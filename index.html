@@ -5561,6 +5561,107 @@ function mobGoPage(el){
   },1000);
 })();
 
+// ── AUTO-FETCH bundle.json ───────────────────────────────────
+(function autoLoadBundle(){
+  // Only attempt if we're served over HTTP (GitHub Pages), not file://
+  if(location.protocol === 'file:') return;
+
+  const BUNDLE_URL = './bundle.json';
+  const statusEl = () => document.getElementById('sp');
+
+  function applyBundle(bundle){
+    try {
+      if(!bundle.player||!bundle.dvp) throw new Error('Missing player or dvp data');
+      let loaded = [], warnings = [];
+
+      if(bundle.player?.length){
+        const parsed = parseP(bundle.player);
+        if(parsed.length){
+          PD=parsed; selName=null; clearCache();
+          const el=document.getElementById('sp');
+          if(el){el.textContent=`✓ ${parsed.length} players`;el.className='ust ok';}
+          loaded.push(`${parsed.length} players`);
+        } else warnings.push('Player CSV 0 rows');
+      }
+      if(bundle.teamdef?.length){
+        const parsed = parseT(bundle.teamdef);
+        if(parsed.length){
+          TD=parsed;
+          const baKeys=Object.keys(parsed[0]).filter(k=>k.endsWith('_a'));
+          baKeys.forEach(k=>{ const vals=parsed.map(t=>t[k]||0).filter(v=>v>0); if(vals.length) BA[k]=vals.reduce((a,b)=>a+b,0)/vals.length; });
+          const el=document.getElementById('st');
+          if(el){el.textContent=`✓ ${parsed.length} teams`;el.className='ust ok';el.style.display='';}
+          loaded.push('Team Def');
+        }
+      }
+      if(bundle.teamform?.length){
+        const parsed = parseTF(bundle.teamform);
+        if(parsed.length){
+          TF=parsed; TF._avgs=calcTFAverages(parsed);
+          const el=document.getElementById('stf');
+          if(el){el.textContent=`✓ ${parsed.length} teams form`;el.className='ust ok';el.style.display='';}
+          loaded.push('Team Form');
+        }
+      }
+      if(bundle.dvp?.length){
+        _dvpRawRows = bundle.dvp;
+        DVP = parseDVPLog(_dvpRawRows);
+        augmentPDFromDVPRAW();
+        const missing = _dvpRawRows.length - DVPRAW.length;
+        const el=document.getElementById('sd');
+        if(el){el.textContent=`✓ DVP: ${DVP.length} records, ${DVPRAW.length} game rows`;el.className='ust dvp';el.style.display='';}
+        loaded.push(`${DVPRAW.length} game rows`);
+      }
+      if(bundle.targets?.length){
+        TI = parseTI(bundle.targets);
+        augmentPDFromTI();
+        loaded.push(`${TI.length} targets`);
+      }
+      if(bundle.fixture?.length){
+        fixture = bundle.fixture.filter(g=>g.home&&g.away);
+        loaded.push(`${fixture.length} fixture games`);
+      }
+
+      // Show reset button
+      const rb=document.getElementById('reset-btn'); if(rb) rb.style.display='';
+      const rd=document.getElementById('reset-div'); if(rd) rd.style.display='';
+
+      renderScanner();
+      try{ renderFixture(); }catch(e){}
+
+      // Update upbar status
+      const sp=document.getElementById('sp');
+      if(sp) sp.textContent=`✓ Auto-loaded: ${loaded.join(', ')}`;
+
+      console.log('[JTT] bundle.json auto-loaded:', loaded.join(', '));
+      if(warnings.length) console.warn('[JTT] Warnings:', warnings.join(' | '));
+
+    } catch(e){
+      console.warn('[JTT] bundle.json apply error:', e.message);
+    }
+  }
+
+  window.addEventListener('DOMContentLoaded', function(){
+    // Show loading indicator
+    const sp = statusEl();
+    if(sp) sp.textContent = 'Loading bundle…';
+
+    fetch(BUNDLE_URL, {cache: 'no-cache'})
+      .then(r => {
+        if(!r.ok) throw new Error('No bundle.json found ('+r.status+')');
+        return r.json();
+      })
+      .then(bundle => {
+        applyBundle(bundle);
+      })
+      .catch(err => {
+        console.log('[JTT] No bundle.json auto-loaded:', err.message);
+        const sp = statusEl();
+        if(sp) sp.textContent = 'No data loaded — load bundle manually or push bundle.json to GitHub';
+      });
+  });
+})();
+
 // Show/hide the Columns toggle button on mobile only
 (function initMobColToggle(){
   function checkMob(){
