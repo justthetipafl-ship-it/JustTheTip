@@ -117,15 +117,31 @@ def api_get(path, params=None):
 
 
 def fetch_team_fixtures_since(team_id, since_date):
-    """Return list of completed fixtures for this team since since_date."""
+    """Return list of completed fixtures for this team since since_date.
+
+    API-Football's /fixtures endpoint requires `season` when querying by
+    `team` — `from`/`to` alone returns nothing. So we iterate seasons and
+    filter client-side.
+    """
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    resp = api_get("/fixtures", {
-        "team":   team_id,
-        "from":   since_date,
-        "to":     today,
-        "status": "FT-AET-PEN",  # only completed matches
-    })
-    return resp.get("response") or []
+    since_year   = int(since_date[:4])
+    current_year = int(today[:4])
+
+    all_fixtures = []
+    for season in range(since_year, current_year + 1):
+        resp = api_get("/fixtures", {
+            "team":   team_id,
+            "season": season,
+        })
+        for f in resp.get("response") or []:
+            status = ((f.get("fixture") or {}).get("status") or {}).get("short", "")
+            if status not in ("FT", "AET", "PEN"):
+                continue  # skip not-yet-played / postponed / cancelled
+            date = f["fixture"]["date"][:10]
+            if date < since_date or date > today:
+                continue
+            all_fixtures.append(f)
+    return all_fixtures
 
 
 def fetch_fixture_detail(fid):
