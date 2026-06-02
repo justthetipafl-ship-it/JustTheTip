@@ -367,7 +367,12 @@ def main():
     new_rows = []
     new_team_stats = {}
     new_dates = []
-    teams_seen = dict(logs.get("teams", {}))
+    # Defensive: older data files had `teams` as a list of codes rather than a
+    # dict of {id: {name}}. If it's not already a dict, start fresh — we'll
+    # rebuild it from scratch from the fixtures we process, which is fine
+    # since the HTML reads team names from the row data, not the teams index.
+    existing_teams = logs.get("teams", {})
+    teams_seen = dict(existing_teams) if isinstance(existing_teams, dict) else {}
 
     for i, fixture in enumerate(new_fixtures):
         fid = fixture["fixture"]["id"]
