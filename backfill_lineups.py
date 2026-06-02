@@ -57,6 +57,9 @@ def fetch_lineup(match_id, key):
     if cache_path.exists():
         with cache_path.open() as f:
             return json.load(f)
+    # API-Football enforces ~10 req/sec. Sleep before each network call so we
+    # stay well under that ceiling and don't trigger 429 rate-limit responses.
+    time.sleep(0.15)
     r = requests.get(BASE + "/fixtures/lineups",
                      params={"fixture": match_id},
                      headers={"x-apisports-key": key}, timeout=30)
