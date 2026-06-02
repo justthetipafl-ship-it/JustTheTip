@@ -1,0 +1,56 @@
+name: WC Update Password
+
+# Manual trigger only. Reads the JTT_WC_PASSWORD GitHub secret, computes a
+# SHA-256 hash of it, writes wc/data/auth.json, and commits the change.
+#
+# To rotate the password:
+#   1. Update the JTT_WC_PASSWORD secret in repo settings
+#   2. Actions → WC Update Password → Run workflow
+#   3. Cloudflare redeploys, new hash takes effect within a minute
+#
+# To DISABLE the gate (open the tool to everyone):
+#   - Delete wc/data/auth.json from the repo
+#   - The HTML checks for that file and skips the overlay if it's missing
+on:
+  workflow_dispatch:
+
+jobs:
+  update-auth:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Generate auth.json from secret
+        env:
+          JTT_WC_PASSWORD: ${{ secrets.JTT_WC_PASSWORD }}
+        run: |
+          if [ -z "$JTT_WC_PASSWORD" ]; then
+            echo "ERROR: JTT_WC_PASSWORD secret is not set."
+            echo "Set it via: Settings → Secrets and variables → Actions → New repository secret"
+            exit 1
+          fi
+          HASH=$(printf '%s' "$JTT_WC_PASSWORD" | sha256sum | awk '{print $1}')
+          UPDATED=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          mkdir -p wc/data
+          cat > wc/data/auth.json <<EOF
+          {"passwordHash":"$HASH","updated":"$UPDATED"}
+          EOF
+          # Bump version so the HTML cache-busts on the next load
+          date +%s%3N > wc/data/version.txt
+          echo "Generated auth.json (hash starts $(echo $HASH | cut -c1-8)…)"
+
+      - name: Commit
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add wc/data/auth.json wc/data/version.txt
+          if git diff --staged --quiet; then
+            echo "No changes (hash unchanged — password is the same as last time)."
+          else
+            git commit -m "chore(wc): rotate password hash"
+            git push
+            echo "Password hash updated and committed."
+          fi
