@@ -1,0 +1,112 @@
+# Save this as: .github/workflows/wc-daily-update.yml
+#
+# Automated daily update of the WC data files.
+#
+# SETUP (one-time, ~5 minutes):
+#   1. In your justthetipafl-ship-it repo on GitHub:
+#        Settings → Secrets and variables → Actions → New repository secret
+#   2. Name: APIFOOTBALL_KEY
+#      Value: your API-Football key
+#   3. Save.
+#   4. Commit this file to .github/workflows/wc-daily-update.yml
+#   5. After commit, go to the "Actions" tab and enable workflows if prompted.
+#
+# WHAT IT DOES:
+#   - Runs at 9am UTC daily (= 7pm AEST during DST, 8pm AEST otherwise)
+#   - You can also run it manually from the Actions tab via "Run workflow"
+#   - Calls fetch_wc_update.py with your stored API key
+#   - Commits any data changes back to main (triggers Cloudflare deploy)
+#   - If no changes, no commit (won't spam the repo)
+#
+# COST:
+#   - GitHub Actions free tier covers this easily (~2 min/day on Ubuntu = ~60 min/month).
+#   - API-Football: ~50-100 calls per run depending on match volume.
+#
+# DEBUGGING:
+#   - If it breaks, check the Actions tab on GitHub.
+#   - The build log shows the fetcher's full output incl. counts of new matches.
+#   - To run manually: Actions → "WC Daily Update" → Run workflow.
+
+name: WC Daily Update
+
+on:
+  schedule:
+    # 9am UTC = 7pm AEST (during AEDT daylight saving) / 8pm AEST otherwise
+    - cron: "0 9 * * *"
+  # Allow manual trigger from the Actions UI
+  workflow_dispatch:
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write  # need write to commit data changes
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install requests
+        run: pip install requests
+
+      - name: Run incremental stats fetcher
+        env:
+          APIFOOTBALL_KEY: ${{ secrets.APIFOOTBALL_KEY }}
+        run: |
+          python fetch_wc_update.py --data=wc/data
+
+      - name: Run odds fetcher
+        env:
+          APIFOOTBALL_KEY: ${{ secrets.APIFOOTBALL_KEY }}
+        # Odds are snapshot-only (API only retains 7 days of history) — we
+        # refresh daily alongside stats. If the API fails, don't kill the
+        # whole job: the previous odds file will keep serving.
+        continue-on-error: true
+        working-directory: wc/data
+        run: |
+          python ../../fetch_wc_odds.py
+
+      - name: Incremental lineups + formations
+        env:
+          APIFOOTBALL_KEY: ${{ secrets.APIFOOTBALL_KEY }}
+        # backfill_lineups.py is incremental — only fetches matches not yet in
+        # wc_lineups.json. On first run it does the big historical backfill
+        # (~3000 calls); subsequent runs only catch the new matches.
+        continue-on-error: true
+        working-directory: wc/data
+        run: |
+          python ../../backfill_lineups.py
+
+      - name: Incremental referees + aggregated stats
+        env:
+          APIFOOTBALL_KEY: ${{ secrets.APIFOOTBALL_KEY }}
+        # Same incremental pattern as lineups. Re-runs include any new matches
+        # since last run + recomputes the refStats aggregate from all matches.
+        continue-on-error: true
+        working-directory: wc/data
+        run: |
+          python ../../backfill_referees.py
+
+      - name: Commit data changes
+        run: |
+          git config user.name "JTT WC Bot"
+          git config user.email "bot@justthetipaus.com"
+          git add wc/data/worldcup_intl_logs.json
+          git add wc/data/worldcup_team_stats.json
+          git add wc/data/worldcup_fixtures_2026.json
+          git add wc/data/worldcup_odds_2026.json
+          git add wc/data/wc_lineups.json
+          git add wc/data/wc_referees.json
+          git add wc/data/version.txt
+          # Only commit if there are actual changes
+          if git diff --staged --quiet; then
+            echo "No data changes to commit."
+          else
+            git commit -m "WC data update: $(date -u +%Y-%m-%d)"
+            git push
+          fi
