@@ -153,19 +153,40 @@ def fetch_fixture_detail(fid):
 
 def build_row(fixture, team_block, player_block, opp_id, opp_name):
     """Mirror of the build_row in fetch_wc_update.py — produces the same shape
-    of player-row that the rest of the pipeline expects."""
-    p = player_block["player"]
-    s = player_block["statistics"][0]
-    games = s.get("games", {}) or {}
-    shots = s.get("shots", {}) or {}
-    goals = s.get("goals", {}) or {}
-    passes = s.get("passes", {}) or {}
-    tackles = s.get("tackles", {}) or {}
-    duels = s.get("duels", {}) or {}
+    of player-row that the rest of the pipeline expects.
+
+    IMPORTANT: must include teamScore/oppScore/result/homeAway/venue or
+    getTeamRecord() in the HTML will report 0 goals scored/conceded.
+    """
+    fxt   = fixture["fixture"]
+    teams = fixture["teams"]
+    goals = fixture.get("goals") or {}
+    team  = team_block["team"]
+    p     = player_block["player"]
+    s     = player_block["statistics"][0]
+    games    = s.get("games", {})    or {}
+    shots    = s.get("shots", {})    or {}
+    pgoals   = s.get("goals", {})    or {}
+    passes   = s.get("passes", {})   or {}
+    tackles  = s.get("tackles", {})  or {}
+    duels    = s.get("duels", {})    or {}
     dribbles = s.get("dribbles", {}) or {}
-    fouls = s.get("fouls", {}) or {}
-    cards = s.get("cards", {}) or {}
-    penalty = s.get("penalty", {}) or {}
+    fouls    = s.get("fouls", {})    or {}
+    cards    = s.get("cards", {})    or {}
+    penalty  = s.get("penalty", {})  or {}
+
+    is_home    = teams["home"]["id"] == team["id"]
+    team_score = goals.get("home") if is_home else goals.get("away")
+    opp_score  = goals.get("away") if is_home else goals.get("home")
+    home_away  = "H" if is_home else "A"
+    if team_score is None or opp_score is None:
+        result = None
+    elif team_score > opp_score:
+        result = "W"
+    elif team_score < opp_score:
+        result = "L"
+    else:
+        result = "D"
 
     # Determine competition tier from league info
     league_id = (fixture.get("league") or {}).get("id")
@@ -181,26 +202,32 @@ def build_row(fixture, team_block, player_block, opp_id, opp_name):
         tier = "tournament"
 
     return {
-        "matchId":          fixture["fixture"]["id"],
-        "date":             fixture["fixture"]["date"][:10],
-        "team":             team_block["team"]["name"],
-        "teamId":           team_block["team"]["id"],
+        "matchId":          fxt["id"],
+        "date":             fxt["date"][:10],
+        "team":             team["name"],
+        "teamId":           team["id"],
         "opponent":         opp_name,
         "opponentId":       opp_id,
+        "venue":            (fxt.get("venue") or {}).get("name"),
+        "homeAway":         home_away,
+        "result":           result,
+        "teamScore":        int(team_score) if team_score is not None else None,
+        "oppScore":         int(opp_score)  if opp_score  is not None else None,
         "competition":      league_name,
         "competitionTier":  tier,
         "playerId":         p.get("id"),
         "playerName":       p.get("name"),
+        "shirtNumber":      games.get("number"),
         "position":         games.get("position"),
         "started":          (games.get("substitute") is False),
         "minutes":          games.get("minutes") or 0,
         "rating":           float(games["rating"]) if games.get("rating") else None,
         "shots":            shots.get("total") or 0,
-        "shotsOnTarget":    shots.get("on") or 0,
-        "goals":            goals.get("total") or 0,
-        "assists":          goals.get("assists") or 0,
-        "saves":            goals.get("saves") or 0,
-        "conceded":         goals.get("conceded") or 0,
+        "shotsOn":          shots.get("on") or 0,
+        "goals":            pgoals.get("total") or 0,
+        "assists":          pgoals.get("assists") or 0,
+        "saves":            pgoals.get("saves") or 0,
+        "conceded":         pgoals.get("conceded") or 0,
         "passes":           passes.get("total") or 0,
         "keyPasses":        passes.get("key") or 0,
         "passAccuracy":     passes.get("accuracy"),
@@ -213,8 +240,8 @@ def build_row(fixture, team_block, player_block, opp_id, opp_name):
         "dribblesSuccess":  dribbles.get("success") or 0,
         "foulsDrawn":       fouls.get("drawn") or 0,
         "foulsCommitted":   fouls.get("committed") or 0,
-        "yellowCards":      cards.get("yellow") or 0,
-        "redCards":         cards.get("red") or 0,
+        "yellowCard":       cards.get("yellow") or 0,
+        "redCard":          cards.get("red") or 0,
         "penaltyWon":       penalty.get("won") or 0,
         "penaltyCommitted": penalty.get("commited") or 0,  # api typo
         "penaltyScored":    penalty.get("scored") or 0,
