@@ -842,6 +842,45 @@
   }
 
   /* === BY THE HALVES (1H vs 2H breakdowns) === */
+  /* Filter chip rows — sit at top of body so user can re-slice the data */
+  .bth-filters {
+    display: flex; flex-direction: column; gap: 5px;
+    margin-bottom: 10px; padding-bottom: 8px;
+    border-bottom: 1px dashed var(--border);
+  }
+  .bth-filter-row {
+    display: flex; align-items: center; gap: 5px;
+    flex-wrap: wrap;
+  }
+  .bth-filter-lbl {
+    font-family: var(--font-mono); font-size: 9px;
+    color: var(--text-3); letter-spacing: 0.5px;
+    text-transform: uppercase;
+    min-width: 64px;
+  }
+  .bth-chip {
+    display: inline-block;
+    font-family: var(--font-mono); font-size: 10px;
+    padding: 3px 8px; border-radius: 10px;
+    border: 1px solid var(--border);
+    background: var(--surface);
+    color: var(--text-2);
+    cursor: pointer; user-select: none;
+    transition: border-color 0.15s, color 0.15s, background 0.15s;
+    letter-spacing: 0.2px;
+  }
+  .bth-chip:hover { border-color: var(--text-3); color: var(--text); }
+  .bth-chip.active {
+    background: rgba(74,222,128,0.15);
+    border-color: var(--accent);
+    color: var(--accent);
+    font-weight: 600;
+  }
+  .bth-empty {
+    font-family: var(--font-mono); font-size: 11px;
+    color: var(--text-3); text-align: center;
+    padding: 18px 8px;
+  }
   .bth-insights {
     display: flex; flex-wrap: wrap; gap: 4px;
     margin-bottom: 10px;
@@ -5161,9 +5200,65 @@ function _repStatsCompact(playerId, teamId) {
 // Returns null if events data isn't loaded — caller renders nothing.
 
 const _halvesCache = {};
+// Per-team filter state. Persists across re-renders within a session so the
+// user's chip selection survives them collapsing and re-expanding the panel.
+const _bthFilterState = {};
+// Cache of per-match enrichment (oppTier, oppStyle, htState) so we don't
+// recompute on every filter toggle.
+const _bthMatchMetaCache = {};
 
-function analyzeHalvesForTeam(teamId, oppId) {
-  const cacheKey = teamId + '_' + (oppId || 'all');
+// Compute opponent-tier + opponent-style + HT-state for one match so it can
+// be filtered downstream. HT state = score difference for the team at the
+// halftime whistle (after counting all goals with minute ≤ 45).
+function _bthEnrichMatch(m, teamId, eventsDoc) {
+  const cacheKey = teamId + ':' + m.matchId;
+  if (_bthMatchMetaCache[cacheKey]) return _bthMatchMetaCache[cacheKey];
+
+  // Opp tier (via FIFA-rank → tier helper, with fallback)
+  let oppTier = 'Unranked';
+  try {
+    const oppRec = (typeof getTeamRecord === 'function')
+      ? getTeamRecord(m.oppId, m.oppName) : null;
+    if (oppRec && oppRec.tier) oppTier = oppRec.tier;
+  } catch (e) { /* swallow */ }
+
+  // Opp style
+  let oppStyle = null;
+  try {
+    if (typeof buildTeamStyles === 'function') buildTeamStyles();
+    if (typeof _teamStyles !== 'undefined' && _teamStyles && _teamStyles[m.oppId]) {
+      oppStyle = _teamStyles[m.oppId].primary && _teamStyles[m.oppId].primary.name;
+    }
+  } catch (e) { /* swallow */ }
+
+  // HT state: who was leading at minute 45?
+  const events = (eventsDoc.events && eventsDoc.events[m.matchId]) || [];
+  let teamGoals1H = 0, oppGoals1H = 0;
+  events.forEach(ev => {
+    if (ev.type !== 'goal') return;
+    if (ev.detail && /missed\s*penalty/i.test(ev.detail)) return;
+    if (ev.minute == null || ev.minute > 45) return;
+    const isOwnGoal = ev.detail && /own\s*goal/i.test(ev.detail);
+    const scorerTeam = isOwnGoal
+      ? (ev.teamId === teamId ? m.oppId : teamId)
+      : ev.teamId;
+    if (scorerTeam === teamId) teamGoals1H++;
+    else oppGoals1H++;
+  });
+  let htState = 'level';
+  if (teamGoals1H > oppGoals1H)      htState = 'leading';
+  else if (oppGoals1H > teamGoals1H) htState = 'trailing';
+
+  const meta = { oppTier, oppStyle, htState };
+  _bthMatchMetaCache[cacheKey] = meta;
+  return meta;
+}
+
+// opts = { oppId, tier, style, htState }
+function analyzeHalvesForTeam(teamId, opts) {
+  opts = opts || {};
+  const { oppId, tier, style, htState } = opts;
+  const cacheKey = [teamId, oppId || '', tier || '', style || '', htState || ''].join('|');
   if (_halvesCache[cacheKey]) return _halvesCache[cacheKey];
 
   const eventsDoc = state.data.events;
@@ -5188,7 +5283,7 @@ function analyzeHalvesForTeam(teamId, oppId) {
     };
   });
 
-  const matchesArr = Object.values(teamMatches)
+  let matchesArr = Object.values(teamMatches)
     .filter(m => eventsDoc.events[m.matchId])
     .sort((a, b) => b.date.localeCompare(a.date));   // newest first
 
@@ -5198,50 +5293,50 @@ function analyzeHalvesForTeam(teamId, oppId) {
     return empty;
   }
 
-  // === Bucket goals into halves ===
-  // 1st half = minute 1..45 (+ added time which API marks as 45 still or 45 + extra)
-  // 2nd half = minute 46..90+ (+ extra)
-  // We treat extra-time of either half as that half (matches typical bookmaker rules).
-  // Knockout extra-time (91-120) is bundled with 2H — irrelevant for friendlies/groups.
-  const stats = {
-    matches: matchesArr.length,
-    goalsFor1H: 0, goalsFor2H: 0,
-    goalsAg1H:  0, goalsAg2H:  0,
-    cardsFor1H: 0, cardsFor2H: 0,
-    // Per-match flags for hit-rate calculation
-    scored1H: 0, scored2H: 0,
-    conceded1H: 0, conceded2H: 0,
-    cs: 0,                 // clean sheets
-    bttsAny: 0,            // matches where both teams scored anywhere
-    btts1H: 0, btts2H: 0,
-    // 15-min buckets for goal timing distribution
-    buckets:    { '0-15':0, '16-30':0, '31-45':0, '46-60':0, '61-75':0, '76-90':0 },
-    bucketsFor: { '0-15':0, '16-30':0, '31-45':0, '46-60':0, '61-75':0, '76-90':0 },
-    bucketsAg:  { '0-15':0, '16-30':0, '31-45':0, '46-60':0, '61-75':0, '76-90':0 },
-  };
+  // === Apply filters ===
+  if (oppId)   matchesArr = matchesArr.filter(m => m.oppId === oppId);
+  if (tier || style || htState) {
+    matchesArr = matchesArr.filter(m => {
+      const meta = _bthEnrichMatch(m, teamId, eventsDoc);
+      if (tier    && meta.oppTier  !== tier)    return false;
+      if (style   && meta.oppStyle !== style)   return false;
+      if (htState && meta.htState  !== htState) return false;
+      return true;
+    });
+  }
 
-  // Optional vs-opp filter
-  const targetMatches = oppId
-    ? matchesArr.filter(m => m.oppId === oppId)
-    : matchesArr;
-  stats.matches = targetMatches.length;
-  if (!targetMatches.length) {
+  if (!matchesArr.length) {
     const empty = { hasData: false, matches: 0 };
     _halvesCache[cacheKey] = empty;
     return empty;
   }
 
+  // === Bucket goals into halves ===
+  const stats = {
+    matches: matchesArr.length,
+    goalsFor1H: 0, goalsFor2H: 0,
+    goalsAg1H:  0, goalsAg2H:  0,
+    cardsFor1H: 0, cardsFor2H: 0,
+    scored1H: 0, scored2H: 0,
+    conceded1H: 0, conceded2H: 0,
+    cs: 0, bttsAny: 0,
+    btts1H: 0, btts2H: 0,
+    buckets:    { '0-15':0, '16-30':0, '31-45':0, '46-60':0, '61-75':0, '76-90':0 },
+    bucketsFor: { '0-15':0, '16-30':0, '31-45':0, '46-60':0, '61-75':0, '76-90':0 },
+    bucketsAg:  { '0-15':0, '16-30':0, '31-45':0, '46-60':0, '61-75':0, '76-90':0 },
+  };
+
   const bucketFor = (minute) => {
     if (minute == null) return null;
     if (minute <= 15) return '0-15';
     if (minute <= 30) return '16-30';
-    if (minute <= 45) return '31-45';   // includes 1H stoppage
+    if (minute <= 45) return '31-45';
     if (minute <= 60) return '46-60';
     if (minute <= 75) return '61-75';
-    return '76-90';                      // includes 2H stoppage + ET
+    return '76-90';
   };
 
-  targetMatches.forEach(m => {
+  matchesArr.forEach(m => {
     const events = eventsDoc.events[m.matchId] || [];
     let scored1 = false, scored2 = false, conceded1 = false, conceded2 = false;
 
@@ -5252,28 +5347,22 @@ function analyzeHalvesForTeam(teamId, oppId) {
       const bk = bucketFor(min);
 
       if (ev.type === 'goal') {
-        // Skip missed penalties — they're not goals
         if (ev.detail && /missed\s*penalty/i.test(ev.detail)) return;
-
-        // Own goal: credit goes to the OTHER team
         const isOwnGoal = ev.detail && /own\s*goal/i.test(ev.detail);
         const goalScorerTeamId = isOwnGoal
           ? (ev.teamId === teamId ? m.oppId : teamId)
           : ev.teamId;
 
         if (goalScorerTeamId === teamId) {
-          // Goal FOR our team
           if (half === 1) { stats.goalsFor1H++; scored1 = true; }
           else            { stats.goalsFor2H++; scored2 = true; }
           if (bk) { stats.bucketsFor[bk]++; stats.buckets[bk]++; }
         } else {
-          // Goal AGAINST our team
           if (half === 1) { stats.goalsAg1H++; conceded1 = true; }
           else            { stats.goalsAg2H++; conceded2 = true; }
           if (bk) { stats.bucketsAg[bk]++; stats.buckets[bk]++; }
         }
       } else if (ev.type === 'card') {
-        // Track card timing for our team only
         if (ev.teamId === teamId) {
           if (half === 1) stats.cardsFor1H++;
           else            stats.cardsFor2H++;
@@ -5291,7 +5380,6 @@ function analyzeHalvesForTeam(teamId, oppId) {
     if (scored2 && conceded2) stats.btts2H++;
   });
 
-  // === Derived per-match averages and percentages ===
   const n = stats.matches;
   const result = {
     hasData: true,
@@ -5320,15 +5408,74 @@ function analyzeHalvesForTeam(teamId, oppId) {
   return result;
 }
 
-function renderByTheHalves(teamId, teamName, oppId, oppName) {
-  const all = analyzeHalvesForTeam(teamId, null);
-  if (!all || !all.hasData) return '';   // no events data loaded yet
-  if (all.matches < 5) return '';        // sample too thin
+// Discover which tiers / styles are actually represented in this team's
+// match history, so chip rows only show useful options.
+function _bthAvailableOptions(teamId) {
+  const eventsDoc = state.data.events;
+  const logs = state.data.logs;
+  if (!eventsDoc || !logs) return { tiers: [], styles: [] };
+  const tiers = new Set();
+  const styles = new Set();
+  const matchSet = new Set();
+  logs.rows.forEach(r => {
+    if (r.teamId !== teamId) return;
+    if (matchSet.has(r.matchId)) return;
+    matchSet.add(r.matchId);
+    if (!eventsDoc.events[r.matchId]) return;
+    const meta = _bthEnrichMatch({
+      matchId: r.matchId, oppId: r.opponentId, oppName: r.opponent,
+    }, teamId, eventsDoc);
+    if (meta.oppTier)  tiers.add(meta.oppTier);
+    if (meta.oppStyle) styles.add(meta.oppStyle);
+  });
+  // Preserve canonical ordering
+  const TIER_ORDER = ['Elite', 'Strong', 'Mid', 'Weak', 'Unranked'];
+  const styleOrder = (typeof STYLE_ORDER !== 'undefined') ? STYLE_ORDER : Array.from(styles);
+  return {
+    tiers:  TIER_ORDER.filter(t => tiers.has(t)),
+    styles: styleOrder.filter(s => styles.has(s)),
+  };
+}
 
-  const vsOpp = oppId ? analyzeHalvesForTeam(teamId, oppId) : null;
-  const showVsOpp = vsOpp && vsOpp.hasData && vsOpp.matches >= 2;
+// Body HTML — re-callable so we can swap content on filter changes without
+// touching the summary or collapsing the <details>.
+function _bthBodyHtml(teamId, teamName, oppId, oppName) {
+  const filters = _bthFilterState[teamId] || {};
+  const data = analyzeHalvesForTeam(teamId, filters);
 
-  // Helper: a stat-line for one window (all/vs-opp)
+  // Filter chips row — render even when data is empty, so user can un-filter.
+  const opts = _bthAvailableOptions(teamId);
+  const chip = (cat, val, label) => {
+    const active = (filters[cat] === val) ? ' active' : '';
+    return '<span class="bth-chip' + active + '" ' +
+      'data-bth-teamid="' + teamId + '" ' +
+      'data-bth-cat="' + cat + '" ' +
+      'data-bth-val="' + escapeHtml(val) + '" ' +
+      'onclick="_bthSetFilter(this)">' + escapeHtml(label) + '</span>';
+  };
+
+  const tierChips = opts.tiers.map(t => chip('tier', t, t)).join('');
+  const styleChips = opts.styles.map(s => chip('style', s, s)).join('');
+  const stateChips =
+    chip('htState', 'leading',  'Leading at HT') +
+    chip('htState', 'trailing', 'Trailing at HT');
+
+  const filtersHtml =
+    '<div class="bth-filters">' +
+      (tierChips
+        ? '<div class="bth-filter-row"><span class="bth-filter-lbl">Opp tier</span>' + tierChips + '</div>'
+        : '') +
+      (styleChips
+        ? '<div class="bth-filter-row"><span class="bth-filter-lbl">Opp style</span>' + styleChips + '</div>'
+        : '') +
+      '<div class="bth-filter-row"><span class="bth-filter-lbl">Game state</span>' + stateChips + '</div>' +
+    '</div>';
+
+  if (!data || !data.hasData) {
+    return filtersHtml + '<div class="bth-empty">No matches match this filter — toggle off to see the full set.</div>';
+  }
+
+  // Stat blocks
   const splitBlock = (a, label, n) => {
     return '<div class="bth-block">' +
       '<div class="bth-block-hdr">' + label + ' <span class="bth-n">' + n + 'g</span></div>' +
@@ -5347,15 +5494,21 @@ function renderByTheHalves(teamId, teamName, oppId, oppName) {
     '</div>';
   };
 
-  // Timing distribution — bar chart showing where goals land
-  // Combined for/against bars so user sees total intensity per bucket
+  // Active-filter label suffix for the All-data block
+  const activeBits = [];
+  if (filters.tier)    activeBits.push('vs ' + filters.tier);
+  if (filters.style)   activeBits.push('vs ' + filters.style);
+  if (filters.htState) activeBits.push(filters.htState + ' at HT');
+  const blockLabel = activeBits.length ? activeBits.join(' · ') : 'All data';
+
+  // Timing distribution
   const buckets = ['0-15', '16-30', '31-45', '46-60', '61-75', '76-90'];
-  const maxFor = Math.max(1, ...buckets.map(b => all.bucketsFor[b]));
-  const maxAg  = Math.max(1, ...buckets.map(b => all.bucketsAg[b]));
+  const maxFor = Math.max(1, ...buckets.map(b => data.bucketsFor[b]));
+  const maxAg  = Math.max(1, ...buckets.map(b => data.bucketsAg[b]));
   const maxAny = Math.max(maxFor, maxAg);
   const bucketBars = buckets.map(b => {
-    const f = all.bucketsFor[b];
-    const a = all.bucketsAg[b];
+    const f = data.bucketsFor[b];
+    const a = data.bucketsAg[b];
     const fH = Math.round((f / maxAny) * 100);
     const aH = Math.round((a / maxAny) * 100);
     return '<div class="bth-bucket">' +
@@ -5370,39 +5523,78 @@ function renderByTheHalves(teamId, teamName, oppId, oppName) {
     '</div>';
   }).join('');
 
-  // Insight tag — flag interesting asymmetries
+  // Insights — only show on unfiltered or single-filter views (when sample
+  // is meaningful). Under tight filter chains they're noise.
   const insights = [];
-  if (all.forAvg2H - all.forAvg1H >= 0.4) insights.push('<span class="bth-tag pos">Strong 2H attack</span>');
-  else if (all.forAvg1H - all.forAvg2H >= 0.4) insights.push('<span class="bth-tag pos">Fast starter</span>');
-  if (all.agAvg2H - all.agAvg1H >= 0.4) insights.push('<span class="bth-tag neg">Leaks late</span>');
-  else if (all.agAvg1H - all.agAvg2H >= 0.4) insights.push('<span class="bth-tag neg">Slow defensive start</span>');
-  if (all.pctScored1H >= 0.65) insights.push('<span class="bth-tag pos">Scores 1H ' + Math.round(all.pctScored1H*100) + '%</span>');
-  if (all.pctScored2H >= 0.65) insights.push('<span class="bth-tag pos">Scores 2H ' + Math.round(all.pctScored2H*100) + '%</span>');
-  if (all.pctConceded2H >= 0.6) insights.push('<span class="bth-tag neg">2H conc ' + Math.round(all.pctConceded2H*100) + '%</span>');
-  // Peak bucket
-  const peakBucket = buckets.reduce((best, b) =>
-    all.buckets[b] > all.buckets[best] ? b : best, buckets[0]);
-  if (all.buckets[peakBucket] > 0) {
-    insights.push('<span class="bth-tag info">Peak: ' + peakBucket + '\'</span>');
+  if (Object.values(filters).filter(Boolean).length <= 1 && data.matches >= 5) {
+    if (data.forAvg2H - data.forAvg1H >= 0.4) insights.push('<span class="bth-tag pos">Strong 2H attack</span>');
+    else if (data.forAvg1H - data.forAvg2H >= 0.4) insights.push('<span class="bth-tag pos">Fast starter</span>');
+    if (data.agAvg2H - data.agAvg1H >= 0.4) insights.push('<span class="bth-tag neg">Leaks late</span>');
+    else if (data.agAvg1H - data.agAvg2H >= 0.4) insights.push('<span class="bth-tag neg">Slow defensive start</span>');
+    if (data.pctScored1H >= 0.65) insights.push('<span class="bth-tag pos">Scores 1H ' + Math.round(data.pctScored1H*100) + '%</span>');
+    if (data.pctScored2H >= 0.65) insights.push('<span class="bth-tag pos">Scores 2H ' + Math.round(data.pctScored2H*100) + '%</span>');
+    if (data.pctConceded2H >= 0.6) insights.push('<span class="bth-tag neg">2H conc ' + Math.round(data.pctConceded2H*100) + '%</span>');
+    const peakBucket = buckets.reduce((best, b) => data.buckets[b] > data.buckets[best] ? b : best, buckets[0]);
+    if (data.buckets[peakBucket] > 0) insights.push('<span class="bth-tag info">Peak: ' + peakBucket + '\'</span>');
   }
+
+  // vs-opp only when no other filters active (avoid double-filtering confusion)
+  const vsOpp = oppId && !filters.tier && !filters.style && !filters.htState
+    ? analyzeHalvesForTeam(teamId, { oppId })
+    : null;
+  const showVsOpp = vsOpp && vsOpp.hasData && vsOpp.matches >= 2;
+
+  return filtersHtml +
+    (insights.length ? '<div class="bth-insights">' + insights.join('') + '</div>' : '') +
+    splitBlock(data, blockLabel, data.matches) +
+    (showVsOpp ? splitBlock(vsOpp, 'Vs ' + escapeHtml(oppName), vsOpp.matches) : '') +
+    '<div class="bth-bucket-title">Goal timing — 15-minute buckets</div>' +
+    '<div class="bth-bucket-chart">' + bucketBars + '</div>' +
+    '<div class="bth-legend">' +
+      '<span class="bth-leg-item"><span class="bth-leg-swatch bth-for"></span> Scored</span>' +
+      '<span class="bth-leg-item"><span class="bth-leg-swatch bth-ag"></span> Conceded</span>' +
+    '</div>';
+}
+
+// Click handler attached to filter chips. Stores teamName + oppId + oppName
+// on a stash keyed by teamId so the rebuild call has what it needs.
+const _bthRenderCtx = {};
+window._bthSetFilter = function(el) {
+  const teamId = parseInt(el.dataset.bthTeamid, 10);
+  const cat    = el.dataset.bthCat;
+  const val    = el.dataset.bthVal;
+  if (!_bthFilterState[teamId]) _bthFilterState[teamId] = {};
+  // Toggle: clicking same chip unsets it
+  if (_bthFilterState[teamId][cat] === val) {
+    delete _bthFilterState[teamId][cat];
+  } else {
+    _bthFilterState[teamId][cat] = val;
+  }
+  const bodyEl = document.querySelector('[data-bth-body="' + teamId + '"]');
+  const ctx = _bthRenderCtx[teamId] || {};
+  if (bodyEl) {
+    bodyEl.innerHTML = _bthBodyHtml(teamId, ctx.teamName, ctx.oppId, ctx.oppName);
+  }
+};
+
+function renderByTheHalves(teamId, teamName, oppId, oppName) {
+  // Initial probe to ensure there's data to render at all
+  const probe = analyzeHalvesForTeam(teamId, {});
+  if (!probe || !probe.hasData) return '';
+  if (probe.matches < 5) return '';
+
+  // Stash context for the click handler to use on re-render
+  _bthRenderCtx[teamId] = { teamName, oppId, oppName };
 
   return '<details class="tp-collapse bth-section">' +
     '<summary class="tp-collapse-sum">' +
       '<i class="ti ti-ball-football" aria-hidden="true"></i>' +
       '<span class="tp-collapse-title">By The Halves</span>' +
-      '<span class="tp-collapse-meta">' + all.matches + 'g · 1H vs 2H</span>' +
+      '<span class="tp-collapse-meta">' + probe.matches + 'g · 1H vs 2H</span>' +
       '<i class="ti ti-chevron-down tp-collapse-chev" aria-hidden="true"></i>' +
     '</summary>' +
-    '<div class="tp-collapse-body">' +
-      (insights.length ? '<div class="bth-insights">' + insights.join('') + '</div>' : '') +
-      splitBlock(all, 'All data', all.matches) +
-      (showVsOpp ? splitBlock(vsOpp, 'Vs ' + escapeHtml(oppName), vsOpp.matches) : '') +
-      '<div class="bth-bucket-title">Goal timing — 15-minute buckets</div>' +
-      '<div class="bth-bucket-chart">' + bucketBars + '</div>' +
-      '<div class="bth-legend">' +
-        '<span class="bth-leg-item"><span class="bth-leg-swatch bth-for"></span> Scored</span>' +
-        '<span class="bth-leg-item"><span class="bth-leg-swatch bth-ag"></span> Conceded</span>' +
-      '</div>' +
+    '<div class="tp-collapse-body" data-bth-body="' + teamId + '">' +
+      _bthBodyHtml(teamId, teamName, oppId, oppName) +
     '</div>' +
   '</details>';
 }
@@ -8108,20 +8300,26 @@ function renderStatLeaders(qualified, oppId, oppName) {
   if (!cards.length) return '';
 
   const fid = state.view.selectedFixtureId || 'null';
-  return '<div class="tp-sec">' +
-      '<div class="sec-title"><i class="ti ti-award" aria-hidden="true"></i> Stat Leaders</div>' +
-      '<div class="sec-meta">last 12 months</div>' +
+  return '<details class="tp-collapse">' +
+    '<summary class="tp-collapse-sum">' +
+      '<i class="ti ti-award" aria-hidden="true"></i>' +
+      '<span class="tp-collapse-title">Stat Leaders</span>' +
+      '<span class="tp-collapse-meta">last 12 months</span>' +
+      '<i class="ti ti-chevron-down tp-collapse-chev" aria-hidden="true"></i>' +
+    '</summary>' +
+    '<div class="tp-collapse-body">' +
+      '<div class="stat-leaders">' +
+        cards.map(c =>
+          '<div class="leader-card pclick" onclick="openPlayerModal(' + c.playerId + ',' + fid + ')">' +
+            '<div class="leader-stat">' + c.label + '</div>' +
+            '<div class="leader-val">' + c.val + '<span class="unit">' + c.unit + '</span></div>' +
+            '<div class="leader-name">' + escapeHtml(c.name) + '</div>' +
+            '<div class="leader-apps">' + c.apps + ' apps</div>' +
+          '</div>'
+        ).join('') +
+      '</div>' +
     '</div>' +
-    '<div class="stat-leaders">' +
-      cards.map(c =>
-        '<div class="leader-card pclick" onclick="openPlayerModal(' + c.playerId + ',' + fid + ')">' +
-          '<div class="leader-stat">' + c.label + '</div>' +
-          '<div class="leader-val">' + c.val + '<span class="unit">' + c.unit + '</span></div>' +
-          '<div class="leader-name">' + escapeHtml(c.name) + '</div>' +
-          '<div class="leader-apps">' + c.apps + ' apps</div>' +
-        '</div>'
-      ).join('') +
-    '</div>';
+  '</details>';
 }
 
 // ----- OPPONENT DVP equivalent -----
