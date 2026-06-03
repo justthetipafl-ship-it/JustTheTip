@@ -76,11 +76,36 @@ jobs:
         run: |
           python ../../fetch_wc_odds.py
 
+      - name: Pull live match status (minute, score, status)
+        env:
+          APIFOOTBALL_KEY: ${{ secrets.APIFOOTBALL_KEY }}
+        # Writes live_status.json with current minute + score for any in-play
+        # WC fixture. The HTML reads this to power the LIVE pill and the
+        # in-running probability updates. Single API call, very cheap.
+        continue-on-error: true
+        working-directory: wc/data
+        run: |
+          python ../../fetch_wc_live.py
+
+      - name: Fetch events for newly-finished matches (goal/card minutes)
+        env:
+          APIFOOTBALL_KEY: ${{ secrets.APIFOOTBALL_KEY }}
+        # Powers the "By the halves" team panel section — needs each goal's
+        # minute to split scoring/conceding into 1H/2H buckets. Incremental:
+        # walks team_stats + FT fixtures and fetches only matches not already
+        # in worldcup_events.json. On a quiet poll this exits with 0 API calls.
+        # On a poll right after a match finishes, costs 1 call per FT match
+        # just completed.
+        continue-on-error: true
+        working-directory: wc/data
+        run: |
+          python ../../fetch_wc_events.py
+
       - name: Commit any updates
         run: |
           git config user.name "JTT WC Bot"
           git config user.email "bot@justthetipaus.com"
-          git add wc/data/wc_lineups.json wc/data/worldcup_odds_2026.json wc/data/version.txt 2>/dev/null || true
+          git add wc/data/wc_lineups.json wc/data/worldcup_odds_2026.json wc/data/live_status.json wc/data/worldcup_events.json wc/data/version.txt 2>/dev/null || true
           if git diff --staged --quiet; then
             echo "No matchday updates this poll."
           else
