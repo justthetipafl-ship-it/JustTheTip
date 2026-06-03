@@ -841,6 +841,104 @@
     flex-wrap: wrap; gap: 4px;
   }
 
+  /* === BY THE HALVES (1H vs 2H breakdowns) === */
+  .bth-insights {
+    display: flex; flex-wrap: wrap; gap: 4px;
+    margin-bottom: 10px;
+  }
+  .bth-tag {
+    font-family: var(--font-mono); font-size: 9px;
+    letter-spacing: 0.4px; text-transform: uppercase;
+    padding: 2px 6px; border-radius: 3px;
+    border: 1px solid var(--border);
+    background: var(--surface);
+  }
+  .bth-tag.pos  { color: #4ade80; border-color: rgba(74,222,128,0.25); }
+  .bth-tag.neg  { color: #f87171; border-color: rgba(248,113,113,0.25); }
+  .bth-tag.info { color: var(--text-2); }
+  .bth-block { margin-bottom: 10px; }
+  .bth-block:last-of-type { margin-bottom: 6px; }
+  .bth-block-hdr {
+    font-family: var(--font-mono); font-size: 10px;
+    color: var(--text-3); letter-spacing: 0.4px;
+    margin-bottom: 6px; padding-bottom: 4px;
+    border-bottom: 1px dashed var(--border);
+    display: flex; align-items: center; justify-content: space-between;
+  }
+  .bth-block .bth-n { color: var(--text-3); font-weight: 400; }
+  .bth-row {
+    display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px;
+    margin-bottom: 4px;
+  }
+  .bth-cell {
+    background: var(--surface); border-radius: 4px;
+    padding: 5px 6px; text-align: center;
+    display: flex; flex-direction: column; gap: 1px;
+  }
+  .bth-cell-lbl {
+    font-family: var(--font-mono); font-size: 8px;
+    color: var(--text-3); letter-spacing: 0.3px;
+    text-transform: uppercase;
+  }
+  .bth-cell-val {
+    font-family: var(--font-display); font-weight: 700;
+    font-size: 13px; color: var(--text);
+  }
+  .bth-bucket-title {
+    font-family: var(--font-mono); font-size: 10px;
+    color: var(--text-3); letter-spacing: 0.4px;
+    margin: 10px 0 6px;
+  }
+  .bth-bucket-chart {
+    display: grid; grid-template-columns: repeat(6, 1fr); gap: 4px;
+    height: 90px;
+    align-items: end;
+    background: var(--surface);
+    border-radius: 4px;
+    padding: 8px 6px 4px;
+  }
+  .bth-bucket {
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: flex-end;
+    height: 100%;
+  }
+  .bth-bucket-bars {
+    display: flex; align-items: flex-end; gap: 2px;
+    height: 60px;
+  }
+  .bth-bucket-bar {
+    width: 8px; min-height: 2px;
+    border-radius: 1px 1px 0 0;
+  }
+  .bth-bucket-bar.bth-for { background: #4ade80; }
+  .bth-bucket-bar.bth-ag  { background: #f87171; }
+  .bth-bucket-lbl {
+    font-family: var(--font-mono); font-size: 9px;
+    color: var(--text-3); margin-top: 4px;
+  }
+  .bth-bucket-nums {
+    font-family: var(--font-mono); font-size: 9px;
+    color: var(--text-2);
+  }
+  .bth-for-num { color: #4ade80; }
+  .bth-ag-num  { color: #f87171; }
+  .bth-legend {
+    display: flex; gap: 12px; justify-content: center;
+    font-family: var(--font-mono); font-size: 10px;
+    color: var(--text-3);
+    margin-top: 6px;
+  }
+  .bth-leg-item { display: flex; align-items: center; gap: 5px; }
+  .bth-leg-swatch {
+    width: 10px; height: 10px; border-radius: 2px;
+    display: inline-block;
+  }
+  .bth-leg-swatch.bth-for { background: #4ade80; }
+  .bth-leg-swatch.bth-ag  { background: #f87171; }
+  @media (max-width: 480px) {
+    .bth-row { grid-template-columns: repeat(2, 1fr); }
+  }
+
   /* === MATCH MARKETS PANEL === */
   .markets-panel {
     background: var(--surface); border: 1px solid var(--border);
@@ -3689,6 +3787,7 @@ const state = {
     lineups: null,    // wc_lineups.json content (optional — present once lineups announced)
     referees: null,   // wc_referees.json content (optional — backfilled refs)
     liveStatus: null, // live_status.json content (only during matchdays)
+    events: null,     // worldcup_events.json content (optional — goal/card minutes for By The Halves)
   },
   view: {
     tab: 'fixtures',           // 'fixtures' | 'crew'
@@ -3805,6 +3904,7 @@ async function tryAutoLoadData() {
     lineups:     prefix + 'wc_lineups.json' + v,
     referees:    prefix + 'wc_referees.json' + v,
     liveStatus:  prefix + 'live_status.json' + v,
+    events:      prefix + 'worldcup_events.json' + v,
   };
 
   // Expose the version for the freshness pill below
@@ -5046,6 +5146,265 @@ function _repStatsCompact(playerId, teamId) {
   if ((avg.goals || 0)     >= 0.20) bits.push(avg.goals.toFixed(2) + ' g');
   if ((avg.tackles || 0)   >= 1.0 && bits.length < 2) bits.push(avg.tackles.toFixed(1) + ' tk');
   return bits.slice(0, 2).join(' · ');
+}
+
+// ============================================================
+// BY THE HALVES
+// ============================================================
+// Analyses a team's goal patterns split by half. Driven entirely from
+// worldcup_events.json (each goal carries a `minute`). Outputs:
+//   - Goals scored / conceded per half (totals + per-match avg)
+//   - Rates: % matches scored 1H, conceded 1H, etc.
+//   - Goal timing distribution in 15-min buckets
+//   - Recent / vs-opp slices when relevant
+//
+// Returns null if events data isn't loaded — caller renders nothing.
+
+const _halvesCache = {};
+
+function analyzeHalvesForTeam(teamId, oppId) {
+  const cacheKey = teamId + '_' + (oppId || 'all');
+  if (_halvesCache[cacheKey]) return _halvesCache[cacheKey];
+
+  const eventsDoc = state.data.events;
+  const logs = state.data.logs;
+  if (!eventsDoc || !eventsDoc.events) return null;
+  if (!logs) return null;
+
+  // Find all matches this team has played, with opponent + result info
+  const teamMatches = {};
+  logs.rows.forEach(r => {
+    if (r.teamId !== teamId) return;
+    if (teamMatches[r.matchId]) return;
+    teamMatches[r.matchId] = {
+      matchId: r.matchId,
+      date: r.date,
+      teamId: r.teamId,
+      oppId: r.opponentId,
+      oppName: r.opponent,
+      teamScore: r.teamScore,
+      oppScore: r.oppScore,
+      result: r.result,
+    };
+  });
+
+  const matchesArr = Object.values(teamMatches)
+    .filter(m => eventsDoc.events[m.matchId])
+    .sort((a, b) => b.date.localeCompare(a.date));   // newest first
+
+  if (!matchesArr.length) {
+    const empty = { hasData: false, matches: 0 };
+    _halvesCache[cacheKey] = empty;
+    return empty;
+  }
+
+  // === Bucket goals into halves ===
+  // 1st half = minute 1..45 (+ added time which API marks as 45 still or 45 + extra)
+  // 2nd half = minute 46..90+ (+ extra)
+  // We treat extra-time of either half as that half (matches typical bookmaker rules).
+  // Knockout extra-time (91-120) is bundled with 2H — irrelevant for friendlies/groups.
+  const stats = {
+    matches: matchesArr.length,
+    goalsFor1H: 0, goalsFor2H: 0,
+    goalsAg1H:  0, goalsAg2H:  0,
+    cardsFor1H: 0, cardsFor2H: 0,
+    // Per-match flags for hit-rate calculation
+    scored1H: 0, scored2H: 0,
+    conceded1H: 0, conceded2H: 0,
+    cs: 0,                 // clean sheets
+    bttsAny: 0,            // matches where both teams scored anywhere
+    btts1H: 0, btts2H: 0,
+    // 15-min buckets for goal timing distribution
+    buckets:    { '0-15':0, '16-30':0, '31-45':0, '46-60':0, '61-75':0, '76-90':0 },
+    bucketsFor: { '0-15':0, '16-30':0, '31-45':0, '46-60':0, '61-75':0, '76-90':0 },
+    bucketsAg:  { '0-15':0, '16-30':0, '31-45':0, '46-60':0, '61-75':0, '76-90':0 },
+  };
+
+  // Optional vs-opp filter
+  const targetMatches = oppId
+    ? matchesArr.filter(m => m.oppId === oppId)
+    : matchesArr;
+  stats.matches = targetMatches.length;
+  if (!targetMatches.length) {
+    const empty = { hasData: false, matches: 0 };
+    _halvesCache[cacheKey] = empty;
+    return empty;
+  }
+
+  const bucketFor = (minute) => {
+    if (minute == null) return null;
+    if (minute <= 15) return '0-15';
+    if (minute <= 30) return '16-30';
+    if (minute <= 45) return '31-45';   // includes 1H stoppage
+    if (minute <= 60) return '46-60';
+    if (minute <= 75) return '61-75';
+    return '76-90';                      // includes 2H stoppage + ET
+  };
+
+  targetMatches.forEach(m => {
+    const events = eventsDoc.events[m.matchId] || [];
+    let scored1 = false, scored2 = false, conceded1 = false, conceded2 = false;
+
+    events.forEach(ev => {
+      const min = ev.minute;
+      if (min == null) return;
+      const half = (min <= 45) ? 1 : 2;
+      const bk = bucketFor(min);
+
+      if (ev.type === 'goal') {
+        // Skip missed penalties — they're not goals
+        if (ev.detail && /missed\s*penalty/i.test(ev.detail)) return;
+
+        // Own goal: credit goes to the OTHER team
+        const isOwnGoal = ev.detail && /own\s*goal/i.test(ev.detail);
+        const goalScorerTeamId = isOwnGoal
+          ? (ev.teamId === teamId ? m.oppId : teamId)
+          : ev.teamId;
+
+        if (goalScorerTeamId === teamId) {
+          // Goal FOR our team
+          if (half === 1) { stats.goalsFor1H++; scored1 = true; }
+          else            { stats.goalsFor2H++; scored2 = true; }
+          if (bk) { stats.bucketsFor[bk]++; stats.buckets[bk]++; }
+        } else {
+          // Goal AGAINST our team
+          if (half === 1) { stats.goalsAg1H++; conceded1 = true; }
+          else            { stats.goalsAg2H++; conceded2 = true; }
+          if (bk) { stats.bucketsAg[bk]++; stats.buckets[bk]++; }
+        }
+      } else if (ev.type === 'card') {
+        // Track card timing for our team only
+        if (ev.teamId === teamId) {
+          if (half === 1) stats.cardsFor1H++;
+          else            stats.cardsFor2H++;
+        }
+      }
+    });
+
+    if (scored1) stats.scored1H++;
+    if (scored2) stats.scored2H++;
+    if (conceded1) stats.conceded1H++;
+    if (conceded2) stats.conceded2H++;
+    if (!conceded1 && !conceded2) stats.cs++;
+    if ((scored1 || scored2) && (conceded1 || conceded2)) stats.bttsAny++;
+    if (scored1 && conceded1) stats.btts1H++;
+    if (scored2 && conceded2) stats.btts2H++;
+  });
+
+  // === Derived per-match averages and percentages ===
+  const n = stats.matches;
+  const result = {
+    hasData: true,
+    matches: n,
+    forAvg1H: stats.goalsFor1H / n,
+    forAvg2H: stats.goalsFor2H / n,
+    agAvg1H:  stats.goalsAg1H  / n,
+    agAvg2H:  stats.goalsAg2H  / n,
+    cardsAvg1H: stats.cardsFor1H / n,
+    cardsAvg2H: stats.cardsFor2H / n,
+    pctScored1H:   stats.scored1H   / n,
+    pctScored2H:   stats.scored2H   / n,
+    pctConceded1H: stats.conceded1H / n,
+    pctConceded2H: stats.conceded2H / n,
+    pctCS:    stats.cs       / n,
+    pctBtts:  stats.bttsAny  / n,
+    pctBtts1H: stats.btts1H  / n,
+    pctBtts2H: stats.btts2H  / n,
+    buckets:    stats.buckets,
+    bucketsFor: stats.bucketsFor,
+    bucketsAg:  stats.bucketsAg,
+    totalGoalsFor: stats.goalsFor1H + stats.goalsFor2H,
+    totalGoalsAg:  stats.goalsAg1H  + stats.goalsAg2H,
+  };
+  _halvesCache[cacheKey] = result;
+  return result;
+}
+
+function renderByTheHalves(teamId, teamName, oppId, oppName) {
+  const all = analyzeHalvesForTeam(teamId, null);
+  if (!all || !all.hasData) return '';   // no events data loaded yet
+  if (all.matches < 5) return '';        // sample too thin
+
+  const vsOpp = oppId ? analyzeHalvesForTeam(teamId, oppId) : null;
+  const showVsOpp = vsOpp && vsOpp.hasData && vsOpp.matches >= 2;
+
+  // Helper: a stat-line for one window (all/vs-opp)
+  const splitBlock = (a, label, n) => {
+    return '<div class="bth-block">' +
+      '<div class="bth-block-hdr">' + label + ' <span class="bth-n">n=' + n + '</span></div>' +
+      '<div class="bth-row">' +
+        '<span class="bth-cell"><span class="bth-cell-lbl">1H GF</span><span class="bth-cell-val">' + a.forAvg1H.toFixed(2) + '</span></span>' +
+        '<span class="bth-cell"><span class="bth-cell-lbl">2H GF</span><span class="bth-cell-val">' + a.forAvg2H.toFixed(2) + '</span></span>' +
+        '<span class="bth-cell"><span class="bth-cell-lbl">1H GA</span><span class="bth-cell-val">' + a.agAvg1H.toFixed(2) + '</span></span>' +
+        '<span class="bth-cell"><span class="bth-cell-lbl">2H GA</span><span class="bth-cell-val">' + a.agAvg2H.toFixed(2) + '</span></span>' +
+      '</div>' +
+      '<div class="bth-row">' +
+        '<span class="bth-cell"><span class="bth-cell-lbl">Scored 1H</span><span class="bth-cell-val">' + Math.round(a.pctScored1H * 100) + '%</span></span>' +
+        '<span class="bth-cell"><span class="bth-cell-lbl">Scored 2H</span><span class="bth-cell-val">' + Math.round(a.pctScored2H * 100) + '%</span></span>' +
+        '<span class="bth-cell"><span class="bth-cell-lbl">Conceded 1H</span><span class="bth-cell-val">' + Math.round(a.pctConceded1H * 100) + '%</span></span>' +
+        '<span class="bth-cell"><span class="bth-cell-lbl">Conceded 2H</span><span class="bth-cell-val">' + Math.round(a.pctConceded2H * 100) + '%</span></span>' +
+      '</div>' +
+    '</div>';
+  };
+
+  // Timing distribution — bar chart showing where goals land
+  // Combined for/against bars so user sees total intensity per bucket
+  const buckets = ['0-15', '16-30', '31-45', '46-60', '61-75', '76-90'];
+  const maxFor = Math.max(1, ...buckets.map(b => all.bucketsFor[b]));
+  const maxAg  = Math.max(1, ...buckets.map(b => all.bucketsAg[b]));
+  const maxAny = Math.max(maxFor, maxAg);
+  const bucketBars = buckets.map(b => {
+    const f = all.bucketsFor[b];
+    const a = all.bucketsAg[b];
+    const fH = Math.round((f / maxAny) * 100);
+    const aH = Math.round((a / maxAny) * 100);
+    return '<div class="bth-bucket">' +
+      '<div class="bth-bucket-bars">' +
+        '<div class="bth-bucket-bar bth-for" style="height:' + fH + '%" title="' + f + ' for"></div>' +
+        '<div class="bth-bucket-bar bth-ag"  style="height:' + aH + '%" title="' + a + ' against"></div>' +
+      '</div>' +
+      '<div class="bth-bucket-lbl">' + b + '</div>' +
+      '<div class="bth-bucket-nums">' +
+        '<span class="bth-for-num">' + f + '</span>·<span class="bth-ag-num">' + a + '</span>' +
+      '</div>' +
+    '</div>';
+  }).join('');
+
+  // Insight tag — flag interesting asymmetries
+  const insights = [];
+  if (all.forAvg2H - all.forAvg1H >= 0.4) insights.push('<span class="bth-tag pos">Strong 2H attack</span>');
+  else if (all.forAvg1H - all.forAvg2H >= 0.4) insights.push('<span class="bth-tag pos">Fast starter</span>');
+  if (all.agAvg2H - all.agAvg1H >= 0.4) insights.push('<span class="bth-tag neg">Leaks late</span>');
+  else if (all.agAvg1H - all.agAvg2H >= 0.4) insights.push('<span class="bth-tag neg">Slow defensive start</span>');
+  if (all.pctScored1H >= 0.65) insights.push('<span class="bth-tag pos">Scores 1H ' + Math.round(all.pctScored1H*100) + '%</span>');
+  if (all.pctScored2H >= 0.65) insights.push('<span class="bth-tag pos">Scores 2H ' + Math.round(all.pctScored2H*100) + '%</span>');
+  if (all.pctConceded2H >= 0.6) insights.push('<span class="bth-tag neg">2H conc ' + Math.round(all.pctConceded2H*100) + '%</span>');
+  // Peak bucket
+  const peakBucket = buckets.reduce((best, b) =>
+    all.buckets[b] > all.buckets[best] ? b : best, buckets[0]);
+  if (all.buckets[peakBucket] > 0) {
+    insights.push('<span class="bth-tag info">Peak: ' + peakBucket + '\'</span>');
+  }
+
+  return '<details class="tp-collapse bth-section">' +
+    '<summary class="tp-collapse-sum">' +
+      '<i class="ti ti-clock-half" aria-hidden="true"></i>' +
+      '<span class="tp-collapse-title">By the halves</span>' +
+      '<span class="tp-collapse-meta">' + all.matches + 'g · 1H vs 2H</span>' +
+      '<i class="ti ti-chevron-down tp-collapse-chev" aria-hidden="true"></i>' +
+    '</summary>' +
+    '<div class="tp-collapse-body">' +
+      (insights.length ? '<div class="bth-insights">' + insights.join('') + '</div>' : '') +
+      splitBlock(all, 'All data', all.matches) +
+      (showVsOpp ? splitBlock(vsOpp, 'Vs ' + escapeHtml(oppName), vsOpp.matches) : '') +
+      '<div class="bth-bucket-title">Goal timing — 15-minute buckets</div>' +
+      '<div class="bth-bucket-chart">' + bucketBars + '</div>' +
+      '<div class="bth-legend">' +
+        '<span class="bth-leg-item"><span class="bth-leg-swatch bth-for"></span> Scored</span>' +
+        '<span class="bth-leg-item"><span class="bth-leg-swatch bth-ag"></span> Conceded</span>' +
+      '</div>' +
+    '</div>' +
+  '</details>';
 }
 
 function renderSubstitutionTrends(teamId, teamName) {
@@ -7647,6 +8006,7 @@ function renderTeamPanel(teamId, teamName, oppId, oppName, isHome, fixture) {
     renderRecentGames(teamId, teamName) +
     renderOppDVP(oppId, oppName) +
     renderShapeTrend(teamId, teamName) +
+    renderByTheHalves(teamId, teamName, oppId, oppName) +
     renderPlayerSpotlight(teamId, teamName, oppId, oppName) +
     renderSubstitutionTrends(teamId, teamName) +
     renderTeamSignals(teamId, fixture) +
@@ -8599,8 +8959,24 @@ function openPlayerModal(playerId, fixtureId) {
 
   // Find player's rows. playerId can be a number or string — coerce.
   const pid = typeof playerId === 'string' ? parseInt(playerId, 10) : playerId;
-  const playerRows = logs.rows.filter(r => r.playerId === pid);
-  if (!playerRows.length) return;
+  const rawRows = logs.rows.filter(r => r.playerId === pid);
+  if (!rawRows.length) return;
+
+  // Enrich rows with keeper-specific derived stats so all downstream functions
+  // (splits table, recent form, hit rates, tier/style breakdowns) see saves
+  // and conceded values per-row. These aren't in the raw player log.
+  // - saves    = team-level saves for that match (from state.data.stats)
+  // - conceded = oppScore (always present on the row)
+  const matches = state.data.stats && state.data.stats.matches;
+  const playerRows = rawRows.map(r => {
+    let saves = null;
+    if (matches && r.matchId != null && r.teamId != null) {
+      const tm = matches[r.matchId];
+      const t  = tm && tm.teams && tm.teams[r.teamId];
+      if (t && t.saves != null) saves = t.saves;
+    }
+    return { ...r, saves, conceded: r.oppScore };
+  });
 
   // Resolve fixture context if provided
   let fixture = null;
@@ -8775,17 +9151,26 @@ function buildPlayerModalHtml(playerRows, playerTeam, playerTeamId, oppId, oppNa
 // ----- RECENT FORM (last 10) -----
 function renderPmRecentForm(rows) {
   if (!rows.length) return '';
+  const pos = rows[0].position;
   const cards = rows.map(r => {
     const ratingClass = r.rating == null ? 'low' : (r.rating >= 8 ? '' : (r.rating >= 7 ? 'mid' : 'low'));
     const ratingTxt = r.rating == null ? '—' : r.rating.toFixed(1);
     const dateObj = new Date(r.date);
     const dateShort = dateObj.toLocaleDateString('en-AU', { day: 'numeric', month: 'short' });
     const statBits = [];
-    if (r.goals > 0) statBits.push('<span class="hi">' + r.goals + 'G</span>');
-    if (r.assists > 0) statBits.push('<span class="hi">' + r.assists + 'A</span>');
-    statBits.push(r.shots + 'sh');
-    if (r.tackles > 0) statBits.push(r.tackles + 'T');
-    if (r.passes >= 30) statBits.push(r.passes + 'p');
+    if (pos === 'G') {
+      // Keeper-relevant bits: clean sheet badge, saves, conceded
+      if ((r.conceded || 0) === 0 && r.minutes >= 60) statBits.push('<span class="hi">CS</span>');
+      if (r.saves != null) statBits.push(r.saves + 'sv');
+      if (r.conceded != null) statBits.push(r.conceded + 'GA');
+      if (r.passes >= 20) statBits.push(r.passes + 'p');
+    } else {
+      if (r.goals > 0) statBits.push('<span class="hi">' + r.goals + 'G</span>');
+      if (r.assists > 0) statBits.push('<span class="hi">' + r.assists + 'A</span>');
+      statBits.push(r.shots + 'sh');
+      if (r.tackles > 0) statBits.push(r.tackles + 'T');
+      if (r.passes >= 30) statBits.push(r.passes + 'p');
+    }
     return '<div class="pm-form-card">' +
       '<div class="opp"><span class="flag">' + flagFor(r.opponent) + '</span>' + escapeHtml(r.opponent) + '</div>' +
       '<div class="date">' + dateShort + ' · ' + r.minutes + '\'</div>' +
@@ -8828,7 +9213,18 @@ function renderPmSplits(allRows, last12, oppId, oppName) {
   );
   const wcAvg = wcRows.length ? avgFromRows(wcRows) : null;
 
-  const statRows = [
+  // Position-aware stat row set. Keepers care about saves/conceded;
+  // everyone else gets the existing offensive-leaning panel.
+  const pos = allRows[0] && allRows[0].position;
+  const statRows = (pos === 'G') ? [
+    { key: 'saves',          label: 'Saves',           dec: 2 },
+    { key: 'conceded',       label: 'Conceded',        dec: 2 },
+    { key: 'passes',         label: 'Passes',          dec: 0 },
+    { key: 'foulsCommitted', label: 'Fouls',           dec: 2 },
+    { key: 'yellowCard',     label: 'Yellow cards',    dec: 2 },
+    { key: 'minutes',        label: 'Minutes',         dec: 0 },
+    { key: 'rating',         label: 'Rating',          dec: 2 },
+  ] : [
     { key: 'shots',          label: 'Shots',           dec: 2 },
     { key: 'shotsOn',        label: 'Shots on target', dec: 2 },
     { key: 'shotAccuracy',   label: 'Shot accuracy',   dec: 0, pct: true },
@@ -8999,6 +9395,16 @@ function renderPmHitRates(rows) {
   const pos = rows[0].position;
 
   const candidates = [];
+
+  // ---- Keeper-specific markets ----
+  if (pos === 'G') {
+    // Saves O/U — pick a realistic line near the player's average
+    const savesLine = roundLine(career.saves, [1.5, 2.5, 3.5, 4.5, 5.5]);
+    if (savesLine) candidates.push({ key: 'saves', line: savesLine, label: 'Saves O/U', stat: 'saves' });
+    // Clean sheet — does the keeper concede zero (full appearance only)
+    candidates.push({ key: 'cleanSheet', line: 0.5, label: 'Clean Sheet', stat: '_cs' });
+  }
+
   // Shots — for F/M only, with realistic line near avg
   if (pos === 'F' || pos === 'M') {
     const line = roundLine(career.shots, [0.5, 1.5, 2.5, 3.5]);
@@ -9021,10 +9427,12 @@ function renderPmHitRates(rows) {
     const line = roundLine(career.tackles, [0.5, 1.5, 2.5, 3.5]);
     if (line) candidates.push({ key: 'tackles', line, label: 'Tackles O/U', stat: 'tackles' });
   }
-  // Fouls
-  const foulsLine = roundLine(career.foulsCommitted, [0.5, 1.5, 2.5]);
-  if (foulsLine) candidates.push({ key: 'foulsCommitted', line: foulsLine, label: 'Fouls O/U', stat: 'foulsCommitted' });
-  // Yellow card
+  // Fouls (all outfielders)
+  if (pos !== 'G') {
+    const foulsLine = roundLine(career.foulsCommitted, [0.5, 1.5, 2.5]);
+    if (foulsLine) candidates.push({ key: 'foulsCommitted', line: foulsLine, label: 'Fouls O/U', stat: 'foulsCommitted' });
+  }
+  // Yellow card (all positions including keepers)
   if (career.yellowCard >= 0.15) {
     candidates.push({ key: 'yellowCard', line: 0.5, label: 'To Be Booked', stat: 'yellowCard' });
   }
@@ -9033,10 +9441,20 @@ function renderPmHitRates(rows) {
 
   const cells = candidates.map(c => {
     const threshold = c.line;
-    // For "anytime goal" / "to be booked" — threshold is 0.5, hit if >=1
-    const cmp = v => (v || 0) > threshold;
-    const l10Hits = l10.filter(r => cmp(r[c.stat])).length;
-    const l5Hits = l5.filter(r => cmp(r[c.stat])).length;
+    // For "anytime goal" / "to be booked" — threshold is 0.5, hit if >=1.
+    // Clean sheet — hit when row.conceded === 0 AND player played ≥60 min.
+    let cmp;
+    if (c.key === 'cleanSheet') {
+      cmp = r => (r.conceded != null) && r.conceded === 0 && r.minutes >= 60;
+    } else {
+      cmp = v => (v || 0) > threshold;
+    }
+    const l10Hits = c.key === 'cleanSheet'
+      ? l10.filter(cmp).length
+      : l10.filter(r => cmp(r[c.stat])).length;
+    const l5Hits = c.key === 'cleanSheet'
+      ? l5.filter(cmp).length
+      : l5.filter(r => cmp(r[c.stat])).length;
     const l10Pct = l10Hits / l10.length;
     const l5Pct = l5.length ? l5Hits / l5.length : 0;
     const colorClass = (pct) => pct >= 0.7 ? 'hot' : (pct >= 0.5 ? 'warm' : (pct >= 0.3 ? 'neutral' : 'cold'));
@@ -9075,7 +9493,8 @@ function avgFromRows(rows) {
   const n = rows.length;
   if (!n) return { n: 0, shots: 0, shotsOn: 0, goals: 0, assists: 0, keyPasses: 0,
                     passes: 0, tackles: 0, foulsCommitted: 0, yellowCard: 0,
-                    minutes: 0, rating: null, shotAccuracy: null, conversion: null };
+                    minutes: 0, rating: null, shotAccuracy: null, conversion: null,
+                    saves: null, conceded: null };
   let ratingSum = 0, ratingN = 0;
   rows.forEach(r => {
     if (r.rating != null) { ratingSum += r.rating; ratingN++; }
@@ -9086,6 +9505,24 @@ function avgFromRows(rows) {
   const totShots   = rows.reduce((s, r) => s + (r.shots   || 0), 0);
   const totShotsOn = rows.reduce((s, r) => s + (r.shotsOn || 0), 0);
   const totGoals   = rows.reduce((s, r) => s + (r.goals   || 0), 0);
+
+  // Goalkeeper-specific derived stats — not present in player log rows.
+  // Saves: looked up from team-level match stats (state.data.stats.matches),
+  //        attributed to the keeper for the match they started.
+  // Conceded: row.oppScore is the opponent's goals — direct proxy when the
+  //           keeper played the full match. Approximation when subbed.
+  let savesSum = 0, savesN = 0;
+  let concededSum = 0, concededN = 0;
+  const matches = state.data && state.data.stats && state.data.stats.matches;
+  rows.forEach(r => {
+    if (r.oppScore != null) { concededSum += r.oppScore; concededN++; }
+    if (matches && r.matchId != null && r.teamId != null) {
+      const tm = matches[r.matchId];
+      const t  = tm && tm.teams && tm.teams[r.teamId];
+      if (t && t.saves != null) { savesSum += t.saves; savesN++; }
+    }
+  });
+
   return {
     n: n,
     shots: rows.reduce((s, r) => s + (r.shots || 0), 0) / n,
@@ -9105,6 +9542,9 @@ function avgFromRows(rows) {
     // Total shots in the window — useful for spotting low-sample volatility
     // when displaying these ratios.
     _totShots: totShots,
+    // Keeper-specific (null if no data found)
+    saves:    savesN    > 0 ? savesSum    / savesN    : null,
+    conceded: concededN > 0 ? concededSum / concededN : null,
   };
 }
 
