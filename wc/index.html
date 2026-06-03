@@ -5214,12 +5214,15 @@ function _bthEnrichMatch(m, teamId, eventsDoc) {
   const cacheKey = teamId + ':' + m.matchId;
   if (_bthMatchMetaCache[cacheKey]) return _bthMatchMetaCache[cacheKey];
 
-  // Opp tier (via FIFA-rank → tier helper, with fallback)
+  // Opp tier — use the team-name-based tier helper directly. (Earlier
+  // version tried .tier on getTeamRecord but that's per-match data, not
+  // a top-level field — every lookup fell through to 'Unranked'.)
   let oppTier = 'Unranked';
   try {
-    const oppRec = (typeof getTeamRecord === 'function')
-      ? getTeamRecord(m.oppId, m.oppName) : null;
-    if (oppRec && oppRec.tier) oppTier = oppRec.tier;
+    if (typeof tierFor === 'function' && m.oppName) {
+      const t = tierFor(m.oppName);
+      if (t) oppTier = t;
+    }
   } catch (e) { /* swallow */ }
 
   // Opp style
@@ -6542,7 +6545,7 @@ function renderMatchMarketsPanel(fixture) {
     name: 'Both Teams To Score',
     line: 'YES/NO',
     value: bttsPct.toFixed(0) + '%',
-    valueLabel: 'YES prob',
+    valueLabel: '',
     lean: bttsLean,
     leanLabel: bttsLean === 'over' ? 'LEAN YES' : (bttsLean === 'under' ? 'LEAN NO' : 'NEUTRAL'),
     detail:
@@ -6619,13 +6622,6 @@ function renderMatchMarketsPanel(fixture) {
       '</div>' +
       '<div style="margin-top:6px; font-size: 9px; color: var(--text-3); font-family: var(--font-mono)">' +
         'Top scores: ' + mlScore +
-      '</div>' +
-      '<div style="margin-top:3px; font-size: 9px; color: var(--text-3); font-family: var(--font-mono)">' +
-        'λ ' + abbrev(homeName) + ' ' + lambdaHomeFinal.toFixed(2) +
-        ' · λ ' + abbrev(awayName) + ' ' + lambdaAwayFinal.toFixed(2) +
-        (h2h && h2hWeight > 0
-          ? ' · H2H w=' + (h2hWeight * 100).toFixed(0) + '%'
-          : '') +
       '</div>',
     sample: '',
     bar: null
@@ -6644,7 +6640,7 @@ function renderMatchMarketsPanel(fixture) {
         '<span class="tier-strip-rank">' + escapeHtml(tierLabelFor(homeName) || 'Unranked') + '</span>' +
         homeStylePill +
       '</div>' +
-      '<div class="tier-strip-vs">VS · projecting through tier + style lens</div>' +
+      '<div class="tier-strip-vs">VS</div>' +
       '<div class="tier-strip-side">' +
         '<span class="tier-strip-team">' + escapeHtml(awayName) + '</span> ' +
         '<span class="tier-strip-rank">' + escapeHtml(tierLabelFor(awayName) || 'Unranked') + '</span>' +
