@@ -4892,11 +4892,11 @@ function _renderPlayerSpotlightDetail(playerId, oppId, oppName) {
     '<div class="ps-vs-grid">' +
       '<div class="ps-vs-row">' +
         '<span class="ps-vs-lens">vs <strong>' + oppTier + '</strong> tier</span>' +
-        '<span class="ps-vs-vals">' + (tierAvg ? statLineFor(tierAvg) + ' <span class="ps-n">(n=' + vsTierRows.length + ')</span>' : 'no data') + '</span>' +
+        '<span class="ps-vs-vals">' + (tierAvg ? statLineFor(tierAvg) + ' <span class="ps-n">(' + vsTierRows.length + 'g)</span>' : 'no data') + '</span>' +
       '</div>' +
       '<div class="ps-vs-row">' +
         '<span class="ps-vs-lens">vs <strong>' + (oppStyle || '?') + '</strong> style</span>' +
-        '<span class="ps-vs-vals">' + (styleAvg ? statLineFor(styleAvg) + ' <span class="ps-n">(n=' + vsStyleRows.length + ')</span>' : 'no data') + '</span>' +
+        '<span class="ps-vs-vals">' + (styleAvg ? statLineFor(styleAvg) + ' <span class="ps-n">(' + vsStyleRows.length + 'g)</span>' : 'no data') + '</span>' +
       '</div>' +
     '</div>';
 
@@ -4948,7 +4948,7 @@ function _renderPlayerSpotlightDetail(playerId, oppId, oppName) {
           '<span class="ps-sim-team">' + escapeHtml(s.team) + '</span>' +
           '<span class="ps-sim-stats">' +
             statLineFor(s.avg) +
-            ' <span class="ps-n">(n=' + s.n + ')</span>' +
+            ' <span class="ps-n">(' + s.n + 'g)</span>' +
           '</span>' +
         '</div>';
       }).join('') +
@@ -5331,7 +5331,7 @@ function renderByTheHalves(teamId, teamName, oppId, oppName) {
   // Helper: a stat-line for one window (all/vs-opp)
   const splitBlock = (a, label, n) => {
     return '<div class="bth-block">' +
-      '<div class="bth-block-hdr">' + label + ' <span class="bth-n">n=' + n + '</span></div>' +
+      '<div class="bth-block-hdr">' + label + ' <span class="bth-n">' + n + 'g</span></div>' +
       '<div class="bth-row">' +
         '<span class="bth-cell"><span class="bth-cell-lbl">1H GF</span><span class="bth-cell-val">' + a.forAvg1H.toFixed(2) + '</span></span>' +
         '<span class="bth-cell"><span class="bth-cell-lbl">2H GF</span><span class="bth-cell-val">' + a.forAvg2H.toFixed(2) + '</span></span>' +
@@ -5388,8 +5388,8 @@ function renderByTheHalves(teamId, teamName, oppId, oppName) {
 
   return '<details class="tp-collapse bth-section">' +
     '<summary class="tp-collapse-sum">' +
-      '<i class="ti ti-clock-half" aria-hidden="true"></i>' +
-      '<span class="tp-collapse-title">By the halves</span>' +
+      '<i class="ti ti-ball-football" aria-hidden="true"></i>' +
+      '<span class="tp-collapse-title">By The Halves</span>' +
       '<span class="tp-collapse-meta">' + all.matches + 'g · 1H vs 2H</span>' +
       '<i class="ti ti-chevron-down tp-collapse-chev" aria-hidden="true"></i>' +
     '</summary>' +
@@ -8470,7 +8470,7 @@ function renderOppDVP(oppId, oppName) {
           '<div class="dvp-tile-hdr">' +
             '<span class="dvp-pos-pill pos-' + GRANULAR_POS[code].group + '">' + code + '</span>' +
             '<span class="dvp-gran-label">' + granularLabel(code) + '</span>' +
-            '<span class="dvp-n">#g=' + o.n + '</span>' +
+            '<span class="dvp-n">' + o.n + 'g</span>' +
           '</div>' +
           '<div class="dvp-cells">' + cellsHtml + '</div>' +
         '</div>';
@@ -8513,7 +8513,7 @@ function renderOppDVP(oppId, oppName) {
         '<span class="dvp-pos-pill pos-' + pos.code + '">' +
           '<i class="ti ' + pos.icon + '" aria-hidden="true"></i> ' + pos.label +
         '</span>' +
-        '<span class="dvp-n">#g=' + o.n + '</span>' +
+        '<span class="dvp-n">' + o.n + 'g</span>' +
       '</div>' +
       '<div class="dvp-cells">' + cellsHtml + '</div>' +
     '</div>';
@@ -8550,11 +8550,22 @@ function renderOppDVP(oppId, oppName) {
   const granWrap   = '<div class="dvp-view dvp-view-gran"  data-view="gran"  data-toggle="' + toggleId + '" '  + (showGranDefault ? '' : 'style="display:none"') + '>' + granHtml + '</div>';
   const broadWrap  = '<div class="dvp-view dvp-view-broad" data-view="broad" data-toggle="' + toggleId + '" '  + (!showGranDefault ? '' : 'style="display:none"') + '>' + broadHtml + '</div>';
 
+  // Compute total opponent matches from the granular data — the max .n
+  // across all roles is the opp's total games played (at least one role
+  // gets played in every match). Used as the "based on Xg" headline.
+  let totalOppGames = 0;
+  if (opp) {
+    Object.values(opp).forEach(v => {
+      if (v && typeof v.n === 'number' && v.n > totalOppGames) totalOppGames = v.n;
+    });
+  }
+
   return '<details class="tp-collapse">' +
     '<summary class="tp-collapse-sum">' +
       '<i class="ti ti-shield-half" aria-hidden="true"></i>' +
-      '<span class="tp-collapse-title">How ' + escapeHtml(oppName) + ' defends</span>' +
-      '<span class="tp-collapse-meta">per match · vs field avg' +
+      '<span class="tp-collapse-title">DVP</span>' +
+      '<span class="tp-collapse-meta">vs ' + escapeHtml(oppName) +
+        (totalOppGames > 0 ? ' · ' + totalOppGames + 'g' : '') +
         (granAvailable ? ' · ' + granRolesWithData.length + ' roles' : '') +
       '</span>' +
       '<i class="ti ti-chevron-down tp-collapse-chev" aria-hidden="true"></i>' +
@@ -8810,15 +8821,18 @@ function renderRecentGames(teamId, teamName) {
     '</details>';
   }).join('');
 
-  // Wrap in outer collapsible — closed by default to keep panel compact
-  return '<div class="tp-sec">' +
-      '<div class="sec-title"><i class="ti ti-history" aria-hidden="true"></i> Recent Games</div>' +
-      '<div class="sec-meta">last ' + recent.length + '</div>' +
-    '</div>' +
-    '<details class="rg-acc-outer">' +
-      '<summary><span class="rg-chev">▸</span> View ' + recent.length + ' recent games</summary>' +
+  // Wrap in standard collapsible to match DVP / Halves / Shape Trend styling
+  return '<details class="tp-collapse rg-collapse">' +
+    '<summary class="tp-collapse-sum">' +
+      '<i class="ti ti-history" aria-hidden="true"></i>' +
+      '<span class="tp-collapse-title">Recent Games</span>' +
+      '<span class="tp-collapse-meta">last ' + recent.length + 'g</span>' +
+      '<i class="ti ti-chevron-down tp-collapse-chev" aria-hidden="true"></i>' +
+    '</summary>' +
+    '<div class="tp-collapse-body">' +
       '<div class="rg-list">' + gamesHtml + '</div>' +
-    '</details>';
+    '</div>' +
+  '</details>';
 }
 
 function renderTrackRecord(teamId, teamName, oppId, oppName) {
@@ -9331,7 +9345,7 @@ function renderPmTierSplits(rows) {
         '<span class="key">G</span>' + a.goals.toFixed(2) + '  ' +
         '<span class="key">rat</span>' + (a.rating != null ? a.rating.toFixed(2) : '—') +
       '</div>' +
-      '<div class="mc-n">n=' + a.n + '</div>' +
+      '<div class="mc-n">' + a.n + 'g</div>' +
     '</div>';
   }).join('');
 
@@ -9372,7 +9386,7 @@ function renderPmStyleSplits(rows) {
         '<span class="key">G</span>' + a.goals.toFixed(2) + '  ' +
         '<span class="key">rat</span>' + (a.rating != null ? a.rating.toFixed(2) : '—') +
       '</div>' +
-      '<div class="mc-n">n=' + a.n + '</div>' +
+      '<div class="mc-n">' + a.n + 'g</div>' +
     '</div>';
   }).join('');
 
