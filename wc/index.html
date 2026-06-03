@@ -1322,6 +1322,79 @@
     text-transform: uppercase; margin-bottom: 6px;
   }
 
+  /* === Vs similar (tier / style / formation) === */
+  .cmb-splits {
+    margin-top: 12px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    padding: 8px 10px;
+  }
+  .cmb-splits-hdr {
+    font-family: var(--font-mono); font-size: 10px;
+    color: var(--text-3); letter-spacing: 0.4px;
+    text-transform: uppercase; margin-bottom: 6px;
+    padding-bottom: 4px;
+    border-bottom: 1px dashed var(--border);
+  }
+  .cmb-split-row {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 4px 0;
+    border-bottom: 1px solid var(--border);
+    gap: 8px;
+  }
+  .cmb-split-row:last-child { border-bottom: none; }
+  .cmb-split-lbl {
+    font-size: 12px; color: var(--text-2);
+  }
+  .cmb-split-lbl strong { color: var(--text); font-weight: 600; }
+  .cmb-split-vals {
+    display: flex; gap: 10px; align-items: center;
+    font-family: var(--font-mono); font-size: 11px;
+  }
+  .cmb-split-val {
+    font-weight: 700; font-size: 12px;
+  }
+  .cmb-split-val.pos { color: #4ade80; }
+  .cmb-split-val.neg { color: #f87171; }
+  .cmb-split-pct { color: var(--text-3); }
+
+  /* === Advanced stats === */
+  .cmb-adv {
+    margin-top: 12px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    padding: 8px 10px;
+  }
+  .cmb-adv-hdr {
+    font-family: var(--font-mono); font-size: 10px;
+    color: var(--text-3); letter-spacing: 0.4px;
+    text-transform: uppercase; margin-bottom: 6px;
+  }
+  .cmb-adv-grid {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+    gap: 6px;
+  }
+  .cmb-adv-tile {
+    background: var(--surface-2); border-radius: 4px;
+    padding: 6px 8px;
+  }
+  .cmb-adv-lbl {
+    font-family: var(--font-mono); font-size: 9px;
+    color: var(--text-3); letter-spacing: 0.4px;
+    text-transform: uppercase; margin-bottom: 2px;
+  }
+  .cmb-adv-val {
+    font-family: var(--font-display); font-weight: 700;
+    font-size: 16px; color: var(--text);
+  }
+  .cmb-adv-hint {
+    font-family: var(--font-mono); font-size: 9px;
+    color: var(--accent); font-style: italic;
+    margin-top: 1px;
+  }
+
   /* === MATCH MARKETS PANEL === */
   .markets-panel {
     background: var(--surface); border: 1px solid var(--border);
@@ -10360,6 +10433,7 @@ function _cmbAnalyzePlayer() {
 
   // DVP lookup — % above/below field avg for this position
   let dvpPct = null;
+  let oppRank = null, oppRankOf = null;
   if (oppId && typeof getDvpFieldStats === 'function') {
     try {
       const field = getDvpFieldStats();
@@ -10376,19 +10450,89 @@ function _cmbAnalyzePlayer() {
         if (oppVal != null && fa && fa[dvpStatKey]) {
           dvpPct = ((oppVal - fa[dvpStatKey]) / fa[dvpStatKey]) * 100;
         }
+        // Rank — where does this opp sit among all WC teams for allowing this stat?
+        const ranksObj = field.ranks && field.ranks[_cmbPlayer.position];
+        const ranks = ranksObj && ranksObj[dvpStatKey];
+        if (ranks) {
+          const rk = ranks.find(r => r.teamId === oppId);
+          if (rk) {
+            oppRank = rk.rank;
+            oppRankOf = ranks.length;
+          }
+        }
       }
     } catch (e) { /* swallow */ }
   }
 
   // vs Opp historical (this player vs same opp before)
-  let vsOppLast = null, vsOppHits = 0, vsOppTotal = 0;
+  let vsOppLast = null, vsOppHits = 0, vsOppTotal = 0, vsOppAvg = null;
   if (oppId) {
     const vsOppRows = rows.filter(r => r.opponentId === oppId);
     vsOppTotal = vsOppRows.length;
     vsOppHits = vsOppRows.filter(r => hit(valFor(r))).length;
     if (vsOppRows.length) {
       vsOppLast = vsOppRows[0];
+      vsOppAvg = avgFromRows(vsOppRows);
     }
+  }
+
+  // ─── Tier / Style / Formation splits ──────────────────────────
+  // What does this player do against opponents of the same tier / style /
+  // formation as the upcoming opp?
+  let tierSplit = null, styleSplit = null, formationSplit = null;
+  let oppTier = null, oppStyle = null, oppFormation = null;
+  if (oppId && oppName) {
+    // Opp tier
+    try { if (typeof tierFor === 'function') oppTier = tierFor(oppName); }
+    catch (e) {}
+    // Opp style
+    try {
+      if (typeof buildTeamStyles === 'function') buildTeamStyles();
+      if (typeof _teamStyles !== 'undefined' && _teamStyles && _teamStyles[oppId]) {
+        oppStyle = _teamStyles[oppId].primary && _teamStyles[oppId].primary.name;
+      }
+    } catch (e) {}
+    // Opp formation (most common recent)
+    try {
+      if (state.data.lineups && state.data.lineups.byTeam && state.data.lineups.byTeam[oppId]) {
+        oppFormation = state.data.lineups.byTeam[oppId].primaryFormation;
+      }
+    } catch (e) {}
+    // Helper: bucket rows by lookup against opp metadata
+    const bucketByTier = (r) => {
+      try { return typeof tierFor === 'function' ? tierFor(r.opponent) : null; }
+      catch (e) { return null; }
+    };
+    const bucketByStyle = (r) => {
+      try {
+        if (typeof _teamStyles !== 'undefined' && _teamStyles && _teamStyles[r.opponentId]) {
+          return _teamStyles[r.opponentId].primary && _teamStyles[r.opponentId].primary.name;
+        }
+      } catch (e) {}
+      return null;
+    };
+    const bucketByFormation = (r) => {
+      try {
+        const lineups = state.data.lineups;
+        if (!lineups || !lineups.byMatch) return null;
+        const lm = lineups.byMatch[r.matchId];
+        if (!lm) return null;
+        const opp = lm[r.opponentId] || lm[String(r.opponentId)];
+        return opp ? opp.formation : null;
+      } catch (e) { return null; }
+    };
+
+    const buildSplit = (label, bucketFn, targetBucket) => {
+      if (!targetBucket) return null;
+      const matches = rows.filter(r => bucketFn(r) === targetBucket);
+      if (!matches.length) return null;
+      const av = avgFromRows(matches);
+      const hits = matches.filter(r => hit(valFor(r))).length;
+      return { label, target: targetBucket, n: matches.length, avg: av, hits, rate: hits / matches.length };
+    };
+    tierSplit      = buildSplit('tier',      bucketByTier,      oppTier);
+    styleSplit     = buildSplit('style',     bucketByStyle,     oppStyle);
+    formationSplit = buildSplit('formation', bucketByFormation, oppFormation);
   }
 
   // Variance — coefficient of variation
@@ -10430,8 +10574,11 @@ function _cmbAnalyzePlayer() {
     market, line, side,
     rows, l10, l5, all, a10, a5, valFor,
     hits10, hits5, hitsAll, rate10, rate5, rateAll,
-    dvpPct, vsOppLast, vsOppHits, vsOppTotal,
+    dvpPct, oppRank, oppRankOf,
+    vsOppLast, vsOppHits, vsOppTotal, vsOppAvg,
     cv, seasonHigh, seasonLow,
+    tierSplit, styleSplit, formationSplit,
+    oppTier, oppStyle, oppFormation,
     verdictClass, verdictLabel, verdictSub,
   };
 }
@@ -10521,6 +10668,140 @@ function _cmbRenderPlayerCard(a) {
     insights.push({ cls, icon, text: 'vs ' + escapeHtml(a.oppName) + ': ' + a.vsOppHits + '/' + a.vsOppTotal + ' historical · last meeting ' + lastVal });
   }
 
+  // ─── Opp rank insight ──────────────────────────────────────
+  if (a.oppRank != null && a.oppRankOf) {
+    const posLbl = a.player.position === 'F' ? 'FWDs'
+                 : a.player.position === 'M' ? 'MIDs'
+                 : a.player.position === 'D' ? 'DEFs'
+                 : a.player.position === 'G' ? 'GKs' : 'players';
+    // Lower rank = leakier (in our DVP system: rank 1 = most leaky = best DVP for over)
+    // Higher rank = stingier (best for under)
+    const leakyHalf = a.oppRank <= Math.floor(a.oppRankOf / 3);
+    const stingyHalf = a.oppRank > Math.floor(2 * a.oppRankOf / 3);
+    let cls = 'mid', icon = 'ti ti-chart-bar';
+    let qualifier = '';
+    if (leakyHalf)       { qualifier = ' — leaky'; cls = a.side === 'over' ? 'pos' : 'neg'; }
+    else if (stingyHalf) { qualifier = ' — stingy'; cls = a.side === 'over' ? 'neg' : 'pos'; }
+    insights.push({ cls, icon,
+      text: escapeHtml(a.oppName || 'Opp') + ' ranks #' + a.oppRank + '/' + a.oppRankOf +
+        ' for ' + marketLbl + ' allowed to ' + posLbl + qualifier });
+  }
+
+  // ─── Vs similar tier / style / formation ──────────────────
+  const splitBlocks = [];
+  const splitInsight = (split) => {
+    if (!split || !split.n) return null;
+    const v = split.avg && split.avg[a.market];
+    if (v == null) return null;
+    const hitPct = Math.round(split.rate * 100);
+    const hitCls = a.side === 'over'
+      ? (v > a.line ? 'pos' : 'neg')
+      : (v <= a.line ? 'pos' : 'neg');
+    return { ...split, v, hitPct, hitCls };
+  };
+  const tierIns      = splitInsight(a.tierSplit);
+  const styleIns     = splitInsight(a.styleSplit);
+  const formationIns = splitInsight(a.formationSplit);
+  if (tierIns || styleIns || formationIns) {
+    const rowFor = (ins, label) => {
+      if (!ins) return '';
+      return '<div class="cmb-split-row">' +
+        '<span class="cmb-split-lbl">' + label + ' <strong>' + escapeHtml(ins.target) + '</strong></span>' +
+        '<span class="cmb-split-vals">' +
+          '<span class="cmb-split-val ' + ins.hitCls + '">' + ins.v.toFixed(a.market === 'passes' ? 0 : 2) + ' avg</span>' +
+          '<span class="cmb-split-pct">' + ins.hits + '/' + ins.n + ' (' + ins.hitPct + '%)</span>' +
+        '</span>' +
+      '</div>';
+    };
+    splitBlocks.push(
+      '<div class="cmb-splits">' +
+        '<div class="cmb-splits-hdr">Vs similar opponents</div>' +
+        (tierIns      ? rowFor(tierIns,      'vs tier')      : '') +
+        (styleIns     ? rowFor(styleIns,     'vs style')     : '') +
+        (formationIns ? rowFor(formationIns, 'vs formation') : '') +
+      '</div>'
+    );
+  }
+
+  // ─── Advanced stats relevant to the market ─────────────────
+  // Pick which advanced stats are most useful for the picked market.
+  const advStats = [];
+  const fmt0 = (v) => v == null ? '—' : v.toFixed(0) + '%';
+  const fmt1 = (v) => v == null ? '—' : v.toFixed(1);
+  // Pass-accuracy — for passes market
+  if (a.market === 'passes' && a.all.passAccuracy != null) {
+    advStats.push({
+      lbl: 'Pass accuracy',
+      val: fmt0(a.all.passAccuracy),
+      hint: a.all.passAccuracy >= 88 ? 'elite' : a.all.passAccuracy >= 82 ? 'solid' : a.all.passAccuracy >= 75 ? 'avg' : 'inaccurate',
+    });
+  }
+  // Conversion + shot accuracy — for goals / shots / shotsOn
+  if (['goals', 'shots', 'shotsOn'].includes(a.market)) {
+    if (a.all.conversion != null && a.all._totShots >= 10) {
+      advStats.push({
+        lbl: 'Conversion rate',
+        val: fmt0(a.all.conversion),
+        hint: a.all.conversion >= 18 ? 'clinical' : a.all.conversion >= 12 ? 'solid' : a.all.conversion >= 8 ? 'avg' : 'wasteful',
+      });
+    }
+    if (a.all.shotAccuracy != null && a.all._totShots >= 10) {
+      advStats.push({
+        lbl: 'Shot accuracy',
+        val: fmt0(a.all.shotAccuracy),
+        hint: a.all.shotAccuracy >= 50 ? 'on-target king' : a.all.shotAccuracy >= 38 ? 'solid' : a.all.shotAccuracy >= 28 ? 'avg' : 'sprays',
+      });
+    }
+  }
+  // Duel win % — universal (shows physicality)
+  if (a.all.duelWinPct != null && a.all.duelsTotal != null && a.all.duelsTotal * (a.rows.length) >= 30) {
+    advStats.push({
+      lbl: 'Duel win %',
+      val: fmt0(a.all.duelWinPct),
+      hint: a.all.duelWinPct >= 55 ? 'dominant' : a.all.duelWinPct >= 48 ? 'even' : 'second-best',
+    });
+  }
+  // Key passes per game — for assists / passes / keyPasses
+  if (['assists', 'passes', 'keyPasses'].includes(a.market) && a.all.keyPasses != null) {
+    advStats.push({
+      lbl: 'KP / game',
+      val: fmt1(a.all.keyPasses),
+      hint: a.all.keyPasses >= 2.0 ? 'creator' : a.all.keyPasses >= 1.2 ? 'involved' : 'occasional',
+    });
+  }
+  // Fouls drawn — for fouls (defenders foul attackers who DRAW fouls)
+  if (a.market === 'foulsCommitted' && a.all.foulsDrawn != null) {
+    advStats.push({
+      lbl: 'Fouls drawn',
+      val: fmt1(a.all.foulsDrawn),
+      hint: a.all.foulsDrawn >= 1.5 ? 'gets hit a lot' : a.all.foulsDrawn >= 0.8 ? 'normal' : 'rare',
+    });
+  }
+  // Tackle / interception combo — for tackles market
+  if (a.market === 'tackles' && a.all.interceptions != null) {
+    advStats.push({
+      lbl: 'Interceptions / g',
+      val: fmt1(a.all.interceptions),
+      hint: a.all.interceptions >= 1.5 ? 'reads game' : a.all.interceptions >= 0.8 ? 'active' : 'low',
+    });
+  }
+  let advBlock = '';
+  if (advStats.length) {
+    advBlock =
+      '<div class="cmb-adv">' +
+        '<div class="cmb-adv-hdr">Advanced — season</div>' +
+        '<div class="cmb-adv-grid">' +
+          advStats.map(s =>
+            '<div class="cmb-adv-tile">' +
+              '<div class="cmb-adv-lbl">' + s.lbl + '</div>' +
+              '<div class="cmb-adv-val">' + s.val + '</div>' +
+              '<div class="cmb-adv-hint">' + s.hint + '</div>' +
+            '</div>'
+          ).join('') +
+        '</div>' +
+      '</div>';
+  }
+
   // Similar-players block — find others at same position vs same opp
   let similarBlock = '';
   if (a.oppId && a.player.position) {
@@ -10584,6 +10865,8 @@ function _cmbRenderPlayerCard(a) {
     '<div class="cmb-kpi-grid">' + kpiGrid + '</div>' +
     '<div class="cmb-chart-title">Last ' + a.l10.length + ' (most recent first) — dashed line = ' + a.line + '+</div>' +
     '<div class="cmb-chart">' + chart + '</div>' +
+    advBlock +
+    splitBlocks.join('') +
     '<div class="cmb-analysis-title">Analysis</div>' +
     '<div class="cmb-insights">' +
       insights.map(i =>
@@ -10712,6 +10995,37 @@ function _cmbRenderMatchCard(a) {
 
   let kpi = '', verdictClass = 'neutral', verdictLabel = 'NO CLEAR EDGE', verdictSub = '', insights = [];
 
+  // ─── Helpers shared by all market kinds ───────────────────
+  const homeId = f.homeTeamId, awayId = f.awayTeamId;
+  // Recent team stats (corners, cards) from match-statistics aggregates
+  let homeTs = null, awayTs = null;
+  try {
+    if (typeof getTeamStatsAvg === 'function') {
+      homeTs = getTeamStatsAvg(homeId);
+      awayTs = getTeamStatsAvg(awayId);
+    }
+  } catch (e) {}
+  // Team-level goal averages from match-result records (different data source)
+  let homeRec = null, awayRec = null;
+  try {
+    if (typeof getTeamRecord === 'function') {
+      homeRec = getTeamRecord(homeId, f.homeTeam);
+      awayRec = getTeamRecord(awayId, f.awayTeam);
+    }
+  } catch (e) {}
+  // Team styles
+  let homeStyle = null, awayStyle = null;
+  try {
+    if (typeof buildTeamStyles === 'function') buildTeamStyles();
+    if (typeof _teamStyles !== 'undefined' && _teamStyles) {
+      homeStyle = _teamStyles[homeId] && _teamStyles[homeId].primary && _teamStyles[homeId].primary.name;
+      awayStyle = _teamStyles[awayId] && _teamStyles[awayId].primary && _teamStyles[awayId].primary.name;
+    }
+  } catch (e) {}
+  // H2H
+  let h2h = null;
+  try { if (typeof summariseH2H === 'function') h2h = summariseH2H(homeId, awayId); } catch (e) {}
+
   if (a.kind === 'result') {
     const probMap = { home: cached.pHome, draw: cached.pDraw, away: cached.pAway };
     const myProb = probMap[a.pick];
@@ -10737,6 +11051,28 @@ function _cmbRenderMatchCard(a) {
       insights.push({ cls: 'mid', icon: 'ti ti-trophy', text: 'Top scorelines: ' +
         cached.topScorelines.slice(0, 3).map(s => s.h + '-' + s.a + ' ' + Math.round(s.p * 100) + '%').join(' · ') });
     }
+    // Lambda gap
+    if (cached.lambdaHome != null && cached.lambdaAway != null) {
+      const gap = cached.lambdaHome - cached.lambdaAway;
+      const cls = (a.pick === 'home' && gap > 0.3) || (a.pick === 'away' && gap < -0.3) ? 'pos'
+                : (a.pick === 'home' && gap < -0.3) || (a.pick === 'away' && gap > 0.3) ? 'neg' : 'mid';
+      insights.push({ cls, icon: 'ti ti-math-symbols',
+        text: 'Expected goals: ' + abbrev(f.homeTeam) + ' ' + cached.lambdaHome.toFixed(2) + ' vs ' + abbrev(f.awayTeam) + ' ' + cached.lambdaAway.toFixed(2) });
+    }
+    // Style matchup
+    if (homeStyle && awayStyle) {
+      insights.push({ cls: 'mid', icon: 'ti ti-tactic',
+        text: 'Style matchup: ' + escapeHtml(homeStyle) + ' vs ' + escapeHtml(awayStyle) });
+    }
+    // H2H
+    if (h2h && h2h.n >= 3) {
+      const hWins = Math.round((h2h.homeWinRate || 0) * h2h.n);
+      const aWins = Math.round((h2h.awayWinRate || 0) * h2h.n);
+      const dWins = Math.max(0, h2h.n - hWins - aWins);
+      insights.push({ cls: 'mid', icon: 'ti ti-history',
+        text: 'H2H: ' + hWins + 'W ' + dWins + 'D ' + aWins + 'L for ' + abbrev(f.homeTeam) + ' (last ' + h2h.n + ')' });
+    }
+
   } else if (a.kind === 'btts') {
     const yesProb = cached.btts;
     const myProb = a.side === 'over' ? yesProb : (1 - yesProb);
@@ -10749,16 +11085,40 @@ function _cmbRenderMatchCard(a) {
     else if (myProb >= 0.45) { verdictClass = 'neutral';    verdictLabel = 'NO CLEAR EDGE'; verdictSub = 'Coin flip territory'; }
     else if (myProb >= 0.35) { verdictClass = 'lean-no';    verdictLabel = 'SLIGHT FADE';   verdictSub = 'Model leans the other way'; }
     else                     { verdictClass = 'strong-no';  verdictLabel = 'STRONG FADE';   verdictSub = 'Model strongly disagrees'; }
+    // Lambda decomposition: high λ for both = BTTS leans yes
+    if (cached.lambdaHome != null && cached.lambdaAway != null) {
+      const weaker = Math.min(cached.lambdaHome, cached.lambdaAway);
+      const weakerSide = cached.lambdaHome < cached.lambdaAway ? f.homeTeam : f.awayTeam;
+      const cls = (a.side === 'over' && weaker > 0.9) || (a.side === 'under' && weaker < 0.7) ? 'pos'
+                : (a.side === 'over' && weaker < 0.7) || (a.side === 'under' && weaker > 0.9) ? 'neg' : 'mid';
+      insights.push({ cls, icon: 'ti ti-math-symbols',
+        text: 'λ home ' + cached.lambdaHome.toFixed(2) + ' · λ away ' + cached.lambdaAway.toFixed(2) +
+          ' — weaker attack (' + abbrev(weakerSide) + ' ' + weaker.toFixed(2) + ') is the swing factor for BTTS' });
+    }
+    // Recent BTTS rate per team — already pre-computed on the team record
+    if (homeRec && homeRec.btts_rate != null) {
+      insights.push({ cls: 'mid', icon: 'ti ti-soccer-field',
+        text: abbrev(f.homeTeam) + ' BTTS rate ' + Math.round(homeRec.btts_rate * 100) + '% in recent matches' });
+    }
+    if (awayRec && awayRec.btts_rate != null) {
+      insights.push({ cls: 'mid', icon: 'ti ti-soccer-field',
+        text: abbrev(f.awayTeam) + ' BTTS rate ' + Math.round(awayRec.btts_rate * 100) + '% in recent matches' });
+    }
+    // H2H BTTS
+    if (h2h && h2h.n >= 3 && h2h.bttsRate != null) {
+      const r = Math.round(h2h.bttsRate * 100);
+      insights.push({ cls: 'mid', icon: 'ti ti-history',
+        text: 'H2H BTTS rate: ' + r + '% across last ' + h2h.n + ' meetings' });
+    }
+
   } else {
+    // Totals — goals / corners / cards
     const projVal = a.kind === 'totalGoals'   ? cached.projGoals
                   : a.kind === 'totalCorners' ? cached.projCorners
                   : cached.projCards;
     let myProb;
     if (projVal != null) {
-      // Poisson-derived O/U probability against this exact line
       const lambda = projVal;
-      // P(X > line) where X ~ Poisson(λ). For integer-line markets like 2.5,
-      // line is "more than 2", so we sum P(X >= 3) = 1 - sum_{k=0..floor(line)} P(k)
       let cum = 0;
       const k_max = Math.floor(a.line);
       for (let k = 0; k <= k_max; k++) {
@@ -10781,6 +11141,81 @@ function _cmbRenderMatchCard(a) {
       else if (myProb >= 0.45) { verdictClass = 'neutral';    verdictLabel = 'NO CLEAR EDGE'; verdictSub = 'Coin flip'; }
       else if (myProb >= 0.35) { verdictClass = 'lean-no';    verdictLabel = 'SLIGHT FADE';   verdictSub = 'Other side preferred'; }
       else                     { verdictClass = 'strong-no';  verdictLabel = 'STRONG FADE';   verdictSub = 'Strong disagreement'; }
+    }
+    // ─── Market-specific insights ─────────────────────────────
+    if (a.kind === 'totalGoals') {
+      if (homeRec && homeRec.gf_avg != null && homeRec.ga_avg != null) {
+        insights.push({ cls: 'mid', icon: 'ti ti-ball-football',
+          text: abbrev(f.homeTeam) + ' recent: ' + homeRec.gf_avg.toFixed(2) + ' GF · ' + homeRec.ga_avg.toFixed(2) + ' GA per game' });
+      }
+      if (awayRec && awayRec.gf_avg != null && awayRec.ga_avg != null) {
+        insights.push({ cls: 'mid', icon: 'ti ti-ball-football',
+          text: abbrev(f.awayTeam) + ' recent: ' + awayRec.gf_avg.toFixed(2) + ' GF · ' + awayRec.ga_avg.toFixed(2) + ' GA per game' });
+      }
+      if (cached.lambdaHome != null && cached.lambdaAway != null) {
+        const sum = cached.lambdaHome + cached.lambdaAway;
+        const cls = (a.side === 'over' && sum > a.line + 0.3) || (a.side === 'under' && sum < a.line - 0.3) ? 'pos'
+                  : (a.side === 'over' && sum < a.line - 0.3) || (a.side === 'under' && sum > a.line + 0.3) ? 'neg' : 'mid';
+        insights.push({ cls, icon: 'ti ti-math-symbols',
+          text: 'Combined λ ' + sum.toFixed(2) + ' (line ' + a.line + ') — raw expectation before style/stage adjustments' });
+      }
+      if (homeStyle && awayStyle) {
+        insights.push({ cls: 'mid', icon: 'ti ti-tactic',
+          text: 'Style matchup: ' + escapeHtml(homeStyle) + ' vs ' + escapeHtml(awayStyle) });
+      }
+      if (h2h && h2h.n >= 3 && h2h.avgGoals != null) {
+        const cls = (a.side === 'over' && h2h.avgGoals > a.line) || (a.side === 'under' && h2h.avgGoals <= a.line) ? 'pos' : 'neg';
+        insights.push({ cls, icon: 'ti ti-history',
+          text: 'H2H avg ' + h2h.avgGoals.toFixed(1) + ' goals (last ' + h2h.n + ')' });
+      }
+    } else if (a.kind === 'totalCorners') {
+      if (homeTs) {
+        insights.push({ cls: 'mid', icon: 'ti ti-flag-3',
+          text: abbrev(f.homeTeam) + ' corners: ' + (homeTs.corners || 0).toFixed(1) + ' for · ' + (homeTs.cornersAgainst || 0).toFixed(1) + ' against per game' });
+      }
+      if (awayTs) {
+        insights.push({ cls: 'mid', icon: 'ti ti-flag-3',
+          text: abbrev(f.awayTeam) + ' corners: ' + (awayTs.corners || 0).toFixed(1) + ' for · ' + (awayTs.cornersAgainst || 0).toFixed(1) + ' against per game' });
+      }
+      if (homeStyle && awayStyle) {
+        const wideStyles = ['ALL-OUT ATTACK', 'WIDE ATTACK', 'COUNTER-ATTACK'];
+        const oneIsWide = wideStyles.includes(homeStyle) || wideStyles.includes(awayStyle);
+        const cls = (a.side === 'over' && oneIsWide) ? 'pos' : (a.side === 'under' && !oneIsWide) ? 'pos' : 'mid';
+        insights.push({ cls, icon: 'ti ti-tactic',
+          text: 'Styles: ' + escapeHtml(homeStyle) + ' vs ' + escapeHtml(awayStyle) +
+            (oneIsWide ? ' — wide-attacking style tends to inflate corners' : '') });
+      }
+    } else if (a.kind === 'totalCards') {
+      if (homeTs) {
+        insights.push({ cls: 'mid', icon: 'ti ti-square-letter-r',
+          text: abbrev(f.homeTeam) + ' picks up ' + (homeTs.yellowCards || 0).toFixed(1) + ' yellows per game recently' });
+      }
+      if (awayTs) {
+        insights.push({ cls: 'mid', icon: 'ti ti-square-letter-r',
+          text: abbrev(f.awayTeam) + ' picks up ' + (awayTs.yellowCards || 0).toFixed(1) + ' yellows per game recently' });
+      }
+      // Referee tendency
+      try {
+        if (state.data.referees && f.referee && state.data.referees.byName) {
+          const refData = state.data.referees.byName[f.referee];
+          if (refData && refData.cardsPerGame != null && refData.matches >= 5) {
+            const refAvg = refData.cardsPerGame;
+            const cls = (a.side === 'over' && refAvg > 4.5) || (a.side === 'under' && refAvg < 3.5) ? 'pos'
+                      : (a.side === 'over' && refAvg < 3.5) || (a.side === 'under' && refAvg > 4.5) ? 'neg' : 'mid';
+            insights.push({ cls, icon: 'ti ti-whistle',
+              text: 'Ref ' + escapeHtml(f.referee) + ' — ' + refAvg.toFixed(1) + ' cards/g across ' + refData.matches + ' matches' });
+          }
+        }
+      } catch (e) {}
+      // Lambda gap (blowout proxy)
+      if (cached.lambdaHome != null && cached.lambdaAway != null) {
+        const gap = Math.abs(cached.lambdaHome - cached.lambdaAway);
+        if (gap > 0.8) {
+          const cls = a.side === 'under' ? 'pos' : 'neg';
+          insights.push({ cls, icon: 'ti ti-arrows-right-left',
+            text: 'Big λ gap (' + gap.toFixed(2) + ') — blowout risk usually means lower card count' });
+        }
+      }
     }
   }
 
@@ -11403,13 +11838,29 @@ function avgFromRows(rows) {
     keyPasses: rows.reduce((s, r) => s + (r.keyPasses || 0), 0) / n,
     passes: rows.reduce((s, r) => s + (r.passes || 0), 0) / n,
     tackles: rows.reduce((s, r) => s + (r.tackles || 0), 0) / n,
+    interceptions: rows.reduce((s, r) => s + (r.interceptions || 0), 0) / n,
     foulsCommitted: rows.reduce((s, r) => s + (r.foulsCommitted || 0), 0) / n,
+    foulsDrawn:     rows.reduce((s, r) => s + (r.foulsDrawn     || 0), 0) / n,
     yellowCard: rows.reduce((s, r) => s + (r.yellowCard || 0), 0) / n,
     minutes: rows.reduce((s, r) => s + (r.minutes || 0), 0) / n,
     rating: ratingN ? ratingSum / ratingN : null,
     // Stored as 0–100 percentages. Null when no shots in the window.
     shotAccuracy: totShots > 0 ? (totShotsOn / totShots) * 100 : null,
     conversion:   totShots > 0 ? (totGoals   / totShots) * 100 : null,
+    // Pass accuracy — store as 0-100 percentage. We average per-match
+    // accuracies (already weighted by attempts via the source data).
+    passAccuracy: (() => {
+      const vals = rows.map(r => r.passAccuracy).filter(v => v != null && v > 0);
+      return vals.length ? vals.reduce((s, x) => s + x, 0) / vals.length : null;
+    })(),
+    // Duel win % — totals approach is more accurate than averaging rates
+    duelWinPct: (() => {
+      const dt = rows.reduce((s, r) => s + (r.duelsTotal || 0), 0);
+      const dw = rows.reduce((s, r) => s + (r.duelsWon   || 0), 0);
+      return dt > 0 ? (dw / dt) * 100 : null;
+    })(),
+    duelsTotal: rows.reduce((s, r) => s + (r.duelsTotal || 0), 0) / n,
+    duelsWon:   rows.reduce((s, r) => s + (r.duelsWon   || 0), 0) / n,
     // Total shots in the window — useful for spotting low-sample volatility
     // when displaying these ratios.
     _totShots: totShots,
