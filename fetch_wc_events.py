@@ -43,7 +43,11 @@ except ImportError:
 # ---------------------------------------------------------------------------
 
 API_KEY = os.environ.get("APIFOOTBALL_KEY")
-DATA_DIR = Path("./wc/data")
+# Default to current working directory — matches the convention of
+# fetch_wc_lineups.py / fetch_wc_live.py. The GitHub Actions matchday
+# poll sets `working-directory: wc/data` so the script just reads from
+# `.`. Daily-update runs from repo root and passes --data=wc/data.
+DATA_DIR = Path(".")
 FORCE_REFRESH = False
 MAX_MATCHES = None  # cap for testing
 
