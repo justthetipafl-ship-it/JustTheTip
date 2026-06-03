@@ -92,6 +92,19 @@ jobs:
         run: |
           python ../../backfill_referees.py
 
+      - name: Incremental match events (goal/card minutes)
+        env:
+          APIFOOTBALL_KEY: ${{ secrets.APIFOOTBALL_KEY }}
+        # Powers the "By the halves" team panel section — each goal's minute
+        # is needed to split scoring patterns into 1H/2H. Incremental: only
+        # fetches matches not already in worldcup_events.json. On a clean
+        # repo first run this fetches ~1330 historical matches; thereafter
+        # only the new ones each day.
+        continue-on-error: true
+        working-directory: wc/data
+        run: |
+          python ../../fetch_wc_events.py
+
       - name: Commit data changes
         run: |
           git config user.name "JTT WC Bot"
@@ -102,6 +115,7 @@ jobs:
           git add wc/data/worldcup_odds_2026.json
           git add wc/data/wc_lineups.json
           git add wc/data/wc_referees.json
+          git add wc/data/worldcup_events.json
           git add wc/data/version.txt
           # Only commit if there are actual changes
           if git diff --staged --quiet; then
