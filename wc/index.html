@@ -1909,6 +1909,78 @@
     background: var(--surface-2); border: 1px solid var(--border);
     border-radius: 5px; padding: 8px 10px;
   }
+  /* Click-to-target affordance — only when teamId is passed in (i.e., we have
+     a "team to target" to look up players for). */
+  .dvp-tile-clickable {
+    cursor: pointer;
+    transition: border-color 0.15s, background 0.15s;
+  }
+  .dvp-tile-clickable:hover { border-color: var(--accent); }
+  .dvp-tile-clickable.dvp-active {
+    border-color: var(--accent);
+    background: rgba(74,222,128,0.06);
+  }
+  /* Targets panel — appears at bottom of DVP body when user taps a tile */
+  .dvp-targets-hint {
+    font-family: var(--font-mono); font-size: 9px;
+    color: var(--text-3); text-align: center;
+    padding: 10px 6px 0;
+    letter-spacing: 0.4px;
+  }
+  .dvp-targets {
+    margin-top: 8px;
+  }
+  .dvp-targets-empty {
+    font-family: var(--font-mono); font-size: 10px;
+    color: var(--text-3); text-align: center;
+    padding: 12px 6px;
+  }
+  .dvp-targets-hdr {
+    font-family: var(--font-mono); font-size: 10px;
+    color: var(--text-2); letter-spacing: 0.4px;
+    padding-bottom: 4px; margin-bottom: 6px;
+    border-bottom: 1px dashed var(--border);
+    text-transform: uppercase;
+  }
+  .dvp-targets-hdr strong { color: var(--accent); font-weight: 700; }
+  .dvp-targets-sub {
+    color: var(--text-3); text-transform: none; font-size: 9px;
+    letter-spacing: 0.2px;
+  }
+  .dvp-targets-list {
+    display: flex; flex-direction: column; gap: 3px;
+  }
+  .dvp-target-row {
+    display: grid; grid-template-columns: 1fr auto auto;
+    gap: 8px; align-items: center;
+    padding: 6px 8px;
+    background: var(--surface); border-radius: 4px;
+    cursor: pointer;
+    transition: background 0.12s;
+  }
+  .dvp-target-row:hover { background: var(--surface-2); }
+  .dvp-target-name {
+    font-size: 12px; font-weight: 600; color: var(--text);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    min-width: 0;
+  }
+  .dvp-target-apps {
+    font-family: var(--font-mono); font-size: 9px;
+    color: var(--text-3); letter-spacing: 0.3px;
+  }
+  .dvp-target-stats {
+    display: flex; gap: 8px;
+    font-family: var(--font-mono); font-size: 10px;
+    color: var(--text-2);
+  }
+  .dvp-ts .lbl {
+    font-size: 8px; color: var(--text-3);
+    margin-right: 2px; letter-spacing: 0.3px;
+  }
+  @media (max-width: 480px) {
+    .dvp-target-row { grid-template-columns: 1fr auto; }
+    .dvp-target-stats { grid-column: 1 / -1; margin-top: 3px; }
+  }
   .dvp-tile-hdr {
     display: flex; align-items: center; gap: 8px;
     margin-bottom: 6px;
@@ -8192,7 +8264,7 @@ function renderTeamPanel(teamId, teamName, oppId, oppName, isHome, fixture) {
     hdr +
     renderStatLeaders(qualified, oppId, oppName) +
     renderRecentGames(teamId, teamName) +
-    renderOppDVP(oppId, oppName) +
+    renderOppDVP(oppId, oppName, teamId, teamName) +
     renderShapeTrend(teamId, teamName) +
     renderByTheHalves(teamId, teamName, oppId, oppName) +
     renderPlayerSpotlight(teamId, teamName, oppId, oppName) +
@@ -8581,7 +8653,145 @@ function getDvpFieldStats() {
   return _dvpFieldCache;
 }
 
-function renderOppDVP(oppId, oppName) {
+// Click handler for DVP tiles. Walks up from the clicked tile to find the
+// DVP body, reads teamId from data attribute, looks up the team's players
+// who play the clicked position, and renders them inline.
+//
+// Position matching:
+//   - granular tiles (LWB, CDM, ST, ...) → players whose recent primary
+//     granular position matches the code
+//   - broad tiles (FWD/MID/DEF) → players in that broad position group
+window._dvpShowTargets = function(tileEl) {
+  const code = tileEl.dataset.dvpCode;
+  const kind = tileEl.dataset.dvpKind;  // 'gran' | 'broad'
+  const body = tileEl.closest('.tp-collapse-body');
+  if (!body) return;
+  const teamId = parseInt(body.dataset.dvpTeamid, 10);
+  if (!teamId) return;
+  const host = body.querySelector('[data-dvp-targets-host="1"]');
+  const hintEl = body.querySelector('.dvp-targets-hint');
+  if (!host) return;
+
+  // Toggle off if same tile re-clicked
+  const wasActive = tileEl.classList.contains('dvp-active');
+  body.querySelectorAll('.dvp-tile-clickable.dvp-active').forEach(t => t.classList.remove('dvp-active'));
+  if (wasActive) {
+    host.innerHTML = '';
+    if (hintEl) hintEl.style.display = '';
+    return;
+  }
+  tileEl.classList.add('dvp-active');
+  if (hintEl) hintEl.style.display = 'none';
+
+  const logs = state.data.logs;
+  if (!logs) {
+    host.innerHTML = '<div class="dvp-targets-empty">No player data loaded.</div>';
+    return;
+  }
+
+  // Build aggregated player stats for this team
+  const playerStats = {};
+  logs.rows.forEach(r => {
+    if (r.teamId !== teamId) return;
+    if (typeof hasMeaningfulMinutes === 'function' && !hasMeaningfulMinutes(r)) return;
+    if (!playerStats[r.playerId]) {
+      playerStats[r.playerId] = {
+        playerId: r.playerId, name: r.playerName, position: r.position,
+        apps: 0, shots: 0, shotsOn: 0, goals: 0, assists: 0,
+        keyPasses: 0, passes: 0, tackles: 0, minutes: 0,
+      };
+    }
+    const p = playerStats[r.playerId];
+    p.apps     += 1;
+    p.shots    += r.shots    || 0;
+    p.shotsOn  += r.shotsOn  || 0;
+    p.goals    += r.goals    || 0;
+    p.assists  += r.assists  || 0;
+    p.keyPasses += r.keyPasses || 0;
+    p.passes   += r.passes   || 0;
+    p.tackles  += r.tackles  || 0;
+    p.minutes  += r.minutes  || 0;
+  });
+
+  // Filter by clicked position
+  let candidates = Object.values(playerStats);
+  if (kind === 'broad') {
+    candidates = candidates.filter(p => p.position === code);
+  } else {
+    // Granular — find players whose primary recent role matches
+    candidates = candidates.filter(p => {
+      try {
+        const prim = (typeof getPlayerPrimaryGranular === 'function')
+          ? getPlayerPrimaryGranular(p.playerId, teamId) : null;
+        return prim === code;
+      } catch (e) { return false; }
+    });
+  }
+  // Minimum sample so we don't surface cameos
+  candidates = candidates.filter(p => p.apps >= 3);
+
+  if (!candidates.length) {
+    const codeLabel = (kind === 'gran' && typeof granularLabel === 'function')
+      ? granularLabel(code) : code;
+    host.innerHTML = '<div class="dvp-targets-empty">No qualifying players found at <strong>' + escapeHtml(codeLabel) + '</strong>.</div>';
+    return;
+  }
+
+  // Pick position-relevant stats to surface, per the role being clicked
+  let group = kind === 'broad' ? code : (typeof GRANULAR_POS !== 'undefined' && GRANULAR_POS[code] ? GRANULAR_POS[code].group : 'M');
+  // Sort key + display columns by group
+  let sortKey, cols;
+  if (group === 'F') {
+    sortKey = p => p.shots / p.apps;
+    cols = [
+      { lbl: 'sh/g', fn: p => (p.shots / p.apps).toFixed(1) },
+      { lbl: 'SoT',  fn: p => (p.shotsOn / p.apps).toFixed(1) },
+      { lbl: 'G',    fn: p => (p.goals / p.apps).toFixed(2) },
+      { lbl: 'A',    fn: p => (p.assists / p.apps).toFixed(2) },
+    ];
+  } else if (group === 'M') {
+    sortKey = p => (p.keyPasses + p.passes / 10) / p.apps;
+    cols = [
+      { lbl: 'pa/g', fn: p => (p.passes / p.apps).toFixed(0) },
+      { lbl: 'kp',   fn: p => (p.keyPasses / p.apps).toFixed(1) },
+      { lbl: 'sh',   fn: p => (p.shots / p.apps).toFixed(1) },
+      { lbl: 'tk',   fn: p => (p.tackles / p.apps).toFixed(1) },
+    ];
+  } else {  // D
+    sortKey = p => (p.tackles + p.passes / 20) / p.apps;
+    cols = [
+      { lbl: 'pa/g', fn: p => (p.passes / p.apps).toFixed(0) },
+      { lbl: 'tk',   fn: p => (p.tackles / p.apps).toFixed(1) },
+      { lbl: 'kp',   fn: p => (p.keyPasses / p.apps).toFixed(1) },
+      { lbl: 'sh',   fn: p => (p.shots / p.apps).toFixed(1) },
+    ];
+  }
+
+  candidates.sort((a, b) => sortKey(b) - sortKey(a));
+  const top = candidates.slice(0, 5);
+
+  const fid = (state.view && state.view.selectedFixtureId) || 'null';
+  const codeLabel = (kind === 'gran' && typeof granularLabel === 'function')
+    ? granularLabel(code) : (code === 'F' ? 'Forwards' : code === 'M' ? 'Midfielders' : code === 'D' ? 'Defenders' : code);
+
+  const rowsHtml = top.map(p => {
+    return '<div class="dvp-target-row" onclick="openPlayerModal(' + p.playerId + ',' + fid + ')">' +
+      '<span class="dvp-target-name">' + escapeHtml(p.name) + '</span>' +
+      '<span class="dvp-target-apps">' + p.apps + 'g</span>' +
+      '<span class="dvp-target-stats">' +
+        cols.map(c => '<span class="dvp-ts"><span class="lbl">' + c.lbl + '</span>' + c.fn(p) + '</span>').join('') +
+      '</span>' +
+    '</div>';
+  }).join('');
+
+  host.innerHTML =
+    '<div class="dvp-targets-hdr">Target at <strong>' + escapeHtml(codeLabel) + '</strong>' +
+      ' <span class="dvp-targets-sub">— ' + top.length + ' of ' + candidates.length + ' qualifying players</span>' +
+    '</div>' +
+    '<div class="dvp-targets-list">' + rowsHtml + '</div>';
+};
+
+function renderOppDVP(oppId, oppName, teamId, teamName) {
   const field = getDvpFieldStats();
   if (!field) return '';
   const opp = field.teamAvgs[oppId];
@@ -8660,7 +8870,9 @@ function renderOppDVP(oppId, oppName) {
             fmtCell('gran', code, stat, o[stat], dec) +
           '</div>'
         ).join('');
-        return '<div class="dvp-tile dvp-tile-gran">' +
+        return '<div class="dvp-tile dvp-tile-gran dvp-tile-clickable" ' +
+            'data-dvp-code="' + code + '" data-dvp-kind="gran" ' +
+            'onclick="_dvpShowTargets(this)">' +
           '<div class="dvp-tile-hdr">' +
             '<span class="dvp-pos-pill pos-' + GRANULAR_POS[code].group + '">' + code + '</span>' +
             '<span class="dvp-gran-label">' + granularLabel(code) + '</span>' +
@@ -8702,7 +8914,9 @@ function renderOppDVP(oppId, oppName) {
         fmtCell('broad', pos.code, stat, o[stat], dec) +
       '</div>'
     ).join('');
-    return '<div class="dvp-tile">' +
+    return '<div class="dvp-tile dvp-tile-clickable" ' +
+        'data-dvp-code="' + pos.code + '" data-dvp-kind="broad" ' +
+        'onclick="_dvpShowTargets(this)">' +
       '<div class="dvp-tile-hdr">' +
         '<span class="dvp-pos-pill pos-' + pos.code + '">' +
           '<i class="ti ' + pos.icon + '" aria-hidden="true"></i> ' + pos.label +
@@ -8764,10 +8978,14 @@ function renderOppDVP(oppId, oppName) {
       '</span>' +
       '<i class="ti ti-chevron-down tp-collapse-chev" aria-hidden="true"></i>' +
     '</summary>' +
-    '<div class="tp-collapse-body">' +
+    '<div class="tp-collapse-body" data-dvp-teamid="' + (teamId || '') + '">' +
       (toggleHtml ? '<div class="tp-toolbar">' + toggleHtml + '</div>' : '') +
       granWrap + broadWrap +
       legend +
+      // Target-players reveal panel — populated by _dvpShowTargets when
+      // user taps a position tile. Hidden until first interaction.
+      (teamId ? '<div class="dvp-targets-hint">Tap a position to see ' + escapeHtml(teamName || 'your') + ' players to target</div>' +
+                '<div class="dvp-targets" data-dvp-targets-host="1"></div>' : '') +
     '</div>' +
   '</details>';
 }
