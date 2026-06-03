@@ -109,14 +109,23 @@ jobs:
         run: |
           git config user.name "JTT WC Bot"
           git config user.email "bot@justthetipaus.com"
-          git add wc/data/worldcup_intl_logs.json
-          git add wc/data/worldcup_team_stats.json
-          git add wc/data/worldcup_fixtures_2026.json
-          git add wc/data/worldcup_odds_2026.json
-          git add wc/data/wc_lineups.json
-          git add wc/data/wc_referees.json
-          git add wc/data/worldcup_events.json
-          git add wc/data/version.txt
+          # Add files defensively — if any are missing on this run
+          # (e.g. fetcher hasn't generated events.json yet), skip cleanly
+          # rather than crash the commit step.
+          for f in \
+            wc/data/worldcup_intl_logs.json \
+            wc/data/worldcup_team_stats.json \
+            wc/data/worldcup_fixtures_2026.json \
+            wc/data/worldcup_odds_2026.json \
+            wc/data/wc_lineups.json \
+            wc/data/wc_referees.json \
+            wc/data/worldcup_events.json \
+            wc/data/version.txt
+          do
+            if [ -f "$f" ]; then
+              git add "$f"
+            fi
+          done
           # Only commit if there are actual changes
           if git diff --staged --quiet; then
             echo "No data changes to commit."
