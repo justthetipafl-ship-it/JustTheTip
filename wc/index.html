@@ -841,6 +841,35 @@
     flex-wrap: wrap; gap: 4px;
   }
 
+  /* === FIRST & LAST player lists === */
+  .fal-block { margin-top: 10px; }
+  .fal-block-hdr {
+    font-family: var(--font-mono); font-size: 10px;
+    color: var(--text-3); letter-spacing: 0.4px;
+    text-transform: uppercase;
+    padding-bottom: 4px; margin-bottom: 6px;
+    border-bottom: 1px dashed var(--border);
+  }
+  .fal-list { display: flex; flex-direction: column; gap: 3px; }
+  .fal-row {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 6px 8px; gap: 8px;
+    background: var(--surface); border-radius: 4px;
+    cursor: pointer;
+    transition: background 0.12s;
+  }
+  .fal-row:hover { background: var(--surface-2); }
+  .fal-name {
+    font-size: 12px; font-weight: 600; color: var(--text);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    min-width: 0; flex: 1;
+  }
+  .fal-count {
+    font-family: var(--font-mono); font-size: 11px;
+    color: var(--accent); font-weight: 600;
+    letter-spacing: 0.3px;
+  }
+
   /* === BY THE HALVES (1H vs 2H breakdowns) === */
   /* Filter chip rows — sit at top of body so user can re-slice the data */
   .bth-filters {
@@ -5679,6 +5708,246 @@ function renderByTheHalves(teamId, teamName, oppId, oppName) {
   '</details>';
 }
 
+// ============================================================
+// FIRST & LAST — opening goal, opening card, late-goal patterns
+// ============================================================
+// Built from worldcup_events.json. Note: /fixtures/events only delivers
+// goals, cards, subs, VAR — NOT shots. So this section covers what we
+// can actually derive: which team tends to open the scoring, who scores
+// first/last for the team, opening-card patterns, opening-goal timing.
+
+const _firstLastCache = {};
+
+function analyzeFirstLastForTeam(teamId) {
+  if (_firstLastCache[teamId]) return _firstLastCache[teamId];
+
+  const eventsDoc = state.data.events;
+  const logs = state.data.logs;
+  if (!eventsDoc || !eventsDoc.events) return null;
+  if (!logs) return null;
+
+  // Match list for this team
+  const teamMatches = {};
+  logs.rows.forEach(r => {
+    if (r.teamId !== teamId) return;
+    if (teamMatches[r.matchId]) return;
+    teamMatches[r.matchId] = {
+      matchId: r.matchId,
+      date: r.date,
+      oppId: r.opponentId,
+      oppName: r.opponent,
+    };
+  });
+
+  const matchesArr = Object.values(teamMatches)
+    .filter(m => eventsDoc.events[m.matchId])
+    .sort((a, b) => b.date.localeCompare(a.date));
+
+  if (!matchesArr.length) return { hasData: false };
+
+  // Aggregates
+  let scoredFirstCount = 0;
+  let concededFirstCount = 0;
+  let noGoalGames = 0;
+  let no1hGoalGames = 0;
+  let firstGoalMinutesFor = [];     // when team scored first
+  let firstGoalMinutesAg  = [];     // when team conceded first
+  // Player-level: how often each player scored team's 1st / last goal
+  const firstByPlayer = {};   // playerId -> { name, count, totalApps }
+  const lastByPlayer  = {};
+  const lateGoalsByPlayer = {};   // goals scored ≥76' for THIS team
+
+  // First card recipient analysis (any team)
+  let cardedFirstCount = 0;       // team got the first card
+  let oppCardedFirstCount = 0;    // opp got the first card
+  const firstCardByPlayer = {};   // THIS team's players who get the first booking
+
+  matchesArr.forEach(m => {
+    const events = (eventsDoc.events[m.matchId] || [])
+      .filter(ev => ev.minute != null)
+      .slice()
+      .sort((a, b) => (a.minute - b.minute) || ((a.extra || 0) - (b.extra || 0)));
+
+    // GOALS — find first and last
+    const goals = events.filter(ev => {
+      if (ev.type !== 'goal') return false;
+      if (ev.detail && /missed\s*penalty/i.test(ev.detail)) return false;
+      return true;
+    }).map(ev => {
+      const isOwnGoal = ev.detail && /own\s*goal/i.test(ev.detail);
+      const scorerTeam = isOwnGoal
+        ? (ev.teamId === teamId ? m.oppId : teamId)
+        : ev.teamId;
+      return { ...ev, scorerTeam, isOwnGoal };
+    });
+
+    if (!goals.length) {
+      noGoalGames++;
+      no1hGoalGames++;   // implicit: no 1H goal either
+    } else {
+      const first = goals[0];
+      if (first.scorerTeam === teamId) {
+        scoredFirstCount++;
+        firstGoalMinutesFor.push(first.minute);
+        // Credit player (only if not own goal — own goals don't credit a real scorer)
+        if (!first.isOwnGoal && first.playerId && first.playerName) {
+          if (!firstByPlayer[first.playerId]) {
+            firstByPlayer[first.playerId] = { name: first.playerName, count: 0 };
+          }
+          firstByPlayer[first.playerId].count++;
+        }
+      } else {
+        concededFirstCount++;
+        firstGoalMinutesAg.push(first.minute);
+      }
+
+      // Last team goal of the match (highest-minute goal scored BY this team)
+      const ourGoals = goals.filter(g => g.scorerTeam === teamId);
+      if (ourGoals.length) {
+        const last = ourGoals[ourGoals.length - 1];
+        if (!last.isOwnGoal && last.playerId && last.playerName) {
+          if (!lastByPlayer[last.playerId]) {
+            lastByPlayer[last.playerId] = { name: last.playerName, count: 0 };
+          }
+          lastByPlayer[last.playerId].count++;
+        }
+
+        // Late merchants (≥76')
+        ourGoals.forEach(g => {
+          if (g.minute >= 76 && !g.isOwnGoal && g.playerId && g.playerName) {
+            if (!lateGoalsByPlayer[g.playerId]) {
+              lateGoalsByPlayer[g.playerId] = { name: g.playerName, count: 0 };
+            }
+            lateGoalsByPlayer[g.playerId].count++;
+          }
+        });
+      }
+
+      // No 1H goal at all?
+      const any1H = goals.some(g => g.minute <= 45);
+      if (!any1H) no1hGoalGames++;
+    }
+
+    // CARDS — find first card of any kind
+    const cards = events.filter(ev => ev.type === 'card');
+    if (cards.length) {
+      const firstCard = cards[0];
+      if (firstCard.teamId === teamId) {
+        cardedFirstCount++;
+        if (firstCard.playerId && firstCard.playerName) {
+          if (!firstCardByPlayer[firstCard.playerId]) {
+            firstCardByPlayer[firstCard.playerId] = { name: firstCard.playerName, count: 0 };
+          }
+          firstCardByPlayer[firstCard.playerId].count++;
+        }
+      } else {
+        oppCardedFirstCount++;
+      }
+    }
+  });
+
+  const n = matchesArr.length;
+  const avg = (arr) => arr.length ? arr.reduce((s, x) => s + x, 0) / arr.length : null;
+
+  const topFirstScorers = Object.entries(firstByPlayer)
+    .map(([id, p]) => ({ playerId: parseInt(id), name: p.name, count: p.count }))
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 5);
+
+  const topLastScorers = Object.entries(lastByPlayer)
+    .map(([id, p]) => ({ playerId: parseInt(id), name: p.name, count: p.count }))
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 5);
+
+  const topLateMerchants = Object.entries(lateGoalsByPlayer)
+    .map(([id, p]) => ({ playerId: parseInt(id), name: p.name, count: p.count }))
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 5);
+
+  const topFirstCarded = Object.entries(firstCardByPlayer)
+    .map(([id, p]) => ({ playerId: parseInt(id), name: p.name, count: p.count }))
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 3);
+
+  const result = {
+    hasData: true,
+    matches: n,
+    scoredFirstCount, concededFirstCount, noGoalGames, no1hGoalGames,
+    pctScoredFirst:   scoredFirstCount   / n,
+    pctConcededFirst: concededFirstCount / n,
+    pctNo1hGoal:      no1hGoalGames      / n,
+    avgFirstGoalFor:  avg(firstGoalMinutesFor),
+    avgFirstGoalAg:   avg(firstGoalMinutesAg),
+    pctCardedFirst:   cardedFirstCount   / n,
+    topFirstScorers, topLastScorers, topLateMerchants, topFirstCarded,
+  };
+  _firstLastCache[teamId] = result;
+  return result;
+}
+
+function renderFirstAndLast(teamId, teamName, oppId, oppName) {
+  const d = analyzeFirstLastForTeam(teamId);
+  if (!d || !d.hasData) return '';
+  if (d.matches < 5) return '';
+
+  const fid = (state.view && state.view.selectedFixtureId) || 'null';
+  const pct = (v) => Math.round(v * 100) + '%';
+
+  // ─── Team summary row ──────────────────────────────────────────
+  const teamRow =
+    '<div class="bth-row">' +
+      '<span class="bth-cell"><span class="bth-cell-lbl">Opens scoring</span><span class="bth-cell-val">' + pct(d.pctScoredFirst) + '</span></span>' +
+      '<span class="bth-cell"><span class="bth-cell-lbl">Concedes 1st</span><span class="bth-cell-val">' + pct(d.pctConcededFirst) + '</span></span>' +
+      '<span class="bth-cell"><span class="bth-cell-lbl">No 1H goal</span><span class="bth-cell-val">' + pct(d.pctNo1hGoal) + '</span></span>' +
+      '<span class="bth-cell"><span class="bth-cell-lbl">Carded 1st</span><span class="bth-cell-val">' + pct(d.pctCardedFirst) + '</span></span>' +
+    '</div>' +
+    '<div class="bth-row">' +
+      '<span class="bth-cell" style="grid-column:span 2"><span class="bth-cell-lbl">Avg 1st goal scored</span><span class="bth-cell-val">' +
+        (d.avgFirstGoalFor != null ? Math.round(d.avgFirstGoalFor) + "'" : '—') + '</span></span>' +
+      '<span class="bth-cell" style="grid-column:span 2"><span class="bth-cell-lbl">Avg 1st goal conceded</span><span class="bth-cell-val">' +
+        (d.avgFirstGoalAg != null ? Math.round(d.avgFirstGoalAg) + "'" : '—') + '</span></span>' +
+    '</div>';
+
+  // ─── Player lists ──────────────────────────────────────────────
+  const playerList = (title, players, suffix) => {
+    if (!players.length) return '';
+    const rows = players.map(p =>
+      '<div class="fal-row" onclick="openPlayerModal(' + p.playerId + ',' + fid + ')">' +
+        '<span class="fal-name">' + escapeHtml(p.name) + '</span>' +
+        '<span class="fal-count">' + p.count + suffix + '</span>' +
+      '</div>'
+    ).join('');
+    return '<div class="fal-block">' +
+      '<div class="fal-block-hdr">' + title + '</div>' +
+      '<div class="fal-list">' + rows + '</div>' +
+    '</div>';
+  };
+
+  const firstScorersHtml  = playerList('First goal scorers',     d.topFirstScorers,   ' opens');
+  const lastScorersHtml   = playerList('Last goal scorers',      d.topLastScorers,    ' last');
+  const lateMerchantsHtml = playerList('Late goal merchants (≥76\')', d.topLateMerchants, ' late');
+  const firstCardedHtml   = playerList('First to be carded',     d.topFirstCarded,    ' bookings');
+
+  return '<details class="tp-collapse">' +
+    '<summary class="tp-collapse-sum">' +
+      '<i class="ti ti-flag" aria-hidden="true"></i>' +
+      '<span class="tp-collapse-title">First &amp; Last</span>' +
+      '<span class="tp-collapse-meta">' + d.matches + 'g · opening &amp; closing patterns</span>' +
+      '<i class="ti ti-chevron-down tp-collapse-chev" aria-hidden="true"></i>' +
+    '</summary>' +
+    '<div class="tp-collapse-body">' +
+      '<div class="bth-block">' +
+        '<div class="bth-block-hdr">Team — when goals fall</div>' +
+        teamRow +
+      '</div>' +
+      firstScorersHtml +
+      lastScorersHtml +
+      lateMerchantsHtml +
+      firstCardedHtml +
+    '</div>' +
+  '</details>';
+}
+
 function renderSubstitutionTrends(teamId, teamName) {
   const analysis = analyzeSubsForTeam(teamId);
   if (!analysis) return '';
@@ -8267,6 +8536,7 @@ function renderTeamPanel(teamId, teamName, oppId, oppName, isHome, fixture) {
     renderOppDVP(oppId, oppName, teamId, teamName) +
     renderShapeTrend(teamId, teamName) +
     renderByTheHalves(teamId, teamName, oppId, oppName) +
+    renderFirstAndLast(teamId, teamName, oppId, oppName) +
     renderPlayerSpotlight(teamId, teamName, oppId, oppName) +
     renderSubstitutionTrends(teamId, teamName) +
     renderTeamSignals(teamId, fixture) +
