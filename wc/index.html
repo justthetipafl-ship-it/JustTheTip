@@ -5196,29 +5196,12 @@ function applyDataFilter(rows) {
     out = out.filter(r => r.competitionTier !== 'friendly');
   }
 
-  if (f.window === 'wc_cycle' || f.window === '12mo') {
+  if (f.window === '12mo') {
     const now = new Date();
     const cutoff = new Date(now);
-    cutoff.setFullYear(now.getFullYear() - (f.window === 'wc_cycle' ? 4 : 1));
+    cutoff.setFullYear(now.getFullYear() - 1);
     const cutoffStr = cutoff.toISOString().slice(0, 10);
     out = out.filter(r => r.date && r.date >= cutoffStr);
-  } else if (f.window === 'L10' || f.window === 'L3') {
-    const n = f.window === 'L10' ? 10 : 3;
-    // Bucket matchIds per teamId (date stored alongside for sort)
-    const byTeam = {};
-    out.forEach(r => {
-      if (r.teamId == null || r.matchId == null) return;
-      if (!byTeam[r.teamId]) byTeam[r.teamId] = {};
-      if (!byTeam[r.teamId][r.matchId]) byTeam[r.teamId][r.matchId] = r.date || '';
-    });
-    const keep = {};
-    Object.entries(byTeam).forEach(([tid, matches]) => {
-      const sorted = Object.entries(matches)
-        .sort((a, b) => (b[1] || '').localeCompare(a[1] || ''))
-        .slice(0, n);
-      keep[tid] = new Set(sorted.map(([mid]) => parseInt(mid, 10)));
-    });
-    out = out.filter(r => keep[r.teamId] && keep[r.teamId].has(r.matchId));
   }
 
   return out;
@@ -5233,14 +5216,10 @@ function filteredMatchIdSet() {
   return set;
 }
 
-// When the user picks a tight window (L3, L10), the legacy MIN_APPS gates
-// (typically ≥8) would zero-out every Degen Signal. Adaptive floor below:
-// scale the gate down to something realistic for the filter scope so signals
-// don't all disappear when the user wants recent-form-only.
+// Kept as a thin wrapper so existing callers don't need surgery. With only
+// the '12mo' and 'all' windows remaining, sample sizes are still big enough
+// that we don't need to relax the original gates.
 function _minAppsForFilter(originalMin) {
-  const w = (state.view && state.view.dataFilter && state.view.dataFilter.window) || 'all';
-  if (w === 'L3')  return Math.min(originalMin, 2);
-  if (w === 'L10') return Math.min(originalMin, 4);
   return originalMin;
 }
 
@@ -5272,28 +5251,19 @@ window._dataFilterChange = function(key, val) {
 };
 
 // Build the filter strip UI shown at the top of the focused-fixture detail.
+// Two boolean toggles: last 12 months only, exclude friendlies.
 function renderDataFilterStrip() {
   const f = (state.view && state.view.dataFilter) || { excludeFriendlies: false, window: 'all' };
-  const windows = [
-    { key: 'all',      lbl: 'All' },
-    { key: 'wc_cycle', lbl: 'WC Cycle' },
-    { key: '12mo',     lbl: '12 mo' },
-    { key: 'L10',      lbl: 'L10' },
-    { key: 'L3',       lbl: 'L3' },
-  ];
-  const chips = windows.map(w =>
-    '<button class="dfilt-chip' + (f.window === w.key ? ' active' : '') + '" ' +
-      'onclick="_dataFilterChange(\'window\', \'' + w.key + '\')">' +
-      escapeHtml(w.lbl) +
-    '</button>'
-  ).join('');
+  const twelveMoOn = f.window === '12mo';
 
   return '<div class="data-filter-strip">' +
     '<div class="dfilt-row">' +
-      '<span class="dfilt-lbl"><i class="ti ti-adjustments-horizontal" aria-hidden="true"></i> Form window</span>' +
-      '<div class="dfilt-chips">' + chips + '</div>' +
-    '</div>' +
-    '<div class="dfilt-row">' +
+      '<span class="dfilt-lbl"><i class="ti ti-adjustments-horizontal" aria-hidden="true"></i> Filter</span>' +
+      '<label class="dfilt-toggle">' +
+        '<input type="checkbox" ' + (twelveMoOn ? 'checked' : '') + ' ' +
+          'onchange="_dataFilterChange(\'window\', this.checked ? \'12mo\' : \'all\')">' +
+        '<span>Last 12 months only</span>' +
+      '</label>' +
       '<label class="dfilt-toggle">' +
         '<input type="checkbox" ' + (f.excludeFriendlies ? 'checked' : '') + ' ' +
           'onchange="_dataFilterChange(\'excludeFriendlies\', this.checked)">' +
