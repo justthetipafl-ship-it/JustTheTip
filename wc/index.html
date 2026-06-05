@@ -520,6 +520,69 @@
   .data-status .err { color: var(--bad); }
 
   /* === DATA LOADER === */
+  /* === FULL-SCREEN INITIAL LOAD OVERLAY ===
+     Shows a branded spinner instead of the raw file-input card while
+     tryAutoLoadData() runs. Hidden as soon as data lands; only flips back
+     to the file-input fallback if the auto-load fails entirely. */
+  .boot-overlay {
+    position: fixed; inset: 0;
+    background: var(--bg);
+    z-index: 99998;
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    gap: 18px;
+    transition: opacity 0.25s ease;
+  }
+  .boot-overlay.hide {
+    opacity: 0; pointer-events: none;
+  }
+  .boot-logo {
+    width: 64px; height: 64px;
+    border-radius: 50%;
+    background: var(--accent);
+    display: grid; place-items: center;
+    box-shadow: 0 0 0 4px rgba(34,197,94,0.18);
+  }
+  .boot-logo i {
+    font-size: 32px; color: #0a0a0a;
+  }
+  .boot-title {
+    font-family: var(--font-display); font-weight: 800;
+    font-size: 22px; color: var(--text);
+    letter-spacing: 0.5px;
+    margin-top: 4px;
+  }
+  .boot-sub {
+    font-family: var(--font-mono); font-size: 10px;
+    color: var(--text-3); letter-spacing: 1.5px;
+    text-transform: uppercase;
+  }
+  /* Three pulsing dots underneath — gives a sense of activity without a
+     spinner gimmick. */
+  .boot-dots {
+    display: flex; gap: 6px;
+    margin-top: 10px;
+  }
+  .boot-dot {
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    background: var(--accent);
+    opacity: 0.3;
+    animation: bootPulse 1.2s ease-in-out infinite;
+  }
+  .boot-dot:nth-child(2) { animation-delay: 0.2s; }
+  .boot-dot:nth-child(3) { animation-delay: 0.4s; }
+  @keyframes bootPulse {
+    0%, 80%, 100% { opacity: 0.3; transform: scale(0.85); }
+    40%           { opacity: 1;   transform: scale(1.1);  }
+  }
+  .boot-status {
+    font-family: var(--font-mono); font-size: 10px;
+    color: var(--text-3); letter-spacing: 0.5px;
+    margin-top: 12px;
+    min-height: 14px;
+  }
+
   .loader-card {
     background: var(--surface); border: 1px solid var(--border);
     border-radius: 6px; padding: 24px; text-align: center;
@@ -4586,8 +4649,8 @@
 <!-- ============== PAGE: FIXTURES ============== -->
 <main id="page-fixtures" class="page">
 
-  <!-- Data status (visible until everything loaded) -->
-  <div class="data-status" id="data-status">
+  <!-- Data status (only shown alongside the file-input fallback) -->
+  <div class="data-status" id="data-status" style="display:none">
     <div class="data-status-row">
       <span>worldcup_intl_logs.json</span>
       <span id="status-logs" class="pending">— not loaded</span>
@@ -4606,8 +4669,23 @@
     </div>
   </div>
 
-  <!-- Data loader (collapses once data is in) -->
-  <div class="loader-card" id="data-loader">
+  <!-- Initial loading overlay — hides the raw file-input UI behind a branded
+       screen while data is fetched from the bundle. Removed once data lands;
+       falls back to revealing #data-loader if auto-load fails entirely. -->
+  <div class="boot-overlay" id="boot-overlay">
+    <div class="boot-logo"><i class="ti ti-check" aria-hidden="true"></i></div>
+    <div class="boot-title">Just The Tip</div>
+    <div class="boot-sub">World Cup 26</div>
+    <div class="boot-dots">
+      <span class="boot-dot"></span>
+      <span class="boot-dot"></span>
+      <span class="boot-dot"></span>
+    </div>
+    <div class="boot-status" id="boot-status">Loading data…</div>
+  </div>
+
+  <!-- Data loader (only shown if auto-load fails — hidden by default) -->
+  <div class="loader-card" id="data-loader" style="display:none">
     <div style="font-family: var(--font-mono); font-size: 11px; color: var(--text-2); letter-spacing: 1px;">LOAD DATA FILES</div>
     <div style="font-family: var(--font-display); font-size: 13px; color: var(--text-3); margin-top: 6px;">Drop the three JSON files below to activate the tool</div>
     <div class="file-input-wrap">
@@ -5008,8 +5086,14 @@ setupFileInput('file-ratings', 'ratings', 'ratings');
 // running locally with file://), silently fall back to file inputs.
 // ============================================================
 async function tryAutoLoadData() {
-  // Skip when not in a browser (e.g. Node test environment) or running from file://
-  if (typeof location === 'undefined' || location.protocol === 'file:') return;
+  // Skip when not in a browser (e.g. Node test environment).
+  if (typeof location === 'undefined') return;
+  // Running from file:// means we can't fetch — fall through immediately
+  // to the file-input loader. The auto-load isn't going to work here.
+  if (location.protocol === 'file:') {
+    _revealFileInputFallback();
+    return;
+  }
 
   // ?data=<name> swaps the data directory — used to run the engine on alternate
   // datasets (e.g. ?data=ucl loads ./data-ucl/, ?data=test loads ./data-test/).
@@ -5061,10 +5145,24 @@ async function tryAutoLoadData() {
     }
   });
   await Promise.all(promises);
-  if (anyLoaded) {
-    renderFreshnessPill();
+  // Core files needed to boot the app: logs + fixtures. If either missing,
+  // surface the file-input fallback so the user can supply them manually.
+  if (state.data.logs && state.data.fixtures) {
+    if (anyLoaded) renderFreshnessPill();
     maybeBoot();
+  } else {
+    _revealFileInputFallback();
   }
+}
+
+// Hides the branded boot overlay and exposes the manual file-input card.
+function _revealFileInputFallback() {
+  const overlay = document.getElementById('boot-overlay');
+  const loader  = document.getElementById('data-loader');
+  const status  = document.getElementById('data-status');
+  if (overlay) overlay.style.display = 'none';
+  if (loader)  loader.style.display  = '';
+  if (status)  status.style.display  = '';
 }
 
 // Render the "Updated Xh ago" pill in the topbar. Colour shifts as data ages.
@@ -5096,6 +5194,13 @@ function maybeBoot() {
   const { logs, fixtures } = state.data;
   // Minimum viable: logs + fixtures. Stats is optional for v1.
   if (logs && fixtures) {
+    // Fade out the branded loading screen and reveal the app.
+    const overlay = document.getElementById('boot-overlay');
+    if (overlay) {
+      overlay.classList.add('hide');
+      // Drop it from the DOM after the fade so it doesn't catch clicks.
+      setTimeout(() => { overlay.style.display = 'none'; }, 280);
+    }
     document.getElementById('data-loader').style.display = 'none';
     document.getElementById('data-status').style.display = 'none';
     document.getElementById('fixtures-view').style.display = 'block';
