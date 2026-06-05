@@ -932,6 +932,17 @@
     background: var(--surface-2);
     padding: 10px 12px;
   }
+  /* Small context line at the top of a tp-collapse body — sample size,
+     window, opponent reference, etc. Replaces the old summary meta pill
+     so closed sections stay clean and the context only shows on expand. */
+  .tp-body-meta {
+    font-family: var(--font-mono); font-size: 10px;
+    color: var(--text-3); letter-spacing: 0.4px;
+    text-transform: uppercase;
+    padding-bottom: 8px;
+    margin-bottom: 8px;
+    border-bottom: 1px dashed var(--border);
+  }
   /* Toolbar slot inside the collapse body for things like the DVP
      Detailed/Simple toggle — keeps it out of the summary where
      clicks would otherwise toggle the section. */
@@ -6851,7 +6862,6 @@ function renderDepthChart(teamId, teamName) {
       '<summary class="tp-collapse-sum">' +
         '<i class="ti ti-users-group" aria-hidden="true"></i>' +
         '<span class="tp-collapse-title">Projected XI</span>' +
-        '<span class="tp-collapse-meta">No lineup data</span>' +
         '<i class="ti ti-chevron-down tp-collapse-chev" aria-hidden="true"></i>' +
       '</summary>' +
       '<div class="tp-collapse-body">' +
@@ -6941,24 +6951,23 @@ function renderDepthChart(teamId, teamName) {
     '</div>'
   ).join('');
 
-  // Match context line — date + opp
-  let contextLine = '';
+  // Match context line — formation + date + opp + coach
+  let contextLine = formation;
   if (recent.date) {
     const d = new Date(recent.date + 'T00:00:00');
     const mo = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][d.getMonth()];
-    contextLine = 'XI from ' + d.getDate() + ' ' + mo + ' ' + d.getFullYear();
+    contextLine += ' · XI from ' + d.getDate() + ' ' + mo + ' ' + d.getFullYear();
   }
-  if (lu.coach) contextLine += (contextLine ? ' · ' : '') + lu.coach;
+  if (lu.coach) contextLine += ' · ' + lu.coach;
 
   return '<details class="tp-collapse">' +
     '<summary class="tp-collapse-sum">' +
       '<i class="ti ti-users-group" aria-hidden="true"></i>' +
       '<span class="tp-collapse-title">Projected XI</span>' +
-      '<span class="tp-collapse-meta">' + escapeHtml(formation) + '</span>' +
       '<i class="ti ti-chevron-down tp-collapse-chev" aria-hidden="true"></i>' +
     '</summary>' +
     '<div class="tp-collapse-body">' +
-      (contextLine ? '<div class="dc-context">' + escapeHtml(contextLine) + '</div>' : '') +
+      '<div class="tp-body-meta">' + escapeHtml(contextLine) + '</div>' +
       '<div class="dc-pitch">' +
         '<div class="dc-pitch-bg"></div>' +
         tiles +
@@ -6984,10 +6993,10 @@ function renderByTheHalves(teamId, teamName, oppId, oppName) {
     '<summary class="tp-collapse-sum">' +
       '<i class="ti ti-ball-football" aria-hidden="true"></i>' +
       '<span class="tp-collapse-title">By The Halves</span>' +
-      '<span class="tp-collapse-meta">' + probe.matches + 'g · 1H vs 2H</span>' +
       '<i class="ti ti-chevron-down tp-collapse-chev" aria-hidden="true"></i>' +
     '</summary>' +
     '<div class="tp-collapse-body" data-bth-body="' + teamId + '">' +
+      '<div class="tp-body-meta">' + probe.matches + ' matches · 1H vs 2H</div>' +
       _bthBodyHtml(teamId, teamName, oppId, oppName) +
     '</div>' +
   '</details>';
@@ -7217,10 +7226,10 @@ function renderFirstAndLast(teamId, teamName, oppId, oppName) {
     '<summary class="tp-collapse-sum">' +
       '<i class="ti ti-flag" aria-hidden="true"></i>' +
       '<span class="tp-collapse-title">First &amp; Last</span>' +
-      '<span class="tp-collapse-meta">' + d.matches + 'g</span>' +
       '<i class="ti ti-chevron-down tp-collapse-chev" aria-hidden="true"></i>' +
     '</summary>' +
     '<div class="tp-collapse-body">' +
+      '<div class="tp-body-meta">' + d.matches + ' matches analysed</div>' +
       '<div class="bth-block">' +
         '<div class="bth-block-hdr">Team — when goals fall</div>' +
         teamRow +
@@ -8325,43 +8334,16 @@ function renderMatchMarketsPanel(fixture) {
     cards:   cards.filter(c => /Total Cards/i.test(c.name)),
   };
 
-  // Builds a compact meta string for the summary row — shows the headline
-  // verdict for each section at a glance so the user doesn't need to expand
-  // every dropdown.
-  function summariseGroup(groupName, gcards) {
-    if (!gcards.length) return '';
-    const goals = gcards.find(c => /Total Goals/i.test(c.name));
-    const btts  = gcards.find(c => /Both Teams|BTTS/i.test(c.name));
-    const corn  = gcards.find(c => /Total Corners/i.test(c.name));
-    const crd   = gcards.find(c => /Total Cards/i.test(c.name));
-    const match = gcards.find(c => /Match Result/i.test(c.name));
-    if (groupName === 'match' && match) {
-      return match.value + ' · ' + match.leanLabel;
-    }
-    if (groupName === 'goals') {
-      const parts = [];
-      if (goals) parts.push(goals.value + ' / ' + goals.line.replace('O/U ', 'O') + ' ' + (goals.lean === 'over' ? 'OVER' : goals.lean === 'under' ? 'UNDER' : 'NTR'));
-      if (btts)  parts.push('BTTS ' + btts.value + (btts.lean === 'over' ? ' YES' : btts.lean === 'under' ? ' NO' : ''));
-      return parts.join(' · ');
-    }
-    if (groupName === 'corners' && corn) {
-      return corn.value + ' / ' + corn.line.replace('O/U ', 'O') + ' ' + (corn.lean === 'over' ? 'OVER' : corn.lean === 'under' ? 'UNDER' : 'NTR');
-    }
-    if (groupName === 'cards' && crd) {
-      return crd.value + ' / ' + crd.line.replace('O/U ', 'O') + ' ' + (crd.lean === 'over' ? 'OVER' : crd.lean === 'under' ? 'UNDER' : 'NTR');
-    }
-    return '';
-  }
-
   // Render a single collapsible group. Match is open by default since it's
   // usually the first thing punters check; the rest are closed to keep the
   // page scannable.
   // - Match section: prepends the rank/style strip + F/A breakdown
   // - Goals/Corners/Cards: appends a stat-breakdown block (vs tier, vs style,
   //   competitive-only, rank pills)
+  // No meta strip on the summary — verdicts live inside the cards when
+  // expanded, not as a teaser next to the section title.
   function renderGroup(groupName, title, icon, gcards, openByDefault) {
     if (!gcards.length) return '';
-    const meta = summariseGroup(groupName, gcards);
     const matchHeader      = groupName === 'match'   ? tierContextStrip + renderForAgainstBreakdown(fixture) : '';
     const tournamentForm   = renderTournamentOnlyForm(groupName, fixture);
     const statBreakdown    = renderMarketStatBreakdown(groupName, fixture);
@@ -8369,7 +8351,6 @@ function renderMatchMarketsPanel(fixture) {
       '<summary class="tp-collapse-sum">' +
         '<i class="ti ' + icon + '" aria-hidden="true"></i>' +
         '<span class="tp-collapse-title">' + title + '</span>' +
-        (meta ? '<span class="tp-collapse-meta">' + meta + '</span>' : '') +
         '<i class="ti ti-chevron-down tp-collapse-chev" aria-hidden="true"></i>' +
       '</summary>' +
       '<div class="tp-collapse-body">' +
@@ -8384,9 +8365,6 @@ function renderMatchMarketsPanel(fixture) {
   }
 
   return '<div class="markets-panel">' +
-    '<div class="section-title" style="display:flex;align-items:center;justify-content:space-between">' +
-      '<span>Match Markets</span>' +'</button>' +
-    '</div>' +
     renderGroup('match',   'Match',   'ti-trophy',          groups.match,   true) +
     renderGroup('goals',   'Goals',   'ti-soccer-field',    groups.goals,   false) +
     renderGroup('corners', 'Corners', 'ti-flag-3',          groups.corners, false) +
@@ -8888,10 +8866,10 @@ function renderH2HModule(fixture) {
     '<summary class="tp-collapse-sum">' +
       '<i class="ti ti-versus" aria-hidden="true"></i>' +
       '<span class="tp-collapse-title">Last Time They Met</span>' +
-      '<span class="tp-collapse-meta">' + meetings.length + ' meeting' + (meetings.length === 1 ? '' : 's') + '</span>' +
       '<i class="ti ti-chevron-down tp-collapse-chev" aria-hidden="true"></i>' +
     '</summary>' +
     '<div class="tp-collapse-body">' +
+      '<div class="tp-body-meta">' + meetings.length + ' meeting' + (meetings.length === 1 ? '' : 's') + ' on record</div>' +
       patternHtml +
       recentHtml +
       earlierHtml +
@@ -9815,18 +9793,10 @@ function renderRefereeSection(fixture) {
   const refExt = ext ? ext[ref.name] : null;
   const ranks = getRefRankings();
 
-  // Quick summary visible while the dropdown is closed
+  // Sample size is referenced by detailHtml below for the empty-state check
+  // and the low-confidence note. The previous summary-stats pill is gone —
+  // those values now live entirely inside the body's stat detail table.
   const matches = (refExt && refExt.matches) || (ref.stats && ref.stats.matches) || 0;
-  const quickCards = refExt ? refExt.cardsPerGame : (ref.stats && ref.stats.cardsPerGame);
-  const quickTend = refExt
-    ? refereeTendency(refExt, 'cardsPerGame')
-    : (ref.stats ? refereeTendency(ref.stats, 'cardsPerGame') : null);
-  const tendPill = quickTend
-    ? '<span class="ref-tend-pill ref-tend-' + quickTend + '">' + quickTend.toUpperCase() + '</span>'
-    : '';
-  const summaryStats = quickCards != null
-    ? '<span class="ref-quick">' + quickCards.toFixed(1) + ' cards/g · ' + matches + 'g</span>' + tendPill
-    : '<span class="ref-quick ref-no-data">No prior match data</span>';
 
   // Detail rows: cards/g, reds/g, pens/g — each with rank pill and tendency
   let detailHtml;
@@ -9878,7 +9848,6 @@ function renderRefereeSection(fixture) {
       '<span class="tp-collapse-title">' + escapeHtml(ref.name) +
         (ref.country ? ' <span class="ref-country">' + escapeHtml(ref.country) + '</span>' : '') +
       '</span>' +
-      summaryStats +
       '<i class="ti ti-chevron-down tp-collapse-chev" aria-hidden="true"></i>' +
     '</summary>' +
     '<div class="tp-collapse-body">' +
@@ -10016,10 +9985,10 @@ function renderShapeTrend(teamId, teamName) {
     '<summary class="tp-collapse-sum">' +
       '<i class="ti ti-layout-grid" aria-hidden="true"></i>' +
       '<span class="tp-collapse-title">Shape Trend</span>' +
-      '<span class="tp-collapse-meta">last 5</span>' +
       '<i class="ti ti-chevron-down tp-collapse-chev" aria-hidden="true"></i>' +
     '</summary>' +
     '<div class="tp-collapse-body">' +
+      '<div class="tp-body-meta">Last 5 matches</div>' +
       '<div class="shape-trend">' + shapeRows + '</div>' +
     '</div>' +
   '</details>';
@@ -10271,10 +10240,10 @@ function renderStatLeaders(qualified, oppId, oppName) {
     '<summary class="tp-collapse-sum">' +
       '<i class="ti ti-award" aria-hidden="true"></i>' +
       '<span class="tp-collapse-title">Stat Leaders</span>' +
-      '<span class="tp-collapse-meta">last 12 months</span>' +
       '<i class="ti ti-chevron-down tp-collapse-chev" aria-hidden="true"></i>' +
     '</summary>' +
     '<div class="tp-collapse-body">' +
+      '<div class="tp-body-meta">Last 12 months</div>' +
       '<div class="stat-leaders">' +
         cards.map(c =>
           '<div class="leader-card pclick" onclick="openPlayerModal(' + c.playerId + ',' + fid + ')">' +
@@ -10871,13 +10840,13 @@ function renderOppDVP(oppId, oppName, teamId, teamName) {
     '<summary class="tp-collapse-sum">' +
       '<i class="ti ti-shield-half" aria-hidden="true"></i>' +
       '<span class="tp-collapse-title">DVP</span>' +
-      '<span class="tp-collapse-meta">vs ' + escapeHtml(oppName) +
-        (totalOppGames > 0 ? ' · ' + totalOppGames + 'g' : '') +
-        (granAvailable ? ' · ' + granRolesWithData.length + ' roles' : '') +
-      '</span>' +
       '<i class="ti ti-chevron-down tp-collapse-chev" aria-hidden="true"></i>' +
     '</summary>' +
     '<div class="tp-collapse-body" data-dvp-teamid="' + (teamId || '') + '">' +
+      '<div class="tp-body-meta">vs ' + escapeHtml(oppName) +
+        (totalOppGames > 0 ? ' · ' + totalOppGames + ' matches' : '') +
+        (granAvailable ? ' · ' + granRolesWithData.length + ' roles' : '') +
+      '</div>' +
       (toggleHtml ? '<div class="tp-toolbar">' + toggleHtml + '</div>' : '') +
       granWrap + broadWrap +
       legend +
@@ -11137,10 +11106,10 @@ function renderRecentGames(teamId, teamName) {
     '<summary class="tp-collapse-sum">' +
       '<i class="ti ti-history" aria-hidden="true"></i>' +
       '<span class="tp-collapse-title">Recent Games</span>' +
-      '<span class="tp-collapse-meta">last ' + recent.length + 'g</span>' +
       '<i class="ti ti-chevron-down tp-collapse-chev" aria-hidden="true"></i>' +
     '</summary>' +
     '<div class="tp-collapse-body">' +
+      '<div class="tp-body-meta">Last ' + recent.length + ' matches</div>' +
       '<div class="rg-list">' + gamesHtml + '</div>' +
     '</div>' +
   '</details>';
