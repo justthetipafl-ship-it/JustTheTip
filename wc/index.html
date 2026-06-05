@@ -553,6 +553,67 @@
   .meta-bar .meta-key { color: var(--text-3); text-transform: uppercase; }
   .meta-bar .meta-val { color: var(--text); font-weight: 500; }
 
+  /* === UNIVERSAL DATA FILTER STRIP (above fixture detail content) === */
+  .data-filter-strip {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--accent);
+    border-radius: 6px;
+    padding: 10px 12px;
+    margin-bottom: 12px;
+    display: flex; flex-direction: column; gap: 8px;
+  }
+  .dfilt-row {
+    display: flex; align-items: center; gap: 10px;
+    flex-wrap: wrap;
+  }
+  .dfilt-lbl {
+    display: inline-flex; align-items: center; gap: 6px;
+    font-family: var(--font-mono); font-size: 10px;
+    color: var(--text-3); letter-spacing: 0.5px;
+    text-transform: uppercase;
+    min-width: 110px;
+  }
+  .dfilt-lbl i { color: var(--accent); font-size: 14px; }
+  .dfilt-chips {
+    display: inline-flex; gap: 4px; flex-wrap: wrap;
+  }
+  .dfilt-chip {
+    background: var(--surface-2); color: var(--text-2);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 5px 10px;
+    font-family: var(--font-display); font-weight: 600;
+    font-size: 11px; letter-spacing: 0.4px;
+    cursor: pointer;
+    transition: background 0.12s, color 0.12s, border-color 0.12s;
+  }
+  .dfilt-chip:hover { border-color: var(--accent); color: var(--text); }
+  .dfilt-chip.active {
+    background: var(--accent); color: #0a0a0a;
+    border-color: var(--accent);
+  }
+  .dfilt-toggle {
+    display: inline-flex; align-items: center; gap: 6px;
+    font-family: var(--font-display); font-weight: 600;
+    font-size: 12px; color: var(--text);
+    cursor: pointer;
+  }
+  .dfilt-toggle input[type="checkbox"] {
+    accent-color: var(--accent);
+    cursor: pointer;
+  }
+  .dfilt-note {
+    margin-left: auto;
+    font-family: var(--font-mono); font-size: 9px;
+    color: var(--text-3); letter-spacing: 0.3px;
+    font-style: italic;
+  }
+  @media (max-width: 540px) {
+    .dfilt-lbl { min-width: 0; }
+    .dfilt-note { margin-left: 0; width: 100%; text-align: center; padding-top: 2px; }
+  }
+
   /* ============================================================
      KICKOFF / LIVE PILL — appears in the fixture header center
      ============================================================ */
@@ -4831,6 +4892,13 @@ const state = {
     crewSubTab: null,          // null when on tile grid; tile name when drilled in
     selectedFixtureId: null,   // null when on picker; fixtureId when on detail
     scope: 'matchday',         // 'matchday' | 'tournament'
+    // Universal data filter — applied to "recent form" sections on the focused
+    // fixture page. Does NOT touch Match Markets projections (they need stable
+    // historical baselines).
+    dataFilter: {
+      excludeFriendlies: false,
+      window: 'all',           // 'all' | 'wc_cycle' | '12mo' | 'L10' | 'L3'
+    },
   },
 };
 
@@ -5099,6 +5167,144 @@ function renderFixturesView() {
 }
 
 // ============================================================
+// UNIVERSAL DATA FILTER
+// ============================================================
+// A single source of truth for "which historical matches do we count?".
+// Applied to recent-form aggregators (recent games, by the halves, first &
+// last, stat leaders, market stat breakdown). Does NOT touch Match Markets
+// projections — those need stable historical baselines to stay reliable.
+//
+// Two independent dimensions:
+//   - excludeFriendlies  → drops r.competitionTier === 'friendly'
+//   - window             → date or last-N filter:
+//       'all'      | unfiltered
+//       'wc_cycle' | last ~4 years (since previous WC)
+//       '12mo'     | last 12 calendar months
+//       'L10'      | last 10 matches PER TEAM
+//       'L3'       | last 3 matches PER TEAM
+//
+// L10/L3 are per-team-relative — we can't apply them globally because each
+// team has a different "last 10". The helper handles that by bucketing
+// matchIds per teamId and keeping the N most-recent per team.
+
+function applyDataFilter(rows) {
+  if (!rows || !rows.length) return rows || [];
+  const f = (state.view && state.view.dataFilter) || {};
+  let out = rows;
+
+  if (f.excludeFriendlies) {
+    out = out.filter(r => r.competitionTier !== 'friendly');
+  }
+
+  if (f.window === 'wc_cycle' || f.window === '12mo') {
+    const now = new Date();
+    const cutoff = new Date(now);
+    cutoff.setFullYear(now.getFullYear() - (f.window === 'wc_cycle' ? 4 : 1));
+    const cutoffStr = cutoff.toISOString().slice(0, 10);
+    out = out.filter(r => r.date && r.date >= cutoffStr);
+  } else if (f.window === 'L10' || f.window === 'L3') {
+    const n = f.window === 'L10' ? 10 : 3;
+    // Bucket matchIds per teamId (date stored alongside for sort)
+    const byTeam = {};
+    out.forEach(r => {
+      if (r.teamId == null || r.matchId == null) return;
+      if (!byTeam[r.teamId]) byTeam[r.teamId] = {};
+      if (!byTeam[r.teamId][r.matchId]) byTeam[r.teamId][r.matchId] = r.date || '';
+    });
+    const keep = {};
+    Object.entries(byTeam).forEach(([tid, matches]) => {
+      const sorted = Object.entries(matches)
+        .sort((a, b) => (b[1] || '').localeCompare(a[1] || ''))
+        .slice(0, n);
+      keep[tid] = new Set(sorted.map(([mid]) => parseInt(mid, 10)));
+    });
+    out = out.filter(r => keep[r.teamId] && keep[r.teamId].has(r.matchId));
+  }
+
+  return out;
+}
+
+// Set of matchIds that pass the current filter — derived once per page render
+// for helpers that need to filter by matchId rather than row-by-row.
+function filteredMatchIdSet() {
+  const rows = applyDataFilter(state.data && state.data.logs && state.data.logs.rows ? state.data.logs.rows : []);
+  const set = new Set();
+  rows.forEach(r => { if (r.matchId != null) set.add(r.matchId); });
+  return set;
+}
+
+// When the user picks a tight window (L3, L10), the legacy MIN_APPS gates
+// (typically ≥8) would zero-out every Degen Signal. Adaptive floor below:
+// scale the gate down to something realistic for the filter scope so signals
+// don't all disappear when the user wants recent-form-only.
+function _minAppsForFilter(originalMin) {
+  const w = (state.view && state.view.dataFilter && state.view.dataFilter.window) || 'all';
+  if (w === 'L3')  return Math.min(originalMin, 2);
+  if (w === 'L10') return Math.min(originalMin, 4);
+  return originalMin;
+}
+
+// Clear caches that hold pre-aggregated team data so the next render picks
+// up the new filter. Called from the filter strip click handlers.
+function clearFilteredCaches() {
+  if (typeof _halvesCache    !== 'undefined') for (const k in _halvesCache)    delete _halvesCache[k];
+  if (typeof _firstLastCache !== 'undefined') for (const k in _firstLastCache) delete _firstLastCache[k];
+  // _teamRecordCache is intentionally NOT cleared — projections must remain
+  // anchored to the full historical baseline regardless of the filter.
+  if (typeof _trendsCache    !== 'undefined') _trendsCache = null;
+}
+
+// UI dispatcher — called from filter strip controls. Updates state, clears
+// caches, re-renders the focused fixture in place.
+window._dataFilterChange = function(key, val) {
+  if (!state.view.dataFilter) state.view.dataFilter = { excludeFriendlies: false, window: 'all' };
+  if (key === 'excludeFriendlies') state.view.dataFilter.excludeFriendlies = !!val;
+  if (key === 'window')            state.view.dataFilter.window            = val;
+  clearFilteredCaches();
+  // Re-render the open fixture
+  const fid = state.view.selectedFixtureId;
+  if (fid != null) {
+    // Preserve scroll position so the user doesn't jump to the top
+    const sy = window.scrollY;
+    openFixture(fid);
+    window.scrollTo({ top: sy, behavior: 'instant' });
+  }
+};
+
+// Build the filter strip UI shown at the top of the focused-fixture detail.
+function renderDataFilterStrip() {
+  const f = (state.view && state.view.dataFilter) || { excludeFriendlies: false, window: 'all' };
+  const windows = [
+    { key: 'all',      lbl: 'All' },
+    { key: 'wc_cycle', lbl: 'WC Cycle' },
+    { key: '12mo',     lbl: '12 mo' },
+    { key: 'L10',      lbl: 'L10' },
+    { key: 'L3',       lbl: 'L3' },
+  ];
+  const chips = windows.map(w =>
+    '<button class="dfilt-chip' + (f.window === w.key ? ' active' : '') + '" ' +
+      'onclick="_dataFilterChange(\'window\', \'' + w.key + '\')">' +
+      escapeHtml(w.lbl) +
+    '</button>'
+  ).join('');
+
+  return '<div class="data-filter-strip">' +
+    '<div class="dfilt-row">' +
+      '<span class="dfilt-lbl"><i class="ti ti-adjustments-horizontal" aria-hidden="true"></i> Form window</span>' +
+      '<div class="dfilt-chips">' + chips + '</div>' +
+    '</div>' +
+    '<div class="dfilt-row">' +
+      '<label class="dfilt-toggle">' +
+        '<input type="checkbox" ' + (f.excludeFriendlies ? 'checked' : '') + ' ' +
+          'onchange="_dataFilterChange(\'excludeFriendlies\', this.checked)">' +
+        '<span>Exclude friendlies</span>' +
+      '</label>' +
+      '<span class="dfilt-note">Projections always use full historical data</span>' +
+    '</div>' +
+  '</div>';
+}
+
+// ============================================================
 // FIXTURE DETAIL PAGE
 // ============================================================
 function openFixture(matchId) {
@@ -5147,6 +5353,9 @@ function openFixture(matchId) {
       '<div class="meta-item"><i class="ti ti-map-pin" aria-hidden="true"></i><span class="meta-key">Venue</span><span class="meta-val">' + escapeHtml(fixture.venue || 'TBC') + (fixture.city ? ', ' + escapeHtml(fixture.city) : '') + '</span></div>' +
       '<div class="meta-item"><i class="ti ti-calendar" aria-hidden="true"></i><span class="meta-key">Round</span><span class="meta-val">' + escapeHtml(fixture.round || '—') + '</span></div>' +
     '</div>' +
+
+    // === UNIVERSAL DATA FILTER (window + exclude friendlies) ===
+    renderDataFilterStrip() +
 
     // === LINEUP LEAK BANNER (only when lineups drop & differ from expected XI) ===
     renderLineupLeakBanner(fixture) +
@@ -5630,6 +5839,17 @@ function renderFirstGoalCardInline(c, matchId) {
     ? '<span class="conf-pill ' + strength.toLowerCase() + '" title="' +
         (prob * 100).toFixed(1) + '% projected to score first">' + strength + ' FGS ' + (prob * 100).toFixed(1) + '%</span>'
     : '';
+  // Actual first-goal tally — counts how many times the player has personally
+  // scored their team's match-opener within the current data filter window.
+  // Surfaced because the projected % alone hides whether the player has
+  // historically been the one to break the deadlock or whether they're just
+  // a high-volume shooter who arrives late to the party.
+  const fgScored = c.firstGoalsScored || 0;
+  const teamG = c.teamGames || 0;
+  const fgLine = teamG > 0
+    ? ' · <span style="color:var(--accent); font-weight:700">' + fgScored + '</span> 1st goal' + (fgScored === 1 ? '' : 's') +
+      ' <span style="color:var(--text-3)">from ' + teamG + 'g</span>'
+    : '';
   return '<div class="li-card" onclick="openPlayerModal(' + c.playerId + ',' + matchId + ')">' +
     '<div class="li-card-top">' +
       '<div class="li-name">' + escapeHtml(c.name) + '</div>' +
@@ -5642,7 +5862,7 @@ function renderFirstGoalCardInline(c, matchId) {
     '<div class="li-line">' +
       '<span class="stat-num">' + c.spg.toFixed(1) + 'sh/g</span>' +
       ' <span style="color:var(--text-3); font-size:10px; margin-left:4px">' +
-        c.gpg.toFixed(2) + 'G/g · ' + (c.startRate*100).toFixed(0) + '% starts' +
+        c.gpg.toFixed(2) + 'G/g · ' + (c.startRate*100).toFixed(0) + '% starts' + fgLine +
       '</span>' +
     '</div>' +
   '</div>';
@@ -6266,9 +6486,11 @@ function analyzeHalvesForTeam(teamId, opts) {
   if (!eventsDoc || !eventsDoc.events) return null;
   if (!logs) return null;
 
-  // Find all matches this team has played, with opponent + result info
+  // Find all matches this team has played, with opponent + result info.
+  // Filter the source rows through the global data filter first so the
+  // window selector (L10, 12mo, etc.) and friendly toggle propagate here.
   const teamMatches = {};
-  logs.rows.forEach(r => {
+  applyDataFilter(logs.rows).forEach(r => {
     if (r.teamId !== teamId) return;
     if (teamMatches[r.matchId]) return;
     teamMatches[r.matchId] = {
@@ -6798,9 +7020,9 @@ function analyzeFirstLastForTeam(teamId) {
   if (!eventsDoc || !eventsDoc.events) return null;
   if (!logs) return null;
 
-  // Match list for this team
+  // Match list for this team — pre-filtered through the global data filter
   const teamMatches = {};
-  logs.rows.forEach(r => {
+  applyDataFilter(logs.rows).forEach(r => {
     if (r.teamId !== teamId) return;
     if (teamMatches[r.matchId]) return;
     teamMatches[r.matchId] = {
@@ -8214,10 +8436,12 @@ function renderMarketStatBreakdown(groupName, fixture) {
   } catch (e) {}
 
   // Walk team's matches and return { matchId, oppId, oppTier, oppStyle, statFor, statAgainst }
+  // Source rows pre-filtered through the global data filter.
+  const _filteredRows = applyDataFilter(logs.rows);
   function teamMatches(teamId) {
     const seen = new Set();
     const out = [];
-    logs.rows.forEach(r => {
+    _filteredRows.forEach(r => {
       if (r.teamId !== teamId) return;
       if (seen.has(r.matchId)) return;
       seen.add(r.matchId);
@@ -10763,8 +10987,8 @@ function renderRecentGames(teamId, teamName) {
   const stats = state.data.stats;
   if (!logs) return '';
 
-  // Collect rows per match for this team
-  const teamRows = logs.rows.filter(r => r.teamId === teamId);
+  // Collect rows per match for this team — honour the global data filter
+  const teamRows = applyDataFilter(logs.rows).filter(r => r.teamId === teamId);
   if (!teamRows.length) return '';
 
   const matchMap = {};
@@ -13112,7 +13336,12 @@ function getTeamRecord(teamId, teamName) {
   // Ensure styles are built before we look up opponent styles
   buildTeamStyles();
 
-  // Collect unique matches for this team
+  // Collect unique matches for this team.
+  // NOTE: deliberately NOT filtered through applyDataFilter — this record
+  // feeds the Match Markets projections, which need the full historical
+  // baseline to stay stable. Recent-form display sections use their own
+  // helpers (analyzeHalvesForTeam, analyzeFirstLastForTeam) that DO honour
+  // the data filter.
   const matches = {};
   logs.rows.forEach(r => {
     if (r.teamId !== teamId) return;
@@ -15524,7 +15753,7 @@ function findFoulPlayCandidates(scopeTeamIds, scopeFixtures) {
   if (!logs) return [];
 
   const players = {};
-  logs.rows.forEach(r => {
+  applyDataFilter(logs.rows).forEach(r => {
     if (!scopeTeamIds.has(r.teamId)) return;
     if (!hasMeaningfulMinutes(r)) return;
     if (!players[r.playerId]) {
@@ -15538,7 +15767,7 @@ function findFoulPlayCandidates(scopeTeamIds, scopeFixtures) {
   });
 
   const FOULS_LADDER = [0.5, 1.5, 2.5, 3.5];
-  const MIN_APPS = 8;
+  const MIN_APPS = _minAppsForFilter(8);
   const results = [];
 
   Object.values(players).forEach(p => {
@@ -15867,7 +16096,7 @@ function findHereToAssistCandidates(scopeTeamIds, scopeFixtures) {
   if (!logs) return [];
 
   const players = {};
-  logs.rows.forEach(r => {
+  applyDataFilter(logs.rows).forEach(r => {
     if (!scopeTeamIds.has(r.teamId)) return;
     if (!hasMeaningfulMinutes(r)) return;
     if (!players[r.playerId]) {
@@ -15880,7 +16109,7 @@ function findHereToAssistCandidates(scopeTeamIds, scopeFixtures) {
   });
 
   const KP_LADDER = [0.5, 1.5, 2.5, 3.5];
-  const MIN_APPS = 6;
+  const MIN_APPS = _minAppsForFilter(6);
   const results = [];
 
   Object.values(players).forEach(p => {
@@ -16279,13 +16508,19 @@ function renderCrewTapIns(scope) {
 function findTapInCandidates(scopeTeamIds, scopeFixtures) {
   const logs = state.data.logs;
   if (!logs) return [];
-  const cutoff = monthsAgo(12);
   const dvp = getOppDvpField();
 
+  // Pre-filter through the global data filter. When the filter is "All",
+  // fall back to the legacy 12-month cutoff so the legacy default behaviour
+  // is preserved.
+  const filterWin = (state.view && state.view.dataFilter && state.view.dataFilter.window) || 'all';
+  const useLegacy12mo = (filterWin === 'all');
+  const cutoff = useLegacy12mo ? monthsAgo(12) : null;
+
   const players = {};
-  logs.rows.forEach(r => {
+  applyDataFilter(logs.rows).forEach(r => {
     if (!scopeTeamIds.has(r.teamId)) return;
-    if (r.date < cutoff) return;
+    if (cutoff && r.date < cutoff) return;
     if (!hasMeaningfulMinutes(r)) return;
     if (!players[r.playerId]) {
       players[r.playerId] = {
@@ -16304,8 +16539,8 @@ function findTapInCandidates(scopeTeamIds, scopeFixtures) {
   Object.values(players).forEach(p => {
     // Include forwards always; include midfielders if they've scored 4+
     if (p.position !== 'F' && !(p.position === 'M' && p.goals >= 4)) return;
-    if (p.apps < 8) return;
-    if (p.shots < 10) return;
+    if (p.apps < _minAppsForFilter(8)) return;
+    if (p.shots < _minAppsForFilter(10)) return;
     if (p.goals < 2) return;
     const conv = p.goals / p.shots * 100;
     if (conv < 25) return;  // sub-25% isn't tap-in territory
@@ -16448,11 +16683,18 @@ function renderCrewFirstGoal(scope) {
 function computeFirstGoalCandidates(teamId, teamName, fixture) {
   const logs = state.data.logs;
   if (!logs) return [];
-  const cutoff = monthsAgo(12);
 
-  // Team scoring rate from full window (not just recent)
+  // Honour the global data filter. When window is 'all' fall back to the
+  // legacy 12-month cutoff so default behaviour is preserved.
+  const filterWin = (state.view && state.view.dataFilter && state.view.dataFilter.window) || 'all';
+  const useLegacy12mo = (filterWin === 'all');
+  const cutoff = useLegacy12mo ? monthsAgo(12) : null;
+  const filteredRows = applyDataFilter(logs.rows);
+
+  // Team scoring rate (uses the filtered window so projections respect the
+  // user's chosen sample)
   let teamGoals = 0, teamMatches = new Set();
-  logs.rows.forEach(r => {
+  filteredRows.forEach(r => {
     if (r.teamId !== teamId) return;
     if (teamMatches.has(r.matchId)) return;
     teamMatches.add(r.matchId);
@@ -16465,7 +16707,7 @@ function computeFirstGoalCandidates(teamId, teamName, fixture) {
   if (fixture) {
     const oppTeamId = teamId === fixture.homeTeamId ? fixture.awayTeamId : fixture.homeTeamId;
     let oppGoals = 0, oppMatches = new Set();
-    logs.rows.forEach(r => {
+    filteredRows.forEach(r => {
       if (r.teamId !== oppTeamId) return;
       if (oppMatches.has(r.matchId)) return;
       oppMatches.add(r.matchId);
@@ -16480,12 +16722,50 @@ function computeFirstGoalCandidates(teamId, teamName, fixture) {
     ? Math.max(0.15, Math.min(0.85, teamGoalsPerG / (teamGoalsPerG + oppGoalsPerG)))
     : 0.5;
 
-  // Player aggregates (last 12 months) — track total team shots so we can compute share
+  // === Actual first-goal events ===
+  // Walk events for every match the team has played (within the current
+  // filter window) and tally how many times each player actually scored
+  // the match's first goal for this team. Own goals exclude the scorer
+  // and credit no one. Used downstream as `firstGoalsScored` on each
+  // candidate so the card can show "3 first goals from 12g".
+  const firstGoalsByPlayer = {};   // playerId -> count
+  const eventsDoc = state.data.events;
+  const teamMatchSet = new Set();
+  filteredRows.forEach(r => {
+    if (r.teamId !== teamId) return;
+    teamMatchSet.add(r.matchId);
+  });
+  if (eventsDoc && eventsDoc.events) {
+    teamMatchSet.forEach(mid => {
+      const matchEvents = eventsDoc.events[mid];
+      if (!matchEvents || !matchEvents.length) return;
+      const goals = matchEvents
+        .filter(ev => ev.minute != null && ev.type === 'goal')
+        .filter(ev => !(ev.detail && /missed\s*penalty/i.test(ev.detail)))
+        .slice()
+        .sort((a, b) => (a.minute - b.minute) || ((a.extra || 0) - (b.extra || 0)));
+      if (!goals.length) return;
+      const first = goals[0];
+      const isOwnGoal = first.detail && /own\s*goal/i.test(first.detail);
+      // Scoring team for an own goal is the OPPOSING team, not the team
+      // the goal-event row belongs to. Credit only when it's a real goal
+      // scored BY a player of teamId.
+      const scorerTeam = isOwnGoal
+        ? (first.teamId === teamId ? null : teamId)   // skip own goals from THIS team
+        : first.teamId;
+      if (scorerTeam !== teamId) return;
+      if (isOwnGoal) return;   // belt+braces — never credit OG scorers
+      if (!first.playerId) return;
+      firstGoalsByPlayer[first.playerId] = (firstGoalsByPlayer[first.playerId] || 0) + 1;
+    });
+  }
+
+  // Player aggregates — track total team shots so we can compute share
   const players = {};
   let teamTotalShots = 0;
-  logs.rows.forEach(r => {
+  filteredRows.forEach(r => {
     if (r.teamId !== teamId) return;
-    if (r.date < cutoff) return;
+    if (cutoff && r.date < cutoff) return;
     if (!hasMeaningfulMinutes(r)) return;
     teamTotalShots += r.shots || 0;
     if (!players[r.playerId]) {
@@ -16504,9 +16784,10 @@ function computeFirstGoalCandidates(teamId, teamName, fixture) {
   });
 
   const candidates = [];
+  const MIN_APPS = _minAppsForFilter(3);
   Object.values(players).forEach(p => {
     if (!['F', 'M'].includes(p.position)) return;
-    if (p.apps < 3) return;
+    if (p.apps < MIN_APPS) return;
     const spg = p.shots / p.apps;
     if (spg < 0.8) return;  // not a real shooter
     const gpg = p.goals / p.apps;
@@ -16531,6 +16812,8 @@ function computeFirstGoalCandidates(teamId, teamName, fixture) {
       shotShare, startRate,
       teamScoresFirstProb,
       fgsProbability,
+      firstGoalsScored: firstGoalsByPlayer[p.playerId] || 0,
+      teamGames: teamMatchSet.size,
     });
   });
 
@@ -16874,8 +17157,12 @@ function findPenaltyTakers(scopeTeamIds, scopeFixtures) {
   };
 
   // === Step 2: identify confirmed takers ===
+  // Pre-filter through the global data filter so 'L10', '12mo', etc. honour
+  // recent-only takers. The team-level pen-rate above stays on full history
+  // since pen rates need a big sample to stabilise.
+  const filteredRows = applyDataFilter(logs.rows);
   const players = {};
-  logs.rows.forEach(r => {
+  filteredRows.forEach(r => {
     if (!scopeTeamIds.has(r.teamId)) return;
     const scored = r.penaltyScored || 0;
     const missed = r.penaltyMissed || 0;
@@ -16893,7 +17180,7 @@ function findPenaltyTakers(scopeTeamIds, scopeFixtures) {
   });
 
   const appsByPlayer = {};
-  logs.rows.forEach(r => {
+  filteredRows.forEach(r => {
     if (!scopeTeamIds.has(r.teamId)) return;
     appsByPlayer[r.playerId] = (appsByPlayer[r.playerId] || 0) + 1;
   });
@@ -17408,14 +17695,24 @@ function findBrickWallCandidates(scopeTeamIds, scopeFixtures) {
   const stats = state.data.stats;
   if (!logs || !stats) return [];
 
-  // Step 1: Identify primary GK per team (most started in last 12 months)
-  const cutoff = monthsAgo(12);
+  // Step 1: Identify primary GK per team — pre-filter through the global
+  // data filter. Fall back to a 12-month cutoff when filter window is 'all'
+  // so legacy default behaviour is preserved.
+  const filterWin = (state.view && state.view.dataFilter && state.view.dataFilter.window) || 'all';
+  const useLegacy12mo = (filterWin === 'all');
+  const cutoff = useLegacy12mo ? monthsAgo(12) : null;
+  const filteredRows = applyDataFilter(logs.rows);
+  // Set of matchIds that pass the filter — used to restrict the team-stats
+  // walk in Step 2 below.
+  const filteredMatchIds = new Set();
+  filteredRows.forEach(r => { if (r.matchId != null) filteredMatchIds.add(r.matchId); });
+
   const gkAppsByTeam = {};
-  logs.rows.forEach(r => {
+  filteredRows.forEach(r => {
     if (r.position !== 'G') return;
     if (!scopeTeamIds.has(r.teamId)) return;
     if (!r.started) return;
-    if (r.date < cutoff) return;
+    if (cutoff && r.date < cutoff) return;
     if (!gkAppsByTeam[r.teamId]) gkAppsByTeam[r.teamId] = {};
     if (!gkAppsByTeam[r.teamId][r.playerId]) {
       gkAppsByTeam[r.teamId][r.playerId] = {
@@ -17444,6 +17741,10 @@ function findBrickWallCandidates(scopeTeamIds, scopeFixtures) {
   const teamOppSOTFaced = {};
 
   Object.entries(stats.matches || {}).forEach(([mid, m]) => {
+    // Honour the global data filter — only count matches whose matchId
+    // appears in filteredMatchIds (built from filteredRows above).
+    const midInt = parseInt(mid);
+    if (!filteredMatchIds.has(midInt) && !filteredMatchIds.has(mid)) return;
     const tIds = Object.keys(m.teams || {}).map(t => parseInt(t));
     if (tIds.length !== 2) return;
     const [t1, t2] = tIds;
@@ -17479,7 +17780,7 @@ function findBrickWallCandidates(scopeTeamIds, scopeFixtures) {
     const tid = parseInt(tidStr);
     const savesEntry = teamSaves[tid];
     const ownFaced = teamOppSOTFaced[tid];
-    if (!savesEntry || savesEntry.vals.length < 5) return;
+    if (!savesEntry || savesEntry.vals.length < _minAppsForFilter(5)) return;
     const savesPg = avg(savesEntry.vals);
     const ownFacedAvg = avg(ownFaced ? ownFaced.vals : []);
     if (savesPg <= 0 || ownFacedAvg <= 0) return;
@@ -17500,7 +17801,7 @@ function findBrickWallCandidates(scopeTeamIds, scopeFixtures) {
     const oppId = nextFx.homeTeamId === tid ? nextFx.awayTeamId : nextFx.homeTeamId;
     const oppName = nextFx.homeTeamId === tid ? nextFx.awayTeam : nextFx.homeTeam;
     const oppSOTEntry = teamOwnSOT[oppId];
-    if (!oppSOTEntry || oppSOTEntry.vals.length < 5) return;
+    if (!oppSOTEntry || oppSOTEntry.vals.length < _minAppsForFilter(5)) return;
     const oppSOTPg = avg(oppSOTEntry.vals);
 
     const teamRow = logs.rows.find(r => r.teamId === tid);
