@@ -4069,45 +4069,49 @@
   .fa-section[open] > summary > .fa-chev { transform: rotate(90deg); }
   .fa-body { padding: 8px 4px 12px; }
 
-  .fa-table {
-    width: 100%;
-    border-collapse: collapse;
+  /* === FOR/AGAINST GRID ===
+     3-column flex layout that mirrors the tier-strip above it:
+     [home column flex:1] [stat label auto-width] [away column flex:1]
+     so each team's stats sit directly beneath their name in the tier strip. */
+  .fa-grid {
+    display: flex; flex-direction: column;
+    gap: 4px;
+    padding: 4px 8px;
+  }
+  .fa-row {
+    display: flex; align-items: center; gap: 12px;
+    padding: 8px 0;
+    border-bottom: 1px dashed var(--border);
+  }
+  .fa-row:last-child { border-bottom: none; }
+  .fa-side {
+    flex: 1;
+    display: flex; flex-direction: column; gap: 3px;
+    align-items: center;
     font-family: var(--font-mono); font-size: 11px;
   }
-  .fa-table thead th {
-    padding: 6px 8px;
-    color: var(--text-3); font-weight: 700;
-    font-size: 10px; letter-spacing: 0.5px;
-    text-transform: uppercase;
-    border-bottom: 1px solid var(--border);
-  }
-  .fa-team-hdr { text-align: center; }
-  .fa-team-hdr .flag { margin-right: 4px; font-size: 12px; }
-  .fa-table tbody td { padding: 5px 6px; vertical-align: middle; }
-  .fa-table tbody tr + tr td { border-top: 1px dashed var(--border); }
-  /* Subtle separator between stat groups */
-  .fa-table tbody tr td.fa-group:not(:empty) {
-    border-top: 1px solid var(--border-light);
-  }
-  .fa-group {
-    color: var(--text); font-weight: 700;
-    font-size: 11px;
-    min-width: 56px;
-    letter-spacing: 0.3px;
-  }
-  .fa-sub {
-    color: var(--text-3); font-size: 10px;
-    font-weight: 600;
-    min-width: 50px;
-  }
-  .fa-cell {
+  .fa-stat-name {
+    font-family: var(--font-display); font-weight: 700;
+    font-size: 11px; letter-spacing: 0.5px;
+    color: var(--text-2); text-transform: uppercase;
     text-align: center;
+    min-width: 60px;
     white-space: nowrap;
   }
-  .fa-val {
+  .fa-line {
+    display: inline-flex; align-items: center; gap: 6px;
+    white-space: nowrap;
+  }
+  .fa-line-empty { color: var(--text-3); }
+  .fa-lbl {
     display: inline-block;
+    color: var(--text-3); font-weight: 700;
+    font-size: 10px; letter-spacing: 0.4px;
+    min-width: 12px;
+  }
+  .fa-val {
     color: var(--text); font-weight: 700;
-    min-width: 32px; text-align: right;
+    min-width: 38px; text-align: right;
   }
   .fa-empty { color: var(--text-3); }
 
@@ -4116,7 +4120,7 @@
     font-family: var(--font-mono); font-size: 9px; font-weight: 700;
     padding: 1px 5px; border-radius: 2px;
     letter-spacing: 0.3px;
-    margin-left: 5px;
+    margin-left: 0;
     min-width: 22px; text-align: center;
   }
   .rk-pill.top    { background: rgba(34,197,94,0.20);  color: #4ade80; }
@@ -4124,6 +4128,14 @@
   .rk-pill.lower  { background: rgba(234,179,8,0.18);  color: #eab308; }
   .rk-pill.bottom { background: rgba(239,68,68,0.20);  color: #f87171; }
   .rk-pill.mid    { background: var(--surface-3);      color: var(--text-3); }
+
+  /* Mobile — narrow the gap and shrink the centre label */
+  @media (max-width: 540px) {
+    .fa-row { gap: 6px; padding: 6px 0; }
+    .fa-stat-name { font-size: 10px; min-width: 48px; }
+    .fa-side { font-size: 10px; gap: 2px; }
+    .fa-val { min-width: 32px; }
+  }
 
   .fa-legend {
     display: flex; gap: 12px; flex-wrap: wrap;
@@ -9365,40 +9377,43 @@ function renderForAgainstBreakdown(fixture) {
   const homeName = fixture.homeTeam;
   const awayName = fixture.awayTeam;
 
-  // Build rows grouped by stat category so the table reads cleanly.
-  // Each group has 1-2 sub-rows (For/Against, or a single "Made"/"Received").
+  // Stat groups — title is shown centred between the two team columns; each
+  // team's For/Against (or equivalent labels) sit stacked vertically beneath
+  // their respective name in the tier strip above. Mirrors the flex layout
+  // of tier-strip (1fr / auto / 1fr) so the columns visually line up.
   const groups = [
-    { title: 'Goals',    rows: [['goalsFor', 'For'], ['goalsAgainst', 'Against']] },
-    { title: 'Shots',    rows: [['shotsFor', 'For'], ['shotsAgainst', 'Against']] },
-    { title: 'SOT',      rows: [['sotFor', 'For'], ['sotAgainst', 'Against']] },
-    { title: 'Corners',  rows: [['cornersFor', 'For'], ['cornersAgainst', 'Against']] },
-    { title: 'Passes',   rows: [['passesFor', 'For'], ['passesAgainst', 'Against']] },
-    { title: 'Tackles',  rows: [['tacklesFor', 'For'], ['tacklesAgainst', 'Against']] },
-    { title: 'Fouls',    rows: [['foulsCommitted', 'Committed'], ['foulsDrawn', 'Drawn']] },
-    { title: 'Cards',    rows: [['cardsReceived', 'Received']] },
-    { title: 'Saves',    rows: [['savesFor', 'Made']] },
+    { title: 'Goals',    rows: [['goalsFor', 'F'], ['goalsAgainst', 'A']] },
+    { title: 'Shots',    rows: [['shotsFor', 'F'], ['shotsAgainst', 'A']] },
+    { title: 'SOT',      rows: [['sotFor', 'F'], ['sotAgainst', 'A']] },
+    { title: 'Corners',  rows: [['cornersFor', 'F'], ['cornersAgainst', 'A']] },
+    { title: 'Passes',   rows: [['passesFor', 'F'], ['passesAgainst', 'A']] },
+    { title: 'Tackles',  rows: [['tacklesFor', 'F'], ['tacklesAgainst', 'A']] },
+    { title: 'Fouls',    rows: [['foulsCommitted', 'C'], ['foulsDrawn', 'D']] },
+    { title: 'Cards',    rows: [['cardsReceived', 'R']] },
+    { title: 'Saves',    rows: [['savesFor', 'M']] },
   ];
 
-  const cell = (entry) => {
-    if (!entry) return '<span class="fa-empty">—</span>';
+  // Per-stat-line cell: F 1.42 #32. Returns a placeholder when missing.
+  const statLine = (label, entry) => {
+    if (!entry) return '<div class="fa-line fa-line-empty"><span class="fa-lbl">' + label + '</span><span class="fa-val">—</span></div>';
     const cls = rankPillClass(entry.rank, entry.total);
     const decimals = entry.val < 5 ? 2 : entry.val < 30 ? 1 : 0;
-    return '<span class="fa-val">' + entry.val.toFixed(decimals) + '</span>' +
-           '<span class="rk-pill ' + cls + '">#' + entry.rank + '</span>';
+    return '<div class="fa-line">' +
+      '<span class="fa-lbl">' + label + '</span>' +
+      '<span class="fa-val">' + entry.val.toFixed(decimals) + '</span>' +
+      '<span class="rk-pill ' + cls + '">#' + entry.rank + '</span>' +
+    '</div>';
   };
 
+  // Per-group row: home stack | centred title | away stack
   const rowsHtml = groups.map(g => {
-    return g.rows.map((row, idx) => {
-      const [key, label] = row;
-      const isFirst = idx === 0;
-      return '<tr>' +
-        // Group title only on first sub-row, otherwise empty cell
-        '<td class="fa-group">' + (isFirst ? g.title : '') + '</td>' +
-        '<td class="fa-sub">' + label + '</td>' +
-        '<td class="fa-cell">' + cell(homeRanks[key]) + '</td>' +
-        '<td class="fa-cell">' + cell(awayRanks[key]) + '</td>' +
-      '</tr>';
-    }).join('');
+    const homeLines = g.rows.map(([key, lbl]) => statLine(lbl, homeRanks[key])).join('');
+    const awayLines = g.rows.map(([key, lbl]) => statLine(lbl, awayRanks[key])).join('');
+    return '<div class="fa-row">' +
+      '<div class="fa-side fa-home">' + homeLines + '</div>' +
+      '<div class="fa-stat-name">' + g.title + '</div>' +
+      '<div class="fa-side fa-away">' + awayLines + '</div>' +
+    '</div>';
   }).join('');
 
   return '<details class="fa-section">' +
@@ -9409,16 +9424,7 @@ function renderForAgainstBreakdown(fixture) {
       '<span class="fa-chev">▸</span>' +
     '</summary>' +
     '<div class="fa-body">' +
-      '<table class="fa-table">' +
-        '<thead>' +
-          '<tr>' +
-            '<th colspan="2"></th>' +
-            '<th class="fa-team-hdr"><span class="flag">' + flagFor(homeName) + '</span>' + abbrev(homeName) + '</th>' +
-            '<th class="fa-team-hdr"><span class="flag">' + flagFor(awayName) + '</span>' + abbrev(awayName) + '</th>' +
-          '</tr>' +
-        '</thead>' +
-        '<tbody>' + rowsHtml + '</tbody>' +
-      '</table>' +
+      '<div class="fa-grid">' + rowsHtml + '</div>' +
       '<div class="fa-legend">' +
         '<span class="fa-legend-item"><span class="rk-pill top">#1</span> top quartile</span>' +
         '<span class="fa-legend-item"><span class="rk-pill upper">#13</span> upper-mid</span>' +
