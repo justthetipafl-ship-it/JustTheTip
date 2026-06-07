@@ -616,6 +616,78 @@
   .meta-bar .meta-key { color: var(--text-3); text-transform: uppercase; }
   .meta-bar .meta-val { color: var(--text); font-weight: 500; }
 
+  /* === VENUE CONDITIONS STRIP (above the data filter, below meta bar) ===
+     Surfaces roof type, altitude, and live weather forecast (Phase 2). */
+  .venue-conditions {
+    display: flex; flex-wrap: wrap; gap: 6px;
+    margin: 6px 0 12px;
+  }
+  .vc-pill {
+    display: inline-flex; align-items: center; gap: 5px;
+    padding: 4px 9px; border-radius: 4px;
+    font-family: var(--font-mono); font-size: 10px;
+    letter-spacing: 0.4px; font-weight: 600;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    color: var(--text-2);
+  }
+  .vc-pill i { font-size: 12px; }
+  /* Roof type variants */
+  .vc-roof-indoor {
+    background: rgba(59,130,246,0.10); color: #60a5fa;
+    border-color: rgba(59,130,246,0.30);
+  }
+  .vc-roof-retract {
+    background: rgba(168,139,250,0.10); color: #a78bfa;
+    border-color: rgba(168,139,250,0.30);
+  }
+  .vc-roof-partial {
+    background: rgba(234,179,8,0.08); color: #facc15;
+    border-color: rgba(234,179,8,0.25);
+  }
+  .vc-roof-open {
+    background: var(--surface-2); color: var(--text-2);
+  }
+  /* Altitude variants */
+  .vc-altitude {
+    background: rgba(168,139,250,0.10); color: #a78bfa;
+    border-color: rgba(168,139,250,0.30);
+  }
+  .vc-altitude-mod {
+    background: var(--surface-2); color: var(--text-2);
+  }
+  /* Weather pill variants — escalate visually with severity */
+  .vc-wx-mild {
+    background: var(--surface-2); color: var(--text-2);
+  }
+  .vc-wx-hot {
+    background: rgba(234,179,8,0.12); color: #facc15;
+    border-color: rgba(234,179,8,0.30);
+  }
+  .vc-wx-very-hot {
+    background: rgba(239,68,68,0.12); color: #f87171;
+    border-color: rgba(239,68,68,0.35);
+    animation: vcPulse 2.5s ease-in-out infinite;
+  }
+  @keyframes vcPulse {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(239,68,68,0); }
+    50%      { box-shadow: 0 0 0 2px rgba(239,68,68,0.2); }
+  }
+  .vc-wx-wet {
+    background: rgba(59,130,246,0.10); color: #60a5fa;
+    border-color: rgba(59,130,246,0.30);
+  }
+  .vc-wx-cold {
+    background: rgba(96,165,250,0.10); color: #93c5fd;
+    border-color: rgba(96,165,250,0.30);
+  }
+  .vc-wx-note {
+    color: var(--text-3); font-weight: 400; margin-left: 4px;
+  }
+  @media (max-width: 540px) {
+    .vc-pill { font-size: 9px; padding: 3px 7px; }
+  }
+
   /* === UNIVERSAL DATA FILTER STRIP (above fixture detail content) === */
   .data-filter-strip {
     background: var(--surface);
@@ -5109,6 +5181,7 @@ const state = {
     referees: null,   // wc_referees.json content (optional — backfilled refs)
     liveStatus: null, // live_status.json content (only during matchdays)
     events: null,     // worldcup_events.json content (optional — goal/card minutes for By The Halves)
+    weather: null,    // worldcup_weather.json content (optional — Open-Meteo forecast per fixture)
   },
   view: {
     tab: 'fixtures',           // 'fixtures' | 'crew'
@@ -5239,6 +5312,7 @@ async function tryAutoLoadData() {
     referees:    prefix + 'wc_referees.json' + v,
     liveStatus:  prefix + 'live_status.json' + v,
     events:      prefix + 'worldcup_events.json' + v,
+    weather:     prefix + 'worldcup_weather.json' + v,
   };
 
   // Expose the version for the freshness pill below
@@ -5574,6 +5648,9 @@ function openFixture(matchId) {
       '<div class="meta-item"><i class="ti ti-calendar" aria-hidden="true"></i><span class="meta-key">Round</span><span class="meta-val">' + escapeHtml(fixture.round || '—') + '</span></div>' +
     '</div>' +
 
+    // === VENUE CONDITIONS (roof type · altitude · weather forecast) ===
+    renderVenueConditions(fixture) +
+
     // === UNIVERSAL DATA FILTER (window + exclude friendlies) ===
     renderDataFilterStrip() +
 
@@ -5646,6 +5723,153 @@ const MIN_TIER_SAMPLE = 3;   // need at least 3 matches in tier to use tier-spec
 //   - Counter-Attackers: low poss + decent shot efficiency
 //   - Park the Bus: very low poss + low shots + high fouls
 //   - Box-to-Box: balanced — middle of the field on all metrics
+
+// ============================================================
+// STADIUM CONDITIONS LOOKUP
+// ============================================================
+// Static metadata for all 16 host venues:
+//   - roof:       'closed_ac' | 'retractable' | 'partial' | 'open'
+//   - altitude_m: metres above sea level (matters >1500m)
+//   - lat / lng:  for the Open-Meteo weather forecast in Phase 2
+//   - city:       human-readable city for UI
+//
+// Roof classifications:
+//   closed_ac    — fully sealed + air conditioning. Outside weather irrelevant.
+//                  (Mercedes-Benz, AT&T, NRG, BC Place per FIFA)
+//   retractable  — roof can close but no AC. FIFA decides match-by-match.
+//   partial      — canopy/awning gives some shade but stadium is not sealed.
+//   open         — fully open-air. Weather matters most.
+
+const STADIUM_INFO = {
+  // ── USA (11) ─────────────────────────────────────────────
+  'MetLife Stadium':           { roof: 'open',        altitude_m: 0,    lat: 40.8135, lng: -74.0744, city: 'East Rutherford, NJ' },
+  'AT&T Stadium':              { roof: 'closed_ac',   altitude_m: 188,  lat: 32.7473, lng: -97.0945, city: 'Arlington, TX'      },
+  'Mercedes-Benz Stadium':     { roof: 'closed_ac',   altitude_m: 320,  lat: 33.7553, lng: -84.4006, city: 'Atlanta, GA'        },
+  'NRG Stadium':               { roof: 'closed_ac',   altitude_m: 12,   lat: 29.6847, lng: -95.4107, city: 'Houston, TX'        },
+  'Hard Rock Stadium':         { roof: 'partial',     altitude_m: 2,    lat: 25.9580, lng: -80.2389, city: 'Miami Gardens, FL'  },
+  'SoFi Stadium':              { roof: 'partial',     altitude_m: 39,   lat: 33.9535, lng: -118.3392,city: 'Inglewood, CA'      },
+  'Lumen Field':               { roof: 'open',        altitude_m: 17,   lat: 47.5953, lng: -122.3316,city: 'Seattle, WA'        },
+  "Levi's Stadium":            { roof: 'open',        altitude_m: 12,   lat: 37.4032, lng: -121.9698,city: 'Santa Clara, CA'    },
+  'Lincoln Financial Field':   { roof: 'open',        altitude_m: 12,   lat: 39.9008, lng: -75.1675, city: 'Philadelphia, PA'   },
+  'Gillette Stadium':          { roof: 'open',        altitude_m: 84,   lat: 42.0909, lng: -71.2643, city: 'Foxborough, MA'     },
+  'Arrowhead Stadium':         { roof: 'open',        altitude_m: 248,  lat: 39.0489, lng: -94.4839, city: 'Kansas City, MO'    },
+  // ── Canada (2) ───────────────────────────────────────────
+  'BMO Field':                 { roof: 'open',        altitude_m: 76,   lat: 43.6332, lng: -79.4185, city: 'Toronto, ON'        },
+  'BC Place':                  { roof: 'closed_ac',   altitude_m: 0,    lat: 49.2768, lng: -123.1119,city: 'Vancouver, BC'      },
+  // ── Mexico (3) ───────────────────────────────────────────
+  'Estadio Azteca':            { roof: 'open',        altitude_m: 2240, lat: 19.3029, lng: -99.1505, city: 'Mexico City' },
+  'Estadio Akron':             { roof: 'retractable', altitude_m: 1565, lat: 20.6824, lng: -103.4622,city: 'Zapopan' },
+  'Estadio BBVA':              { roof: 'open',        altitude_m: 540,  lat: 25.6694, lng: -100.2444,city: 'Monterrey' },
+};
+
+// Resolve a fixture's stadium info — tolerant of name variations.
+function getStadiumInfo(fixture) {
+  if (!fixture || !fixture.venue) return null;
+  const direct = STADIUM_INFO[fixture.venue];
+  if (direct) return direct;
+  // Soft match — strip "Stadium" suffix, lowercase, etc.
+  const norm = fixture.venue.toLowerCase().replace(/\s+stadium$/i, '').replace(/[^\w]+/g, '');
+  for (const [name, info] of Object.entries(STADIUM_INFO)) {
+    const candidate = name.toLowerCase().replace(/\s+stadium$/i, '').replace(/[^\w]+/g, '');
+    if (candidate === norm) return info;
+  }
+  return null;
+}
+
+// Render the venue conditions strip — sits below the meta bar.
+// Shows roof type pill + altitude pill (when elevated) + heat warning
+// derived from forecast (when worldcup_weather.json is loaded).
+function renderVenueConditions(fixture) {
+  const info = getStadiumInfo(fixture);
+  if (!info) return '';
+
+  const roofMap = {
+    closed_ac:   { lbl: 'Indoor · Climate-controlled', icon: 'ti-snowflake',     cls: 'vc-roof-indoor' },
+    retractable: { lbl: 'Retractable roof',            icon: 'ti-arrow-bar-down',cls: 'vc-roof-retract' },
+    partial:     { lbl: 'Partial cover',               icon: 'ti-umbrella',      cls: 'vc-roof-partial' },
+    open:        { lbl: 'Open-air',                    icon: 'ti-sun',           cls: 'vc-roof-open'   },
+  };
+  const roof = roofMap[info.roof] || roofMap.open;
+
+  // Altitude pill — only show when meaningfully elevated.
+  let altitudePill = '';
+  if (info.altitude_m >= 1500) {
+    const ft = Math.round(info.altitude_m * 3.28084);
+    altitudePill = '<span class="vc-pill vc-altitude" title="Ball flies further, players tire faster">' +
+      '<i class="ti ti-mountain" aria-hidden="true"></i> High altitude · ' + ft.toLocaleString() + 'ft' +
+    '</span>';
+  } else if (info.altitude_m >= 500) {
+    const ft = Math.round(info.altitude_m * 3.28084);
+    altitudePill = '<span class="vc-pill vc-altitude-mod">' +
+      '<i class="ti ti-mountain" aria-hidden="true"></i> Moderate altitude · ' + ft.toLocaleString() + 'ft' +
+    '</span>';
+  }
+
+  // Phase 2 — weather pill (only for non-indoor venues with a loaded forecast)
+  let weatherPill = '';
+  if (info.roof !== 'closed_ac') {
+    const wx = getFixtureWeather(fixture, info);
+    if (wx) weatherPill = renderWeatherPill(wx, info);
+  }
+
+  return '<div class="venue-conditions">' +
+    '<span class="vc-pill ' + roof.cls + '">' +
+      '<i class="ti ' + roof.icon + '" aria-hidden="true"></i> ' + roof.lbl +
+    '</span>' +
+    altitudePill +
+    weatherPill +
+  '</div>';
+}
+
+// Returns weather for a fixture if Open-Meteo data is loaded for it.
+function getFixtureWeather(fixture, info) {
+  if (!fixture || !fixture.matchId) return null;
+  const wx = state.data && state.data.weather;
+  if (!wx || !wx.byMatch) return null;
+  return wx.byMatch[fixture.matchId] || wx.byMatch[String(fixture.matchId)] || null;
+}
+
+// Pill for the weather forecast.
+function renderWeatherPill(wx, info) {
+  const t = Math.round(wx.tempC);
+  const isHot       = t >= 28;
+  const isVeryHot   = t >= 32;
+  const isCold      = t <= 5;
+  const isWet       = (wx.precipitationProb || 0) >= 40;
+  const isWindy     = (wx.windKph || 0) >= 30;
+
+  // Pick the dominant icon
+  let icon = 'ti-sun';
+  if (isVeryHot)         icon = 'ti-temperature-sun';
+  else if (isHot)        icon = 'ti-sun';
+  else if (isWet)        icon = 'ti-cloud-rain';
+  else if (isCold)       icon = 'ti-snowflake';
+  else if (isWindy)      icon = 'ti-wind';
+  else                   icon = 'ti-cloud';
+
+  // Pill class — escalate styling with severity
+  const cls = isVeryHot ? 'vc-wx-very-hot'
+           : isHot       ? 'vc-wx-hot'
+           : isWet       ? 'vc-wx-wet'
+           : isCold      ? 'vc-wx-cold'
+           :               'vc-wx-mild';
+
+  // Build the text — temperature mandatory, then conditional descriptors
+  const parts = [t + '°C'];
+  if (isVeryHot)      parts.push('EXTREME HEAT');
+  else if (isHot)     parts.push('HOT');
+  if (isWet)          parts.push((wx.precipitationProb || 0) + '% rain');
+  if (isWindy)        parts.push(Math.round(wx.windKph) + 'kph wind');
+
+  // For retractable roofs note that FIFA may close it
+  const retractNote = (info.roof === 'retractable')
+    ? '<span class="vc-wx-note">· Roof may close</span>' : '';
+
+  return '<span class="vc-pill ' + cls + '" title="Open-Meteo forecast at kickoff">' +
+    '<i class="ti ' + icon + '" aria-hidden="true"></i> ' + parts.join(' · ') +
+    retractNote +
+  '</span>';
+}
 
 const STYLES = {
   'Possession Masters': { icon: 'ti-shape-2',          color: '#3b82f6', sub: 'CONTROL & SUFFOCATE' },
