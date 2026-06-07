@@ -1060,6 +1060,33 @@
     border-radius: 4px;
     line-height: 1.5;
   }
+  /* === ROTATION WARNING (depth chart body) ===
+     Shown when match stakes are low for this team — XI is likely to differ
+     from the lineup shown below. */
+  .dc-rotation-warn {
+    background: rgba(234,179,8,0.10);
+    border: 1px solid rgba(234,179,8,0.30);
+    border-left: 3px solid #facc15;
+    border-radius: 4px;
+    padding: 8px 10px;
+    margin-bottom: 10px;
+    display: flex; gap: 8px; align-items: flex-start;
+  }
+  .dc-rotation-warn > i {
+    color: #facc15; font-size: 16px;
+    flex-shrink: 0; margin-top: 2px;
+  }
+  .dc-rotation-warn-title {
+    font-family: var(--font-display); font-weight: 700;
+    font-size: 11px; letter-spacing: 0.4px;
+    color: #facc15; text-transform: uppercase;
+    margin-bottom: 2px;
+  }
+  .dc-rotation-warn-body {
+    font-family: var(--font-mono); font-size: 10px;
+    color: var(--text-2); line-height: 1.45;
+  }
+
   .dc-pitch {
     position: relative;
     width: 100%;
@@ -1710,6 +1737,82 @@
     color: var(--accent); font-style: italic;
     margin-top: 1px;
   }
+
+  /* === MATCH IMPORTANCE BANNER (above Match Markets, group-stage MD3 only) === */
+  .mks-banner {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--accent);
+    border-radius: 6px;
+    padding: 10px 12px;
+    margin-bottom: 10px;
+    font-family: var(--font-mono);
+  }
+  .mks-banner.mks-hot   { border-left-color: #f87171; }
+  .mks-banner.mks-warm  { border-left-color: #facc15; }
+  .mks-banner.mks-mixed { border-left-color: var(--accent); }
+  .mks-banner.mks-dead  { border-left-color: var(--text-3); opacity: 0.85; }
+
+  .mks-hdr {
+    display: flex; align-items: center; gap: 8px;
+    margin-bottom: 8px;
+  }
+  .mks-hdr i { color: var(--accent); font-size: 14px; }
+  .mks-hdr-lbl {
+    font-size: 9px; letter-spacing: 0.6px;
+    color: var(--text-2); font-weight: 600;
+    text-transform: uppercase;
+  }
+  .mks-intensity {
+    margin-left: auto;
+    font-size: 9px; letter-spacing: 0.5px;
+    color: var(--text-3);
+    text-transform: uppercase;
+  }
+  .mks-banner.mks-hot  .mks-intensity { color: #f87171; }
+  .mks-banner.mks-warm .mks-intensity { color: #facc15; }
+  .mks-banner.mks-dead .mks-intensity { color: var(--text-3); font-style: italic; }
+
+  .mks-sides {
+    display: grid; grid-template-columns: 1fr 1fr;
+    gap: 12px;
+    padding-top: 6px;
+    border-top: 1px dashed var(--border);
+  }
+  @media (max-width: 540px) {
+    .mks-sides { grid-template-columns: 1fr; gap: 8px; }
+  }
+  .mks-side {
+    display: flex; flex-direction: column; gap: 3px;
+    min-width: 0;
+  }
+  .mks-team {
+    display: flex; align-items: center; gap: 6px;
+    font-family: var(--font-display); font-weight: 700;
+    font-size: 12px; letter-spacing: 0.4px;
+    color: var(--text);
+  }
+  .mks-team .flag { font-size: 14px; line-height: 1; }
+  .mks-team-name { letter-spacing: 0.3px; }
+  .mks-rot-pill {
+    margin-left: auto;
+    display: inline-block;
+    background: rgba(234,179,8,0.18); color: #facc15;
+    border: 1px solid rgba(234,179,8,0.35);
+    font-family: var(--font-mono); font-size: 8px; font-weight: 700;
+    padding: 2px 5px; border-radius: 3px;
+    letter-spacing: 0.4px;
+  }
+  .mks-status {
+    font-size: 11px; color: var(--text-2);
+    padding-left: 20px;
+    line-height: 1.4;
+  }
+  .mks-status-must_win    { color: #f87171; font-weight: 600; }
+  .mks-status-need_draw   { color: var(--accent); }
+  .mks-status-qualified   { color: var(--text-3); font-style: italic; }
+  .mks-status-eliminated  { color: var(--text-3); font-style: italic; opacity: 0.75; }
+  .mks-status-open        { color: var(--text-2); }
 
   /* === MATCH MARKETS PANEL === */
   /* Collapsible markets group — visually matches the .tp-collapse pattern
@@ -3119,6 +3222,16 @@
   .pm-qb-pills {
     display: flex; flex-wrap: wrap; gap: 6px;
   }
+  .pm-qb-rot-warn {
+    background: rgba(234,179,8,0.10);
+    border: 1px solid rgba(234,179,8,0.30);
+    border-radius: 4px;
+    padding: 6px 8px;
+    margin-bottom: 8px;
+    font-family: var(--font-mono); font-size: 10px;
+    color: var(--text-2); line-height: 1.4;
+  }
+  .pm-qb-rot-warn i { color: #facc15; margin-right: 4px; }
   .pm-qb-pill {
     background: var(--surface);
     border: 1px solid var(--border);
@@ -6958,7 +7071,7 @@ function _dcGetMostRecentLineup(teamId) {
   return result;
 }
 
-function renderDepthChart(teamId, teamName) {
+function renderDepthChart(teamId, teamName, fixture) {
   const recent = _dcGetMostRecentLineup(teamId);
   // Empty state — render a placeholder note rather than nothing so the
   // user knows the feature exists and is waiting on data
@@ -7073,6 +7186,23 @@ function renderDepthChart(teamId, teamName) {
     '</summary>' +
     '<div class="tp-collapse-body">' +
       '<div class="tp-body-meta">' + escapeHtml(contextLine) + '</div>' +
+      (function () {
+        // Rotation-risk banner — only fires for MD3 group-stage matches where
+        // this team's stake score is low (already qualified or eliminated).
+        // The XI shown here is the LAST lineup; the actual MD3 XI may differ.
+        const rot = (typeof getRotationFlag === 'function') ? getRotationFlag(teamId, fixture) : null;
+        if (!rot || !rot.rotationLikely) return '';
+        return '<div class="dc-rotation-warn">' +
+          '<i class="ti ti-alert-triangle" aria-hidden="true"></i>' +
+          '<div>' +
+            '<div class="dc-rotation-warn-title">Rotation likely</div>' +
+            '<div class="dc-rotation-warn-body">' +
+              escapeHtml(rot.target) + '. The XI below may differ significantly — ' +
+              'expect rested starters and a more experimental lineup.' +
+            '</div>' +
+          '</div>' +
+        '</div>';
+      })() +
       '<div class="dc-pitch">' +
         '<div class="dc-pitch-bg"></div>' +
         tiles +
@@ -7954,6 +8084,16 @@ function renderMatchMarketsPanel(fixture) {
   const goalsStyleMult = styleMatchupMultiplier('goals', homeStyleName, awayStyleName);
   const goalsStageMult = isKO ? 0.95 : 1.00;
 
+  // Phase 3: motivation multiplier — group-stage MD3 only. Adjusts each
+  // team's λ based on their stake in the result. Motivated team scores
+  // slightly more; team with nothing to play for scores slightly less.
+  // Range ±10% from the centre stake (~0.6).
+  const _stakes = (typeof computeMatchStakes === 'function') ? computeMatchStakes(fixture) : null;
+  const homeMotivationMult = _stakes ? goalsMotivationMultiplier(_stakes.home) : 1.0;
+  const awayMotivationMult = _stakes ? goalsMotivationMultiplier(_stakes.away) : 1.0;
+  lambdaHome *= homeMotivationMult;
+  lambdaAway *= awayMotivationMult;
+
   let projGoals = (lambdaHome + lambdaAway) * goalsStyleMult * goalsStageMult;
   // H2H bias
   if (h2h && h2hWeight > 0) {
@@ -8092,7 +8232,11 @@ function renderMatchMarketsPanel(fixture) {
       refMultiplier = 1 + adj;
       refDeltaPct = Math.round(adj * 100);
     }
-    projCards = projCardsRaw * cardsStyleMult * cardsStageMult * cardsBlowoutMult * refMultiplier;
+    // Phase 3: cards intensity multiplier — group-stage MD3 only.
+    // Dead rubbers play out at lower intensity (fewer cards); must-win
+    // knockouts get full-blooded. Range 0.70–1.25 around centre stake 0.6.
+    const intensityMult = _stakes ? cardsIntensityMultiplier(_stakes.combinedStake) : 1.0;
+    projCards = projCardsRaw * cardsStyleMult * cardsStageMult * cardsBlowoutMult * refMultiplier * intensityMult;
   }
 
   // --- 5. BTTS (placeholder — computed below from Match Result matrix) ---
@@ -8470,6 +8614,7 @@ function renderMatchMarketsPanel(fixture) {
   }
 
   return '<div class="markets-panel">' +
+    renderMatchStakesBanner(fixture) +
     renderGroup('match',   'Match',   'ti-trophy',          groups.match,   true) +
     renderGroup('goals',   'Goals',   'ti-soccer-field',    groups.goals,   false) +
     renderGroup('corners', 'Corners', 'ti-flag-3',          groups.corners, false) +
@@ -10237,7 +10382,7 @@ function renderTeamPanel(teamId, teamName, oppId, oppName, isHome, fixture) {
     safe(() => renderRecentGames(teamId, teamName), 'RecentGames') +
     safe(() => renderOppDVP(oppId, oppName, teamId, teamName), 'DVP') +
     safe(() => renderShapeTrend(teamId, teamName), 'ShapeTrend') +
-    safe(() => renderDepthChart(teamId, teamName), 'DepthChart') +
+    safe(() => renderDepthChart(teamId, teamName, fixture), 'DepthChart') +
     safe(() => renderByTheHalves(teamId, teamName, oppId, oppName), 'ByTheHalves') +
     safe(() => renderFirstAndLast(teamId, teamName, oppId, oppName), 'FirstAndLast') +
     safe(() => renderPlayerSpotlight(teamId, teamName, oppId, oppName), 'PlayerSpotlight') +
@@ -12826,10 +12971,21 @@ function renderPmQuickBets(playerRows, oppId, oppName, p) {
   const playerId = p.playerId;
   const fid = (state.view && state.view.selectedFixtureId) || 'null';
 
+  // Phase 2: rotation risk haircut on player's confidence.
+  // If the player's team has low stakes for this fixture, drop the pill
+  // confidence by ~25% and show a warning. Doesn't suppress the pills
+  // entirely (the player MIGHT still start) — just calibrates the expectation.
+  const playerTeamId = playerRows && playerRows[0] && playerRows[0].teamId;
+  const fixture = state.data.fixtures && state.data.fixtures.fixtures &&
+    state.data.fixtures.fixtures.find(f => f.matchId === state.view.selectedFixtureId);
+  const rot = (typeof getRotationFlag === 'function' && playerTeamId && fixture)
+    ? getRotationFlag(playerTeamId, fixture) : null;
+  const haircut = (rot && rot.rotationLikely) ? 0.75 : 1.0;
+
   const pillHtml = picks.map(pick => {
     const mlbl = CMB_MARKET_LABELS[pick.market] || pick.market;
-    const conf = Math.round(pick.l10Rate * 100);
-    // Color band on confidence
+    const conf = Math.round(pick.l10Rate * 100 * haircut);
+    // Color band on confidence (after haircut, so warning is visible in the band too)
     const cls = conf >= 70 ? 'qb-strong' : conf >= 55 ? 'qb-lean' : 'qb-edge';
     // Display string
     let display;
@@ -12845,11 +13001,23 @@ function renderPmQuickBets(playerRows, oppId, oppName, p) {
     '</button>';
   }).join('');
 
+  // Rotation warning slips above the pills when the player's team has low
+  // stakes — gives the punter a sample-size caveat without removing the data.
+  const rotationWarn = (rot && rot.rotationLikely)
+    ? '<div class="pm-qb-rot-warn">' +
+        '<i class="ti ti-alert-triangle" aria-hidden="true"></i> ' +
+        'Low-stake match — ' + escapeHtml(rot.teamName) + ' may rest starters. ' +
+        'Confidence haircut applied; ' +
+        'check confirmed lineups ~1hr pre-kickoff.' +
+      '</div>'
+    : '';
+
   return '<div class="pm-quick-bets">' +
     '<div class="pm-qb-hdr">' +
       '<i class="ti ti-target-arrow" aria-hidden="true"></i> Top bet ideas' +
       (oppName ? '<span class="pm-qb-opp">vs ' + escapeHtml(oppName) + '</span>' : '') +
     '</div>' +
+    rotationWarn +
     '<div class="pm-qb-pills">' + pillHtml + '</div>' +
   '</div>';
 }
@@ -14151,6 +14319,250 @@ function computeGroupStandings() {
 
   _standingsCache = built;
   return built;
+}
+
+// ============================================================
+// MATCH IMPORTANCE / STAKES ENGINE
+// ============================================================
+// Group-stage only. For matchday 3, simulates all 9 outcome combinations
+// (THIS match × OTHER simultaneous match in the same group) to determine
+// each team's qualification stake. Returns a stakes object consumed by:
+//   - Phase 1: Stakes banner above Match Markets
+//   - Phase 2: Rotation risk in Depth Chart + props haircut
+//   - Phase 3: Projection multipliers on goals + cards
+//
+// For matchday 1 and 2 we return null (stakes are uniformly high — no useful
+// signal to surface).
+//
+// Heuristic for the "best 8 third place" cutoff: 3rd-place teams advance
+// if they have ≥3 points. This historical threshold is approximate but good
+// enough for stake classification (off by one usually shifts a team from
+// "open" to "must win" — both are still motivating).
+
+let _matchStakesCache = {};
+
+// Clear stakes cache when filter changes or new data lands
+function _clearMatchStakesCache() { _matchStakesCache = {}; }
+
+function computeMatchStakes(fixture) {
+  if (!fixture || !fixture.round) return null;
+  if (!/^Group Stage/.test(fixture.round)) return null;
+  // Only meaningful for matchday 3 — earlier matchdays have uniform stakes
+  if (!/3$/.test(fixture.round)) return null;
+  if (_matchStakesCache[fixture.matchId] !== undefined) return _matchStakesCache[fixture.matchId];
+
+  const groups = computeGroupStandings();
+  if (!groups) { _matchStakesCache[fixture.matchId] = null; return null; }
+  const group = groups.find(g => g.teams.includes(fixture.homeTeamId));
+  if (!group) { _matchStakesCache[fixture.matchId] = null; return null; }
+
+  const allFixtures = (state.data.fixtures && state.data.fixtures.fixtures) || [];
+  // Identify the OTHER MD3 fixture in this group (simultaneous kickoff)
+  const otherFx = allFixtures.find(f =>
+    f.round === 'Group Stage - 3' &&
+    f.matchId !== fixture.matchId &&
+    group.teams.includes(f.homeTeamId)
+  );
+  if (!otherFx) { _matchStakesCache[fixture.matchId] = null; return null; }
+
+  // Pre-MD3 standings (only FT matches before this point — group.standings
+  // already filters to FT). Clone records so we can mutate freely.
+  const baseStandings = group.standings.map(t => ({ ...t }));
+  const stIndex = {};
+  baseStandings.forEach(t => { stIndex[t.teamId] = t; });
+
+  // Heuristic 3rd-place cutoff for the 48-team format (8 of 12 third-place
+  // teams advance). Historically ~3 points suffices. We're conservative and
+  // count 3+ as "likely advance".
+  const THIRD_PLACE_THRESHOLD = 3;
+
+  function advancesFromGroup(simStandings, teamId) {
+    const idx = simStandings.findIndex(t => t.teamId === teamId);
+    if (idx < 0) return false;
+    if (idx < 2) return true;                                        // top 2 = always advances
+    if (idx === 2 && simStandings[idx].Pts >= THIRD_PLACE_THRESHOLD) return true;
+    return false;
+  }
+
+  function applyResult(rec, gf, ga) {
+    rec.P++;
+    rec.GF += gf; rec.GA += ga;
+    rec.GD = rec.GF - rec.GA;
+    if (gf > ga)      { rec.W++; rec.Pts += 3; }
+    else if (gf < ga) { rec.L++; }
+    else              { rec.D++; rec.Pts += 1; }
+  }
+
+  // For each (this outcome, other outcome) combo, simulate and check who advances.
+  // Outcomes: 'H' (home wins), 'D' (draw), 'A' (away wins). Representative scores:
+  //   H = 1-0, D = 0-0, A = 0-1. Specific margins ignored for now — captures the
+  //   qualifying-or-not bit cleanly without needing to model goal-difference races.
+  const outcomes = ['H', 'D', 'A'];
+  const homeAdvCount = { H: 0, D: 0, A: 0 };
+  const awayAdvCount = { H: 0, D: 0, A: 0 };
+  const otherHomeAdvCount = { H: 0, D: 0, A: 0 };
+  const otherAwayAdvCount = { H: 0, D: 0, A: 0 };
+
+  outcomes.forEach(thisO => {
+    outcomes.forEach(otherO => {
+      // Fresh copy of base standings
+      const sim = baseStandings.map(t => ({ ...t }));
+      const simIdx = {}; sim.forEach(t => { simIdx[t.teamId] = t; });
+      // Apply THIS fixture result
+      const [hs, as_] = thisO === 'H' ? [1,0] : thisO === 'A' ? [0,1] : [0,0];
+      applyResult(simIdx[fixture.homeTeamId], hs, as_);
+      applyResult(simIdx[fixture.awayTeamId], as_, hs);
+      // Apply OTHER fixture result
+      const [ohs, oas] = otherO === 'H' ? [1,0] : otherO === 'A' ? [0,1] : [0,0];
+      applyResult(simIdx[otherFx.homeTeamId], ohs, oas);
+      applyResult(simIdx[otherFx.awayTeamId], oas, ohs);
+      // Re-sort by FIFA tie-breakers (Pts → GD → GF → name)
+      sim.sort((a, b) => b.Pts - a.Pts || b.GD - a.GD || b.GF - a.GF || a.name.localeCompare(b.name));
+      // Record whether each team advances
+      if (advancesFromGroup(sim, fixture.homeTeamId))   homeAdvCount[thisO]++;
+      if (advancesFromGroup(sim, fixture.awayTeamId))   awayAdvCount[thisO]++;
+      if (advancesFromGroup(sim, otherFx.homeTeamId))   otherHomeAdvCount[otherO]++;
+      if (advancesFromGroup(sim, otherFx.awayTeamId))   otherAwayAdvCount[otherO]++;
+    });
+  });
+
+  // Classify each team's stake based on outcome-conditional advance rates
+  function classify(advByOutcome, side /* 'home' | 'away' */) {
+    // For "home", winning is 'H'; for "away", winning is 'A'
+    const winKey  = side === 'home' ? 'H' : 'A';
+    const lossKey = side === 'home' ? 'A' : 'H';
+    const win  = advByOutcome[winKey]  / 3;
+    const draw = advByOutcome['D']     / 3;
+    const loss = advByOutcome[lossKey] / 3;
+
+    let status, target, stakeScore;
+    if (win === 0 && draw === 0 && loss === 0) {
+      status = 'eliminated';
+      target = 'Already eliminated — pride only';
+      stakeScore = 0.10;
+    } else if (loss === 1) {
+      // Even losing advances — already through
+      status = 'qualified';
+      target = 'Already through — could rotate';
+      stakeScore = 0.15;
+    } else if (draw === 1 && win === 1 && loss < 1) {
+      // A draw secures it — comfortable position
+      status = 'need_draw';
+      target = 'Draw or better secures advance';
+      stakeScore = 0.60;
+    } else if (win === 1 && draw < 1) {
+      // Need to win
+      status = 'must_win';
+      target = draw === 0 ? 'Must win to advance' : 'Win to secure (draw uncertain)';
+      stakeScore = draw === 0 ? 1.00 : 0.90;
+    } else if (win > 0 && win > loss) {
+      // Open — winning helps significantly
+      status = 'open';
+      target = 'Win lifts chances · loss likely out';
+      stakeScore = 0.75;
+    } else if (win === 0 && draw === 0 && loss === 0) {
+      status = 'eliminated';
+      target = 'Cannot qualify';
+      stakeScore = 0.10;
+    } else {
+      status = 'open';
+      target = 'Result decides qualification';
+      stakeScore = 0.65;
+    }
+    return { status, target, stakeScore, winAdv: win, drawAdv: draw, lossAdv: loss };
+  }
+
+  const homeClass = classify(homeAdvCount, 'home');
+  const awayClass = classify(awayAdvCount, 'away');
+
+  const out = {
+    isMatchday3:  true,
+    isGroupStage: true,
+    groupLabel:   group.label,
+    home: {
+      teamId:          fixture.homeTeamId,
+      teamName:        fixture.homeTeam,
+      ...homeClass,
+      rotationLikely:  homeClass.stakeScore < 0.25,
+    },
+    away: {
+      teamId:          fixture.awayTeamId,
+      teamName:        fixture.awayTeam,
+      ...awayClass,
+      rotationLikely:  awayClass.stakeScore < 0.25,
+    },
+    combinedStake: (homeClass.stakeScore + awayClass.stakeScore) / 2,
+    deadRubber:    homeClass.stakeScore < 0.25 && awayClass.stakeScore < 0.25,
+  };
+
+  _matchStakesCache[fixture.matchId] = out;
+  return out;
+}
+
+// === Phase 1 UI: stakes banner above Match Markets ===
+function renderMatchStakesBanner(fixture) {
+  const stakes = computeMatchStakes(fixture);
+  if (!stakes) return '';
+  const pct = Math.round(stakes.combinedStake * 100);
+  const intensityLbl = stakes.deadRubber       ? 'DEAD RUBBER'
+                     : stakes.combinedStake >= 0.85 ? 'MUST WIN'
+                     : stakes.combinedStake >= 0.65 ? 'HIGH STAKES'
+                     : 'MIXED STAKES';
+  const intensityCls = stakes.deadRubber       ? 'mks-dead'
+                     : stakes.combinedStake >= 0.85 ? 'mks-hot'
+                     : stakes.combinedStake >= 0.65 ? 'mks-warm'
+                     : 'mks-mixed';
+
+  function sidePill(side, sideKey) {
+    const statusCls = 'mks-status-' + side.status;
+    const rotPill = side.rotationLikely
+      ? '<span class="mks-rot-pill" title="Stakes low — squad rotation likely">ROTATION RISK</span>'
+      : '';
+    return '<div class="mks-side mks-' + sideKey + '">' +
+      '<div class="mks-team">' +
+        '<span class="flag">' + flagFor(side.teamName) + '</span>' +
+        '<span class="mks-team-name">' + escapeHtml(side.teamName) + '</span>' +
+        rotPill +
+      '</div>' +
+      '<div class="mks-status ' + statusCls + '">' + escapeHtml(side.target) + '</div>' +
+    '</div>';
+  }
+
+  return '<div class="mks-banner ' + intensityCls + '">' +
+    '<div class="mks-hdr">' +
+      '<i class="ti ti-target-arrow" aria-hidden="true"></i>' +
+      '<span class="mks-hdr-lbl">Match Importance · Group ' + stakes.groupLabel + ' · Matchday 3</span>' +
+      '<span class="mks-intensity">' + intensityLbl + ' · ' + pct + '%</span>' +
+    '</div>' +
+    '<div class="mks-sides">' +
+      sidePill(stakes.home, 'home') +
+      sidePill(stakes.away, 'away') +
+    '</div>' +
+  '</div>';
+}
+
+// === Phase 2 helper: returns the per-team rotation flag for a given player ===
+// Used by Depth Chart + Top Bets pills + Check My Bet.
+function getRotationFlag(teamId, fixture) {
+  if (!fixture) return null;
+  const stakes = computeMatchStakes(fixture);
+  if (!stakes) return null;
+  if (stakes.home.teamId === teamId) return stakes.home;
+  if (stakes.away.teamId === teamId) return stakes.away;
+  return null;
+}
+
+// === Phase 3 helpers: motivation/intensity multipliers for projections ===
+// Goals: motivated team scores slightly more. Range ±10% based on stake.
+function goalsMotivationMultiplier(teamStakeSide) {
+  if (!teamStakeSide) return 1.0;
+  // Centre at 0.6 (typical stake); deviation × 0.10
+  return 1.0 + (teamStakeSide.stakeScore - 0.6) * 0.10;
+}
+// Cards: dead rubbers fewer cards, must-win KOs more cards. Range ±20%.
+function cardsIntensityMultiplier(combinedStake) {
+  // Centre at 0.6, deviation × 0.30
+  return Math.max(0.70, Math.min(1.25, 1.0 + (combinedStake - 0.6) * 0.30));
 }
 
 function renderTournamentStandings() {
