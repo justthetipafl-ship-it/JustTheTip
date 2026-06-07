@@ -105,6 +105,16 @@ jobs:
         run: |
           python ../../fetch_wc_events.py
 
+      - name: Fetch weather forecasts (Open-Meteo, no API key)
+        # Pulls hourly forecasts from Open-Meteo for all 16 host stadiums and
+        # picks the hour closest to each fixture's kickoff. Free, no key.
+        # Outputs worldcup_weather.json which the focused-fixture page reads
+        # to render the weather pill on outdoor venues.
+        continue-on-error: true
+        working-directory: wc/data
+        run: |
+          python ../../fetch_wc_weather.py --fixtures worldcup_fixtures_2026.json --out worldcup_weather.json
+
       - name: Commit data changes
         run: |
           git config user.name "JTT WC Bot"
@@ -120,6 +130,7 @@ jobs:
             wc/data/wc_lineups.json \
             wc/data/wc_referees.json \
             wc/data/worldcup_events.json \
+            wc/data/worldcup_weather.json \
             wc/data/version.txt
           do
             if [ -f "$f" ]; then
@@ -129,6 +140,7 @@ jobs:
           # Only commit if there are actual changes
           if git diff --staged --quiet; then
             echo "No data changes to commit."
-            
-     - name: Fetch weather forecasts
-     run: python fetch_wc_weather.py --fixtures data/worldcup_fixtures_2026.json --out data/worldcup_weather.json
+          else
+            git commit -m "chore: daily WC data refresh ($(date -u +%Y-%m-%d))"
+            git push
+          fi
