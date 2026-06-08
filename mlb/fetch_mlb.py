@@ -318,6 +318,62 @@ def team_recent(tid, date, season, n=8):
     games.sort(key=lambda x: x["date"], reverse=True)
     return games[:n]
 
+# ---------------------------------------------------------------- weather (Open-Meteo)
+def classify_weather(park, temp_f, wind_mph, wind_from_deg, precip_pct=0):
+    """Turn raw conditions into a wind out/in read + an HR multiplier.
+    Only open-air parks get a weather HR effect; roofed parks are treated neutral
+    (we don't know roof open/closed state from the feed)."""
+    roof = (park or {}).get("roof", "open")
+    if roof != "open":
+        return {"tempF": round(temp_f), "windMph": round(wind_mph),
+                "windFromDeg": round(wind_from_deg), "effect": "indoor",
+                "hrMult": 1.0, "precipPct": round(precip_pct),
+                "summary": "Roofed — weather neutral"}
+    cf = (park or {}).get("cfBearing", 0)
+    toward = (wind_from_deg + 180) % 360          # direction the wind blows toward
+    diff = abs((toward - cf + 180) % 360 - 180)    # angular gap to center field
+    effect = "out" if diff <= 45 else "in" if diff >= 135 else "cross"
+    w = min(wind_mph, 25)
+    mult = 1.0
+    if effect == "out":  mult += min(0.10, w * 0.006)
+    elif effect == "in": mult -= min(0.10, w * 0.006)
+    mult += max(-0.05, min(0.05, (temp_f - 70) * 0.003))   # warm air carries
+    mult = max(0.85, min(1.15, mult))
+    desc = {"out": "blowing out", "in": "blowing in", "cross": "crosswind"}[effect]
+    return {"tempF": round(temp_f), "windMph": round(wind_mph),
+            "windFromDeg": round(wind_from_deg), "effect": effect,
+            "hrMult": round(mult, 3), "precipPct": round(precip_pct),
+            "summary": f"{round(temp_f)}\u00b0F \u00b7 {round(wind_mph)} mph {desc}"}
+
+def fetch_weather(park, game_iso_utc):
+    """First-pitch forecast for a park via Open-Meteo (free, no key). Returns a
+    classified weather dict, or a neutral fallback on any failure."""
+    if not park or park.get("lat") is None:
+        return None
+    if park.get("roof") != "open":
+        return classify_weather(park, 72, 0, 0, 0)   # roofed: skip the call, stay neutral
+    try:
+        r = _session.get("https://api.open-meteo.com/v1/forecast", timeout=20, params={
+            "latitude": park["lat"], "longitude": park["lng"],
+            "hourly": "temperature_2m,wind_speed_10m,wind_direction_10m,precipitation_probability",
+            "temperature_unit": "fahrenheit", "wind_speed_unit": "mph",
+            "timezone": "GMT", "forecast_days": 3})
+        if r.status_code != 200:
+            return None
+        d = r.json().get("hourly", {})
+        times = d.get("time", [])
+        if not times:
+            return None
+        hour = (game_iso_utc or "")[:13]            # 'YYYY-MM-DDTHH'
+        idx = next((k for k, t in enumerate(times) if t[:13] == hour), 0)
+        temp = (d.get("temperature_2m") or [72])[idx]
+        wind = (d.get("wind_speed_10m") or [0])[idx]
+        wdir = (d.get("wind_direction_10m") or [0])[idx]
+        pp = (d.get("precipitation_probability") or [0])[idx] or 0
+        return classify_weather(park, f(temp, 72), f(wind, 0), f(wdir, 0), f(pp, 0))
+    except (requests.RequestException, ValueError, IndexError, KeyError):
+        return None
+
 # ---------------------------------------------------------------- build
 def main():
     date = sys.argv[1] if len(sys.argv) > 1 else \
@@ -364,6 +420,7 @@ def main():
                                          "throws": "R"}},
             "lines": None,  # Stats API has no odds; wire a book feed in Phase 2 if desired
             "lineups": {"away": [], "home": []},
+            "weather": fetch_weather(parks.get(TEAM_PARK.get(htid)), gd),
         })
         if asp.get("id"): starter_ids[asp["id"]] = htid   # this pitcher faces the HOME lineup
         if hsp.get("id"): starter_ids[hsp["id"]] = atid
