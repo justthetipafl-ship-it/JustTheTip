@@ -1,0 +1,31 @@
+name: JTT MLB daily data update
+
+# Refreshes mlb/data/mlb_bundle.json from the MLB Stats API.
+# Two runs/day: morning US (probable pitchers locked) + afternoon US (lineups posting).
+on:
+  schedule:
+    - cron: '0 13 * * *'   # 13:00 UTC  (~09:00 ET / ~23:00 AEST)
+    - cron: '0 22 * * *'   # 22:00 UTC  (~18:00 ET, lineups firming up)
+  workflow_dispatch:        # manual "Run workflow" button
+
+permissions:
+  contents: write
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install requests
+      - name: Fetch today's slate
+        run: python3 mlb/fetch_mlb.py
+      - name: Commit refreshed data
+        run: |
+          git config user.name  "jtt-bot"
+          git config user.email "[email protected]"
+          git add mlb/data/mlb_bundle.json mlb/data/version.txt
+          git diff --cached --quiet && echo "No changes to commit." || git commit -m "data: refresh MLB slate $(date -u +%Y-%m-%dT%H:%MZ)"
+          git push
