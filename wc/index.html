@@ -6193,48 +6193,77 @@ function collectCrewSignals(fixture) {
   if (goalsProj) {
     const pg = goalsProj.projGoals;
     if (pg >= 2.9) market.push({ tab: 'Goals Galore', icon: 'ti-flame', variant: 'over',
-      verdict: 'OVER 2.5', verdictClass: 'over', body: pg.toFixed(1) + ' goals projected', sub: 'Galore lean' });
+      verdict: 'OVER 2.5', verdictClass: 'over', body: pg.toFixed(1) + ' goals projected', sub: 'Galore lean',
+      bookMarket: 'goals', bookLine: 2.5, bookSide: 'over' });
     else if (pg <= 2.1) market.push({ tab: 'Goals Galore', icon: 'ti-bed', variant: 'under',
-      verdict: 'UNDER 2.5', verdictClass: 'under', body: pg.toFixed(1) + ' goals projected', sub: 'Bore draw lean' });
+      verdict: 'UNDER 2.5', verdictClass: 'under', body: pg.toFixed(1) + ' goals projected', sub: 'Bore draw lean',
+      bookMarket: 'goals', bookLine: 2.5, bookSide: 'under' });
   }
   const cornProj = projectFixtureCorners(fixture);
   if (cornProj) {
     const pc = cornProj.projCorners;
     if (pc >= 10.0) market.push({ tab: 'Corner Storm', icon: 'ti-flag-3', variant: 'over',
-      verdict: 'OVER 9.5', verdictClass: 'over', body: pc.toFixed(1) + ' corners projected', sub: 'Storm lean' });
+      verdict: 'OVER 9.5', verdictClass: 'over', body: pc.toFixed(1) + ' corners projected', sub: 'Storm lean',
+      bookMarket: 'corners', bookLine: 9.5, bookSide: 'over' });
     else if (pc <= 9.0) market.push({ tab: 'Corner Storm', icon: 'ti-wind', variant: 'under',
-      verdict: 'UNDER 9.5', verdictClass: 'under', body: pc.toFixed(1) + ' corners projected', sub: 'Flat flags lean' });
+      verdict: 'UNDER 9.5', verdictClass: 'under', body: pc.toFixed(1) + ' corners projected', sub: 'Flat flags lean',
+      bookMarket: 'corners', bookLine: 9.5, bookSide: 'under' });
   }
   const cardProj = projectFixtureCards(fixture);
   if (cardProj) {
     const pc = cardProj.projCards;
     if (pc >= 3.9) market.push({ tab: 'Spam Square', icon: 'ti-square-letter-x', variant: 'over',
-      verdict: 'OVER 3.5', verdictClass: 'over', body: pc.toFixed(1) + ' cards projected', sub: 'Card magnet' });
+      verdict: 'OVER 3.5', verdictClass: 'over', body: pc.toFixed(1) + ' cards projected', sub: 'Card magnet',
+      bookMarket: 'cards', bookLine: 3.5, bookSide: 'over' });
     else if (pc <= 3.1) market.push({ tab: 'Spam Square', icon: 'ti-shield-check', variant: 'under',
-      verdict: 'UNDER 3.5', verdictClass: 'under', body: pc.toFixed(1) + ' cards projected', sub: 'Clean game lean' });
+      verdict: 'UNDER 3.5', verdictClass: 'under', body: pc.toFixed(1) + ' cards projected', sub: 'Clean game lean',
+      bookMarket: 'cards', bookLine: 3.5, bookSide: 'under' });
   }
 
   // ---- PLAYER SIGNALS scoped to both teams, tagged by teamId ----
+  // bookMarket maps the signal to a Bet365 market key from the fetcher.
+  // bookLine is set for O/U markets; null for yes/no markets like anytimeGoal.
+  const STAT_TO_BOOK_MARKET = {
+    'goals':           'anytimeGoal',
+    'shots':           'shots',
+    'shotsOn':         'shotsOnTarget',
+    'shotsOnTarget':   'shotsOnTarget',
+    'assists':         'assists',
+    'foulsCommitted':  'foulsCommitted',
+    'saves':           'goalkeeperSaves',
+  };
+
   findLockedInCandidates(bothTeamIds, singleFixtureArr).forEach(c => {
     const line = c.stat === 'goals' ? 'Anytime Goal' : c.line + '+ ' + c.statName;
+    const bookMarket = STAT_TO_BOOK_MARKET[c.stat];
+    const bookLine = (c.stat === 'goals' || !bookMarket) ? null : c.line;
     pushTeam(c.teamId, { tab: 'Locked In', icon: 'ti-lock-square-rounded', variant: 'player',
       verdict: c.hits + '/5', verdictClass: 'over', playerId: c.playerId,
-      body: escapeHtml(c.name), sub: line });
+      body: escapeHtml(c.name), sub: line,
+      bookMarket, bookLine });
   });
   findOnARunCandidates(bothTeamIds, singleFixtureArr).forEach(c => {
     const line = c.stat === 'goals' ? 'Anytime Goal' : c.line + '+ ' + c.statName;
+    const bookMarket = STAT_TO_BOOK_MARKET[c.stat];
+    const bookLine = (c.stat === 'goals' || !bookMarket) ? null : c.line;
     pushTeam(c.teamId, { tab: 'On a Run', icon: 'ti-run', variant: 'amber',
       verdict: c.streak + ' STR', verdictClass: 'amber', playerId: c.playerId,
-      body: escapeHtml(c.name), sub: line });
+      body: escapeHtml(c.name), sub: line,
+      bookMarket, bookLine });
   });
   findFallingOffCandidates(bothTeamIds, singleFixtureArr).forEach(c => {
     // Surface the specific UNDER line when one was identified
     const lineSub = c.underLine != null
       ? (c.stat === 'goals' ? 'NO ATG' : 'UNDER ' + c.underLine + ' ' + c.statName) + ' in ' + c.underHits + '/5'
       : c.statName + ' fade';
+    // Falling Off is an UNDER signal — but bookmaker markets are usually
+    // priced as OVERs. Look up the over and let the badge reflect that line.
+    const bookMarket = STAT_TO_BOOK_MARKET[c.stat];
+    const bookLine = (c.stat === 'goals' || !bookMarket) ? null : c.underLine;
     pushTeam(c.teamId, { tab: 'Falling Off', icon: 'ti-trending-down', variant: 'under',
       verdict: '−' + c.dropPct.toFixed(0) + '%', verdictClass: 'under', playerId: c.playerId,
-      body: escapeHtml(c.name), sub: lineSub });
+      body: escapeHtml(c.name), sub: lineSub,
+      bookMarket, bookLine });
   });
   findTapInCandidates(bothTeamIds, singleFixtureArr).forEach(c => {
     // Verdict is now the ATG probability (the actual bettable signal), not raw conv%
@@ -6243,7 +6272,8 @@ function collectCrewSignals(fixture) {
       : c.conv.toFixed(0) + '% conv';
     pushTeam(c.teamId, { tab: 'Tap-Ins', icon: 'ti-hand-finger', variant: 'player',
       verdict, verdictClass: 'over', playerId: c.playerId,
-      body: escapeHtml(c.name), sub: c.conv.toFixed(0) + '% conv · ' + c.spg.toFixed(1) + 'sh/g' });
+      body: escapeHtml(c.name), sub: c.conv.toFixed(0) + '% conv · ' + c.spg.toFixed(1) + 'sh/g',
+      bookMarket: 'anytimeGoal', bookLine: null });
   });
   findPenaltyTakers(bothTeamIds, singleFixtureArr).forEach(c => {
     // Verdict shows the pen-scorer probability when we can compute it
@@ -6252,7 +6282,8 @@ function collectCrewSignals(fixture) {
       : c.conv.toFixed(0) + '%';
     pushTeam(c.teamId, { tab: 'Penalty Takers', icon: 'ti-crown', variant: 'gold',
       verdict, verdictClass: 'gold', playerId: c.playerId,
-      body: escapeHtml(c.name), sub: c.scored + '/' + c.total + ' pens · ' + c.conv.toFixed(0) + '% conv' });
+      body: escapeHtml(c.name), sub: c.scored + '/' + c.total + ' pens · ' + c.conv.toFixed(0) + '% conv',
+      bookMarket: 'scorePenalty', bookLine: null });
   });
   findFormAlerts(bothTeamIds, singleFixtureArr).forEach(c => {
     const sign = c.diff > 0 ? '+' : '';
@@ -6261,6 +6292,7 @@ function collectCrewSignals(fixture) {
     const sub = top
       ? 'L5 ' + (top.delta > 0 ? '+' : '') + (top.delta * 100).toFixed(0) + '% ' + top.label
       : 'L3 ' + c.l3Avg.toFixed(2) + ' rating';
+    // Form alerts are general-form not stat-specific — no clean bookmarket map.
     pushTeam(c.teamId, { tab: 'Form Alerts', icon: c.direction === 'hot' ? 'ti-flame' : 'ti-snowflake',
       variant: c.direction === 'hot' ? 'over' : 'under',
       verdict: (c.direction === 'hot' ? '🔥 ' : '❄️ ') + sign + c.diff.toFixed(2),
@@ -6272,9 +6304,11 @@ function collectCrewSignals(fixture) {
     const verdict = c.pick
       ? (c.pick.side === 'over' ? 'OVER ' : 'UNDER ') + c.pick.line
       : c.projection.toFixed(1);
+    const bookLine = c.pick ? c.pick.line : Math.round(c.projection - 0.5) + 0.5;
     pushTeam(c.teamId, { tab: 'Brick Wall', icon: 'ti-shield', variant: 'keeper',
       verdict, verdictClass: 'keeper', playerId: c.playerId,
-      body: escapeHtml(c.name) + ' (GK)', sub: c.projection.toFixed(1) + ' proj saves' });
+      body: escapeHtml(c.name) + ' (GK)', sub: c.projection.toFixed(1) + ' proj saves',
+      bookMarket: 'goalkeeperSaves', bookLine });
   });
 
   // First Goal — top opener candidate per team
@@ -6288,7 +6322,8 @@ function collectCrewSignals(fixture) {
         : '—';
       pushTeam(t.id, { tab: 'First Goal', icon: 'ti-target-arrow', variant: 'player',
         verdict, verdictClass: 'neutral', playerId: top.playerId,
-        body: escapeHtml(top.name), sub: top.spg.toFixed(1) + 'sh/g · ' + top.gpg.toFixed(2) + 'G/g' });
+        body: escapeHtml(top.name), sub: top.spg.toFixed(1) + 'sh/g · ' + top.gpg.toFixed(2) + 'G/g',
+        bookMarket: 'firstGoal', bookLine: null });
     }
   });
 
@@ -6302,9 +6337,11 @@ function collectCrewSignals(fixture) {
       const verdict = top.pick
         ? (top.pick.side === 'over' ? 'OVER ' : 'UNDER ') + top.pick.line + ' sh'
         : top.projectedShots.toFixed(1) + ' sh';
+      const bookLine = top.pick ? top.pick.line : null;
       pushTeam(t.id, { tab: 'Mismatch Alert', icon: 'ti-bolt', variant: 'amber',
         verdict, verdictClass: 'amber', playerId: top.playerId,
-        body: escapeHtml(top.name), sub: top.projectedShots.toFixed(1) + ' proj · ' + top.spg.toFixed(1) + 'sh/g avg' });
+        body: escapeHtml(top.name), sub: top.projectedShots.toFixed(1) + ' proj · ' + top.spg.toFixed(1) + 'sh/g avg',
+        bookMarket: 'shots', bookLine });
     }
   });
 
@@ -6342,10 +6379,31 @@ function renderSignalCard(s, matchId) {
   const clickAttr = s.playerId != null
     ? 'onclick="openPlayerModal(' + s.playerId + ',' + matchId + ')"'
     : '';
+  // Phase C: book odds badge. Looks up the market the signal flagged
+  // (e.g. 'anytimeGoal', 'foulsCommitted', 'goals', 'corners', 'cards').
+  // Returns empty string if no book line — never breaks the card.
+  let oddsBadge = '';
+  if (s.bookMarket && matchId) {
+    if (s.playerId) {
+      // Player-level signal — use the bookMarket against the player's odds
+      oddsBadge = renderSignalOddsBadge(s.playerId, matchId, s.bookMarket, s.bookLine);
+    } else {
+      // Market signal (Goals Galore, Corner Storm, Spam Square) — look up
+      // the match-level O/U line directly. Pick the side the signal called.
+      const matchData = getMatchOuLine(matchId, s.bookMarket, s.bookLine);
+      if (matchData) {
+        const side = s.bookSide || 'over';
+        const odd = side === 'under' ? matchData.under : matchData.over;
+        if (odd && odd > 1) {
+          oddsBadge = '<span class="sig-odds-badge" title="Bet365 line">$' + odd.toFixed(2) + '</span>';
+        }
+      }
+    }
+  }
   return '<div class="signal-card ' + (s.variant || '') + '" ' + clickAttr + '>' +
     '<div class="signal-card-top">' +
       '<span class="signal-tab-name"><i class="ti ' + s.icon + '" aria-hidden="true"></i>' + s.tab + '</span>' +
-      '<span class="signal-verdict ' + (s.verdictClass || 'neutral') + '">' + s.verdict + '</span>' +
+      '<span class="signal-verdict ' + (s.verdictClass || 'neutral') + '">' + s.verdict + oddsBadge + '</span>' +
     '</div>' +
     '<div class="signal-body">' + s.body + '</div>' +
     (s.sub ? '<div class="signal-sub">' + s.sub + '</div>' : '') +
@@ -11859,10 +11917,18 @@ function _cmbBuildPlayerList() {
     }
     map[r.playerId].apps++;
   });
-  // Sort by apps so search prioritizes regulars
+  // Sort by apps so search prioritizes regulars. Also pre-compute an
+  // accent-stripped lowercase searchKey for each player so the search
+  // can match basic-ASCII typing against names like "Müller" or
+  // "Lautaro Martínez" without users needing to type the diacritics.
   _cmbPlayerList = Object.values(map)
     .filter(p => p.apps >= 3)
     .sort((a, b) => b.apps - a.apps);
+  _cmbPlayerList.forEach(p => {
+    p.searchKey = (p.name || '')
+      .normalize('NFKD').replace(/[\u0300-\u036f]/g, '')
+      .toLowerCase();
+  });
   return _cmbPlayerList;
 }
 
@@ -11874,8 +11940,13 @@ window._cmbPlayerSearch = function(query) {
     return;
   }
   const list = _cmbBuildPlayerList();
-  const q = query.toLowerCase();
-  const matches = list.filter(p => p.name.toLowerCase().includes(q)).slice(0, 15);
+  // Normalise the query the same way searchKey was built — strip accents,
+  // lowercase — so "muller" matches "Müller" and "martinez" matches
+  // "Martínez".
+  const q = query
+    .normalize('NFKD').replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase();
+  const matches = list.filter(p => p.searchKey.includes(q)).slice(0, 15);
   if (!matches.length) {
     results.innerHTML = '<div class="cmb-search-row" style="color: var(--text-3); cursor: default">No matches</div>';
     results.classList.add('open');
@@ -14743,24 +14814,23 @@ function computeGroupStandings() {
 // by the auto-loader. Helpers below give UI code (Top Bets, CMB, Degen
 // Signals) a clean interface that tolerates missing data gracefully.
 //
-// Structure:
-//   state.data.odds.byMatch[fixtureId] = {
+// Structure (matches existing fetcher output shape):
+//   state.data.odds.byFixture[fixtureId] = {
 //     matchWinner: {home, draw, away},
 //     btts: {yes, no},
-//     goalsOU: {line, over, under, allLines: {1.5: {over, under}, ...}},
-//     ...
+//     goals: {line, over, under, allLines: {1.5: {over, under}, ...}},
+//     corners: {line, over, under, allLines},
+//     cards: {line, over, under, allLines},
+//     totalShots: {...}, totalTackles: {...}, offsides: {...},
 //     players: {
 //       lautaro_martinez: {
 //         name, normalisedKey, playerId, teamId, matchedName,
 //         anytimeGoal: 3.50, firstGoal: 6.00, lastGoal: 6.50,
 //         scorePenalty: 12.00,
 //         shots: {0.5: {over, under}, 1.5: {over, under}, ...},
-//         shotsOnTarget: {0.5: {over, under}, ...},
-//         assists: {0.5: {over, under}, ...},
-//         foulsCommitted: {0.5: {over, under}, ...},
-//         goalkeeperSaves: {2.5: {over, under}, ...}
-//       },
-//       ...
+//         shotsOnTarget: {...}, assists: {...},
+//         foulsCommitted: {...}, goalkeeperSaves: {...}
+//       }
 //     }
 //   }
 
@@ -14768,13 +14838,13 @@ function computeGroupStandings() {
 function _getOddsDoc(fixtureId) {
   if (!fixtureId) return null;
   const odds = state.data && state.data.odds;
-  if (!odds || !odds.byMatch) return null;
-  return odds.byMatch[fixtureId] || odds.byMatch[String(fixtureId)] || null;
+  if (!odds || !odds.byFixture) return null;
+  return odds.byFixture[fixtureId] || odds.byFixture[String(fixtureId)] || null;
 }
 
 // Match-level market lookup. Examples:
 //   getMatchOdds(fid, 'matchWinner') → {home: 1.85, draw: 3.40, away: 4.20}
-//   getMatchOdds(fid, 'goalsOU')     → {line: 2.5, over: 2.10, under: 1.70, allLines: {...}}
+//   getMatchOdds(fid, 'goals')       → {line: 2.5, over: 2.10, under: 1.70, allLines: {...}}
 function getMatchOdds(fixtureId, market) {
   const doc = _getOddsDoc(fixtureId);
   if (!doc || !doc[market]) return null;
