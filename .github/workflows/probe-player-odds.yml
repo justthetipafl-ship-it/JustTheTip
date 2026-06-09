@@ -1,0 +1,48 @@
+# Save this as: .github/workflows/probe-player-odds.yml
+#
+# One-off diagnostic to discover what bet markets API-Football returns
+# for WC fixtures. Manual trigger only — does not run on a schedule.
+#
+# USAGE:
+#   1. Commit this file + probe_wc_player_odds.py to the repo root
+#   2. Go to Actions tab → "Probe Player Odds" → "Run workflow"
+#   3. Optionally enter a specific fixture ID, or leave blank for default
+#   4. Click Run, wait ~30 seconds
+#   5. Open the run, expand the "Run probe" step to see the output
+#   6. Copy/paste the output back into chat
+#
+# WHEN TO DELETE:
+#   After we know what's available, delete this file and probe_wc_player_odds.py
+#   They're diagnostic-only — not part of the production pipeline.
+
+name: Probe Player Odds
+
+on:
+  workflow_dispatch:
+    inputs:
+      fixture_id:
+        description: 'WC fixture ID to probe (leave blank to use default samples)'
+        required: false
+        default: ''
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Run probe
+        env:
+          APIFOOTBALL_KEY: ${{ secrets.APIFOOTBALL_KEY }}
+        run: |
+          if [ -n "${{ inputs.fixture_id }}" ]; then
+            python probe_wc_player_odds.py --fixture ${{ inputs.fixture_id }}
+          else
+            python probe_wc_player_odds.py
+          fi
