@@ -1,222 +1,505 @@
 #!/usr/bin/env python3
 """
-fetch_wc_odds.py — pulls bookmaker odds for WC 2026 fixtures from API-Football.
+fetch_wc_odds.py — Bet365 odds fetcher for WC 2026 fixtures.
 
-WHAT IT DOES:
-    1. Calls /odds?league=1&season=2026&bookmaker=8 (Bet365 default).
-    2. Walks all pages, extracts the 5 markets we render on fixture cards:
-         matchWinner, btts, goals (O/U), corners (O/U), cards (O/U).
-    3. Writes worldcup_odds_2026.json + bumps version.txt for cache busting.
+Pulls match-level + team-level + player-level markets from API-Football
+(bookmaker_id 8 = Bet365) and writes a structured JSON consumed by JTT WC.
 
-WHY A SEPARATE FETCHER:
-    Odds change continuously and only the last 7 days are retained by the API
-    (no historical query). Player/team stats only need updating after games
-    finish — odds need refreshing more like daily (or hourly on matchday).
-    Keeping it separate lets the cron schedules diverge later.
+This is Phase A of the player-odds integration. The fetcher pulls
+extended markets but the UI doesn't surface them yet — that lands in
+Phases B (JS plumbing) and C (UI integration).
 
-USAGE:
+EXISTING MATCH-LEVEL KEYS (preserved exactly — do not change shape):
+    matchWinner, btts, goalsOU, cornersOU, cardsOU
+
+NEW TEAM-LEVEL KEYS (additive):
+    totalShotsOU, totalTacklesOU, offsidesOU, goalLine
+
+NEW PLAYER KEYS (additive, under `players` dict keyed by normalised name):
+    anytimeGoal, firstGoal, lastGoal, scorePenalty,
+    assists, shotsOnTarget, shots, foulsCommitted, goalkeeperSaves
+
+Plus `unmatchedPlayers` list of book player names we couldn't normalise
+against lineups (audit only — appears empty 99% of the time).
+
+Usage:
     export APIFOOTBALL_KEY=your_key
     python fetch_wc_odds.py
-    # or:
-    python fetch_wc_odds.py --key=your_key --bookmaker=8
-
-LIMITATIONS:
-    - API-Football only retains last 7 days of odds. To track line movement
-      over time we'd need to capture and store the deltas locally (not done
-      here — out of scope; this fetcher snapshots current state only).
-    - Coverage varies per league; if the WC league's /leagues coverage.odds
-      field is false, this will silently produce an empty JSON. Verify with:
-          curl ".../v3/leagues?id=1" -H "x-apisports-key: KEY"
-    - Bet IDs below are the documented ones at time of writing. If a bet
-      shows up with unexpected name/structure the fetcher logs a WARN and
-      continues — no hard fail.
+    # or with explicit paths
+    python fetch_wc_odds.py --fixtures data/worldcup_fixtures_2026.json \\
+                             --lineups  data/wc_lineups.json \\
+                             --out      data/worldcup_odds_2026.json
 """
-import os, sys, json, time, requests
-from datetime import datetime, timezone
+
+import argparse
+import datetime as dt
+import json
+import os
+import re
+import sys
+import time
+import unicodedata
 from pathlib import Path
+from urllib import request, parse, error
 
-BASE = "https://v3.football.api-sports.io"
-LEAGUE_ID = 1     # FIFA World Cup
-SEASON    = 2026
-DEFAULT_BOOKMAKER_ID = 8  # Bet365 in API-Football's catalog
+API_BASE = "https://v3.football.api-sports.io"
+BOOKMAKER_ID = 8  # Bet365
+LEAGUE_ID    = 1  # World Cup
+SEASON       = 2026
 
-# Bet ID → our normalised market key. Anything not in this map is ignored
-# (the API returns dozens of esoteric markets we don't surface in the UI).
+# Bet IDs we care about. Format: bet_id -> (json_key, parser_type)
+# parser_type drives how the API response values are parsed.
 MARKET_MAP = {
-    1:  "matchWinner",   # 1X2
-    5:  "goals",         # Goals Over/Under — multiple lines, we pick closest to 2.5
-    8:  "btts",          # Both Teams To Score
-    45: "corners",       # Corners Over/Under — verify ID against the API if empty
-    25: "cards",         # Cards Over/Under  — verify ID against the API if empty
+    # === EXISTING MATCH-LEVEL ===
+    1:   ("matchWinner",            "match_3way"),
+    8:   ("btts",                   "btts"),
+    5:   ("goalsOU",                "ou_simple"),       # "Goals Over/Under"
+    45:  ("cornersOU",              "ou_simple"),       # "Corners Over Under"
+    # Note: API-Football's "Total Cards" bet ID has historically varied;
+    # check the probe output and adjust if your existing fetcher uses a
+    # different ID. Common values: 52, 116, 138.
+    52:  ("cardsOU",                "ou_simple"),
+
+    # === NEW TEAM-LEVEL ===
+    211: ("totalShotsOU",           "ou_simple"),       # "Total Shots"
+    281: ("totalTacklesOU",         "ou_simple"),       # "Total Tackles"
+    164: ("offsidesOU",             "ou_simple"),       # "Offsides Total"
+    50:  ("goalLine",               "ou_simple"),       # Asian goals line
+
+    # === NEW PLAYER MARKETS — goalscorer ===
+    92:  ("anytimeGoal",            "player_single"),
+    93:  ("firstGoal",              "player_single"),
+    94:  ("lastGoal",               "player_single"),
+    99:  ("scorePenalty",           "player_single"),
+
+    # === NEW PLAYER MARKETS — stats (each player has an O/U line) ===
+    212: ("assists",                "player_ou"),       # "Player Assists"
+    242: ("shotsOnTarget",          "player_ou"),       # "Player Shots On Target"
+    266: ("foulsCommitted",         "player_ou"),       # "Player Fouls Committed"
+    267: ("goalkeeperSaves",        "player_ou"),       # "Goalkeeper Saves"
+
+    # === NEW PLAYER MARKETS — per-team aggregated shots ===
+    # These contain team-split player shots — we merge them into the shared
+    # `shots` and `shotsOnTarget` dicts per player.
+    240: ("_homePlayerShots",       "player_ou"),
+    241: ("_awayPlayerShots",       "player_ou"),
+    269: ("_homePlayerSOT",         "player_ou"),
+    275: ("_awayPlayerSOT",         "player_ou"),
+    276: ("_awayPlayerShotsTotal",  "player_ou"),
 }
 
-# Target lines for the O/U markets — we pick the line closest to these so the
-# display matches our projection cards (which use these defaults).
-TARGET_LINES = {"goals": 2.5, "corners": 9.5, "cards": 4.5}
 
-CACHE_DIR = Path("data/.cache/odds")
-CACHE_DIR.mkdir(parents=True, exist_ok=True)
+# ============================================================
+# NAME NORMALISER
+# ============================================================
+# Bet365 may return "L. Martinez" while lineups have "Lautaro Martínez".
+# We normalise to a stable key for matching across sources.
 
-
-def get_arg(name, default=None):
-    """Read --name=value from sys.argv."""
-    pre = f"--{name}="
-    for arg in sys.argv[1:]:
-        if arg.startswith(pre):
-            return arg[len(pre):]
-    return default
+def strip_accents(text: str) -> str:
+    nfkd = unicodedata.normalize("NFKD", text)
+    return "".join(c for c in nfkd if not unicodedata.combining(c))
 
 
-def get_key():
-    k = get_arg("key") or os.environ.get("APIFOOTBALL_KEY")
-    if not k:
-        sys.exit("ERROR: Set APIFOOTBALL_KEY env var or pass --key=XXX")
-    return k
+def normalise_player_key(name: str) -> str:
+    """Returns a stable, lowercase, ASCII key from a player name.
+
+    Examples:
+      'Lautaro Martinez'  -> 'lautaro_martinez'
+      'L. Martinez'       -> 'l_martinez'
+      'Cristiano Ronaldo' -> 'cristiano_ronaldo'
+    """
+    if not name:
+        return ""
+    s = strip_accents(name).lower().strip()
+    # Drop common honorifics / titles
+    s = re.sub(r"\b(jr|sr|i{1,3})\b\.?", "", s)
+    # Collapse whitespace + punctuation
+    s = re.sub(r"[^\w\s]", " ", s)
+    s = re.sub(r"\s+", " ", s).strip()
+    return s.replace(" ", "_")
 
 
-def api_get(params, key):
-    """GET /odds with the given params. Caches by parameter hash so reruns
-    within a session are cheap; cache key includes the date so daily reruns
-    still fetch fresh data."""
-    cache_key = "_".join(f"{k}-{v}" for k, v in sorted(params.items()))
-    cache_key = cache_key.replace("/", "_") + f"_{datetime.now().strftime('%Y%m%d')}.json"
-    cache_path = CACHE_DIR / cache_key
-    if cache_path.exists():
-        with cache_path.open() as f:
-            return json.load(f)
+def build_lineup_index(lineups_doc):
+    """Walks all lineups and builds two indexes for fuzzy player matching:
+        full_name_idx[normalised_full] -> {playerId, teamId, fullName}
+        last_name_idx[normalised_last] -> [list of candidates]
 
-    r = requests.get(BASE + "/odds", params=params,
-                     headers={"x-apisports-key": key}, timeout=30)
-    r.raise_for_status()
-    data = r.json()
-    errors = data.get("errors") or []
-    if errors:
-        # API returns errors as either list or dict — handle both
-        msg = errors if isinstance(errors, list) else list(errors.values())
-        if msg:
-            print(f"  API errors: {msg}")
-    with cache_path.open("w") as f:
-        json.dump(data, f)
-    return data
+    The list of candidates handles the case where 'Martinez' could match
+    multiple players — we fall through to first-initial matching for
+    those, and if still ambiguous, leave unmatched.
+    """
+    full_idx, last_idx = {}, {}
+    if not lineups_doc or "byMatch" not in lineups_doc:
+        return {"full": full_idx, "last": last_idx}
 
-
-def parse_bookmaker(bookmaker):
-    """Extract our 5 markets from one bookmaker's bet list. Returns a dict
-    keyed by our market names. Missing markets are simply absent from output."""
-    out = {}
-    for bet in bookmaker.get("bets", []):
-        key = MARKET_MAP.get(bet.get("id"))
-        if not key:
-            continue
-        values = bet.get("values", [])
-        try:
-            if key == "matchWinner":
-                d = {}
-                for v in values:
-                    if v["value"] == "Home": d["home"] = float(v["odd"])
-                    elif v["value"] == "Draw": d["draw"] = float(v["odd"])
-                    elif v["value"] == "Away": d["away"] = float(v["odd"])
-                if {"home", "draw", "away"}.issubset(d):
-                    out[key] = d
-            elif key == "btts":
-                d = {}
-                for v in values:
-                    if v["value"] == "Yes": d["yes"] = float(v["odd"])
-                    elif v["value"] == "No":  d["no"]  = float(v["odd"])
-                if "yes" in d and "no" in d:
-                    out[key] = d
-            elif key in ("goals", "corners", "cards"):
-                # Multiple lines — collect all into {line: {over, under}} then
-                # pick the one closest to our target line.
-                by_line = {}
-                for v in values:
-                    parts = v["value"].split()
-                    if len(parts) != 2: continue
-                    side, line_str = parts
-                    try:
-                        line = float(line_str)
-                    except ValueError:
-                        continue
-                    by_line.setdefault(line, {})[side.lower()] = float(v["odd"])
-                # Filter to lines that have BOTH over + under priced
-                complete = {ln: o for ln, o in by_line.items() if "over" in o and "under" in o}
-                if not complete:
+    for match_id, lineup in lineups_doc.get("byMatch", {}).items():
+        for side in ("home", "away"):
+            team = lineup.get(side) or {}
+            team_id = team.get("teamId")
+            for p in team.get("startXI", []) + team.get("substitutes", []):
+                pid = p.get("playerId")
+                full = p.get("name") or p.get("fullName") or ""
+                if not full or pid is None:
                     continue
-                target = TARGET_LINES[key]
-                best_line = min(complete.keys(), key=lambda ln: abs(ln - target))
-                out[key] = {"line": best_line,
-                            "over":  complete[best_line]["over"],
-                            "under": complete[best_line]["under"]}
-        except (KeyError, ValueError, TypeError) as e:
-            print(f"  WARN: skipped bet {bet.get('id')} '{bet.get('name')}': {e}")
+                full_norm = normalise_player_key(full)
+                full_idx[full_norm] = {"playerId": pid, "teamId": team_id, "fullName": full}
+                last_word = full_norm.split("_")[-1] if "_" in full_norm else full_norm
+                last_idx.setdefault(last_word, []).append({
+                    "playerId": pid, "teamId": team_id,
+                    "fullName": full, "fullNorm": full_norm,
+                })
+    return {"full": full_idx, "last": last_idx}
+
+
+def match_player_to_lineup(book_name, fixture_teams, lineup_idx):
+    """Returns {playerId, teamId, fullName} or None.
+
+    Match algorithm:
+      1. Direct normalised full-name match
+      2. First-initial + last-name match (e.g. 'L. Martinez' -> 'Lautaro Martinez')
+      3. Last-name only if uniquely belongs to one of the two fixture teams
+    """
+    if not book_name:
+        return None
+    norm = normalise_player_key(book_name)
+
+    if norm in lineup_idx["full"]:
+        return lineup_idx["full"][norm]
+
+    parts = norm.split("_")
+    if len(parts) >= 2 and len(parts[0]) == 1:
+        first_initial = parts[0]
+        last_word = parts[-1]
+        candidates = lineup_idx["last"].get(last_word, [])
+        filtered = [c for c in candidates if c["fullNorm"].startswith(first_initial)]
+        if fixture_teams and filtered:
+            filtered = [c for c in filtered if c["teamId"] in fixture_teams]
+        if len(filtered) == 1:
+            return {"playerId": filtered[0]["playerId"], "teamId": filtered[0]["teamId"],
+                    "fullName": filtered[0]["fullName"]}
+
+    if len(parts) >= 1:
+        last_word = parts[-1]
+        candidates = lineup_idx["last"].get(last_word, [])
+        if fixture_teams:
+            in_fixture = [c for c in candidates if c["teamId"] in fixture_teams]
+            if len(in_fixture) == 1:
+                return {"playerId": in_fixture[0]["playerId"], "teamId": in_fixture[0]["teamId"],
+                        "fullName": in_fixture[0]["fullName"]}
+
+    return None
+
+
+# ============================================================
+# PARSERS — one per market type
+# ============================================================
+
+def parse_match_3way(values):
+    out = {}
+    for v in values:
+        val = (v.get("value") or "").strip().lower()
+        odd = v.get("odd")
+        if not odd: continue
+        try: odd = float(odd)
+        except (TypeError, ValueError): continue
+        if val == "home":   out["home"]  = odd
+        elif val == "draw": out["draw"]  = odd
+        elif val == "away": out["away"]  = odd
+    return out if len(out) == 3 else None
+
+
+def parse_btts(values):
+    out = {}
+    for v in values:
+        val = (v.get("value") or "").strip().lower()
+        odd = v.get("odd")
+        if not odd: continue
+        try: odd = float(odd)
+        except (TypeError, ValueError): continue
+        if val == "yes": out["yes"] = odd
+        elif val == "no": out["no"]  = odd
+    return out if len(out) == 2 else None
+
+
+def parse_ou_simple(values):
+    """Parses any Over/Under market into {line, over, under}. Returns the
+    most-balanced line (closest over/under prices) plus allLines for
+    secondary access."""
+    by_line = {}
+    for v in values:
+        val = (v.get("value") or "").strip().lower()
+        odd = v.get("odd")
+        if not odd: continue
+        try: odd = float(odd)
+        except (TypeError, ValueError): continue
+        m = re.match(r"(over|under)\s+([\d.]+)", val)
+        if not m:
             continue
+        side, line_str = m.group(1), m.group(2)
+        try:
+            line = float(line_str)
+        except ValueError:
+            continue
+        by_line.setdefault(line, {})[side] = odd
+
+    complete = [(line, prices) for line, prices in by_line.items()
+                if "over" in prices and "under" in prices]
+    if not complete:
+        return None
+    def balance_score(prices):
+        return abs(prices["over"] - prices["under"])
+    best_line, best_prices = min(complete, key=lambda x: balance_score(x[1]))
+    return {"line": best_line, "over": best_prices["over"], "under": best_prices["under"],
+            "allLines": {str(l): p for l, p in by_line.items()}}
+
+
+def parse_player_single(values):
+    """For markets where each value is a player + odds with no line."""
+    out = {}
+    for v in values:
+        name = (v.get("value") or "").strip()
+        odd = v.get("odd")
+        if not name or not odd: continue
+        low = name.lower()
+        if low in ("no goalscorer", "any other player", "no first scorer",
+                   "no last scorer", "no goal", "no penalty"):
+            continue
+        try: odd = float(odd)
+        except (TypeError, ValueError): continue
+        key = normalise_player_key(name)
+        if key:
+            out[key] = {"name": name, "odd": odd}
     return out
 
 
-def main():
-    key = get_key()
-    bookmaker_id = int(get_arg("bookmaker", str(DEFAULT_BOOKMAKER_ID)))
-    print(f"Fetching WC 2026 odds — league={LEAGUE_ID}, season={SEASON}, bookmaker={bookmaker_id}")
-
-    by_fixture = {}
-    bookmaker_name = None
-    page = 1
-    total_pages = 1
-
-    while page <= total_pages:
-        params = {"league": LEAGUE_ID, "season": SEASON,
-                  "bookmaker": bookmaker_id, "page": page}
-        resp = api_get(params, key)
-        total_pages = resp.get("paging", {}).get("total", 1) or 1
-        rows = resp.get("response", []) or []
-        print(f"  page {page}/{total_pages} — {len(rows)} fixtures returned")
-
-        for row in rows:
-            fid = (row.get("fixture") or {}).get("id")
-            bks = row.get("bookmakers") or []
-            if not fid or not bks:
-                continue
-            # We requested a specific bookmaker so there should only be one,
-            # but be defensive in case the filter returns multiple.
-            chosen = next((b for b in bks if b.get("id") == bookmaker_id), bks[0])
-            bookmaker_name = bookmaker_name or chosen.get("name")
-            markets = parse_bookmaker(chosen)
-            if markets:
-                by_fixture[str(fid)] = markets
-        page += 1
-
-    print(f"\nCompiled odds for {len(by_fixture)} fixtures · bookmaker: {bookmaker_name}")
-
-    version_ms = int(time.time() * 1000)
-    # Append the current snapshot to the rolling history. We keep the last 48
-    # snapshots (~2 days at hourly cadence) so the HTML can compute the line
-    # drift between then-and-now without storing every reading forever.
-    MAX_SNAPSHOTS = 48
-    existing = {}
-    out_path = "worldcup_odds_2026.json"
-    if os.path.exists(out_path):
+def parse_player_ou(values):
+    """For player O/U markets where each value is 'Name Over/Under X.X'."""
+    out = {}
+    for v in values:
+        raw = (v.get("value") or "").strip()
+        odd = v.get("odd")
+        if not raw or not odd:
+            continue
+        try: odd = float(odd)
+        except (TypeError, ValueError): continue
+        m = re.match(r"^(.*?)\s+(over|under)\s+([\d.]+)\s*$", raw, re.IGNORECASE)
+        if not m:
+            continue
+        name = m.group(1).strip()
+        side = m.group(2).lower()
         try:
-            with open(out_path) as f:
-                existing = json.load(f) or {}
-        except (OSError, ValueError):
-            existing = {}
-    history = existing.get("history") or []
-    history.append({"ts": version_ms, "byFixture": by_fixture})
-    history = history[-MAX_SNAPSHOTS:]
+            line = float(m.group(3))
+        except ValueError:
+            continue
+        if not name:
+            continue
+        key = normalise_player_key(name)
+        if not key:
+            continue
+        if key not in out:
+            out[key] = {"name": name, "lines": {}}
+        line_str = str(line)
+        out[key]["lines"].setdefault(line_str, {})[side] = odd
+    return out
 
-    output = {
-        "fetchedAt":     datetime.now(timezone.utc).isoformat(timespec="seconds"),
-        "version":       version_ms,
-        "bookmakerName": bookmaker_name or "Bet365",
-        "byFixture":     by_fixture,     # current snapshot (what the UI reads by default)
-        "history":       history,        # rolling snapshots for line-movement display
+
+PARSER_MAP = {
+    "match_3way":     parse_match_3way,
+    "btts":           parse_btts,
+    "ou_simple":      parse_ou_simple,
+    "player_single":  parse_player_single,
+    "player_ou":      parse_player_ou,
+}
+
+
+# ============================================================
+# FETCH
+# ============================================================
+
+def api_call(endpoint, params, key, retries=2):
+    url = f"{API_BASE}/{endpoint}?{parse.urlencode(params)}"
+    req = request.Request(url, headers={"x-apisports-key": key})
+    for attempt in range(retries + 1):
+        try:
+            with request.urlopen(req, timeout=20) as r:
+                return json.loads(r.read())
+        except (error.URLError, error.HTTPError, TimeoutError) as e:
+            if attempt < retries:
+                time.sleep(1.5 * (attempt + 1))
+                continue
+            print(f"  ! API failed: {e}", file=sys.stderr)
+            return None
+
+
+def fetch_fixture_odds(fixture_id, fixture_teams, lineup_idx, key):
+    data = api_call("odds", {
+        "fixture": fixture_id, "bookmaker": BOOKMAKER_ID,
+        "league": LEAGUE_ID, "season": SEASON,
+    }, key)
+    if not data or not data.get("response"):
+        return None
+
+    bets_by_id = {}
+    for entry in data["response"]:
+        for bm in entry.get("bookmakers", []):
+            for bet in bm.get("bets", []):
+                bid = bet.get("id")
+                if bid is not None:
+                    bets_by_id[bid] = bet.get("values", [])
+
+    fixture_doc = {}
+    players_merged = {}
+    unmatched_names = set()
+
+    for bet_id, (json_key, parser_type) in MARKET_MAP.items():
+        if bet_id not in bets_by_id:
+            continue
+        values = bets_by_id[bet_id]
+        parser = PARSER_MAP.get(parser_type)
+        if not parser:
+            continue
+        parsed = parser(values)
+        if parsed is None:
+            continue
+
+        if parser_type in ("match_3way", "btts", "ou_simple"):
+            if not json_key.startswith("_"):
+                fixture_doc[json_key] = parsed
+
+        elif parser_type == "player_single":
+            for pkey, payload in parsed.items():
+                slot = players_merged.setdefault(pkey, {
+                    "name": payload["name"], "normalisedKey": pkey,
+                })
+                if not json_key.startswith("_"):
+                    slot[json_key] = payload["odd"]
+
+        elif parser_type == "player_ou":
+            public_market = {
+                "_homePlayerShots":      "shots",
+                "_awayPlayerShots":      "shots",
+                "_awayPlayerShotsTotal": "shots",
+                "_homePlayerSOT":        "shotsOnTarget",
+                "_awayPlayerSOT":        "shotsOnTarget",
+            }.get(json_key, json_key)
+            if public_market.startswith("_"):
+                continue
+            for pkey, payload in parsed.items():
+                slot = players_merged.setdefault(pkey, {
+                    "name": payload["name"], "normalisedKey": pkey,
+                })
+                slot.setdefault(public_market, {}).update(payload["lines"])
+
+    if players_merged:
+        players_out = {}
+        for pkey, payload in players_merged.items():
+            match = match_player_to_lineup(payload["name"], fixture_teams, lineup_idx)
+            if match:
+                payload["playerId"]    = match["playerId"]
+                payload["teamId"]      = match["teamId"]
+                payload["matchedName"] = match["fullName"]
+            else:
+                unmatched_names.add(payload["name"])
+            players_out[pkey] = payload
+        fixture_doc["players"] = players_out
+
+    if unmatched_names:
+        fixture_doc["unmatchedPlayers"] = sorted(unmatched_names)
+
+    return fixture_doc
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__,
+        formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--fixtures", default="worldcup_fixtures_2026.json")
+    ap.add_argument("--lineups",  default="wc_lineups.json")
+    ap.add_argument("--out",      default="worldcup_odds_2026.json")
+    ap.add_argument("--max-future-days", type=int, default=14)
+    ap.add_argument("--include-past", action="store_true")
+    args = ap.parse_args()
+
+    key = os.environ.get("APIFOOTBALL_KEY")
+    if not key:
+        print("ERROR: APIFOOTBALL_KEY env var not set", file=sys.stderr)
+        sys.exit(1)
+
+    fixtures_path = Path(args.fixtures)
+    if not fixtures_path.exists():
+        print(f"ERROR: fixtures file not found: {fixtures_path}", file=sys.stderr)
+        sys.exit(1)
+    with fixtures_path.open() as f:
+        fixtures_doc = json.load(f)
+    fixtures = fixtures_doc.get("fixtures", [])
+
+    lineup_idx = {"full": {}, "last": {}}
+    lineups_path = Path(args.lineups)
+    if lineups_path.exists():
+        try:
+            with lineups_path.open() as f:
+                lineups_doc = json.load(f)
+            lineup_idx = build_lineup_index(lineups_doc)
+            print(f"Loaded {len(lineup_idx['full'])} players from lineups for ID matching")
+        except (json.JSONDecodeError, OSError):
+            print(f"Could not parse lineups file, proceeding without ID matching")
+    else:
+        print(f"No lineups file at {lineups_path} — player odds will lack playerId matching")
+
+    now_ts = int(time.time())
+    cutoff_future = now_ts + (args.max_future_days * 86400)
+    eligible = []
+    for fx in fixtures:
+        ts = fx.get("timestamp", 0)
+        status = fx.get("status", "")
+        if status in ("FT", "AET", "PEN") and not args.include_past:
+            continue
+        if ts > cutoff_future:
+            continue
+        eligible.append(fx)
+
+    print(f"Fetching odds for {len(eligible)} upcoming fixtures …")
+    print(f"  ({len(fixtures) - len(eligible)} skipped: past or beyond {args.max_future_days}-day window)")
+
+    by_match = {}
+    fail_count = 0
+    for i, fx in enumerate(eligible, 1):
+        fid = fx["matchId"]
+        teams = (fx.get("homeTeamId"), fx.get("awayTeamId"))
+        print(f"  [{i}/{len(eligible)}] {fx.get('homeTeam')} vs {fx.get('awayTeam')} (id {fid})")
+        doc = fetch_fixture_odds(fid, teams, lineup_idx, key)
+        if doc:
+            by_match[str(fid)] = doc
+            n_players = len(doc.get("players", {}))
+            n_markets = len([k for k in doc.keys() if k not in ("players", "unmatchedPlayers")])
+            n_unmatched = len(doc.get("unmatchedPlayers", []))
+            extra = f" ({n_unmatched} unmatched)" if n_unmatched else ""
+            print(f"        ✓ {n_markets} match/team markets + {n_players} players{extra}")
+        else:
+            fail_count += 1
+            print(f"        ✗ no odds returned")
+        time.sleep(0.4)
+
+    out_doc = {
+        "fetchedAt":   dt.datetime.utcnow().isoformat() + "Z",
+        "source":      "api-football",
+        "bookmaker":   "Bet365",
+        "bookmakerId": BOOKMAKER_ID,
+        "byMatch":     by_match,
     }
-    with open(out_path, "w") as f:
-        json.dump(output, f, separators=(",", ":"))  # compact — history grows
-    # Bump version.txt so the HTML cache-busts the odds (and any other) file
-    with open("version.txt", "w") as f:
-        f.write(str(version_ms))
-    print(f"Saved {out_path} ({len(history)} snapshots in history) and bumped version.txt")
+
+    out_path = Path(args.out)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = out_path.with_suffix(out_path.suffix + ".tmp")
+    with tmp_path.open("w") as f:
+        json.dump(out_doc, f, separators=(",", ":"))
+    tmp_path.replace(out_path)
+
+    total_unmatched = sum(len(d.get("unmatchedPlayers", [])) for d in by_match.values())
+    print(f"\n✓ Wrote {len(by_match)} fixture odds to {out_path}")
+    print(f"  Failures: {fail_count} fixtures returned no odds")
+    if total_unmatched:
+        print(f"  Unmatched players across all fixtures: {total_unmatched}")
+        print(f"  (See `unmatchedPlayers` arrays in the JSON for audit)")
 
 
 if __name__ == "__main__":
