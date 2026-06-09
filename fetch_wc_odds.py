@@ -151,6 +151,61 @@ def build_lineup_index(lineups_doc):
     return {"full": full_idx, "last": last_idx}
 
 
+def build_log_index(logs_doc, existing_idx=None):
+    """Walks player game logs to build a fallback player matching index.
+
+    Used when wc_lineups.json is empty (pre-tournament — squads haven't
+    been announced yet). The logs file has every player who's appeared
+    for these national teams in qualifiers + recent matches, so it's a
+    near-complete source of WC-eligible names.
+
+    If existing_idx is provided, MERGES new entries into it rather than
+    overwriting — keeps lineup-matched players preferred when available.
+    """
+    if existing_idx is None:
+        full_idx, last_idx = {}, {}
+    else:
+        full_idx = existing_idx["full"]
+        last_idx = existing_idx["last"]
+
+    if not logs_doc:
+        return {"full": full_idx, "last": last_idx}
+
+    # The logs file shape: { "rows": [ {playerId, playerName, teamId, ...}, ... ] }
+    rows = logs_doc.get("rows", [])
+    if not isinstance(rows, list):
+        return {"full": full_idx, "last": last_idx}
+
+    seen = set()  # (playerId, teamId) tuples — dedupe across many rows
+    added = 0
+    for r in rows:
+        pid = r.get("playerId")
+        name = r.get("playerName") or r.get("name") or ""
+        team_id = r.get("teamId")
+        if pid is None or not name:
+            continue
+        key = (pid, team_id)
+        if key in seen:
+            continue
+        seen.add(key)
+        full_norm = normalise_player_key(name)
+        # Don't overwrite a lineup-matched entry (lineups are more authoritative)
+        if full_norm and full_norm not in full_idx:
+            full_idx[full_norm] = {"playerId": pid, "teamId": team_id, "fullName": name}
+            added += 1
+        last_word = full_norm.split("_")[-1] if "_" in full_norm else full_norm
+        if last_word:
+            existing = last_idx.setdefault(last_word, [])
+            # Dedupe in the last-name index too
+            if not any(c["playerId"] == pid for c in existing):
+                existing.append({
+                    "playerId": pid, "teamId": team_id,
+                    "fullName": name, "fullNorm": full_norm,
+                })
+    print(f"  Added {added} players from logs to player index")
+    return {"full": full_idx, "last": last_idx}
+
+
 def match_player_to_lineup(book_name, fixture_teams, lineup_idx):
     """Returns {playerId, teamId, fullName} or None.
 
@@ -414,6 +469,9 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--fixtures", default="worldcup_fixtures_2026.json")
     ap.add_argument("--lineups",  default="wc_lineups.json")
+    ap.add_argument("--logs",     default="worldcup_intl_logs.json",
+                    help="Player game logs JSON — used as fallback for player ID "
+                         "matching when lineups are empty (e.g. pre-tournament).")
     ap.add_argument("--out",      default="worldcup_odds_2026.json")
     ap.add_argument("--max-future-days", type=int, default=14)
     ap.add_argument("--include-past", action="store_true")
@@ -432,6 +490,10 @@ def main():
         fixtures_doc = json.load(f)
     fixtures = fixtures_doc.get("fixtures", [])
 
+    # === Build player matching index — TWO sources ===
+    # 1. Lineups (preferred — authoritative once squads are confirmed)
+    # 2. Player logs (fallback — every player who's appeared for these
+    #    national teams in qualifiers/recent matches)
     lineup_idx = {"full": {}, "last": {}}
     lineups_path = Path(args.lineups)
     if lineups_path.exists():
@@ -441,9 +503,22 @@ def main():
             lineup_idx = build_lineup_index(lineups_doc)
             print(f"Loaded {len(lineup_idx['full'])} players from lineups for ID matching")
         except (json.JSONDecodeError, OSError):
-            print(f"Could not parse lineups file, proceeding without ID matching")
+            print(f"Could not parse lineups file, will rely on logs fallback")
     else:
-        print(f"No lineups file at {lineups_path} — player odds will lack playerId matching")
+        print(f"No lineups file at {lineups_path} — will rely on logs fallback")
+
+    # Always layer in the logs (does nothing if logs file is missing)
+    logs_path = Path(args.logs)
+    if logs_path.exists():
+        try:
+            with logs_path.open() as f:
+                logs_doc = json.load(f)
+            lineup_idx = build_log_index(logs_doc, existing_idx=lineup_idx)
+            print(f"Player index now contains {len(lineup_idx['full'])} unique players")
+        except (json.JSONDecodeError, OSError) as e:
+            print(f"Could not parse logs file ({e}) — using lineup data only")
+    else:
+        print(f"No logs file at {logs_path} — player matching may be incomplete")
 
     now_ts = int(time.time())
     cutoff_future = now_ts + (args.max_future_days * 86400)
@@ -480,7 +555,7 @@ def main():
         time.sleep(0.4)
 
     out_doc = {
-        "fetchedAt":   dt.datetime.utcnow().isoformat() + "Z",
+        "fetchedAt":   dt.datetime.now(dt.timezone.utc).isoformat().replace("+00:00", "Z"),
         "source":      "api-football",
         "bookmaker":   "Bet365",
         "bookmakerId": BOOKMAKER_ID,
