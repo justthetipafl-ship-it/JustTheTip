@@ -538,6 +538,14 @@ def main():
 
     by_match = {}
     fail_count = 0
+    # Track coverage of each player market across fixtures, so we can see at
+    # the end of the run which markets Bet365 has posted broadly vs which
+    # ones haven't been posted yet (typical pre-tournament: only goalscorer
+    # markets posted; detailed player O/U lands ~48h before kickoff).
+    market_coverage = {}  # market_name -> count of fixtures where it appeared
+    market_player_count = {}  # market_name -> total player rows across all fixtures
+    team_market_coverage = {}  # match/team-level markets too
+
     for i, fx in enumerate(eligible, 1):
         fid = fx["matchId"]
         teams = (fx.get("homeTeamId"), fx.get("awayTeamId"))
@@ -550,6 +558,22 @@ def main():
             n_unmatched = len(doc.get("unmatchedPlayers", []))
             extra = f" ({n_unmatched} unmatched)" if n_unmatched else ""
             print(f"        ✓ {n_markets} match/team markets + {n_players} players{extra}")
+            # Tally team-level market coverage
+            for k in doc.keys():
+                if k in ("players", "unmatchedPlayers"):
+                    continue
+                team_market_coverage[k] = team_market_coverage.get(k, 0) + 1
+            # Tally player market coverage — count fixtures that posted each market
+            # and total player-rows for that market
+            posted_in_this_fixture = set()
+            for pkey, payload in (doc.get("players") or {}).items():
+                for k in payload.keys():
+                    if k in ("name", "normalisedKey", "playerId", "teamId", "matchedName"):
+                        continue
+                    posted_in_this_fixture.add(k)
+                    market_player_count[k] = market_player_count.get(k, 0) + 1
+            for k in posted_in_this_fixture:
+                market_coverage[k] = market_coverage.get(k, 0) + 1
         else:
             fail_count += 1
             print(f"        ✗ no odds returned")
@@ -576,6 +600,34 @@ def main():
     if total_unmatched:
         print(f"  Unmatched players across all fixtures: {total_unmatched}")
         print(f"  (See `unmatchedPlayers` arrays in the JSON for audit)")
+
+    # ===== MARKET COVERAGE REPORT =====
+    # Shows which markets Bet365 has posted broadly vs sparsely. Use this to
+    # diagnose missing Degen Signal badges — if e.g. shotsOnTarget shows
+    # 8/44 fixtures, that's a Bet365 timing issue (markets land ~48h before
+    # kickoff), not a fetcher bug.
+    total_fx = len(by_match)
+    if total_fx:
+        print(f"\n=== MARKET COVERAGE ACROSS {total_fx} FIXTURES ===")
+        print(f"\n  Team / match markets:")
+        for k in sorted(team_market_coverage.keys()):
+            n = team_market_coverage[k]
+            pct = (n / total_fx) * 100
+            bar = '█' * int(pct / 5)
+            print(f"    {k:20s} {n:3d}/{total_fx} ({pct:5.1f}%) {bar}")
+        print(f"\n  Player markets (fixtures w/ ≥1 player posted):")
+        if not market_coverage:
+            print(f"    (none — Bet365 hasn't posted any player markets yet)")
+        else:
+            for k in sorted(market_coverage.keys()):
+                n = market_coverage[k]
+                pct = (n / total_fx) * 100
+                n_players = market_player_count.get(k, 0)
+                avg_players = n_players / n if n else 0
+                bar = '█' * int(pct / 5)
+                print(f"    {k:20s} {n:3d}/{total_fx} ({pct:5.1f}%) {bar}  "
+                      f"avg {avg_players:.1f} players/fixture")
+        print()
 
 
 if __name__ == "__main__":
