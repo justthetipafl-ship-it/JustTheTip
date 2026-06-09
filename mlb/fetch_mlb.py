@@ -10,7 +10,7 @@ only (no Statcast). Run locally:  python3 fetch_mlb.py [YYYY-MM-DD]
 
 Dependency: requests  (pip install requests)
 """
-import sys, os, json, time, datetime
+import sys, os, json, time, datetime, csv, io
 import requests
 
 BASE = "https://statsapi.mlb.com/api/v1"
@@ -374,6 +374,54 @@ def fetch_weather(park, game_iso_utc):
     except (requests.RequestException, ValueError, IndexError, KeyError):
         return None
 
+# ---------------------------------------------------------------- Statcast (Baseball Savant)
+def _savant_csv(url):
+    try:
+        r = _session.get(url, timeout=40, headers={"User-Agent": "Mozilla/5.0 (JTT MLB)"})
+        if r.status_code != 200 or not r.text:
+            return []
+        return list(csv.DictReader(io.StringIO(r.text)))
+    except (requests.RequestException, csv.Error):
+        return []
+
+def load_statcast(year):
+    """Whole-league quality-of-contact pulls (2 CSVs x batter/pitcher, no key).
+    Keyed by MLBAM player_id (== our player ids). Returns (batters, pitchers)."""
+    bat, pit = {}, {}
+    def gv(row, *keys):
+        for k in keys:
+            if k in row and row[k] not in (None, "", " "):
+                return row[k]
+        return None
+    def fnum(x):
+        try: return round(float(x), 3)
+        except (TypeError, ValueError): return None
+    # expected stats: xBA / xSLG / xwOBA (+ actuals for the luck gap)
+    for typ, store in (("batter", bat), ("pitcher", pit)):
+        for row in _savant_csv(f"https://baseballsavant.mlb.com/leaderboard/expected_statistics"
+                               f"?type={typ}&year={year}&position=&team=&min=1&csv=true"):
+            pid = gv(row, "player_id", "playerid", "id")
+            try: pid = int(pid)
+            except (TypeError, ValueError): continue
+            store.setdefault(pid, {}).update({
+                "xba": fnum(gv(row, "est_ba")), "ba": fnum(gv(row, "ba")),
+                "xslg": fnum(gv(row, "est_slg")), "slg": fnum(gv(row, "slg")),
+                "xwoba": fnum(gv(row, "est_woba")), "woba": fnum(gv(row, "woba")),
+            })
+    # exit velocity / barrels
+    for typ, store in (("batter", bat), ("pitcher", pit)):
+        for row in _savant_csv(f"https://baseballsavant.mlb.com/leaderboard/statcast"
+                               f"?type={typ}&year={year}&position=&team=&min=10&csv=true"):
+            pid = gv(row, "player_id", "playerid", "id")
+            try: pid = int(pid)
+            except (TypeError, ValueError): continue
+            store.setdefault(pid, {}).update({
+                "barrelPct": fnum(gv(row, "brl_percent", "barrel_batted_rate")),
+                "hardHitPct": fnum(gv(row, "ev95percent", "hard_hit_percent")),
+                "ev": fnum(gv(row, "avg_hit_speed", "exit_velocity_avg")),
+            })
+    return {k: v for k, v in bat.items() if v}, {k: v for k, v in pit.items() if v}
+
 # ---------------------------------------------------------------- build
 def main():
     date = sys.argv[1] if len(sys.argv) > 1 else \
@@ -387,6 +435,10 @@ def main():
     teams = load_teams()
     idmap = {tid: t["abbr"] for tid, t in teams.items()}
     TEAM_ABBR.update(idmap)
+
+    print("[JTT MLB] loading Statcast (Baseball Savant)…")
+    STATCAST_BAT, STATCAST_PIT = load_statcast(season)
+    print(f"[JTT MLB]   statcast: {len(STATCAST_BAT)} batters, {len(STATCAST_PIT)} pitchers")
 
     games = load_schedule(date)
     print(f"[JTT MLB] {len(games)} games on schedule")
@@ -478,6 +530,7 @@ def main():
                 "splitVsR": splits["splitVsR"] or seas_eq,
                 "gameLog": gamelog_bat(pid, season, idmap),
                 "bvp": {},
+                "statcast": STATCAST_BAT.get(pid),
             }
             if opp_pid:
                 v = bvp(pid, opp_pid, season)
@@ -513,6 +566,7 @@ def main():
             "splitVsL": splits["splitVsL"] or seas_eq,
             "splitVsR": splits["splitVsR"] or seas_eq,
             "gameLog": gamelog_pit(pid, season, idmap),
+            "statcast": STATCAST_PIT.get(pid),
         }
     print(f"[JTT MLB]   {len(pitchers)} probable starters profiled")
 
