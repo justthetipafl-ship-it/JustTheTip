@@ -1646,6 +1646,43 @@
   .cmb-verdict.lean-no    { background: rgba(248,113,113,0.08); color: #fca5a5; border: 1px solid rgba(248,113,113,0.2); }
   .cmb-verdict.strong-no  { background: rgba(248,113,113,0.15); color: #f87171; border: 1px solid rgba(248,113,113,0.3); }
 
+  /* Phase C: book odds comparison strip — sits between verdict and KPI grid */
+  .cmb-odds-compare {
+    display: grid; grid-template-columns: repeat(3, 1fr);
+    gap: 6px;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 8px 10px;
+    margin: 0 0 12px;
+  }
+  .cmb-oc-col {
+    text-align: center;
+    padding: 4px;
+  }
+  .cmb-oc-lbl {
+    font-family: var(--font-mono); font-size: 9px;
+    color: var(--text-3); letter-spacing: 0.6px;
+    text-transform: uppercase;
+    margin-bottom: 3px;
+  }
+  .cmb-oc-val {
+    font-family: var(--font-display); font-weight: 700;
+    font-size: 16px;
+    color: var(--text);
+    line-height: 1.1;
+  }
+  .cmb-oc-sub {
+    font-family: var(--font-mono); font-size: 9px;
+    color: var(--text-3);
+    margin-top: 2px;
+  }
+  .cmb-oc-edge.pos .cmb-oc-val { color: #4ade80; }
+  .cmb-oc-edge.pos { background: rgba(74,222,128,0.06); border-radius: 4px; }
+  .cmb-oc-edge.neg .cmb-oc-val { color: #f87171; }
+  .cmb-oc-edge.neg { background: rgba(239,68,68,0.05); border-radius: 4px; }
+  .cmb-oc-edge.mid .cmb-oc-val { color: var(--text-2); }
+
   .cmb-kpi-grid {
     display: grid; grid-template-columns: repeat(3, 1fr);
     gap: 6px;
@@ -2563,6 +2600,22 @@
   .conf-pill.under-lean   { background: rgba(239, 68, 68, 0.10); color: #fca5a5; }
   .conf-pill.neutral      { background: var(--surface-3); color: var(--text-3); }
 
+  /* === Phase C: signal odds badge (Bet365 line on Degen Signal cards) ===
+     Sits next to the strength/conf pill in the li-meta row. Tiny, monospace,
+     blends with the existing pill family. Border colour subtle accent. */
+  .sig-odds-badge {
+    display: inline-block;
+    margin-left: 4px;
+    padding: 2px 6px;
+    border-radius: 3px;
+    font-family: var(--font-mono); font-size: 9px; font-weight: 700;
+    letter-spacing: 0.3px;
+    color: #facc15;
+    background: rgba(234,179,8,0.10);
+    border: 1px solid rgba(234,179,8,0.30);
+    white-space: nowrap;
+  }
+
   /* Opponent-context pill — flags whether the upcoming opponent is "leaky"
      (favourable for overs) or "tight" (warning) for the player's position. */
   .opp-ctx-pill {
@@ -3343,6 +3396,33 @@
   }
   .pm-qb-pill.qb-lean .pm-qb-rate { color: #eab308; background: rgba(234,179,8,0.15); }
   .pm-qb-pill.qb-edge .pm-qb-rate { color: var(--text-2); background: var(--surface-2); }
+
+  /* Book odds + edge display inside a Top Bet pill (Phase C) */
+  .pm-qb-book {
+    display: inline-flex; align-items: center; gap: 4px;
+    margin-left: 6px; padding: 2px 6px;
+    border-radius: 3px;
+    font-family: var(--font-mono); font-size: 10px; font-weight: 600;
+    color: var(--text-3);
+    background: rgba(255,255,255,0.04);
+    border: 1px solid var(--border);
+    white-space: nowrap;
+  }
+  .pm-qb-edge {
+    color: var(--text-3); font-size: 9px;
+  }
+  .pm-qb-book.qb-edge-pos {
+    color: #4ade80;
+    background: rgba(74,222,128,0.08);
+    border-color: rgba(74,222,128,0.3);
+  }
+  .pm-qb-book.qb-edge-pos .pm-qb-edge { color: #4ade80; }
+  .pm-qb-book.qb-edge-neg {
+    color: #f87171;
+    background: rgba(239,68,68,0.06);
+    border-color: rgba(239,68,68,0.25);
+  }
+  .pm-qb-book.qb-edge-neg .pm-qb-edge { color: #f87171; }
   @media (max-width: 480px) {
     .pm-qb-pills { flex-direction: column; }
     .pm-qb-pill { width: 100%; }
@@ -6301,7 +6381,13 @@ function renderFirstGoalCardInline(c, matchId) {
     '</div>' +
     '<div class="li-meta">' +
       '<span class="pos">' + escapeHtml(c.position || '?') + '</span>' +
-      (probPill ? '<span style="margin-left:auto">' + probPill + '</span>' : '') +
+      (function () {
+        const badge = renderSignalOddsBadge(c.playerId, matchId, 'firstGoal');
+        if (probPill || badge) {
+          return '<span style="margin-left:auto">' + probPill + badge + '</span>';
+        }
+        return '';
+      })() +
     '</div>' +
     '<div class="li-line">' +
       '<span class="stat-num">' + c.spg.toFixed(1) + 'sh/g</span>' +
@@ -6323,7 +6409,13 @@ function renderMismatchCardInline(c, matchId) {
     '</div>' +
     '<div class="li-meta">' +
       '<span class="pos">' + escapeHtml(c.position || '?') + '</span>' +
-      (pickHtml ? '<span style="margin-left:auto">' + pickHtml + '</span>' : '') +
+      (function () {
+        const badge = renderSignalOddsBadge(c.playerId, matchId, 'anytimeGoal');
+        if (pickHtml || badge) {
+          return '<span style="margin-left:auto">' + pickHtml + badge + '</span>';
+        }
+        return '';
+      })() +
     '</div>' +
     '<div class="li-line">' +
       '<span class="stat-num">' + c.spg.toFixed(1) + 'sh/g avg</span>' +
@@ -12412,6 +12504,59 @@ function _cmbRenderPlayerCard(a) {
     }
   }
 
+  // ─── Phase C: book odds comparison strip ──────────────────
+  // Looks up the Bet365 line for this exact prop and shows model vs book
+  // with an edge calculation. Sits between verdict and KPI grid when data
+  // exists. Falls through to empty string when no book line is posted.
+  let oddsCompareBlock = '';
+  const CMB_MARKET_TO_BOOK = {
+    'shots':           'shots',
+    'shotsOn':         'shotsOnTarget',
+    'goals':           'anytimeGoal',
+    'assists':         'assists',
+    'foulsCommitted':  'foulsCommitted',
+    'saves':           'goalkeeperSaves',
+  };
+  const bookMarketKey = CMB_MARKET_TO_BOOK[a.market];
+  if (bookMarketKey && a.fixture && a.player.playerId) {
+    const lookup = getPlayerMarketOdds(a.fixture.matchId, a.player.playerId, bookMarketKey, a.line);
+    let bookOdd = null;
+    if (lookup != null) {
+      if (typeof lookup === 'number') {
+        bookOdd = lookup;
+      } else if (typeof lookup === 'object') {
+        bookOdd = a.side === 'under' ? lookup.under : lookup.over;
+      }
+    }
+    if (bookOdd && bookOdd > 1) {
+      const modelProb = a.rate10;
+      const impProb = oddsToProb(bookOdd);
+      const edge = modelProb - impProb;
+      const edgeCls = edge >= 0.05 ? 'pos' : edge <= -0.05 ? 'neg' : 'mid';
+      const edgePct = (edge * 100);
+      const edgeStr = (edgePct >= 0 ? '+' : '') + edgePct.toFixed(1) + '%';
+      oddsCompareBlock =
+        '<div class="cmb-odds-compare">' +
+          '<div class="cmb-oc-col">' +
+            '<div class="cmb-oc-lbl">Model</div>' +
+            '<div class="cmb-oc-val">' + Math.round(modelProb * 100) + '%</div>' +
+          '</div>' +
+          '<div class="cmb-oc-col">' +
+            '<div class="cmb-oc-lbl">Bet365</div>' +
+            '<div class="cmb-oc-val">$' + bookOdd.toFixed(2) + '</div>' +
+            '<div class="cmb-oc-sub">(' + Math.round(impProb * 100) + '% implied)</div>' +
+          '</div>' +
+          '<div class="cmb-oc-col cmb-oc-edge ' + edgeCls + '">' +
+            '<div class="cmb-oc-lbl">Edge</div>' +
+            '<div class="cmb-oc-val">' + edgeStr + '</div>' +
+            '<div class="cmb-oc-sub">' +
+              (edge >= 0.05 ? 'value bet' : edge <= -0.05 ? 'avoid' : 'fair') +
+            '</div>' +
+          '</div>' +
+        '</div>';
+    }
+  }
+
   return '<div class="cmb-card">' +
     '<div class="cmb-card-hdr">' +
       '<div class="cmb-card-title">' +
@@ -12425,6 +12570,7 @@ function _cmbRenderPlayerCard(a) {
         '<span class="cmb-verdict-sub">' + a.verdictSub + '</span>' +
       '</div>' +
     '</div>' +
+    oddsCompareBlock +
     '<div class="cmb-kpi-grid">' + kpiGrid + '</div>' +
     '<div class="cmb-chart-title">Last ' + a.l10.length + ' (most recent first) — dashed line = ' + a.line + '+</div>' +
     '<div class="cmb-chart">' + chart + '</div>' +
@@ -13194,6 +13340,7 @@ function renderPmQuickBets(playerRows, oppId, oppName, p) {
 
   const playerId = p.playerId;
   const fid = (state.view && state.view.selectedFixtureId) || 'null';
+  const fixtureId = state.view && state.view.selectedFixtureId;
 
   // Phase 2: rotation risk haircut on player's confidence.
   // If the player's team has low stakes for this fixture, drop the pill
@@ -13206,22 +13353,66 @@ function renderPmQuickBets(playerRows, oppId, oppName, p) {
     ? getRotationFlag(playerTeamId, fixture) : null;
   const haircut = (rot && rot.rotationLikely) ? 0.75 : 1.0;
 
+  // Phase C: book odds lookup. Maps the JTT internal market keys to the
+  // book market keys from the odds fetcher. Anything not mapped won't
+  // try to look up odds (so the pill renders without the odds line).
+  const PILL_MARKET_TO_BOOK = {
+    'shots':           'shots',
+    'shotsOn':         'shotsOnTarget',
+    'goals':           'anytimeGoal',       // book is yes/no, no line
+    'assists':         'assists',
+    'foulsCommitted':  'foulsCommitted',
+    'saves':           'goalkeeperSaves',
+    // No book equivalents (return null): passes, tackles, yellowCard
+  };
+
   const pillHtml = picks.map(pick => {
     const mlbl = CMB_MARKET_LABELS[pick.market] || pick.market;
     const conf = Math.round(pick.l10Rate * 100 * haircut);
-    // Color band on confidence (after haircut, so warning is visible in the band too)
     const cls = conf >= 70 ? 'qb-strong' : conf >= 55 ? 'qb-lean' : 'qb-edge';
-    // Display string
+
+    // Display string (model side)
     let display;
     if (['goals', 'assists', 'yellowCard'].includes(pick.market)) {
       display = mlbl;
     } else {
       display = (pick.side === 'over' ? 'O ' : 'U ') + pick.line + ' ' + mlbl;
     }
+
+    // ── Book odds lookup ──
+    let oddsLine = '';
+    const bookMarket = PILL_MARKET_TO_BOOK[pick.market];
+    if (bookMarket && fixtureId && playerId) {
+      const lookup = getPlayerMarketOdds(fixtureId, playerId, bookMarket, pick.line);
+      if (lookup != null) {
+        let bookOdd = null;
+        if (typeof lookup === 'number') {
+          // Single-value market (anytime, firstGoal, etc.)
+          bookOdd = lookup;
+        } else if (typeof lookup === 'object') {
+          // O/U — pick the side that matches the model's pick
+          bookOdd = pick.side === 'under' ? lookup.under : lookup.over;
+        }
+        if (bookOdd && bookOdd > 1) {
+          // Edge calc: model says conf%, book implies impProb%. Edge = conf - impProb.
+          const modelProb = (pick.l10Rate * haircut);
+          const impProb = oddsToProb(bookOdd);
+          const edge = modelProb - impProb;
+          const edgeBadgeCls = edge >= 0.05 ? 'qb-edge-pos' : edge <= -0.05 ? 'qb-edge-neg' : '';
+          const edgeTxt = edge >= 0 ? '+' + (edge * 100).toFixed(1) + '%' : (edge * 100).toFixed(1) + '%';
+          oddsLine = '<span class="pm-qb-book ' + edgeBadgeCls + '">' +
+            '$' + bookOdd.toFixed(2) +
+            ' <span class="pm-qb-edge">' + edgeTxt + '</span>' +
+          '</span>';
+        }
+      }
+    }
+
     return '<button class="pm-qb-pill ' + cls + '" ' +
       "onclick=\"_pmQuickBet(" + playerId + ",'" + pick.market + "'," + pick.line + ",'" + pick.side + "'," + fid + ')">' +
       '<span class="pm-qb-bet">' + escapeHtml(display) + '</span>' +
       '<span class="pm-qb-rate">' + conf + '%</span>' +
+      oddsLine +
     '</button>';
   }).join('');
 
@@ -14543,6 +14734,190 @@ function computeGroupStandings() {
 
   _standingsCache = built;
   return built;
+}
+
+// ============================================================
+// PHASE B — ODDS LOOKUP HELPERS
+// ============================================================
+// Live Bet365 lines from worldcup_odds_2026.json fed into state.data.odds
+// by the auto-loader. Helpers below give UI code (Top Bets, CMB, Degen
+// Signals) a clean interface that tolerates missing data gracefully.
+//
+// Structure:
+//   state.data.odds.byMatch[fixtureId] = {
+//     matchWinner: {home, draw, away},
+//     btts: {yes, no},
+//     goalsOU: {line, over, under, allLines: {1.5: {over, under}, ...}},
+//     ...
+//     players: {
+//       lautaro_martinez: {
+//         name, normalisedKey, playerId, teamId, matchedName,
+//         anytimeGoal: 3.50, firstGoal: 6.00, lastGoal: 6.50,
+//         scorePenalty: 12.00,
+//         shots: {0.5: {over, under}, 1.5: {over, under}, ...},
+//         shotsOnTarget: {0.5: {over, under}, ...},
+//         assists: {0.5: {over, under}, ...},
+//         foulsCommitted: {0.5: {over, under}, ...},
+//         goalkeeperSaves: {2.5: {over, under}, ...}
+//       },
+//       ...
+//     }
+//   }
+
+// Get the per-fixture odds doc, or null. All other helpers go through this.
+function _getOddsDoc(fixtureId) {
+  if (!fixtureId) return null;
+  const odds = state.data && state.data.odds;
+  if (!odds || !odds.byMatch) return null;
+  return odds.byMatch[fixtureId] || odds.byMatch[String(fixtureId)] || null;
+}
+
+// Match-level market lookup. Examples:
+//   getMatchOdds(fid, 'matchWinner') → {home: 1.85, draw: 3.40, away: 4.20}
+//   getMatchOdds(fid, 'goalsOU')     → {line: 2.5, over: 2.10, under: 1.70, allLines: {...}}
+function getMatchOdds(fixtureId, market) {
+  const doc = _getOddsDoc(fixtureId);
+  if (!doc || !doc[market]) return null;
+  return doc[market];
+}
+
+// Get a specific O/U line for a match-level market.
+//   getMatchOuLine(fid, 'goalsOU', 2.5) → {over: 2.10, under: 1.70}
+// Falls back to the "best" line if the exact one isn't posted.
+function getMatchOuLine(fixtureId, market, line) {
+  const m = getMatchOdds(fixtureId, market);
+  if (!m) return null;
+  if (line == null) return { over: m.over, under: m.under, line: m.line };
+  if (m.allLines && m.allLines[String(line)]) return { ...m.allLines[String(line)], line };
+  // Fallback: return the default line
+  return { over: m.over, under: m.under, line: m.line };
+}
+
+// Find a player's odds object by playerId (preferred) or by name. Returns
+// the full per-player odds dict from the fetcher, or null.
+function getPlayerOdds(fixtureId, playerIdOrName) {
+  const doc = _getOddsDoc(fixtureId);
+  if (!doc || !doc.players) return null;
+  if (typeof playerIdOrName === 'number') {
+    for (const k in doc.players) {
+      if (doc.players[k].playerId === playerIdOrName) return doc.players[k];
+    }
+    return null;
+  }
+  // String — try normalised-key match
+  if (typeof playerIdOrName === 'string') {
+    const k = _normalisePlayerKey(playerIdOrName);
+    return doc.players[k] || null;
+  }
+  return null;
+}
+
+// Look up a specific player + market combination. Returns:
+//   - For yes/no markets (anytime, firstGoal, scorePenalty): single decimal odd
+//   - For O/U markets (shots, assists, etc.): {over, under} at requested line,
+//     or null if line not posted
+function getPlayerMarketOdds(fixtureId, playerIdOrName, market, line) {
+  const p = getPlayerOdds(fixtureId, playerIdOrName);
+  if (!p) return null;
+  const data = p[market];
+  if (data == null) return null;
+  // Single-value market (e.g. anytimeGoal: 3.50)
+  if (typeof data === 'number') return data;
+  // O/U market — keyed by line as string
+  if (typeof data === 'object') {
+    if (line != null && data[String(line)]) return data[String(line)];
+    // No line specified or that line not posted — return the first available line
+    const keys = Object.keys(data);
+    if (keys.length) return { ...data[keys[0]], line: parseFloat(keys[0]) };
+  }
+  return null;
+}
+
+// JS-side mirror of the Python normaliser. Keep these in lockstep — both
+// must produce the same key for the same input name.
+function _normalisePlayerKey(name) {
+  if (!name) return '';
+  // Strip diacritics
+  let s = name.normalize('NFKD').replace(/[\u0300-\u036f]/g, '');
+  s = s.toLowerCase().trim();
+  s = s.replace(/\b(jr|sr|iii|ii|i)\b\.?/g, '');
+  s = s.replace(/[^\w\s]/g, ' ');
+  s = s.replace(/\s+/g, ' ').trim();
+  return s.replace(/ /g, '_');
+}
+
+// ============================================================
+// PHASE B — EDGE CALCULATION
+// ============================================================
+// Converts decimal odds to implied probability and computes the edge
+// between model and book.
+
+function oddsToProb(decimalOdds) {
+  if (!decimalOdds || decimalOdds <= 1) return null;
+  return 1 / decimalOdds;
+}
+
+function probToOdds(prob) {
+  if (!prob || prob <= 0 || prob >= 1) return null;
+  return 1 / prob;
+}
+
+// Returns edge in PERCENTAGE POINTS (e.g. 0.023 = 2.3% edge).
+// Positive = model thinks the pick has more value than the book is offering.
+function marketEdge(modelProb, decimalOdds) {
+  const implied = oddsToProb(decimalOdds);
+  if (modelProb == null || implied == null) return null;
+  return modelProb - implied;
+}
+
+// Format decimal odds as +/- American style for display when preferred.
+//   2.50 → +150
+//   1.50 → -200
+//   3.00 → +200
+function decimalToAmerican(decimalOdds) {
+  if (!decimalOdds || decimalOdds <= 1) return '';
+  if (decimalOdds >= 2) return '+' + Math.round((decimalOdds - 1) * 100);
+  return '-' + Math.round(100 / (decimalOdds - 1));
+}
+
+// Format an odds object for display in a compact pill.
+// Returns a short string like "+150" or "3.50".
+function formatOddsCompact(decimalOdds, style) {
+  if (!decimalOdds || decimalOdds <= 1) return '';
+  style = style || 'decimal';
+  return style === 'american' ? decimalToAmerican(decimalOdds) : decimalOdds.toFixed(2);
+}
+
+// ============================================================
+// PHASE C — DEGEN SIGNAL ODDS BADGE
+// ============================================================
+// Single helper used by every Degen Signal card render function.
+// Looks up the book odds for the player's primary market and returns
+// a small inline badge — or empty string when no book line exists.
+//
+// Usage from a card render function:
+//   const badge = renderSignalOddsBadge(c.playerId, c.nextOpponent && c.nextOpponent.matchId, 'anytimeGoal');
+//
+// Card render functions splice `badge` next to their strength pill or
+// stat-line. Empty string means no badge appears, which is the correct
+// degraded behaviour.
+
+function renderSignalOddsBadge(playerId, fixtureId, market, line) {
+  if (!playerId || !fixtureId || !market) return '';
+  const lookup = getPlayerMarketOdds(fixtureId, playerId, market, line);
+  if (lookup == null) return '';
+  let bookOdd = null;
+  if (typeof lookup === 'number') {
+    bookOdd = lookup;
+  } else if (typeof lookup === 'object') {
+    // O/U market — default to over side for signals (most signals are
+    // over-side picks: shots over, fouls over, assists over)
+    bookOdd = lookup.over;
+  }
+  if (!bookOdd || bookOdd <= 1) return '';
+  return '<span class="sig-odds-badge" title="Bet365 line">' +
+    '$' + bookOdd.toFixed(2) +
+  '</span>';
 }
 
 // ============================================================
@@ -16012,7 +16387,22 @@ function renderLockedInCard(c) {
       '<span class="flag">' + flagFor(c.team) + '</span>' +
       '<span class="team">' + escapeHtml(c.team) + '</span>' +
       '<span class="pos">' + escapeHtml(c.position || '?') + '</span>' +
-      '<span style="margin-left:auto">' + strengthPill + '</span>' +
+      '<span style="margin-left:auto">' + strengthPill +
+        (function () {
+          // Map the Locked In stat to a book market
+          const LI_STAT_TO_MARKET = {
+            'goals':           ['anytimeGoal', null],
+            'shots':           ['shots', c.line],
+            'shotsOn':         ['shotsOnTarget', c.line],
+            'shotsOnTarget':   ['shotsOnTarget', c.line],
+            'assists':         ['assists', c.line],
+            'foulsCommitted':  ['foulsCommitted', c.line],
+          };
+          const mapped = LI_STAT_TO_MARKET[c.stat];
+          if (!mapped || !c.nextOpponent || !c.nextOpponent.matchId) return '';
+          return renderSignalOddsBadge(c.playerId, c.nextOpponent.matchId, mapped[0], mapped[1]);
+        })() +
+      '</span>' +
     '</div>' +
     '<div class="li-line">' +
       '<span class="stat-num">' + lineDisplay + '</span>' +
@@ -16591,6 +16981,11 @@ function renderFoulPlayCard(c) {
   const strengthPill = '<span class="conf-pill ' + strength.toLowerCase() +
     '">' + strength + ' ' + strengthLabel + '</span>';
 
+  // Phase C: book odds badge for foul-related markets
+  const oddsBadge = (m.kind === 'fouls' && c.nextOpponent && c.nextOpponent.matchId)
+    ? renderSignalOddsBadge(c.playerId, c.nextOpponent.matchId, 'foulsCommitted', m.line)
+    : '';
+
   const refPill = c.refContext
     ? '<span class="ref-tend-pill ref-tend-' + c.refContext.tendency + '" ' +
         'style="margin-left:6px; font-size:8px;">' + c.refContext.label + '</span>'
@@ -16615,7 +17010,7 @@ function renderFoulPlayCard(c) {
       '<span class="flag">' + flagFor(c.team) + '</span>' +
       '<span class="team">' + escapeHtml(c.team) + '</span>' +
       '<span class="pos">' + escapeHtml(c.position || '?') + '</span>' +
-      '<span style="margin-left:auto">' + strengthPill + '</span>' +
+      '<span style="margin-left:auto">' + strengthPill + oddsBadge + '</span>' +
     '</div>' +
     '<div class="li-line">' +
       '<span class="stat-num">' + lineDisplay + '</span>' +
@@ -16941,7 +17336,11 @@ function renderHereToAssistCard(c) {
       '<span class="flag">' + flagFor(c.team) + '</span>' +
       '<span class="team">' + escapeHtml(c.team) + '</span>' +
       '<span class="pos">' + escapeHtml(c.position || '?') + '</span>' +
-      '<span style="margin-left:auto">' + strengthPill + '</span>' +
+      '<span style="margin-left:auto">' + strengthPill +
+        ((c.nextOpponent && c.nextOpponent.matchId)
+          ? renderSignalOddsBadge(c.playerId, c.nextOpponent.matchId, 'assists', 0.5)
+          : '') +
+      '</span>' +
     '</div>' +
     '<div class="li-line">' +
       '<span class="stat-num">' + m.label + '</span>' +
@@ -17153,7 +17552,21 @@ function renderOnARunCard(c) {
       '<span class="flag">' + flagFor(c.team) + '</span>' +
       '<span class="team">' + escapeHtml(c.team) + '</span>' +
       '<span class="pos">' + escapeHtml(c.position || '?') + '</span>' +
-      '<span style="margin-left:auto">' + strengthPill + '</span>' +
+      '<span style="margin-left:auto">' + strengthPill +
+        (function () {
+          const RUN_STAT_TO_MARKET = {
+            'goals':           ['anytimeGoal', null],
+            'shots':           ['shots', c.line],
+            'shotsOn':         ['shotsOnTarget', c.line],
+            'shotsOnTarget':   ['shotsOnTarget', c.line],
+            'assists':         ['assists', c.line],
+            'foulsCommitted':  ['foulsCommitted', c.line],
+          };
+          const mapped = RUN_STAT_TO_MARKET[c.stat];
+          if (!mapped || !c.nextOpponent || !c.nextOpponent.matchId) return '';
+          return renderSignalOddsBadge(c.playerId, c.nextOpponent.matchId, mapped[0], mapped[1]);
+        })() +
+      '</span>' +
     '</div>' +
     '<div class="li-line">' +
       '<span class="stat-num">' + lineDisplay + '</span>' +
@@ -17332,7 +17745,15 @@ function renderTapInCard(c) {
       '<span class="flag">' + flagFor(c.team) + '</span>' +
       '<span class="team">' + escapeHtml(c.team) + '</span>' +
       '<span class="pos">' + escapeHtml(c.position || '?') + '</span>' +
-      (convPill ? '<span style="margin-left:auto">' + convPill + '</span>' : '') +
+      (function () {
+        const badge = (c.nextOpponent && c.nextOpponent.matchId)
+          ? renderSignalOddsBadge(c.playerId, c.nextOpponent.matchId, 'anytimeGoal')
+          : '';
+        if (convPill || badge) {
+          return '<span style="margin-left:auto">' + convPill + badge + '</span>';
+        }
+        return '';
+      })() +
     '</div>' +
     '<div class="li-line">' +
       '<span class="stat-num">' + c.goals + 'G / ' + c.shots + 'sh</span>' +
@@ -17988,7 +18409,15 @@ function renderPenaltyKingCard(c) {
       '<span class="flag">' + flagFor(c.team) + '</span>' +
       '<span class="team">' + escapeHtml(c.team) + '</span>' +
       '<span class="pos">' + escapeHtml(c.position || '?') + '</span>' +
-      (probPill ? '<span style="margin-left:auto">' + probPill + '</span>' : '') +
+      (function () {
+        const badge = (c.nextOpponent && c.nextOpponent.matchId)
+          ? renderSignalOddsBadge(c.playerId, c.nextOpponent.matchId, 'scorePenalty')
+          : '';
+        if (probPill || badge) {
+          return '<span style="margin-left:auto">' + probPill + badge + '</span>';
+        }
+        return '';
+      })() +
     '</div>' +
     '<div class="li-line">' +
       '<span class="stat-num">' + c.scored + '/' + c.total + ' pens</span>' +
@@ -18558,7 +18987,11 @@ function renderBrickWallCard(c) {
       '<span class="flag">' + flagFor(c.team) + '</span>' +
       '<span class="team">' + escapeHtml(c.team) + '</span>' +
       '<span class="pos">GK</span>' +
-      '<span style="margin-left:auto">' + pickHtml + '</span>' +
+      '<span style="margin-left:auto">' + pickHtml +
+        ((c.nextOpponent && c.nextOpponent.matchId)
+          ? renderSignalOddsBadge(c.playerId, c.nextOpponent.matchId, 'goalkeeperSaves', Math.round(c.projection))
+          : '') +
+      '</span>' +
     '</div>' +
     '<div class="li-line">' +
       '<span class="stat-num">' + c.savesPg.toFixed(2) + ' sv/g</span>' +
