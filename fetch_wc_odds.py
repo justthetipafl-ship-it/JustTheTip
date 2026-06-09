@@ -50,20 +50,21 @@ SEASON       = 2026
 # Bet IDs we care about. Format: bet_id -> (json_key, parser_type)
 # parser_type drives how the API response values are parsed.
 MARKET_MAP = {
-    # === EXISTING MATCH-LEVEL ===
+    # === EXISTING MATCH-LEVEL (key names MUST stay aligned with what the HTML reads) ===
     1:   ("matchWinner",            "match_3way"),
     8:   ("btts",                   "btts"),
-    5:   ("goalsOU",                "ou_simple"),       # "Goals Over/Under"
-    45:  ("cornersOU",              "ou_simple"),       # "Corners Over Under"
-    # Note: API-Football's "Total Cards" bet ID has historically varied;
-    # check the probe output and adjust if your existing fetcher uses a
-    # different ID. Common values: 52, 116, 138.
-    52:  ("cardsOU",                "ou_simple"),
+    5:   ("goals",                  "ou_simple"),       # "Goals Over/Under"
+    45:  ("corners",                "ou_simple"),       # "Corners Over Under"
+    # Note: Bet365 does NOT post Total Cards O/U for WC fixtures (confirmed
+    # via probe). Bet 80 is the catalogue's "Cards Over/Under" but isn't
+    # returned for these matches. Kept here for completeness; will be empty.
+    80:  ("cards",                  "ou_simple"),
+    52:  ("cards",                  "ou_simple"),       # fallback bet ID
 
     # === NEW TEAM-LEVEL ===
-    211: ("totalShotsOU",           "ou_simple"),       # "Total Shots"
-    281: ("totalTacklesOU",         "ou_simple"),       # "Total Tackles"
-    164: ("offsidesOU",             "ou_simple"),       # "Offsides Total"
+    211: ("totalShots",             "ou_simple"),
+    281: ("totalTackles",           "ou_simple"),
+    164: ("offsides",               "ou_simple"),
     50:  ("goalLine",               "ou_simple"),       # Asian goals line
 
     # === NEW PLAYER MARKETS — goalscorer ===
@@ -555,11 +556,11 @@ def main():
         time.sleep(0.4)
 
     out_doc = {
-        "fetchedAt":   dt.datetime.now(dt.timezone.utc).isoformat().replace("+00:00", "Z"),
-        "source":      "api-football",
-        "bookmaker":   "Bet365",
-        "bookmakerId": BOOKMAKER_ID,
-        "byMatch":     by_match,
+        "fetchedAt":     dt.datetime.now(dt.timezone.utc).isoformat().replace("+00:00", "Z"),
+        "source":        "api-football",
+        "bookmakerName": "Bet365",
+        "bookmakerId":   BOOKMAKER_ID,
+        "byFixture":     by_match,
     }
 
     out_path = Path(args.out)
