@@ -312,13 +312,22 @@ def parse_ou_simple(values):
 def parse_player_single(values):
     """For markets where each value is a player + odds with no line."""
     out = {}
+    # Reject values that are clearly NOT player names — these slip in when a
+    # bet ID returns a match-level Yes/No instead of player-level data
+    # (e.g. some books interpret "To Score A Penalty" as the match-level
+    # "will a penalty be scored" market). We exclude these so they don't
+    # get stored as fake player entries with normalised keys "yes" / "no".
+    NOT_A_PLAYER = {
+        "no goalscorer", "any other player", "no first scorer",
+        "no last scorer", "no goal", "no penalty",
+        "yes", "no", "over", "under",
+        "draw", "1", "2", "x", "home", "away",
+    }
     for v in values:
         name = (v.get("value") or "").strip()
         odd = v.get("odd")
         if not name or not odd: continue
-        low = name.lower()
-        if low in ("no goalscorer", "any other player", "no first scorer",
-                   "no last scorer", "no goal", "no penalty"):
+        if name.lower() in NOT_A_PLAYER:
             continue
         try: odd = float(odd)
         except (TypeError, ValueError): continue
