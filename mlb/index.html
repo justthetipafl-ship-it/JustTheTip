@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;600;700;800;900&family=IBM+Plex+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/[email protected]/dist/tabler-icons.min.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@2.47.0/tabler-icons.min.css">
   <link rel="stylesheet" href="jtt-core.css">
   <style>
   /* ===== MLB-specific styles — mirrors the WC component vocabulary, on jtt-core tokens ===== */
@@ -52,11 +52,8 @@
     display:grid;place-items:center;color:#0a0a0a;}
   .pip.W{background:var(--accent);} .pip.L{background:#f87171;}
   /* team columns */
-  .team-cols{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:8px;}
-  .team-panel{background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:12px;min-width:0;}
-  .team-panel-hdr{display:flex;align-items:center;gap:8px;padding-bottom:10px;margin-bottom:10px;border-bottom:1px solid var(--border);}
-  .team-panel-hdr .nm{font-family:var(--font-display);font-weight:800;font-size:15px;letter-spacing:.5px;}
-  .team-panel-hdr .vs{font-family:var(--font-mono);font-size:10px;color:var(--text-3);margin-left:auto;}
+  .team-cols{display:grid;grid-template-columns:1fr 1fr;gap:18px;margin-bottom:8px;align-items:start;}
+  .team-col{min-width:0;}
   .tp-sub{font-family:var(--font-display);font-weight:700;font-size:11px;letter-spacing:.5px;text-transform:uppercase;
     color:var(--text-2);margin:12px 0 6px;display:flex;align-items:center;gap:6px;}
   .tp-sub i{color:var(--accent);font-size:14px;}
@@ -184,7 +181,7 @@
   .verdict{font-family:var(--font-display);font-weight:900;font-size:16px;letter-spacing:1px;}
   .verdict.over{color:var(--accent);} .verdict.under{color:#f87171;} .verdict.pass{color:var(--text-3);}
   .bvp-warn{font-family:var(--font-mono);font-size:9px;color:#facc15;margin-top:4px;}
-  @media(max-width:640px){
+  @media(max-width:760px){
     .team-cols{grid-template-columns:1fr;}
     .modal-grid{grid-template-columns:repeat(2,1fr);}
     .lead-grid{grid-template-columns:1fr;}
@@ -257,7 +254,7 @@
 
   <script>
   /* ===== CONFIG ===== */
-  const AUTH_HASH = '8176fcb0a9b2d2d2dd6fe9170c1cc921cd43952173f7b9550e98204f687beb8e'; // demo: jtt-mlb-demo — workflow injects real hash
+  const AUTH_HASH = 'aab47a4d89b7b3de88f7a1684dd71f8eccfe06cafda2e5b1bf33505a1051955b'; // demo: jtt-mlb-demo — workflow injects real hash
   const AUTH_TTL_DAYS = 30, AUTH_STORAGE_KEY = 'jtt_mlb_auth_v1';
   const DATA_FILES = { bundle: 'data/mlb_bundle.json' };
   const TABS = [
@@ -396,16 +393,15 @@
   // Table Setters — top-of-order run scorers vs a baserunner-prone starter
   function tableSetters(bs){return bs.map(b=>{const r=projBat(b,{k:'R',line:0.5,stat:'R'});const p=starterFacing(b.teamId);return {b,r,p,prob:r.prob};}).filter(x=>(x.b.order||9)<=3&&x.prob>=.42&&x.p&&(x.p.season.WHIP>=1.25||x.p.season.BB9>=3.3)).sort((a,b)=>b.prob-a.prob);}
   // Get To Him — starter in a bad spot (back the opposing bats / under his Ks)
-  function getToHim(g){const pk=PARK(g.parkId);const wxOut=g.weather&&g.weather.effect==='out';const effHr=pk.hrFactor*((g.weather&&g.weather.hrMult)?g.weather.hrMult:1);const out=[];
-    [g.away,g.home].forEach(s=>{const p=PITCHERS()[s.probablePitcher.id];if(!p)return;let sc=0;const tags=[];
-      if(p.season.oppAVG>=.255){sc+=2;tags.push('hittable arm');}
-      if(p.season.HR9>=1.35){sc+=2;tags.push('HR prone');}
-      if(effHr>=1.06){sc+=1;tags.push(pk.name+' '+effHr.toFixed(2)+'x');}
-      if(wxOut){sc+=1;tags.push('wind out');}
-      if(p.season.K9<=7.5){sc+=1;tags.push('low K');}
-      if(p.season.ERA>=4.50){sc+=1;tags.push(p.season.ERA.toFixed(2)+' ERA');}
-      if(sc>=3)out.push({p,sc,tags});});
-    return out.sort((a,b)=>b.sc-a.sc);}
+  function getToHimPitcher(g,p){if(!p)return null;const pk=PARK(g.parkId);const wxOut=g.weather&&g.weather.effect==='out';const effHr=pk.hrFactor*((g.weather&&g.weather.hrMult)?g.weather.hrMult:1);
+    let sc=0;const tags=[];
+    if(p.season.oppAVG>=.255){sc+=2;tags.push('hittable arm');}
+    if(p.season.HR9>=1.35){sc+=2;tags.push('HR prone');}
+    if(effHr>=1.06){sc+=1;tags.push(pk.name+' '+effHr.toFixed(2)+'x');}
+    if(wxOut){sc+=1;tags.push('wind out');}
+    if(p.season.K9<=7.5){sc+=1;tags.push('low K');}
+    if(p.season.ERA>=4.50){sc+=1;tags.push(p.season.ERA.toFixed(2)+' ERA');}
+    return sc>=3?{p,sc,tags}:null;}
   // Platoon Smash — extreme handedness edge into the disadvantaged arm
   function platoonSmash(bs){return bs.map(b=>{const p=starterFacing(b.teamId);if(!p)return null;const sp=p.throws==='L'?b.splitVsL:b.splitVsR;const ratio=b.season.SLG?sp.SLG/b.season.SLG:1;return {b,p,sp,ratio};}).filter(x=>x&&x.ratio>=1.15&&x.sp.PA>=20).sort((a,b)=>b.ratio-a.ratio);}
   // NRFI / YRFI — modeled first-inning scoring (no true 1st-inning splits yet)
@@ -466,10 +462,11 @@
     // MATCH section
     h+=renderMatchPanel(g,pk);
     // TEAM panels
-    // TEAM panels (stacked full-width, WC-style)
-    h+=renderTeamPanel(g,'away')+renderTeamPanel(g,'home');
-    // DEGEN signals
-    h+=renderGameSignals(g);
+    // TEAM columns (parallel, WC-style) — each with its own Degen Signals
+    h+='<div class="team-cols">'+
+      '<div class="team-col">'+renderTeamPanel(g,'away')+renderTeamSignals(g,'away')+'</div>'+
+      '<div class="team-col">'+renderTeamPanel(g,'home')+renderTeamSignals(g,'home')+'</div>'+
+    '</div>';
     return h;
   }
 
@@ -578,7 +575,7 @@
         '<div class="tp-sub" style="margin-top:10px"><i class="ti ti-target-arrow"></i>Top Exploiters</div>';
       const exploit=bs.map(b=>({b,mu:batMatchup(b)})).sort((a,b)=>b.mu.score-a.mu.score).slice(0,4);
       exploit.forEach(x=>dv+='<div class="dvp-target" onclick="openPlayerModal('+x.b.id+')"><span class="pname">'+esc(x.b.name)+'</span> <span class="ptag">'+x.b.bats+'</span><span style="margin-left:auto">'+muBadge(x.mu.score)+'</span></div>');
-      h+=collapse('Starter Matchup (DVP)','ti-shield-half','c-green','',dv,false);}
+      h+=collapse('Starter Matchup (DVP)','ti-shield','c-green','',dv,false);}
     // Player Spotlight
     let spot=null;bs.forEach(b=>{const best=bestBatMarket(b);if(!spot||best.r.prob>spot.best.r.prob)spot={b,best};});
     if(spot){const b=spot.b,best=spot.best;
@@ -593,17 +590,20 @@
   function spark(log,key,line){return '<span class="spark">'+slice(log).slice(0,12).reverse().map(r=>(r[key]>=line)?'<span class="hit">\u25CF</span>':'<span class="miss">\u25CB</span>').join('')+'</span>';}
 
   // ---------- DEGEN SIGNALS (per game) ----------
-  function renderGameSignals(g){
-    const bs=gameBatters(g);
+  function renderTeamSignals(g,side){
+    const team=g[side]; const tid=team.teamId;
+    const bs=teamBatters(tid);
     const sect=(title,icon,color,arr,render)=>arr.length?collapse(title,icon,color,arr.length,arr.map(render).join(''),false):'';
     const gl=greenLights(bs), dr=deathRiders(bs), sk=streakers(bs), pb=parkBombers(bs);
     const bun=bvpList(bs,'bunny'), bog=bvpList(bs,'bogey');
     const sb=bagSnatchers(bs), bb=freePasses(bs);
-    const wr=whiffRisk(bs), cb=coldBats(bs), ts=tableSetters(bs), ps=platoonSmash(bs), gth=getToHim(g);
-    const ks=[g.away,g.home].map(s=>PITCHERS()[s.probablePitcher.id]).filter(Boolean).map(p=>({p,k:pitcherKProj(p)})).sort((a,b)=>b.k.proj-a.k.proj);
+    const wr=whiffRisk(bs), cb=coldBats(bs), ts=tableSetters(bs), ps=platoonSmash(bs);
+    const ownP=PITCHERS()[team.probablePitcher.id];
+    const ks=ownP?[{p:ownP,k:pitcherKProj(ownP)}]:[];
+    const gthOne=getToHimPitcher(g,ownP); const gth=gthOne?[gthOne]:[];
     const fired=gl.length+dr.length+sk.length+pb.length+bun.length+bog.length+ks.length+sb.length+bb.length+wr.length+cb.length+ts.length+ps.length+gth.length;
     let h='<div class="signals-head"><i class="ti ti-flame" style="color:var(--accent)"></i><span class="lbl">Degen Signals</span><span class="fired">'+fired+' FIRED</span></div>';
-    h+=sect('Green Lights','ti-traffic-lights','c-green',gl,glCard);
+    h+=sect('Green Lights','ti-circle-check','c-green',gl,glCard);
     h+=sect('Platoon Smash','ti-arrows-left-right','c-green',ps,x=>'<div class="sig-card" onclick="openPlayerModal('+x.b.id+')"><div class="sig-row"><div><div class="pname">'+esc(x.b.name)+' <span class="ptag">'+x.b.abbr+' '+x.b.bats+' vs '+x.p.throws+'HP</span></div><div class="sig-sub">vs '+x.p.throws+'HP SLG '+x.sp.SLG.toFixed(3).replace(/^0/,'')+' vs '+x.b.season.SLG.toFixed(3).replace(/^0/,'')+' overall ('+x.sp.PA+' PA)</div></div><div class="sig-metric">+'+Math.round((x.ratio-1)*100)+'%<small>SLG edge</small></div></div></div>');
     h+=sect('Table Setters','ti-arrow-up-right','c-green',ts,x=>'<div class="sig-card" onclick="openPlayerModal('+x.b.id+')"><div class="sig-row"><div><div class="pname">'+esc(x.b.name)+' <span class="ptag">'+x.b.abbr+' bat '+x.b.order+'</span></div><div class="sig-sub">1+ run · '+winLbl()+' R '+avgOf(x.b.gameLog,'R').toFixed(2)+'/g · vs '+esc(x.p.name)+' '+x.p.season.WHIP.toFixed(2)+' WHIP</div></div><div class="sig-metric">'+Math.round(x.prob*100)+'%<small>run prob</small></div></div></div>');
     h+=sect('Strikeout Kings','ti-ball-baseball','c-blue',ks,x=>'<div class="sig-card" onclick="openPlayerModal('+x.p.id+')"><div class="sig-row"><div><div class="pname">'+esc(x.p.name)+' <span class="ptag">'+x.p.abbr+' '+x.p.throws+'HP · vs '+(x.k.opp?x.k.opp.abbr:'?')+'</span></div><div class="sig-sub">O'+x.k.line+' K · '+winLbl()+' K/9 '+x.k.k9.toFixed(1)+' · hit '+Math.round(x.k.hitRate*100)+'%</div></div><div class="sig-metric">'+x.k.proj.toFixed(1)+'<small>proj K</small></div></div></div>');
@@ -611,13 +611,13 @@
     h+=sect('Bag Snatchers','ti-run','c-green',sb,x=>'<div class="sig-card" onclick="openPlayerModal('+x.b.id+')"><div class="sig-row"><div><div class="pname">'+esc(x.b.name)+' <span class="ptag">'+x.b.abbr+' '+x.b.pos+'</span></div><div class="sig-sub">'+winLbl()+' SB rate '+avgOf(x.b.gameLog,'SB').toFixed(2)+'/g · '+x.b.season.SB+' SB this season</div></div><div class="sig-metric">'+Math.round(x.prob*100)+'%<small>SB prob</small></div></div></div>');
     h+=sect('Free Passes','ti-walk','c-purple',bb,x=>'<div class="sig-card" onclick="openPlayerModal('+x.b.id+')"><div class="sig-row"><div><div class="pname">'+esc(x.b.name)+' <span class="ptag">'+x.b.abbr+' '+x.b.pos+'</span></div><div class="sig-sub">'+winLbl()+' BB '+avgOf(x.b.gameLog,'BB').toFixed(2)+'/g'+(x.st&&x.st.season.BB9?' · vs '+esc(x.st.name)+' '+x.st.season.BB9.toFixed(1)+' BB/9':'')+'</div></div><div class="sig-metric">'+Math.round(x.prob*100)+'%<small>walk prob</small></div></div></div>');
     h+=sect('Streakers','ti-flame','c-amber',sk,x=>'<div class="sig-card warn" onclick="openPlayerModal('+x.b.id+')"><div class="sig-row"><div><div class="pname">'+esc(x.b.name)+' <span class="ptag">'+x.b.abbr+'</span></div><div class="sig-sub">'+x.kind+' · '+spark(x.b.gameLog,x.stat,x.line)+'</div></div><div class="sig-metric warn">'+x.n+'<small>game streak</small></div></div></div>');
-    h+=sect('Bunnies','ti-rabbit','c-amber',bun,x=>bvpCard(x,'warn'));
+    h+=sect('Bunnies','ti-mood-happy','c-amber',bun,x=>bvpCard(x,'warn'));
     h+=sect('Get To Him','ti-alert-triangle','c-red',gth,x=>'<div class="sig-card red" onclick="openPlayerModal('+x.p.id+')"><div class="sig-row"><div><div class="pname">'+esc(x.p.name)+' <span class="ptag">'+x.p.abbr+' '+x.p.throws+'HP</span></div><div class="sig-sub">fade the arm · '+x.tags.join(' · ')+'</div></div><div class="sig-metric red">'+x.sc+'<small>fade score</small></div></div></div>');
     h+=sect('Whiff Risk','ti-circle-x','c-red',wr,x=>'<div class="sig-card red" onclick="openPlayerModal('+x.b.id+')"><div class="sig-row"><div><div class="pname">'+esc(x.b.name)+' <span class="ptag">'+x.b.abbr+' '+x.b.pos+'</span></div><div class="sig-sub">1+ K · '+winLbl()+' SO '+avgOf(x.b.gameLog,'SO').toFixed(2)+'/g'+(x.k.p?' · vs '+esc(x.k.p.name)+' '+x.k.p.season.K9.toFixed(1)+' K/9':'')+'</div></div><div class="sig-metric red">'+Math.round(x.prob*100)+'%<small>K prob</small></div></div></div>');
     h+=sect('Cold Bats','ti-snowflake','c-red',cb,x=>'<div class="sig-card red" onclick="openPlayerModal('+x.b.id+')"><div class="sig-row"><div><div class="pname">'+esc(x.b.name)+' <span class="ptag">'+x.b.abbr+' '+x.b.pos+'</span></div><div class="sig-sub">'+x.n+' straight hitless · '+spark(x.b.gameLog,'H',1)+'</div></div><div class="sig-metric red">'+x.n+'<small>cold streak</small></div></div></div>');
     h+=sect('Death Riders','ti-skull','c-red',dr,x=>'<div class="sig-card red" onclick="openPlayerModal('+x.b.id+')"><div class="sig-row"><div><div class="pname">'+esc(x.b.name)+' <span class="ptag">'+x.b.abbr+' '+x.b.pos+'</span></div><div class="sig-sub">fade '+x.best.m.label+' · '+(x.mu.tags.join(', ')||'tough spot')+'</div></div><div class="sig-metric red">'+x.mu.score+'<small>matchup</small></div></div></div>');
     h+=sect('Bogey','ti-mood-sad','c-red',bog,x=>bvpCard(x,'red'));
-    if(!fired)h+='<div class="empty"><div class="ico"><i class="ti ti-mood-empty"></i></div>No standout signals for this game in the current window.</div>';
+    if(!fired)h+='<div class="empty"><div class="ico"><i class="ti ti-mood-empty"></i></div>No standout signals for this team in the current window.</div>';
     return h;
   }
   function glCard(x){const best=x.best,mu=x.mu;return '<div class="sig-card" onclick="openPlayerModal('+x.b.id+')"><div class="sig-row"><div><div class="pname">'+esc(x.b.name)+' <span class="ptag">'+x.b.abbr+' '+x.b.pos+'</span></div><div class="sig-sub">'+best.m.label+' · '+winLbl()+' avg '+best.r.proj.toFixed(2)+(mu.tags.length?' · '+mu.tags.slice(0,2).join(', '):'')+'</div></div><div class="sig-metric">'+Math.round(best.r.prob*100)+'%<small>'+muBadge(mu.score).replace(/<[^>]+>/g,'')+'</small></div></div></div>';}
@@ -685,7 +685,7 @@
   function batterModal(b){
     const mu=batMatchup(b),st=starterFacing(b.teamId),pk=parkForTeam(b.teamId),s=b.season;
     let h=pmHdr(b.name,esc(TEAM(b.teamId).name)+' · '+b.pos+' · Bats '+b.bats,b.teamId,b.abbr)+'<div class="pm-body">';
-    h+='<div class="meta-bar">'+(st?'<div class="meta-item"><i class="ti ti-swords"></i><span class="meta-key">Today</span><span class="meta-val">vs '+esc(st.name)+' ('+st.throws+'HP)</span></div>':'')+
+    h+='<div class="meta-bar">'+(st?'<div class="meta-item"><i class="ti ti-target-arrow"></i><span class="meta-key">Today</span><span class="meta-val">vs '+esc(st.name)+' ('+st.throws+'HP)</span></div>':'')+
       '<div class="meta-item"><i class="ti ti-map-pin"></i><span class="meta-key">Park</span><span class="meta-val">'+esc(pk.name)+'</span></div>'+
       '<div class="meta-item"><i class="ti ti-target"></i><span class="meta-key">Matchup</span><span class="meta-val">'+muBadge(mu.score)+'</span></div></div>';
     h+=dataFilterStrip();
@@ -696,7 +696,7 @@
     h+='<div class="section-title"><i class="ti ti-percentage" style="color:var(--accent);margin-right:7px"></i>Hit Rates ('+winLbl()+')</div><div class="ladder">';
     BAT_MARKETS.forEach(m=>{const r=hitRate(b.gameLog,m.stat,m.line);h+='<div class="ladder-cell'+(r>=.6?' hot':'')+'"><div class="ll">'+m.label+'</div><div class="lv">'+Math.round(r*100)+'%</div></div>';});
     h+='</div>';
-    if(st&&b.bvp&&b.bvp[st.id]){const v=b.bvp[st.id];h+='<div class="section-title"><i class="ti ti-swords" style="color:var(--accent);margin-right:7px"></i>vs '+esc(st.name)+' (career)</div><div class="sig-card warn" style="cursor:default"><div class="sig-row"><div><div class="pname">'+v.H+'-for-'+Math.round(v.PA*.88)+' · '+v.HR+' HR · '+v.TB+' TB</div><div class="bvp-warn"><i class="ti ti-alert-triangle"></i> '+v.PA+' PA — small sample, treat as noise not signal</div></div><div class="sig-metric warn">'+v.AVG.toFixed(3).replace(/^0/,'')+'<small>BvP AVG</small></div></div></div>';}
+    if(st&&b.bvp&&b.bvp[st.id]){const v=b.bvp[st.id];h+='<div class="section-title"><i class="ti ti-target-arrow" style="color:var(--accent);margin-right:7px"></i>vs '+esc(st.name)+' (career)</div><div class="sig-card warn" style="cursor:default"><div class="sig-row"><div><div class="pname">'+v.H+'-for-'+Math.round(v.PA*.88)+' · '+v.HR+' HR · '+v.TB+' TB</div><div class="bvp-warn"><i class="ti ti-alert-triangle"></i> '+v.PA+' PA — small sample, treat as noise not signal</div></div><div class="sig-metric warn">'+v.AVG.toFixed(3).replace(/^0/,'')+'<small>BvP AVG</small></div></div></div>';}
     h+=sct('ti-table','Game Log')+gameLogTable(b.gameLog,['H','TB','HR','RBI','R','SB','BB','SO']);
     h+=sct('ti-calculator','Prop Calculator')+propCalc(b.id);
     return h+'</div>';
@@ -704,7 +704,7 @@
   function pitcherModal(p){
     const k=pitcherKProj(p),s=p.season;
     let h=pmHdr(p.name,esc(TEAM(p.teamId).name)+' · SP · Throws '+p.throws,p.teamId,p.abbr)+'<div class="pm-body">';
-    h+='<div class="meta-bar"><div class="meta-item"><i class="ti ti-swords"></i><span class="meta-key">vs</span><span class="meta-val">'+(k.opp?esc(k.opp.name):'TBD')+'</span></div><div class="meta-item"><i class="ti ti-flame"></i><span class="meta-key">Proj K</span><span class="meta-val">'+k.proj.toFixed(1)+'</span></div></div>';
+    h+='<div class="meta-bar"><div class="meta-item"><i class="ti ti-target-arrow"></i><span class="meta-key">vs</span><span class="meta-val">'+(k.opp?esc(k.opp.name):'TBD')+'</span></div><div class="meta-item"><i class="ti ti-flame"></i><span class="meta-key">Proj K</span><span class="meta-val">'+k.proj.toFixed(1)+'</span></div></div>';
     h+=dataFilterStrip();
     h+='<div class="modal-grid">'+mini('ERA',s.ERA.toFixed(2))+mini('WHIP',s.WHIP.toFixed(2))+mini('K/9',s.K9.toFixed(1))+mini('HR/9',s.HR9.toFixed(2))+'</div>';
     h+='<div class="section-title"><i class="ti ti-flame" style="color:var(--accent);margin-right:7px"></i>Strikeout Spot</div><div class="sig-card" style="cursor:default"><div class="sig-row"><div><div class="pname">O'+k.line+' Strikeouts</div><div class="sig-sub">'+winLbl()+' K/9 '+k.k9.toFixed(1)+' · ~'+k.expIP.toFixed(1)+' IP · opp K-rate '+(k.opp?(k.opp.kRate*100).toFixed(0)+'%':'?')+' (×'+k.oppF.toFixed(2)+')</div></div><div class="sig-metric">'+Math.round(k.hitRate*100)+'%<small>'+winLbl()+' hit rate</small></div></div></div>';
