@@ -7,6 +7,12 @@ on:
         description: "Season e.g. 2026"
         required: true
         default: "2026"
+  schedule:
+    # Daily 20:00 UTC ~= 6am AEST — catches overnight-completed games
+    - cron: "0 20 * * *"
+
+permissions:
+  contents: write
 
 jobs:
   fetch:
@@ -38,20 +44,26 @@ jobs:
         run: Rscript -e 'install.packages(c("nrlR","jsonlite","dplyr"))'
 
       - name: Fetch NRL data
-        run: Rscript fetch_nrl_data.R "${{ github.event.inputs.season }}" 2>&1 | tee nrl_fetch_output.txt
+        run: Rscript fetch_nrl_data.R "${{ github.event.inputs.season || '2026' }}" 2>&1 | tee nrl_fetch_output.txt
 
-      - name: Upload data
+      - name: Commit refreshed data
+        working-directory: ${{ github.workspace }}
+        run: |
+          git config user.name "jtt-bot"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add NRL/data/nrl_player_logs.json NRL/data/nrl_team_stats.json NRL/data/nrl_fixtures.json NRL/data/nrl_ladder.json NRL/data/nrl_injuries.json NRL/data/version.txt
+          if git diff --staged --quiet; then
+            echo "No data changes — nothing to commit."
+          else
+            git commit -m "Auto: refresh NRL data $(date -u +%F)"
+            git push
+          fi
+
+      - name: Upload data (debug)
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: nrl-data
-          path: |
-            NRL/nrl_fetch_output.txt
-            NRL/nrl_player_logs.json
-            NRL/nrl_team_stats.json
-            NRL/nrl_fixtures.json
-            NRL/nrl_ladder.json
-            NRL/nrl_injuries.json
-            NRL/version.txt
+          path: NRL/nrl_fetch_output.txt
           if-no-files-found: warn
-          retention-days: 14
+          retention-days: 7
