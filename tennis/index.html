@@ -1,0 +1,566 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <title>Just The Tip · Tennis</title>
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;600;700;800;900&family=IBM+Plex+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/[email protected]/dist/tabler-icons.min.css">
+  <link rel="stylesheet" href="jtt-core.css">
+
+  <style>
+  /* ===== TENNIS-SPECIFIC STYLES (sport-only; core tokens untouched) ===== */
+
+  /* surface coding — the one piece of tennis vocabulary worth a colour system */
+  .surf-chip{display:inline-flex;align-items:center;gap:.3em;font-family:var(--font-mono);
+    font-size:.66rem;font-weight:600;letter-spacing:.04em;text-transform:uppercase;
+    padding:.18em .5em;border-radius:999px;border:1px solid transparent;}
+  .surf-Grass{background:rgba(34,197,94,.13);color:#4ade80;border-color:rgba(34,197,94,.3);}
+  .surf-Clay{background:rgba(234,88,12,.14);color:#fb923c;border-color:rgba(234,88,12,.32);}
+  .surf-Hard{background:rgba(59,130,246,.14);color:#60a5fa;border-color:rgba(59,130,246,.32);}
+  .surf-na{background:var(--surface-3);color:var(--text-3);}
+
+  /* match card */
+  .tn-match{display:block;width:100%;text-align:left;background:var(--surface-2);
+    border:1px solid var(--border);border-radius:12px;padding:.8rem .9rem;margin-bottom:.55rem;
+    cursor:pointer;transition:border-color .15s,transform .05s;color:inherit;font:inherit;}
+  .tn-match:hover{border-color:var(--accent-dim);}
+  .tn-match:active{transform:translateY(1px);}
+  .tn-match-top{display:flex;justify-content:space-between;align-items:center;gap:.5rem;margin-bottom:.5rem;}
+  .tn-match-meta{display:flex;gap:.4rem;align-items:center;font-family:var(--font-mono);
+    font-size:.66rem;color:var(--text-3);text-transform:uppercase;letter-spacing:.04em;}
+  .tn-row{display:flex;justify-content:space-between;align-items:center;gap:.6rem;padding:.12rem 0;}
+  .tn-name{font-weight:600;font-size:.92rem;display:flex;align-items:center;gap:.45rem;min-width:0;}
+  .tn-name .ti{color:var(--text-3);font-size:.85rem;}
+  .tn-name.fav{color:var(--accent);}
+  .tn-seed{font-family:var(--font-mono);font-size:.6rem;color:var(--text-3);
+    border:1px solid var(--border);border-radius:4px;padding:.05em .3em;flex:none;}
+  .tn-flag{font-family:var(--font-mono);font-size:.62rem;color:var(--text-3);flex:none;}
+  .tn-prob{font-family:var(--font-mono);font-weight:700;font-size:.86rem;flex:none;}
+
+  /* win-probability split bar */
+  .winbar{height:6px;border-radius:3px;overflow:hidden;display:flex;background:var(--surface-3);margin:.5rem 0 .2rem;}
+  .winbar > span{display:block;height:100%;}
+  .winbar .a{background:var(--accent);}
+  .winbar .b{background:var(--surface-3);}
+
+  /* serve/return comparison grid */
+  .cmp{display:grid;grid-template-columns:1fr auto 1fr;gap:.15rem .8rem;align-items:center;
+    font-family:var(--font-mono);font-size:.82rem;}
+  .cmp .lbl{text-align:center;color:var(--text-3);font-size:.64rem;text-transform:uppercase;letter-spacing:.04em;}
+  .cmp .l{text-align:right;}
+  .cmp .r{text-align:left;}
+  .cmp .win{color:var(--accent);font-weight:700;}
+
+  /* projection stat tiles */
+  .proj-tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:.55rem;margin:.6rem 0;}
+  .proj-tile{background:var(--surface-2);border:1px solid var(--border);border-radius:10px;padding:.7rem;text-align:center;}
+  .proj-tile .v{font-family:var(--font-mono);font-weight:700;font-size:1.4rem;color:var(--text);}
+  .proj-tile .k{font-size:.64rem;color:var(--text-3);text-transform:uppercase;letter-spacing:.05em;margin-top:.15rem;}
+
+  /* Elo / surface pill row */
+  .elo-row{display:flex;flex-wrap:wrap;gap:.35rem;margin:.4rem 0;}
+  .elo-pill{font-family:var(--font-mono);font-size:.7rem;padding:.2em .55em;border-radius:6px;
+    background:var(--surface-2);border:1px solid var(--border);color:var(--text-2);}
+  .elo-pill b{color:var(--text);}
+
+  /* form string */
+  .form-str{font-family:var(--font-mono);letter-spacing:.12em;font-weight:700;font-size:.8rem;}
+  .form-str .w{color:var(--good);} .form-str .l{color:var(--text-3);}
+
+  /* player list row */
+  .pl-row{display:flex;justify-content:space-between;align-items:center;gap:.6rem;width:100%;
+    background:var(--surface-2);border:1px solid var(--border);border-radius:10px;
+    padding:.6rem .8rem;margin-bottom:.4rem;cursor:pointer;color:inherit;font:inherit;text-align:left;}
+  .pl-row:hover{border-color:var(--accent-dim);}
+  .pl-elo{font-family:var(--font-mono);font-weight:700;color:var(--text);}
+  .stat-grid{display:grid;grid-template-columns:1fr 1fr;gap:.3rem .9rem;font-family:var(--font-mono);font-size:.82rem;}
+  .stat-grid .s{display:flex;justify-content:space-between;border-bottom:1px dashed var(--border);padding:.18rem 0;}
+  .stat-grid .s span:first-child{color:var(--text-3);}
+  .crew-tile-sub small{display:block;color:var(--text-3);font-size:.62rem;margin-top:.1rem;}
+  .search-box{width:100%;background:var(--surface-2);border:1px solid var(--border);border-radius:10px;
+    padding:.55rem .8rem;color:var(--text);font:inherit;font-size:.9rem;margin-bottom:.6rem;}
+  .cmb-field{margin-bottom:.7rem;}
+  .cmb-field label{display:block;font-size:.7rem;color:var(--text-3);text-transform:uppercase;
+    letter-spacing:.04em;margin-bottom:.25rem;}
+  .cmb-field select,.cmb-field input{width:100%;background:var(--surface-2);border:1px solid var(--border);
+    border-radius:8px;padding:.5rem .6rem;color:var(--text);font:inherit;}
+  .cmb-verdict{margin-top:.8rem;padding:.9rem;border-radius:10px;border:1px solid var(--border);background:var(--surface-2);}
+  .cmb-verdict.lean-yes{border-color:rgba(34,197,94,.4);} .cmb-verdict.lean-no{border-color:rgba(239,68,68,.4);}
+  .cmb-verdict .hd{font-weight:700;margin-bottom:.3rem;}
+  </style>
+</head>
+<body class="auth-locked">
+
+  <!-- AUTH GATE -->
+  <div class="auth-overlay" id="auth-overlay">
+    <div class="auth-box">
+      <div class="auth-logo">
+        <svg viewBox="0 0 28 28" xmlns="http://www.w3.org/2000/svg">
+          <circle cx="14" cy="14" r="14" fill="#22c55e"/>
+          <path d="M8.5 14.5 L12.5 18.5 L19.5 10.5" stroke="#0a0a0a" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+        </svg>
+      </div>
+      <div class="auth-title">Just The Tip · Tennis</div>
+      <div class="auth-sub">Members only</div>
+      <form class="auth-form" id="auth-form" onsubmit="return _authSubmit(event)">
+        <label class="auth-lbl" for="auth-pw">Access password</label>
+        <input type="password" id="auth-pw" class="auth-input" autocomplete="current-password" autofocus>
+        <button type="submit" class="auth-btn" id="auth-btn">Unlock</button>
+        <div class="auth-msg" id="auth-msg"></div>
+      </form>
+    </div>
+  </div>
+
+  <!-- BOOT OVERLAY -->
+  <div class="boot-overlay" id="boot-overlay">
+    <div class="boot-logo">
+      <svg viewBox="0 0 28 28" xmlns="http://www.w3.org/2000/svg"><circle cx="14" cy="14" r="14" fill="#22c55e"/><path d="M8.5 14.5 L12.5 18.5 L19.5 10.5" stroke="#0a0a0a" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>
+    </div>
+    <div class="boot-title">Just The Tip</div>
+    <div class="boot-sub">TENNIS · LOADING</div>
+    <div class="boot-dots"><div class="boot-dot"></div><div class="boot-dot"></div><div class="boot-dot"></div></div>
+    <div class="boot-status" id="boot-status"></div>
+  </div>
+
+  <!-- TOPBAR -->
+  <header class="topbar">
+    <div class="brand">
+      <div class="logo-check">
+        <svg viewBox="0 0 28 28" xmlns="http://www.w3.org/2000/svg"><circle cx="14" cy="14" r="14" fill="#22c55e"/><path d="M8.5 14.5 L12.5 18.5 L19.5 10.5" stroke="#0a0a0a" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>
+      </div>
+      <div class="brand-text">Just The Tip<span class="sub">Tennis</span></div>
+    </div>
+    <div class="topbar-meta">
+      <a class="cross-link" href="https://dubclub.win/JustTheTipAUS/" title="JTT home">
+        <i class="ti ti-arrow-left"></i><span class="cross-link-label">JTT</span>
+      </a>
+      <span class="freshness-pill" id="freshness-pill">Loading…</span>
+    </div>
+  </header>
+
+  <nav class="tabnav" id="tabnav"></nav>
+  <main class="page" id="page-content"></main>
+
+  <!-- CHECK MY BET -->
+  <button class="cmb-fab" id="cmb-fab" onclick="_cmbOpen()" aria-label="Check My Bet">
+    <i class="ti ti-checks"></i><span class="cmb-fab-lbl">Check My Bet</span>
+  </button>
+  <div class="cmb-overlay" id="cmb-overlay" onclick="if(event.target===this)_cmbClose()">
+    <div class="cmb-modal" id="cmb-modal">
+      <div class="cmb-hdr">
+        <h2><i class="ti ti-checks"></i> Check My Bet</h2>
+        <button class="cmb-close" onclick="_cmbClose()" aria-label="Close">&times;</button>
+      </div>
+      <div id="cmb-body"></div>
+    </div>
+  </div>
+
+  <!-- FOOTER -->
+  <footer class="app-footer">
+    <div class="ft-inner">
+      <div class="ft-disclaimer">
+        <strong>Gamble responsibly.</strong> Information provided is for entertainment and research purposes only.
+        Past performance does not guarantee future results. Set deposit limits and seek help if gambling becomes a problem.
+        Call <a href="https://www.gamblinghelponline.org.au/" target="_blank" rel="noopener">Gambling Help Online</a> (1800 858 858)
+        or visit <a href="https://www.responsiblewagering.org.au/" target="_blank" rel="noopener">Responsible Wagering Australia</a>. 18+ only.
+      </div>
+      <div class="ft-copy">© <span id="ft-year"></span> Just The Tip. All rights reserved.</div>
+    </div>
+  </footer>
+
+  <script>
+  /* ===== 1. CONFIG ===== */
+  const AUTH_HASH = 'REPLACE_WITH_SHA256_OF_YOUR_PASSWORD';
+  const AUTH_TTL_DAYS = 30;
+  const AUTH_STORAGE_KEY = 'jtt_tennis_auth_v1';
+
+  const DATA_FILES = {
+    fixtures:    'data/tennis_fixtures.json',
+    players:     'data/tennis_players.json',
+    h2h:         'data/tennis_h2h.json',
+    projections: 'data/tennis_projections.json',
+  };
+
+  const TABS = [
+    { name: 'today',   label: 'Today',   icon: 'ti-calendar-event' },
+    { name: 'players', label: 'Players', icon: 'ti-users' },
+    { name: 'matchup', label: 'Matchup', icon: 'ti-swords' },
+    { name: 'crew',    label: 'Degen',   icon: 'ti-flame' },
+  ];
+
+  /* ===== 2. STATE ===== */
+  const state = {
+    data: {}, dataVersion: null,
+    view: { activeTab: TABS[0].name, match: null, player: null, crew: null,
+            filters: { tour: 'all', q: '' } },
+  };
+
+  /* ===== 3. AUTH GATE ===== */
+  async function _sha256(text){const b=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(text));return Array.from(new Uint8Array(b)).map(x=>x.toString(16).padStart(2,'0')).join('');}
+  function _authCheckPersisted(){try{const raw=localStorage.getItem(AUTH_STORAGE_KEY);if(!raw)return false;const d=JSON.parse(raw);if(!d.unlockedAt)return false;if(Date.now()-d.unlockedAt>AUTH_TTL_DAYS*86400*1000){localStorage.removeItem(AUTH_STORAGE_KEY);return false;}return d.hash===AUTH_HASH;}catch(e){return false;}}
+  function _authUnlock(){const o=document.getElementById('auth-overlay');o.classList.add('unlocked');document.body.classList.remove('auth-locked');try{localStorage.setItem(AUTH_STORAGE_KEY,JSON.stringify({unlockedAt:Date.now(),hash:AUTH_HASH}));}catch(e){}setTimeout(()=>o.remove(),320);_appBoot();}
+  async function _authSubmit(ev){ev.preventDefault();const i=document.getElementById('auth-pw'),m=document.getElementById('auth-msg'),b=document.getElementById('auth-btn');if(!i.value)return false;b.disabled=true;m.textContent='';m.className='auth-msg';try{const h=await _sha256(i.value);if(h===AUTH_HASH){m.textContent='Unlocked';m.className='auth-msg success';setTimeout(_authUnlock,250);}else{i.classList.add('error');m.textContent='Incorrect password';m.className='auth-msg error';setTimeout(()=>i.classList.remove('error'),400);b.disabled=false;}}catch(e){m.textContent='Auth error — try again';m.className='auth-msg error';b.disabled=false;}return false;}
+
+  /* ===== 4. BOOT ===== */
+  function _bootStatus(t){const el=document.getElementById('boot-status');if(el)el.textContent=t||'';}
+  function _bootHide(){const el=document.getElementById('boot-overlay');if(!el)return;el.classList.add('hide');setTimeout(()=>el.remove(),320);}
+
+  /* ===== 5. DATA LOADER ===== */
+  async function tryAutoLoadData(){
+    const prefix='./';let version='';
+    try{const v=await fetch(prefix+'data/version.txt',{cache:'no-cache'});if(v.ok)version=(await v.text()).trim();}catch(e){}
+    if(version)state.dataVersion=version;
+    const cb=version?'?v='+version:'';
+    _bootStatus('Loading data…');let any=false;
+    await Promise.all(Object.entries(DATA_FILES).map(async([k,url])=>{
+      try{const r=await fetch(prefix+url+cb,{cache:'no-cache'});if(!r.ok)return;state.data[k]=await r.json();any=true;}
+      catch(e){console.warn('load failed',k,e);}
+    }));
+    if(any){_bootStatus('Ready');_buildIndex();_updateFreshnessPill();_renderApp();}
+    else{_bootStatus('No data');_showLoaderFallback();}
+    _bootHide();
+  }
+  function _showLoaderFallback(){
+    document.getElementById('page-content').innerHTML =
+      '<div class="empty"><div class="ico"><i class="ti ti-database-off"></i></div>'+
+      'No data loaded. The pipeline writes <code>data/tennis_*.json</code> — run the GitHub Action or check the deploy.</div>';
+  }
+
+  /* ===== 6. TAB NAV + ROUTING ===== */
+  function _renderTabnav(){
+    document.getElementById('tabnav').innerHTML = TABS.map(t=>
+      '<button class="tab'+(t.name===state.view.activeTab?' active':'')+'" onclick="_switchTab(\''+t.name+'\')">'+
+      '<i class="ti '+t.icon+'"></i><span>'+t.label+'</span></button>').join('');
+  }
+  function _switchTab(name){state.view.activeTab=name;state.view.match=null;state.view.player=null;state.view.crew=null;_renderTabnav();_renderApp();window.scrollTo(0,0);}
+  function _renderApp(){const p=document.getElementById('page-content');try{p.innerHTML=renderTab(state.view.activeTab)||'';}catch(e){console.error('renderTab',e);p.innerHTML='<div class="empty"><div class="ico"><i class="ti ti-alert-triangle"></i></div>Something went wrong rendering this view.</div>';}window.scrollTo(0,0);}
+
+  /* navigation that preserves a focused entity */
+  function openMatch(mid){state.view.activeTab='matchup';state.view.match=mid;state.view.player=null;_renderTabnav();_renderApp();}
+  function openPlayer(id){state.view.activeTab='players';state.view.player=id;state.view.match=null;_renderTabnav();_renderApp();}
+  function openCrew(c){state.view.crew=c;_renderApp();}
+  function setFilter(k,v){state.view.filters[k]=v;_renderApp();}
+
+  /* ===== 7. CMB ===== */
+  function _cmbOpen(){document.getElementById('cmb-body').innerHTML=cmbForm();document.getElementById('cmb-overlay').classList.add('open');}
+  function _cmbClose(){document.getElementById('cmb-overlay').classList.remove('open');}
+
+  /* ===== 8. FRESHNESS ===== */
+  function _updateFreshnessPill(){
+    const el=document.getElementById('freshness-pill');if(!el)return;
+    let ts=state.dataVersion?parseInt(state.dataVersion,10):null;
+    if(!ts&&state.data.fixtures&&state.data.fixtures.generated_at)ts=Math.floor(Date.parse(state.data.fixtures.generated_at)/1000);
+    if(!ts){el.textContent='Loaded';return;}
+    const ageH=(Date.now()/1000-ts)/3600;
+    el.textContent=ageH<1?'Updated <1h ago':ageH<24?'Updated '+Math.round(ageH)+'h ago':'Updated '+Math.round(ageH/24)+'d ago';
+  }
+
+  /* ===== 9 + 10. INIT ===== */
+  function _appBoot(){_renderTabnav();document.getElementById('ft-year').textContent=new Date().getFullYear();tryAutoLoadData();}
+  (function(){if(_authCheckPersisted()){const o=document.getElementById('auth-overlay');if(o)o.remove();document.body.classList.remove('auth-locked');_appBoot();}})();
+
+  /* ============================================================
+     11. TENNIS ENGINE
+     ============================================================ */
+  let IDX = null;
+  function _buildIndex(){
+    IDX = { players:{}, proj:{}, h2h:{}, fixtures:[] };
+    const pl = state.data.players && state.data.players.players || [];
+    pl.forEach(p=>{ IDX.players[p.id]=p; });
+    const pr = state.data.projections && state.data.projections.projections || [];
+    pr.forEach(x=>{ IDX.proj[x.match_id]=x; });
+    IDX.h2h = state.data.h2h && state.data.h2h.h2h || {};
+    IDX.fixtures = state.data.fixtures && state.data.fixtures.fixtures || [];
+  }
+  const P  = id => (IDX && IDX.players[id]) || null;
+  const PR = mid => (IDX && IDX.proj[mid]) || null;
+
+  /* ---- formatting helpers ---- */
+  const esc = s => String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+  const pct = x => (x==null||isNaN(x))?'—':(Math.round(x*100)+'%');
+  const num = (x,d=1) => (x==null||isNaN(x))?'—':Number(x).toFixed(d);
+  function surfChip(s){const c=['Grass','Clay','Hard'].includes(s)?s:'na';return '<span class="surf-chip surf-'+c+'">'+(s||'—')+'</span>';}
+  function formStr(f){if(!f)return '<span class="form-str">—</span>';return '<span class="form-str">'+f.split('').map(c=>c==='W'?'<span class="w">W</span>':'<span class="l">L</span>').join('')+'</span>';}
+  function eloPills(p){
+    if(!p)return '';
+    const o='<span class="elo-pill">Elo <b>'+Math.round(p.elo_overall)+'</b></span>';
+    const s=[['Hard',p.elo_hard,p.n_hard],['Clay',p.elo_clay,p.n_clay],['Grass',p.elo_grass,p.n_grass]]
+      .map(([k,v,n])=>'<span class="elo-pill">'+surfChip(k)+' <b>'+Math.round(v)+'</b><small style="color:var(--text-3)"> ('+(n||0)+')</small></span>').join('');
+    return '<div class="elo-row">'+o+s+'</div>';
+  }
+  function winBar(pa){const a=Math.round((pa||0)*100);return '<div class="winbar"><span class="a" style="width:'+a+'%"></span><span class="b" style="width:'+(100-a)+'%"></span></div>';}
+
+  /* ---- fixtures helpers ---- */
+  function upcomingSingles(){return IDX.fixtures.filter(f=>f.event_type==='singles'&&f.status==='pre');}
+  function passFilter(f){const fl=state.view.filters;if(fl.tour!=='all'&&f.tour!==fl.tour)return false;
+    if(fl.q){const q=fl.q.toLowerCase();const nm=(f.players||[]).map(p=>(p.name||'').toLowerCase()).join(' ');
+      if(!nm.includes(q)&&!(f.tournament||'').toLowerCase().includes(q))return false;}return true;}
+  function tourPills(){const fl=state.view.filters;
+    return '<div class="data-filter-strip"><div class="dfilt-row"><span class="dfilt-lbl">Tour</span><div class="dfilt-chips">'+
+      ['all','atp','wta'].map(t=>'<button class="dfilt-chip'+(fl.tour===t?' active':'')+'" onclick="setFilter(\'tour\',\''+t+'\')">'+t.toUpperCase()+'</button>').join('')+
+      '</div></div></div>';}
+
+  /* ---- TODAY ---- */
+  function viewToday(){
+    let fx=upcomingSingles().filter(passFilter);
+    let head='<div class="page-header"><div class="page-title">Today</div></div>'+
+      '<input class="search-box" placeholder="Search player or tournament…" value="'+esc(state.view.filters.q)+'" oninput="setFilter(\'q\',this.value)">'+tourPills();
+    if(!fx.length)return head+'<div class="empty"><div class="ico"><i class="ti ti-calendar-off"></i></div>No upcoming matches match these filters.</div>';
+    // group by tournament
+    const groups={};fx.forEach(f=>{(groups[f.tournament||'—']=groups[f.tournament||'—']||[]).push(f);});
+    let out=head;
+    Object.keys(groups).sort().forEach(tn=>{
+      const arr=groups[tn];const loc=arr[0].location?(' · '+arr[0].location):'';
+      out+='<div class="section-title">'+esc(tn)+'<small style="color:var(--text-3);font-weight:400">'+esc(loc)+'</small></div>';
+      arr.sort((a,b)=>(a.start||'').localeCompare(b.start||''));
+      arr.forEach(f=>{out+=matchCard(f);});
+    });
+    return out;
+  }
+  function matchCard(f){
+    const pr=PR(f.match_id);const ps=f.players||[];
+    const p0=ps[0]||{},p1=ps[1]||{};
+    let prob0=null;if(pr&&pr.players){prob0=pr.players[0].win_prob;}
+    const fav0=prob0!=null&&prob0>=0.5;
+    const seed=p=>p.seed?'<span class="tn-seed">'+p.seed+'</span>':(p.rank?'<span class="tn-seed">#'+p.rank+'</span>':'');
+    const flag=p=>p.ioc?'<span class="tn-flag">'+esc(p.ioc)+'</span>':'';
+    return '<button class="tn-match" onclick="openMatch(\''+esc(f.match_id)+'\')">'+
+      '<div class="tn-match-top"><div class="tn-match-meta">'+surfChip(prSurf(f))+' <span>'+esc(f.round||'')+'</span></div>'+
+      (pr?'<span class="tn-match-meta">model</span>':'<span class="tn-match-meta" style="color:var(--text-3)">no model</span>')+'</div>'+
+      '<div class="tn-row"><div class="tn-name'+(prob0!=null&&fav0?' fav':'')+'">'+seed(p0)+esc(p0.name||'—')+' '+flag(p0)+'</div>'+
+        (prob0!=null?'<span class="tn-prob">'+pct(prob0)+'</span>':'')+'</div>'+
+      (prob0!=null?winBar(prob0):'')+
+      '<div class="tn-row"><div class="tn-name'+(prob0!=null&&!fav0?' fav':'')+'">'+seed(p1)+esc(p1.name||'—')+' '+flag(p1)+'</div>'+
+        (prob0!=null?'<span class="tn-prob">'+pct(1-prob0)+'</span>':'')+'</div>'+
+      '</button>';
+  }
+  function prSurf(f){const pr=PR(f.match_id);return (pr&&pr.surface)||f.surface||null;}
+
+  /* ---- PLAYERS ---- */
+  function viewPlayers(){
+    if(state.view.player)return viewPlayer(state.view.player);
+    const fl=state.view.filters;
+    let list=Object.values(IDX.players);
+    if(fl.tour!=='all')list=list.filter(p=>p.tour===fl.tour);
+    if(fl.q){const q=fl.q.toLowerCase();list=list.filter(p=>(p.name||'').toLowerCase().includes(q));}
+    list.sort((a,b)=>b.elo_overall-a.elo_overall);
+    const top=list.slice(0,120);
+    let out='<div class="page-header"><div class="page-title">Players</div></div>'+
+      '<input class="search-box" placeholder="Search player…" value="'+esc(fl.q)+'" oninput="setFilter(\'q\',this.value)">'+tourPills();
+    if(!top.length)return out+'<div class="empty"><div class="ico"><i class="ti ti-user-off"></i></div>No players match.</div>';
+    out+=top.map(p=>'<button class="pl-row" onclick="openPlayer(\''+esc(p.id)+'\')">'+
+      '<div class="tn-name">'+esc(p.name)+' <span class="tn-flag">'+esc(p.ioc||'')+'</span></div>'+
+      '<div style="display:flex;gap:.6rem;align-items:center">'+formStr((p.form_last10||'').slice(-5))+
+      '<span class="pl-elo">'+Math.round(p.elo_overall)+'</span></div></button>').join('');
+    if(list.length>120)out+='<div class="dfilt-note" style="text-align:center;margin-top:.5rem">Showing top 120 by Elo — search to narrow.</div>';
+    return out;
+  }
+  function statRow(label,a,b){return '<div class="s"><span>'+label+'</span><span>'+a+(b!=null?' <span style="color:var(--text-3)">/ '+b+'</span>':'')+'</span></div>';}
+  function viewPlayer(id){
+    const p=P(id);if(!p)return '<button class="back-btn" onclick="state.view.player=null;_renderApp()"><i class="ti ti-arrow-left"></i> Back</button><div class="empty">Player not found.</div>';
+    const c=p.serve_career||{},r=p.serve_recent||{};
+    let out='<button class="back-btn" onclick="state.view.player=null;_renderApp()"><i class="ti ti-arrow-left"></i> Players</button>';
+    out+='<div class="page-header"><div class="page-title">'+esc(p.name)+'</div></div>';
+    out+='<div class="meta-bar">'+
+      '<span class="meta-item"><i class="ti ti-flag"></i>'+esc(p.ioc||'—')+'</span>'+
+      '<span class="meta-item"><i class="ti ti-ball-tennis"></i>'+p.tour.toUpperCase()+'</span>'+
+      '<span class="meta-item"><i class="ti ti-history"></i>'+p.n_matches+' matches</span>'+
+      '<span class="meta-item">'+formStr((p.form_last10||'').slice(-10))+'</span></div>';
+    out+=eloPills(p);
+    out+='<div class="section-title">Serve <small style="color:var(--text-3);font-weight:400">career / recent '+ (r.n||0) +'</small></div>';
+    out+='<div class="stat-grid">'+
+      statRow('Aces / svc game',num(c.ace_svgm,2),num(r.ace_svgm,2))+
+      statRow('Double faults / game',num(c.df_svgm,2),num(r.df_svgm,2))+
+      statRow('1st serve in',pct(c.first_pct),pct(r.first_pct))+
+      statRow('1st serve won',pct(c.first_win),pct(r.first_win))+
+      statRow('2nd serve won',pct(c.second_win),pct(r.second_win))+
+      statRow('Service pts won',pct(c.spw),pct(r.spw))+
+      statRow('Break pts saved',pct(c.bp_save),pct(r.bp_save))+
+      statRow('Return pts won',pct(c.rpw),pct(r.rpw))+
+      '</div>';
+    // surface splits
+    const ss=p.serve_surface||{};const keys=Object.keys(ss);
+    if(keys.length){
+      out+='<div class="tp-collapse"><details><summary class="tp-collapse-sum"><span class="tp-collapse-title">Surface splits</span><i class="ti ti-chevron-down tp-collapse-chev"></i></summary><div class="tp-collapse-body">';
+      keys.forEach(k=>{const s=ss[k];out+='<div style="margin-bottom:.5rem">'+surfChip(k)+' <span style="color:var(--text-3);font-family:var(--font-mono);font-size:.72rem"> '+(s.n||0)+' matches</span>'+
+        '<div class="stat-grid" style="margin-top:.3rem">'+statRow('Aces/game',num(s.ace_svgm,2))+statRow('Svc pts won',pct(s.spw))+statRow('1st in',pct(s.first_pct))+statRow('Aces against',num(s.ace_against,2))+'</div></div>';});
+      out+='</div></details></div>';
+    }
+    return out;
+  }
+
+  /* ---- MATCHUP ---- */
+  function viewMatchup(mid){
+    const f=IDX.fixtures.find(x=>x.match_id===mid);
+    const pr=PR(mid);
+    let out='<button class="back-btn" onclick="_switchTab(\'today\')"><i class="ti ti-arrow-left"></i> Today</button>';
+    if(!f)return out+'<div class="empty">Match not found.</div>';
+    const surf=prSurf(f);
+    out+='<div class="meta-bar">'+
+      '<span class="meta-item"><i class="ti ti-trophy"></i>'+esc(f.tournament||'')+'</span>'+
+      '<span class="meta-item">'+surfChip(surf)+'</span>'+
+      '<span class="meta-item"><i class="ti ti-tournament"></i>'+esc(f.round||'')+'</span>'+
+      '<span class="meta-item"><i class="ti ti-ball-tennis"></i>Best of '+(f.best_of||3)+'</span></div>';
+    const ps=f.players||[];
+    if(!pr){
+      out+='<div class="tn-row" style="font-size:1.05rem;font-weight:700;margin:.6rem 0">'+esc((ps[0]||{}).name||'—')+'</div>'+
+           '<div style="text-align:center;color:var(--text-3);font-family:var(--font-mono);font-size:.8rem">vs</div>'+
+           '<div class="tn-row" style="font-size:1.05rem;font-weight:700;margin:.6rem 0">'+esc((ps[1]||{}).name||'—')+'</div>'+
+           '<div class="empty" style="margin-top:.8rem"><div class="ico"><i class="ti ti-chart-bar-off"></i></div>No model projection — one or both players aren\'t yet in the rating data.</div>';
+      return out;
+    }
+    const a=pr.players[0],b=pr.players[1];const pa=P(a.sackmann_id),pb=P(b.sackmann_id);
+    out+='<div class="tn-row"><div class="tn-name'+(a.win_prob>=0.5?' fav':'')+'" style="font-size:1.05rem">'+esc(a.name)+'</div><span class="tn-prob">'+pct(a.win_prob)+'</span></div>';
+    out+=winBar(a.win_prob);
+    out+='<div class="tn-row"><div class="tn-name'+(b.win_prob>0.5?' fav':'')+'" style="font-size:1.05rem">'+esc(b.name)+'</div><span class="tn-prob">'+pct(b.win_prob)+'</span></div>';
+    // projection tiles
+    out+='<div class="proj-tiles">'+
+      '<div class="proj-tile"><div class="v">'+num(pr.proj_total_games)+'</div><div class="k">Proj. total games</div></div>'+
+      '<div class="proj-tile"><div class="v">'+num(a.proj_aces)+'</div><div class="k">'+esc(lastName(a.name))+' aces</div></div>'+
+      '<div class="proj-tile"><div class="v">'+num(b.proj_aces)+'</div><div class="k">'+esc(lastName(b.name))+' aces</div></div>'+
+      '</div>';
+    // serve/return comparison
+    if(pa&&pb){
+      const ca=pa.serve_career||{},cb=pb.serve_career||{};
+      const cmp=(label,va,vb,fmt,hi='max')=>{
+        const fa=fmt(va),fb=fmt(vb);let wa='',wb='';
+        if(va!=null&&vb!=null&&!isNaN(va)&&!isNaN(vb)){const aWin=hi==='max'?va>vb:va<vb;wa=aWin?'win':'';wb=aWin?'':'win';}
+        return '<div class="l '+wa+'">'+fa+'</div><div class="lbl">'+label+'</div><div class="r '+wb+'">'+fb+'</div>';};
+      out+='<div class="section-title">Serve &amp; return</div><div class="cmp">'+
+        '<div class="l" style="font-weight:700">'+esc(lastName(a.name))+'</div><div class="lbl"></div><div class="r" style="font-weight:700">'+esc(lastName(b.name))+'</div>'+
+        cmp('Aces/gm',ca.ace_svgm,cb.ace_svgm,x=>num(x,2))+
+        cmp('Svc pts won',ca.spw,cb.spw,pct)+
+        cmp('1st in',ca.first_pct,cb.first_pct,pct)+
+        cmp('BP saved',ca.bp_save,cb.bp_save,pct)+
+        cmp('Return pts won',ca.rpw,cb.rpw,pct)+
+        cmp('Aces against',ca.ace_against,cb.ace_against,x=>num(x,2),'min')+
+        '</div>';
+    }
+    // H2H
+    out+=h2hBlock(a.sackmann_id,b.sackmann_id,a.name,b.name);
+    out+='<div class="dfilt-note" style="margin-top:.7rem">'+esc(pr.model||'')+'</div>';
+    return out;
+  }
+  function lastName(n){if(!n)return '';const t=n.split(' ');return t[t.length-1];}
+  function h2hBlock(id1,id2,n1,n2){
+    const k=[id1,id2].sort().join('_');const h=IDX.h2h[k];
+    if(!h)return '<div class="section-title">Head-to-head</div><div class="empty" style="padding:1rem"><div class="ico"><i class="ti ti-swords"></i></div>No prior meetings on record.</div>';
+    const w1=h.a===id1?h.a_wins:h.b_wins, w2=h.a===id1?h.b_wins:h.a_wins;
+    let out='<div class="section-title">Head-to-head</div>'+
+      '<div class="tn-row" style="font-size:1.1rem;font-weight:700;justify-content:center;gap:1rem;font-family:var(--font-mono)">'+
+      '<span'+(w1>w2?' style="color:var(--accent)"':'')+'>'+w1+'</span><span style="color:var(--text-3)">–</span>'+
+      '<span'+(w2>w1?' style="color:var(--accent)"':'')+'>'+w2+'</span></div>';
+    if(h.last){const winner=P(h.last.winner_id);out+='<div class="dfilt-note" style="text-align:center">Last met: '+esc(h.last.tourney||'')+' '+surfChip(h.last.surface)+' — won by '+esc(winner?winner.name:'—')+'</div>';}
+    return out;
+  }
+  function viewMatchupPicker(){
+    const fx=upcomingSingles().filter(f=>PR(f.match_id)).filter(passFilter);
+    let out='<div class="page-header"><div class="page-title">Matchup</div></div>'+tourPills();
+    if(!fx.length)return out+'<div class="empty"><div class="ico"><i class="ti ti-swords"></i></div>No projectable matches right now. Matches appear once both players are in the rating data.</div>';
+    out+='<div class="dfilt-note" style="margin-bottom:.6rem">Pick a match to see the full model breakdown.</div>';
+    fx.sort((a,b)=>(a.start||'').localeCompare(b.start||''));
+    out+=fx.map(matchCard).join('');
+    return out;
+  }
+
+  /* ---- DEGEN CREW ---- */
+  const CREW=[
+    {id:'greenlights',name:'Green Lights',icon:'ti-traffic-lights',sub:'Model\u2019s most confident calls'},
+    {id:'aces',name:'Ace Merchants',icon:'ti-flame',sub:'Highest projected aces'},
+    {id:'kryptonite',name:'Kryptonite',icon:'ti-skull',sub:'Owns this opponent (H2H)'},
+    {id:'streakers',name:'Streakers',icon:'ti-trending-up',sub:'Riding a win streak'},
+    {id:'grinders',name:'Grinders',icon:'ti-arrows-maximize',sub:'Long matches \u2192 games over'},
+    {id:'elite',name:'Elite Matchups',icon:'ti-stars',sub:'Two top-rated players'},
+  ];
+  function crewData(id){
+    const fx=upcomingSingles().filter(f=>PR(f.match_id));
+    if(id==='greenlights')return fx.map(f=>{const pr=PR(f.match_id),mx=Math.max(pr.players[0].win_prob,pr.players[1].win_prob),fav=pr.players[0].win_prob>=pr.players[1].win_prob?pr.players[0]:pr.players[1];return{f,mx,note:esc(fav.name)+' '+pct(mx),sort:mx};}).filter(x=>x.mx>=0.70).sort((a,b)=>b.sort-a.sort);
+    if(id==='aces')return fx.map(f=>{const pr=PR(f.match_id);const best=(pr.players[0].proj_aces||0)>=(pr.players[1].proj_aces||0)?pr.players[0]:pr.players[1];return{f,note:esc(best.name)+' ~'+num(best.proj_aces)+' aces',sort:best.proj_aces||0};}).filter(x=>x.sort>=8).sort((a,b)=>b.sort-a.sort);
+    if(id==='kryptonite')return fx.map(f=>{const pr=PR(f.match_id),k=[pr.players[0].sackmann_id,pr.players[1].sackmann_id].sort().join('_'),h=IDX.h2h[k];if(!h)return null;const tot=h.a_wins+h.b_wins,diff=Math.abs(h.a_wins-h.b_wins);if(tot<3||diff<2)return null;const domId=h.a_wins>h.b_wins?h.a:h.b,dom=P(domId);return{f,note:(dom?esc(dom.name):'—')+' leads '+Math.max(h.a_wins,h.b_wins)+'\u2013'+Math.min(h.a_wins,h.b_wins),sort:diff};}).filter(Boolean).sort((a,b)=>b.sort-a.sort);
+    if(id==='streakers')return fx.map(f=>{const pr=PR(f.match_id);let best=null;pr.players.forEach(pp=>{const p=P(pp.sackmann_id);if(!p||!p.form_last10)return;const m=p.form_last10.match(/W+$/);const st=m?m[0].length:0;if(st>=4&&(!best||st>best.st))best={name:p.name,st};});if(!best)return null;return{f,note:esc(best.name)+' '+best.st+' wins in a row',sort:best.st};}).filter(Boolean).sort((a,b)=>b.sort-a.sort);
+    if(id==='grinders')return fx.map(f=>{const pr=PR(f.match_id);return{f,note:'~'+num(pr.proj_total_games)+' games',sort:pr.proj_total_games||0};}).sort((a,b)=>b.sort-a.sort).slice(0,12);
+    if(id==='elite')return fx.map(f=>{const pr=PR(f.match_id),lo=Math.min(pr.players[0].elo,pr.players[1].elo);return{f,note:Math.round(pr.players[0].elo)+' vs '+Math.round(pr.players[1].elo),sort:lo};}).filter(x=>x.sort>=1700).sort((a,b)=>b.sort-a.sort);
+    return [];
+  }
+  function viewCrew(){
+    let out='<div class="page-header"><div class="page-title">Degen Crew</div></div>';
+    out+='<div class="crew-grid">'+CREW.map(c=>{const n=crewData(c.id).length;
+      return '<button class="crew-tile'+(state.view.crew===c.id?' active':'')+'" onclick="openCrew(\''+c.id+'\')">'+
+      '<div class="crew-tile-icon"><i class="ti '+c.icon+'"></i></div>'+
+      '<div class="crew-tile-name">'+c.name+'</div>'+
+      '<div class="crew-tile-sub">'+n+' plays<small>'+c.sub+'</small></div></button>';}).join('')+'</div>';
+    if(state.view.crew){
+      const c=CREW.find(x=>x.id===state.view.crew);const rows=crewData(state.view.crew);
+      out+='<div class="section-title">'+c.name+'</div>';
+      if(!rows.length)out+='<div class="empty"><div class="ico"><i class="ti ti-mood-empty"></i></div>No '+c.name.toLowerCase()+' in the current slate.</div>';
+      else out+=rows.map(x=>{const ps=x.f.players||[];
+        return '<button class="tn-match" onclick="openMatch(\''+esc(x.f.match_id)+'\')">'+
+        '<div class="tn-match-top"><div class="tn-match-meta">'+surfChip(prSurf(x.f))+' '+esc(x.f.tournament||'')+'</div><span class="tn-prob" style="font-size:.78rem;color:var(--accent)">'+x.note+'</span></div>'+
+        '<div class="tn-row"><div class="tn-name">'+esc((ps[0]||{}).name||'—')+'</div><div style="color:var(--text-3)">vs</div><div class="tn-name">'+esc((ps[1]||{}).name||'—')+'</div></div>'+
+        '</button>';}).join('');
+    } else {
+      out+='<div class="dfilt-note" style="text-align:center;margin-top:.8rem">Tap a crew to see its plays. Signals run off the model — no odds attached, so treat them as leans, not locked edges.</div>';
+    }
+    return out;
+  }
+
+  /* ---- CHECK MY BET ---- */
+  function cmbForm(){
+    const fx=upcomingSingles().filter(f=>PR(f.match_id));
+    if(!fx.length)return '<div class="empty"><div class="ico"><i class="ti ti-checks"></i></div>No projectable matches to check yet.</div>';
+    const opts=fx.map(f=>{const pr=PR(f.match_id);return '<option value="'+esc(f.match_id)+'">'+esc(pr.players[0].name)+' v '+esc(pr.players[1].name)+'</option>';}).join('');
+    return '<div class="cmb-field"><label>Match</label><select id="cmb-match" onchange="cmbRender()">'+opts+'</select></div>'+
+      '<div class="cmb-field"><label>Market</label><select id="cmb-market" onchange="cmbRender()">'+
+        '<option value="winner">Match winner</option><option value="aces">Player total aces</option><option value="games">Total match games</option></select></div>'+
+      '<div id="cmb-dynamic"></div>'+
+      '<button class="auth-btn" style="margin-top:.4rem" onclick="cmbCheck()">Check it</button>'+
+      '<div id="cmb-out"></div>';
+  }
+  function cmbCur(){const mid=document.getElementById('cmb-match').value;return {mid,pr:PR(mid),market:document.getElementById('cmb-market').value};}
+  function cmbRender(){
+    const {pr,market}=cmbCur();const d=document.getElementById('cmb-dynamic');if(!pr){d.innerHTML='';return;}
+    if(market==='winner'){d.innerHTML='<div class="cmb-field"><label>Your pick</label><select id="cmb-pick">'+pr.players.map((p,i)=>'<option value="'+i+'">'+esc(p.name)+'</option>').join('')+'</select></div>';}
+    else if(market==='aces'){d.innerHTML='<div class="cmb-field"><label>Player</label><select id="cmb-pick">'+pr.players.map((p,i)=>'<option value="'+i+'">'+esc(p.name)+'</option>').join('')+'</select></div>'+
+      '<div class="cmb-field"><label>Line</label><input id="cmb-line" type="number" step="0.5" placeholder="e.g. 8.5"></div>'+
+      '<div class="cmb-field"><label>Side</label><select id="cmb-side"><option value="over">Over</option><option value="under">Under</option></select></div>';}
+    else{d.innerHTML='<div class="cmb-field"><label>Total games line</label><input id="cmb-line" type="number" step="0.5" placeholder="e.g. 21.5"></div>'+
+      '<div class="cmb-field"><label>Side</label><select id="cmb-side"><option value="over">Over</option><option value="under">Under</option></select></div>';}
+  }
+  function cmbCheck(){
+    const {pr,market}=cmbCur();const out=document.getElementById('cmb-out');if(!pr){out.innerHTML='';return;}
+    let lean='',cls='',hd='',body='';
+    if(market==='winner'){const i=+document.getElementById('cmb-pick').value;const p=pr.players[i];const prob=p.win_prob;
+      cls=prob>=0.5?'lean-yes':'lean-no';hd=(prob>=0.5?'Model agrees':'Model leans against');
+      body='Model gives '+esc(p.name)+' a <b>'+pct(prob)+'</b> win probability (Elo '+Math.round(p.elo)+' vs '+Math.round(pr.players[1-i].elo)+').';}
+    else if(market==='aces'){const i=+document.getElementById('cmb-pick').value;const p=pr.players[i];const line=parseFloat(document.getElementById('cmb-line').value);const side=document.getElementById('cmb-side').value;
+      if(isNaN(line)){out.innerHTML='<div class="cmb-verdict">Enter a line first.</div>';return;}
+      const proj=p.proj_aces;if(proj==null){out.innerHTML='<div class="cmb-verdict">No ace projection for this player.</div>';return;}
+      const overHit=proj>line;const agree=(side==='over')===overHit;cls=agree?'lean-yes':'lean-no';
+      hd=agree?'Model leans your way':'Model leans against';
+      body='Projected ~<b>'+num(proj)+'</b> aces for '+esc(p.name)+' vs your '+side+' '+line+'. <span class="dfilt-note">Ace projection is heuristic — no market line attached.</span>';}
+    else{const line=parseFloat(document.getElementById('cmb-line').value);const side=document.getElementById('cmb-side').value;
+      if(isNaN(line)){out.innerHTML='<div class="cmb-verdict">Enter a line first.</div>';return;}
+      const proj=pr.proj_total_games;const overHit=proj>line;const agree=(side==='over')===overHit;cls=agree?'lean-yes':'lean-no';
+      hd=agree?'Model leans your way':'Model leans against';
+      body='Projected ~<b>'+num(proj)+'</b> total games vs your '+side+' '+line+'. <span class="dfilt-note">Total-games projection is heuristic v1.</span>';}
+    out.innerHTML='<div class="cmb-verdict '+cls+'"><div class="hd">'+hd+'</div><div>'+body+'</div></div>';
+  }
+
+  /* ---- ROUTER ---- */
+  function renderTab(name){
+    if(!IDX)return '<div class="empty">Loading…</div>';
+    switch(name){
+      case 'today':   return viewToday();
+      case 'players': return viewPlayers();
+      case 'matchup': return state.view.match?viewMatchup(state.view.match):viewMatchupPicker();
+      case 'crew':    return viewCrew();
+      default:        return viewToday();
+    }
+  }
+  </script>
+</body>
+</html>
