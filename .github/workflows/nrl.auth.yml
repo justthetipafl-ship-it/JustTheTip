@@ -1,0 +1,40 @@
+name: NRL Auth Hash
+
+# Injects SHA-256(NRL_PASSWORD secret) into NRL/index.html on every change to it.
+# Until the secret is set, the file ships with the demo hash (password: jtt-nrl-demo).
+on:
+  push:
+    paths:
+      - "NRL/index.html"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  inject:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Inject password hash
+        env:
+          NRL_PASSWORD: ${{ secrets.NRL_PASSWORD }}
+        run: |
+          if [ -z "$NRL_PASSWORD" ]; then
+            echo "NRL_PASSWORD secret not set — leaving demo hash in place."
+            exit 0
+          fi
+          HASH=$(printf '%s' "$NRL_PASSWORD" | sha256sum | cut -d' ' -f1)
+          # Replace the value on the line tagged // jtt-auth-hash
+          sed -i -E 's|(const NRL_AUTH_HASH = ")[a-f0-9]*(";.*// jtt-auth-hash)|\1'"$HASH"'\2|' NRL/index.html
+          if git diff --quiet NRL/index.html; then
+            echo "Hash already current — nothing to commit."
+          else
+            git config user.name "jtt-bot"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add NRL/index.html
+            git commit -m "Auth: inject NRL password hash"
+            git push
+          fi
