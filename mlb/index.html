@@ -263,7 +263,7 @@
 
   <script>
   /* ===== CONFIG ===== */
-  const AUTH_HASH = '8176fcb0a9b2d2d2dd6fe9170c1cc921cd43952173f7b9550e98204f687beb8e'; // demo: jtt-mlb-demo — workflow injects real hash
+  const AUTH_HASH = 'aab47a4d89b7b3de88f7a1684dd71f8eccfe06cafda2e5b1bf33505a1051955b'; // demo: jtt-mlb-demo — workflow injects real hash
   const AUTH_TTL_DAYS = 30, AUTH_STORAGE_KEY = 'jtt_mlb_auth_v1';
   const DATA_FILES = { bundle: 'data/mlb_bundle.json' };
   const TABS = [
@@ -434,7 +434,15 @@
   function dataFilterStrip(){const w=win();const chip=(v,l)=>'<button class="dfilt-chip'+(w===v?' active':'')+'" onclick="state.view.window='+v+';_renderApp()">'+l+'</button>';
     return '<div class="data-filter-strip"><div class="dfilt-row"><span class="dfilt-lbl"><i class="ti ti-adjustments"></i>Window</span><span class="dfilt-chips">'+chip(10,'L10')+chip(15,'L15')+chip(999,'Season')+'</span><span class="dfilt-note">Drives hit rates, projections &amp; signals</span></div></div>';}
   function formPips(tid){const rec=(TEAM(tid).recent||[]).slice(0,5);if(!rec.length)return '';return '<div class="form-pips">'+rec.map(r=>'<span class="pip '+r.res+'">'+r.res+'</span>').join('')+'</div>';}
-  function _gdate(g){let iso=g.gameTimeUTC;if(!iso&&g.date&&g.time&&/^\d{1,2}:\d{2}$/.test(g.time))iso=g.date+'T'+(g.time.length<5?'0'+g.time:g.time)+':00Z';if(!iso)return null;const d=new Date(iso);return isNaN(d.getTime())?null:d;}
+  function _gdate(g){
+    if(g.gameTimeUTC){const d=new Date(g.gameTimeUTC);return isNaN(d.getTime())?null:d;}
+    if(g.date&&g.time&&/^\d{1,2}:\d{2}$/.test(g.time)){
+      const hh=parseInt(g.time.split(':')[0],10);let ds=g.date;
+      if(hh<12){const base=new Date(g.date+'T00:00:00Z');if(!isNaN(base.getTime())){base.setUTCDate(base.getUTCDate()+1);ds=base.toISOString().slice(0,10);}}
+      const t=g.time.length<5?'0'+g.time:g.time;const d=new Date(ds+'T'+t+':00Z');return isNaN(d.getTime())?null:d;
+    }
+    return null;
+  }
   function gameTimeShort(g){const d=_gdate(g);if(!d)return g.time||'';try{return d.toLocaleString([],{weekday:'short',hour:'numeric',minute:'2-digit'});}catch(e){return g.time||'';}}
   function gameTimeFull(g){const d=_gdate(g);if(!d)return (B().asOf||'')+(g.time?' · '+g.time:'');try{return d.toLocaleString([],{weekday:'short',day:'numeric',month:'short',hour:'numeric',minute:'2-digit',timeZoneName:'short'});}catch(e){return (B().asOf||'')+(g.time?' · '+g.time:'');}}
 
