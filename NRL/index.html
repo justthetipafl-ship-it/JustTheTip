@@ -303,8 +303,11 @@
 
 <script>
 // ============================================================
-// AUTH GATE — loads auth.json (sha256 passwordHash). If missing, gate off.
+// AUTH GATE — gated against an injected SHA-256 hash. nrl-auth.yml
+// rewrites the line tagged // jtt-auth-hash with SHA-256(NRL_PASSWORD)
+// on push. Demo password until injected: "jtt-nrl-demo". Empty = gate off.
 // ============================================================
+const NRL_AUTH_HASH = "800c777adb704c2fa3c74a9582a5be09bfb79da75401dc26eb69767d0ac62e67"; // jtt-auth-hash
 (function authGateInit() {
   const LS_KEY = 'jtt_nrl_auth', TTL_MS = 30 * 864e5;
   const overlay = document.getElementById('auth-overlay');
@@ -313,19 +316,14 @@
   async function sha256(t){ const b=new TextEncoder().encode(t); const h=await crypto.subtle.digest('SHA-256',b); return Array.from(new Uint8Array(h)).map(x=>x.toString(16).padStart(2,'0')).join(''); }
   function unlock(){ overlay.classList.add('unlocked'); document.body.classList.remove('auth-locked'); setTimeout(()=>overlay.style.display='none',320); boot(); }
   let stored=null; try{ stored=JSON.parse(localStorage.getItem(LS_KEY)); }catch{}
-  const prefix = new URLSearchParams(location.search).get('data') || '';
-  (async ()=>{
-    let auth=null;
-    try{ const r=await fetch(prefix+'auth.json?t='+Date.now(),{cache:'no-store'}); if(r.ok) auth=await r.json(); }catch{}
-    if(!auth || !auth.passwordHash){ unlock(); return; }
-    if(stored && stored.h===auth.passwordHash && stored.e>Date.now()){ unlock(); return; }
-    form.addEventListener('submit', async (e)=>{
-      e.preventDefault(); btn.disabled=true;
-      const h=await sha256(input.value);
-      if(h===auth.passwordHash){ msg.className='auth-msg success'; msg.textContent='Access granted'; try{localStorage.setItem(LS_KEY,JSON.stringify({h,e:Date.now()+TTL_MS}));}catch{} unlock(); }
-      else { msg.className='auth-msg error'; msg.textContent='Incorrect access code'; input.classList.add('error'); setTimeout(()=>input.classList.remove('error'),420); btn.disabled=false; }
-    });
-  })();
+  if(!NRL_AUTH_HASH){ unlock(); return; }
+  if(stored && stored.h===NRL_AUTH_HASH && stored.e>Date.now()){ unlock(); return; }
+  form.addEventListener('submit', async (e)=>{
+    e.preventDefault(); btn.disabled=true;
+    const h=await sha256(input.value);
+    if(h===NRL_AUTH_HASH){ msg.className='auth-msg success'; msg.textContent='Access granted'; try{localStorage.setItem(LS_KEY,JSON.stringify({h,e:Date.now()+TTL_MS}));}catch{} unlock(); }
+    else { msg.className='auth-msg error'; msg.textContent='Incorrect access code'; input.classList.add('error'); setTimeout(()=>input.classList.remove('error'),420); btn.disabled=false; }
+  });
 })();
 
 // ============================================================
@@ -333,11 +331,11 @@
 // ============================================================
 const state = { data:{}, version:null, round:null, fixtureMatch:null, crewTab:'try-scorers', playerSort:'tries', cmbPlayer:null };
 
-const DATA_FILES = { logs:'nrl_player_logs.json', team:'nrl_team_stats.json', ladder:'nrl_ladder.json', inj:'nrl_injuries.json' };
+const DATA_FILES = { logs:'nrl_player_logs.json', team:'nrl_team_stats.json', ladder:'nrl_ladder.json', inj:'nrl_injuries.json', fixtures:'nrl_fixtures.json' };
 
 async function boot() {
   const status = document.getElementById('boot-status');
-  const prefix = new URLSearchParams(location.search).get('data') || '';
+  const prefix = new URLSearchParams(location.search).get('data') || 'data/';
   let v=''; try{ const r=await fetch(prefix+'version.txt?t='+Date.now(),{cache:'no-store'}); if(r.ok){ state.version=(await r.text()).trim(); v='?t='+Date.now(); } }catch{}
   await Promise.all(Object.entries(DATA_FILES).map(async ([k,f])=>{
     try{ const r=await fetch(prefix+f+v,{cache:'no-cache'}); if(r.ok) state.data[k]=await r.json(); }catch{}
@@ -375,7 +373,7 @@ const BETTABLE = [
 const BET_BY_KEY = Object.fromEntries(BETTABLE.map(b=>[b.key,b]));
 const POS_ORDER = ['Fullback','Wing','Centre','Five-Eighth','Halfback','Hooker','Prop','Second Row','Lock','Interchange'];
 
-let PLAYERS={}, MATCHES={}, ROUNDS=[], TEAMS={}, DVP={}, TIER={};
+let PLAYERS={}, MATCHES={}, ROUNDS=[], TEAMS={}, DVP={}, TIER={}, NICK2FULL={}, FIXTURES=[], INJURED={};
 
 function num(v){ return (v===null||v===undefined||v==='')?0:(+v||0); }
 
@@ -385,7 +383,7 @@ function buildIndexes() {
   // matches: two teams per match_id
   logs.forEach(r=>{
     const mid=r.match_id;
-    if(!MATCHES[mid]) MATCHES[mid]={ match_id:mid, round:r.round, utc:r.utc_start, teams:{} };
+    if(!MATCHES[mid]) MATCHES[mid]={ match_id:mid, round:r.round, utc:r.utc_start, played:true, teams:{} };
     MATCHES[mid].teams[r.team_location]=r.team_name;
   });
   // opponent lookup
@@ -403,7 +401,6 @@ function buildIndexes() {
     p.position = Object.entries(p.posCount).sort((a,b)=>b[1]-a[1])[0]?.[0] || '—';
   });
   ROUNDS=[...new Set(logs.map(r=>r.round))].sort((a,b)=>a-b);
-  state.round = state.round || ROUNDS[ROUNDS.length-1];
   // DVP: team concedes stat to position
   const acc={};
   logs.forEach(r=>{
@@ -415,7 +412,35 @@ function buildIndexes() {
   Object.entries(acc).forEach(([team,byPos])=>{ DVP[team]={}; Object.entries(byPos).forEach(([pos,stats])=>{ DVP[team][pos]={}; Object.entries(stats).forEach(([k,o])=>{ DVP[team][pos][k]= o.n? o.s/o.n : 0; }); }); });
   // tiers from ladder
   buildTiers();
+  // nickname -> full team name (fixtures + injuries use nicknames; logs use full)
+  NICK2FULL={};
+  Object.keys(TEAMS).forEach(full=>{ NICK2FULL[shortName(full)]=full; });
+  // fixtures feed (NRL.com) — gives the full draw incl. UPCOMING rounds
+  FIXTURES=[];
+  const ff = state.data.fixtures;
+  if (ff && ff.length) {
+    ff.forEach(r=>{
+      const hFull = NICK2FULL[r.home_team] || r.home_team;
+      const aFull = NICK2FULL[r.away_team] || r.away_team;
+      const mid = r.match_id || (r.round+'_'+r.home_team+'_'+r.away_team);
+      FIXTURES.push({ match_id:mid, round:r.round, utc:r.date, venue:r.venue,
+                      played: !!(r.result && String(r.result).trim()),
+                      teams:{ home:hFull, away:aFull } });
+    });
+    // MATCHES from the fixtures feed (covers upcoming); keep log-derived as fallback for any gaps
+    FIXTURES.forEach(m=>{ MATCHES[m.match_id]={ match_id:m.match_id, round:m.round, utc:m.utc, venue:m.venue, played:m.played, teams:m.teams }; });
+    ROUNDS=[...new Set(FIXTURES.map(m=>m.round))].sort((a,b)=>a-b);
+    // default to next unplayed round (what you actually bet on), else last
+    const next = FIXTURES.filter(m=>!m.played).map(m=>m.round).sort((a,b)=>a-b)[0];
+    state.round = state.round || next || ROUNDS[ROUNDS.length-1];
+  }
+  // injuries / suspensions — key by normalised player name
+  INJURED={};
+  (state.data.inj||[]).forEach(r=>{ if(r.player) INJURED[normName(r.player)]={ team:r.team, reason:r.reason, ret:r.expected_return }; });
+  // default round: next unplayed if fixtures present (set above), else last played
+  if(state.round==null) state.round = ROUNDS[ROUNDS.length-1];
 }
+function normName(s){ return (s||'').toLowerCase().replace(/[^a-z]/g,''); }
 
 function buildTiers() {
   const lad = state.data.ladder;
@@ -479,9 +504,10 @@ function renderFixtures(){
     const fx=fixturesForRound(state.round);
     html += `<div class="nrl-fix-grid">`+ fx.map(m=>{
       const h=m.teams.home, a=m.teams.away;
-      return `<div class="nrl-fix-card" onclick="openFixture(${m.match_id})">
+      const tag = m.played ? 'FINAL · tap for markets' : (m.venue? m.venue+' · tap for markets' : 'UPCOMING · tap for markets');
+      return `<div class="nrl-fix-card" onclick="openFixture('${m.match_id}')">
         <div class="nrl-fix-teams"><span class="nrl-fix-team">${shortName(h)}</span><span class="nrl-fix-vs">vs</span><span class="nrl-fix-team">${shortName(a)}</span></div>
-        <div class="nrl-fix-sub">Round ${m.round} · tap for markets</div></div>`;
+        <div class="nrl-fix-sub">Round ${m.round} · ${tag}</div></div>`;
     }).join('') + `</div>`;
     if(!fx.length) html+=`<div class="empty">No fixtures for round ${state.round}.</div>`;
   }
@@ -537,11 +563,15 @@ function topBets(home, away){
 function teamSection(team, opp){
   const roster=teamRosterForMatch(team, state.round);
   const dvp = DVP[opp]||{};
-  let body=`<div class="tp-body-meta">Markets vs ${shortName(opp)} defence · season averages · ▲ = opp concedes above-average to this position</div>`;
+  const nick=shortName(team);
+  const outs=Object.entries(INJURED).filter(([,v])=>v.team===nick).map(([,v],i,a)=>v);
+  const outsLine = outs.length ? `<div class="tp-body-meta" style="color:#f87171"><i class="ti ti-bandage"></i> Outs: ${(state.data.inj||[]).filter(r=>r.team===nick).map(r=>r.player+' ('+(r.reason||'?')+')').slice(0,8).join(' · ')}</div>` : '';
+  let body=outsLine+`<div class="tp-body-meta">Markets vs ${shortName(opp)} defence · season averages · ▲ = opp concedes above-average to this position</div>`;
   body+=`<table class="nrl-tbl"><thead><tr><th>Player</th><th>Pos</th><th>Tries</th><th>Tackles</th><th>T-Breaks</th><th>Run M</th><th>L.Brk</th></tr></thead><tbody>`;
   roster.sort((x,y)=>avg(y.rows,'runMetres')-avg(x.rows,'runMetres')).forEach(({p,rows})=>{
     const cell=(k)=>{ const v=avg(rows,k); const d=dvp[p.position]?.[k]; const up = d && v>0 && d> (leagueAvgPos(p.position,k)||0)*1.05; return `<td>${fmt(v, k==='runMetres'?0:1)}${up?' <span style="color:var(--good)">▲</span>':''}</td>`; };
-    body+=`<tr onclick="openPlayer(${p.id})"><td class="nrl-name">${p.name}</td><td class="nrl-pos">${p.position}</td>${cell('tries')}${cell('tackles')}${cell('tackleBreaks')}${cell('runMetres')}${cell('lineBreaks')}</tr>`;
+    const ic = INJURED[normName(p.name)] ? ' <i class="ti ti-bandage" style="color:#f87171;font-size:12px" title="Injured/suspended"></i>' : '';
+    body+=`<tr onclick="openPlayer(${p.id})"><td class="nrl-name">${p.name}${ic}</td><td class="nrl-pos">${p.position}</td>${cell('tries')}${cell('tackles')}${cell('tackleBreaks')}${cell('runMetres')}${cell('lineBreaks')}</tr>`;
   });
   body+=`</tbody></table>`;
   return `<details class="tp-collapse"><summary class="tp-collapse-sum"><i class="ti ti-users"></i><span class="tp-collapse-title">${shortName(team)}</span><span class="tp-collapse-meta">${roster.length} players</span><i class="ti ti-chevron-down tp-collapse-chev"></i></summary><div class="tp-collapse-body">${body}</div></details>`;
@@ -583,11 +613,13 @@ function filterPlayers(q){ q=q.toLowerCase(); document.querySelectorAll('#pl-bod
 function openPlayer(id){
   const p=PLAYERS[id]; if(!p) return;
   const l5=lastN(p.rows,5);
+  const inj=INJURED[normName(p.name)];
+  const injChip = inj ? `<div style="margin-top:6px;display:inline-flex;align-items:center;gap:6px;background:rgba(239,68,68,0.12);border:1px solid rgba(239,68,68,0.35);color:#f87171;border-radius:4px;padding:3px 8px;font-family:var(--font-mono);font-size:10px"><i class="ti ti-bandage"></i> ${inj.reason||'Injured'} · return ${inj.ret||'TBC'}</div>` : '';
   const grid=(rows,title)=>{ return `<div class="page-sub" style="margin:10px 0 6px">${title}</div><div class="stat-grid">`+
     BETTABLE.slice(0,8).map(b=>`<div class="stat-cell"><div class="sc-val">${fmt(avg(rows,b.key), b.key==='runMetres'||b.key==='postContactMetres'?0:1)}</div><div class="sc-lbl">${b.label}</div></div>`).join('')+`</div>`; };
   let html=`<div style="padding:16px 18px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:12px">
     <div style="flex:1"><div style="font-family:var(--font-display);font-weight:800;font-size:20px">${p.name}</div>
-    <div style="font-family:var(--font-mono);font-size:11px;color:var(--text-3);margin-top:2px">${p.position} · ${shortName(p.team)} · ${p.rows.length} games</div></div>
+    <div style="font-family:var(--font-mono);font-size:11px;color:var(--text-3);margin-top:2px">${p.position} · ${shortName(p.team)} · ${p.rows.length} games</div>${injChip}</div>
     <button class="cmb-close" onclick="closePlayerModal()">×</button></div><div style="padding:14px 18px">`;
   html+=grid(p.rows,'SEASON AVERAGE');
   html+=grid(l5,'LAST 5');
