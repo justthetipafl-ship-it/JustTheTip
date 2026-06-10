@@ -10,7 +10,7 @@ only (no Statcast). Run locally:  python3 fetch_mlb.py [YYYY-MM-DD]
 
 Dependency: requests  (pip install requests)
 """
-import sys, os, json, time, datetime, csv, io
+import sys, os, json, time, datetime
 import requests
 
 BASE = "https://statsapi.mlb.com/api/v1"
@@ -25,9 +25,6 @@ TEAM_PARK = {
     135:"SD",136:"SEA",137:"SF",138:"STL",139:"TB",140:"TEX",141:"TOR",142:"MIN",
     143:"PHI",144:"ATL",145:"CWS",146:"MIA",147:"NYY",158:"MIL",
 }
-
-# Populated in main() from the teams endpoint: teamId -> official abbreviation.
-TEAM_ABBR = {}
 
 _session = requests.Session()
 _session.headers.update({"User-Agent": "JTT-MLB/1.0 (research tool)"})
@@ -222,206 +219,6 @@ def gamelog_pit(pid, season, idmap, limit=20):
         if len(log) >= limit: break
     return log
 
-# ---------------------------------------------------------------- league extras
-DIV_NAMES = {200:"AL West",201:"AL East",202:"AL Central",
-             203:"NL West",204:"NL East",205:"NL Central"}
-
-def load_standings(season):
-    d = api("standings", leagueId="103,104", season=season, standingsTypes="regularSeason")
-    out = []
-    for rec in d.get("records", []):
-        div_id = (rec.get("division") or {}).get("id")
-        rows = []
-        for tr in rec.get("teamRecords", []):
-            t = tr.get("team", {})
-            l10 = ""
-            for sr in (tr.get("records", {}).get("splitRecords", []) or []):
-                if sr.get("type") == "lastTen":
-                    l10 = f"{sr.get('wins',0)}-{sr.get('losses',0)}"
-            rows.append({
-                "abbr": TEAM_ABBR.get(t.get("id"), t.get("abbreviation", "?")),
-                "name": t.get("name", "?"),
-                "w": i(tr.get("wins")), "l": i(tr.get("losses")),
-                "pct": f(tr.get("winningPercentage")),
-                "gb": str(tr.get("gamesBack", "—")),
-                "rs": i(tr.get("runsScored")), "ra": i(tr.get("runsAllowed")),
-                "diff": i(tr.get("runDifferential")),
-                "l10": l10 or "—",
-                "streak": (tr.get("streak") or {}).get("streakCode", "—"),
-            })
-        out.append({"div": DIV_NAMES.get(div_id, "Division"), "teams": rows})
-    # order AL then NL, East/Central/West
-    order = ["AL East","AL Central","AL West","NL East","NL Central","NL West"]
-    out.sort(key=lambda d: order.index(d["div"]) if d["div"] in order else 99)
-    return out
-
-LEADER_CATS_BAT = {"AVG":"battingAverage","HR":"homeRuns","RBI":"rbi",
-                   "OPS":"onBasePlusSlugging","SB":"stolenBases"}
-LEADER_CATS_PIT = {"ERA":"earnedRunAverage","K":"strikeouts","WHIP":"walksAndHitsPerInningPitched"}
-
-def _leader_rows(cat, group, season, n=8):
-    d = api("stats/leaders", leaderCategories=cat, season=season,
-            sportId=1, statGroup=group, limit=n)
-    rows = []
-    for cat_block in d.get("leagueLeaders", []):
-        for L in cat_block.get("leaders", [])[:n]:
-            p = L.get("person", {}); team = L.get("team", {})
-            val = L.get("value")
-            try: val = float(val) if "." in str(val) else int(val)
-            except (TypeError, ValueError): pass
-            rows.append({"playerId": p.get("id"), "name": p.get("fullName", "?"),
-                         "abbr": TEAM_ABBR.get(team.get("id"), "?"), "val": val})
-    return rows
-
-def load_league_leaders(season):
-    return {
-        "batting":  {k: _leader_rows(v, "hitting", season)  for k, v in LEADER_CATS_BAT.items()},
-        "pitching": {k: _leader_rows(v, "pitching", season) for k, v in LEADER_CATS_PIT.items()},
-    }
-
-def load_league_trends(season, standings):
-    all_rows = [t for d in standings for t in d["teams"]]
-    tot_gp = sum(t["w"] + t["l"] for t in all_rows)
-    tot_rs = sum(t["rs"] for t in all_rows)
-    trends = {"games": tot_gp // 2 if tot_gp else 0, "league": "MLB",
-              "avgRunsPerGame": round(tot_rs / tot_gp, 2) if tot_gp else None,
-              "avgTotalPerGame": round(2 * tot_rs / tot_gp, 2) if tot_gp else None,
-              "avgHRPerGame": None}
-    # league HR/game from one aggregate hitting call
-    d = api("stats", stats="season", group="hitting", season=season, sportId=1)
-    try:
-        st = d["stats"][0]["splits"][0]["stat"]
-        hr = f(st.get("homeRuns")); g = f(st.get("gamesPlayed"))
-        if g: trends["avgHRPerGame"] = round(hr / g, 2)
-    except Exception:
-        pass
-    return trends
-
-def team_recent(tid, date, season, n=8):
-    end = date
-    start = (datetime.date.fromisoformat(date) - datetime.timedelta(days=18)).isoformat()
-    d = api("schedule", sportId=1, teamId=tid, startDate=start, endDate=end,
-            gameType="R", hydrate="team")
-    games = []
-    for day in d.get("dates", []):
-        for g in day.get("games", []):
-            if (g.get("status") or {}).get("abstractGameState") != "Final":
-                continue
-            gt = g.get("teams", {})
-            home, away = gt.get("home", {}), gt.get("away", {})
-            is_home = (home.get("team") or {}).get("id") == tid
-            me, opp = (home, away) if is_home else (away, home)
-            rf = i(me.get("score")); ra = i(opp.get("score"))
-            games.append({"date": g.get("officialDate", g.get("gameDate", "")[:10]),
-                          "opp": TEAM_ABBR.get((opp.get("team") or {}).get("id"), "?"),
-                          "rf": rf, "ra": ra, "res": "W" if rf > ra else "L"})
-    games.sort(key=lambda x: x["date"], reverse=True)
-    return games[:n]
-
-# ---------------------------------------------------------------- weather (Open-Meteo)
-def classify_weather(park, temp_f, wind_mph, wind_from_deg, precip_pct=0):
-    """Turn raw conditions into a wind out/in read + an HR multiplier.
-    Only open-air parks get a weather HR effect; roofed parks are treated neutral
-    (we don't know roof open/closed state from the feed)."""
-    roof = (park or {}).get("roof", "open")
-    if roof != "open":
-        return {"tempF": round(temp_f), "windMph": round(wind_mph),
-                "windFromDeg": round(wind_from_deg), "effect": "indoor",
-                "hrMult": 1.0, "precipPct": round(precip_pct),
-                "summary": "Roofed — weather neutral"}
-    cf = (park or {}).get("cfBearing", 0)
-    toward = (wind_from_deg + 180) % 360          # direction the wind blows toward
-    diff = abs((toward - cf + 180) % 360 - 180)    # angular gap to center field
-    effect = "out" if diff <= 45 else "in" if diff >= 135 else "cross"
-    w = min(wind_mph, 25)
-    mult = 1.0
-    if effect == "out":  mult += min(0.10, w * 0.006)
-    elif effect == "in": mult -= min(0.10, w * 0.006)
-    mult += max(-0.05, min(0.05, (temp_f - 70) * 0.003))   # warm air carries
-    mult = max(0.85, min(1.15, mult))
-    desc = {"out": "blowing out", "in": "blowing in", "cross": "crosswind"}[effect]
-    return {"tempF": round(temp_f), "windMph": round(wind_mph),
-            "windFromDeg": round(wind_from_deg), "effect": effect,
-            "hrMult": round(mult, 3), "precipPct": round(precip_pct),
-            "summary": f"{round(temp_f)}\u00b0F \u00b7 {round(wind_mph)} mph {desc}"}
-
-def fetch_weather(park, game_iso_utc):
-    """First-pitch forecast for a park via Open-Meteo (free, no key). Returns a
-    classified weather dict, or a neutral fallback on any failure."""
-    if not park or park.get("lat") is None:
-        return None
-    if park.get("roof") != "open":
-        return classify_weather(park, 72, 0, 0, 0)   # roofed: skip the call, stay neutral
-    try:
-        r = _session.get("https://api.open-meteo.com/v1/forecast", timeout=20, params={
-            "latitude": park["lat"], "longitude": park["lng"],
-            "hourly": "temperature_2m,wind_speed_10m,wind_direction_10m,precipitation_probability",
-            "temperature_unit": "fahrenheit", "wind_speed_unit": "mph",
-            "timezone": "GMT", "forecast_days": 3})
-        if r.status_code != 200:
-            return None
-        d = r.json().get("hourly", {})
-        times = d.get("time", [])
-        if not times:
-            return None
-        hour = (game_iso_utc or "")[:13]            # 'YYYY-MM-DDTHH'
-        idx = next((k for k, t in enumerate(times) if t[:13] == hour), 0)
-        temp = (d.get("temperature_2m") or [72])[idx]
-        wind = (d.get("wind_speed_10m") or [0])[idx]
-        wdir = (d.get("wind_direction_10m") or [0])[idx]
-        pp = (d.get("precipitation_probability") or [0])[idx] or 0
-        return classify_weather(park, f(temp, 72), f(wind, 0), f(wdir, 0), f(pp, 0))
-    except (requests.RequestException, ValueError, IndexError, KeyError):
-        return None
-
-# ---------------------------------------------------------------- Statcast (Baseball Savant)
-def _savant_csv(url):
-    try:
-        r = _session.get(url, timeout=40, headers={"User-Agent": "Mozilla/5.0 (JTT MLB)"})
-        if r.status_code != 200 or not r.text:
-            return []
-        return list(csv.DictReader(io.StringIO(r.text)))
-    except (requests.RequestException, csv.Error):
-        return []
-
-def load_statcast(year):
-    """Whole-league quality-of-contact pulls (2 CSVs x batter/pitcher, no key).
-    Keyed by MLBAM player_id (== our player ids). Returns (batters, pitchers)."""
-    bat, pit = {}, {}
-    def gv(row, *keys):
-        for k in keys:
-            if k in row and row[k] not in (None, "", " "):
-                return row[k]
-        return None
-    def fnum(x):
-        try: return round(float(x), 3)
-        except (TypeError, ValueError): return None
-    # expected stats: xBA / xSLG / xwOBA (+ actuals for the luck gap)
-    for typ, store in (("batter", bat), ("pitcher", pit)):
-        for row in _savant_csv(f"https://baseballsavant.mlb.com/leaderboard/expected_statistics"
-                               f"?type={typ}&year={year}&position=&team=&min=1&csv=true"):
-            pid = gv(row, "player_id", "playerid", "id")
-            try: pid = int(pid)
-            except (TypeError, ValueError): continue
-            store.setdefault(pid, {}).update({
-                "xba": fnum(gv(row, "est_ba")), "ba": fnum(gv(row, "ba")),
-                "xslg": fnum(gv(row, "est_slg")), "slg": fnum(gv(row, "slg")),
-                "xwoba": fnum(gv(row, "est_woba")), "woba": fnum(gv(row, "woba")),
-            })
-    # exit velocity / barrels
-    for typ, store in (("batter", bat), ("pitcher", pit)):
-        for row in _savant_csv(f"https://baseballsavant.mlb.com/leaderboard/statcast"
-                               f"?type={typ}&year={year}&position=&team=&min=10&csv=true"):
-            pid = gv(row, "player_id", "playerid", "id")
-            try: pid = int(pid)
-            except (TypeError, ValueError): continue
-            store.setdefault(pid, {}).update({
-                "barrelPct": fnum(gv(row, "brl_percent", "barrel_batted_rate")),
-                "hardHitPct": fnum(gv(row, "ev95percent", "hard_hit_percent")),
-                "ev": fnum(gv(row, "avg_hit_speed", "exit_velocity_avg")),
-            })
-    return {k: v for k, v in bat.items() if v}, {k: v for k, v in pit.items() if v}
-
 # ---------------------------------------------------------------- build
 def main():
     date = sys.argv[1] if len(sys.argv) > 1 else \
@@ -434,11 +231,6 @@ def main():
 
     teams = load_teams()
     idmap = {tid: t["abbr"] for tid, t in teams.items()}
-    TEAM_ABBR.update(idmap)
-
-    print("[JTT MLB] loading Statcast (Baseball Savant)…")
-    STATCAST_BAT, STATCAST_PIT = load_statcast(season)
-    print(f"[JTT MLB]   statcast: {len(STATCAST_BAT)} batters, {len(STATCAST_PIT)} pitchers")
 
     games = load_schedule(date)
     print(f"[JTT MLB] {len(games)} games on schedule")
@@ -472,7 +264,6 @@ def main():
                                          "throws": "R"}},
             "lines": None,  # Stats API has no odds; wire a book feed in Phase 2 if desired
             "lineups": {"away": [], "home": []},
-            "weather": fetch_weather(parks.get(TEAM_PARK.get(htid)), gd),
         })
         if asp.get("id"): starter_ids[asp["id"]] = htid   # this pitcher faces the HOME lineup
         if hsp.get("id"): starter_ids[hsp["id"]] = atid
@@ -530,7 +321,6 @@ def main():
                 "splitVsR": splits["splitVsR"] or seas_eq,
                 "gameLog": gamelog_bat(pid, season, idmap),
                 "bvp": {},
-                "statcast": STATCAST_BAT.get(pid),
             }
             if opp_pid:
                 v = bvp(pid, opp_pid, season)
@@ -543,7 +333,6 @@ def main():
         for game in slate:
             if game["away"]["teamId"] == tid: game["lineups"]["away"] = ids_for_lineup
             if game["home"]["teamId"] == tid: game["lineups"]["home"] = ids_for_lineup
-        teams[tid]["recent"] = team_recent(tid, date, season)
         print(f"[JTT MLB]   {teams[tid]['abbr']}: {len(ids_for_lineup)} hitters")
 
     # probable starters full profiles
@@ -566,22 +355,13 @@ def main():
             "splitVsL": splits["splitVsL"] or seas_eq,
             "splitVsR": splits["splitVsR"] or seas_eq,
             "gameLog": gamelog_pit(pid, season, idmap),
-            "statcast": STATCAST_PIT.get(pid),
         }
     print(f"[JTT MLB]   {len(pitchers)} probable starters profiled")
-
-    # league-wide extras for the League page
-    standings = load_standings(season)
-    league_leaders = load_league_leaders(season)
-    trends = load_league_trends(season, standings)
-    print(f"[JTT MLB]   standings divisions={len(standings)} "
-          f"trends avgTotal={trends.get('avgTotalPerGame')}")
 
     bundle = {
         "generated": int(time.time()), "season": season, "asOf": date,
         "teams": {str(tid): t for tid, t in teams.items() if tid in team_ids_playing},
         "parks": parks, "slate": slate, "batters": batters, "pitchers": pitchers,
-        "standings": standings, "leagueLeaders": league_leaders, "trends": trends,
     }
     os.makedirs(os.path.join(HERE, "data"), exist_ok=True)
     with open(os.path.join(HERE, "data", "mlb_bundle.json"), "w") as fh:
