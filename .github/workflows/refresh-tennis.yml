@@ -1,0 +1,81 @@
+# .github/workflows/refresh-tennis.yml   (MUST live at repo root under .github/workflows/ to run)
+# Injects the auth hash from a repo secret, refreshes JTT Tennis data, commits back.
+# Cloudflare Pages redeploys on the commit. Live at justthetipaus.com/tennis/
+name: Refresh tennis data
+
+on:
+  schedule:
+    - cron: '17 */6 * * *'      # every 6h UTC. '0 18 * * *' = once daily (~4am AEST).
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+defaults:
+  run:
+    working-directory: tennis   # script steps run inside /tennis, so data/ == tennis/data/
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Inject the auth hash from the TENNIS_PASSWORD repo secret into the placeholder.
+      # The secret may hold EITHER the plaintext password OR the 64-char SHA-256 hash —
+      # this step hashes it if it's plaintext, so either works. The client compares
+      # SHA-256(typed password) to this value, so a hash must end up in the file.
+      - name: Inject auth hash
+        env:
+          SECRET: ${{ secrets.TENNIS_PASSWORD }}
+        run: |
+          if [ -z "$SECRET" ]; then
+            echo "WARNING: TENNIS_PASSWORD secret not set — placeholder left in place"
+          else
+            if printf '%s' "$SECRET" | grep -qiE '^[0-9a-f]{64}$'; then
+              HASH="$SECRET"; echo "secret looks like a hash — using as-is"
+            else
+              HASH=$(printf '%s' "$SECRET" | sha256sum | cut -d' ' -f1); echo "secret hashed from plaintext"
+            fi
+            sed -i "s/REPLACE_WITH_SHA256_OF_YOUR_PASSWORD/$HASH/" index.html
+            echo "auth hash injected"
+          fi
+
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
+      - run: pip install requests
+
+      - uses: r-lib/actions/setup-r@v2
+        with: { r-version: 'release', use-public-rspm: true }
+        # build.R is base-R only — no install.packages step needed.
+
+      - name: Download Sackmann match files
+        run: |
+          mkdir -p data/sackmann
+          A=https://raw.githubusercontent.com/JeffSackmann/tennis_atp/master
+          W=https://raw.githubusercontent.com/JeffSackmann/tennis_wta/master
+          for y in 2023 2024 2025 2026; do curl -sfL "$A/atp_matches_$y.csv" -o "data/sackmann/atp_matches_$y.csv" || true; done
+          for y in 2025 2026;             do curl -sfL "$W/wta_matches_$y.csv" -o "data/sackmann/wta_matches_$y.csv" || true; done
+
+      - name: 1. Fetch fixtures (ESPN)
+        run: python fetch_espn_v4.py --days 3 --out data/tennis_fixtures.json
+
+      - name: 2. Match players to Sackmann
+        run: python match_players.py --download
+
+      - name: 3. Build model bundles
+        run: Rscript build.R
+
+      - name: Commit refreshed data + injected index
+        working-directory: ${{ github.workspace }}    # back to repo root for git
+        run: |
+          date +%s > tennis/data/version.txt
+          git config user.name  "jtt-bot"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add tennis/data tennis/index.html 2>/dev/null || echo "nothing to stage"
+          if git diff --staged --quiet; then
+            echo "No changes — nothing to commit."
+          else
+            git commit -m "Auto: refresh tennis data + auth $(date -u +%F)"
+            git push
+          fi
