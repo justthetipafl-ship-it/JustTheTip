@@ -1,0 +1,57 @@
+name: NRL Data Fetch
+
+on:
+  workflow_dispatch:
+    inputs:
+      season:
+        description: "Season e.g. 2026"
+        required: true
+        default: "2026"
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: NRL
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: System libraries for R packages
+        run: sudo apt-get update && sudo apt-get install -y libcurl4-openssl-dev libxml2-dev libssl-dev
+
+      - name: Set up R
+        uses: r-lib/actions/setup-r@v2
+        with:
+          r-version: "release"
+          use-public-rspm: true
+
+      - name: Cache R packages
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.R_LIBS_USER }}
+          key: r-pkgs-${{ runner.os }}-nrlR
+          restore-keys: r-pkgs-${{ runner.os }}-
+
+      - name: Install R packages
+        run: Rscript -e 'install.packages(c("nrlR","jsonlite","dplyr"))'
+
+      - name: Fetch NRL data
+        run: Rscript fetch_nrl_data.R "${{ github.event.inputs.season }}" 2>&1 | tee nrl_fetch_output.txt
+
+      - name: Upload data
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nrl-data
+          path: |
+            NRL/nrl_fetch_output.txt
+            NRL/nrl_player_logs.json
+            NRL/nrl_team_stats.json
+            NRL/nrl_fixtures.json
+            NRL/nrl_ladder.json
+            NRL/nrl_injuries.json
+            NRL/version.txt
+          if-no-files-found: warn
+          retention-days: 14
