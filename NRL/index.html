@@ -1,1801 +1,686 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>JTT NRL · Try Edition — Just The Tip</title>
-
-  <!-- ============================================================
-       JTT SPORT TEMPLATE
-       ============================================================
-       Drop-in skeleton for any sport-specific JTT tool. Has all
-       the architectural bones already wired:
-         • Auth gate (SHA-256, 30-day localStorage TTL)
-         • Branded boot overlay
-         • Topbar with brand, freshness pill, cross-link
-         • Tab nav
-         • Floating Check My Bet button
-         • Data loader pattern
-         • Footer with responsible-gambling notice
-
-       To build a new sport from this template:
-         1. Set the AUTH_HASH constant below (SHA-256 of your password)
-         2. Edit the BRAND object (sport name, accent colour overrides)
-         3. Add your sport's data file paths to DATA_FILES
-         4. Add your tabs to the TABS array
-         5. Implement renderTab(name) in the SPORT-SPECIFIC ENGINE section
-         6. Hook up your CMB markup inside #cmb-modal
-       ============================================================ -->
-
-  <!-- Fonts -->
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;600;700;800;900&family=IBM+Plex+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
-
-  <!-- Tabler Icons -->
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/[email protected]/dist/tabler-icons.min.css">
-
-  <!-- JTT design system -->
-  <!-- jtt-core.css inlined for single-file deploy. To use the shared stylesheet
-       across the JTT family instead, delete this <style> and uncomment:
-       <link rel="stylesheet" href="jtt-core.css"> -->
-  <style id="jtt-core">
-/* ============================================================
-   JTT-CORE.CSS — Universal stylesheet for JTT tools
-   ============================================================
-   Drop-in stylesheet that provides JTT's design tokens, brand
-   chrome, and reusable components for any sport-specific tool.
-
-   What's in here:
-     • Design tokens (colors, fonts, spacing)
-     • Base reset + typography
-     • App footer + responsible-gambling disclaimer
-     • Auth gate (full-screen password overlay)
-     • Topbar / brand / freshness pill / ticker
-     • Tab nav (top of page)
-     • Page container, headers, section titles
-     • Crew tile grid (Degen Crew brand identity)
-     • Empty states, back button, data status
-     • Boot overlay (branded initial load)
-     • Loader card (file-input fallback)
-     • Meta bar (pill row for focused entities)
-     • Universal data filter strip
-     • tp-collapse + tp-body-meta + tp-toolbar
-     • Check My Bet FAB + modal pattern
-     • Mobile responsive base
-
-   What's NOT in here (sport-specific, build per-tool):
-     • Sport-specific market panels (goals/cards/tries/etc.)
-     • Sport-specific stat breakdowns (DVP, By The Halves, etc.)
-     • Sport-specific modals (Depth Chart, Match Stakes, etc.)
-     • Sport-specific player modal extensions
-
-   Usage:
-     <link rel="stylesheet" href="jtt-core.css">
-     Then build your sport-specific styles in <style> below it.
-   ============================================================ */
-
-/* === DESIGN TOKENS === */
-:root {
-  --bg:           #0a0a0a;
-  --surface:      #111;
-  --surface-2:    #161616;
-  --surface-3:    #1d1d1d;
-  --border:       #1f1f1f;
-  --border-light: #2a2a2a;
-  --text:         #f0f0f0;
-  --text-2:       #c4c4c4;
-  --text-3:       #8c8c8c;
-  --accent:       #22c55e;
-  --accent-dim:   #16a34a;
-  --accent-bg:    rgba(34, 197, 94, 0.08);
-  --warn:         #eab308;
-  --bad:          #ef4444;
-  --neutral:      #888;
-  --good:         #22c55e;
-  --font-display: 'Montserrat', system-ui, sans-serif;
-  --font-mono:    'IBM Plex Mono', ui-monospace, monospace;
-}
-
-/* === BASE RESET === */
-* {
-  margin: 0; padding: 0; box-sizing: border-box;
-  -webkit-tap-highlight-color: transparent;
-}
-html, body {
-  background: var(--bg);
-  color: var(--text);
-  font-family: var(--font-display);
-  font-weight: 400;
-  min-height: 100vh;
-  overscroll-behavior-y: none;
-}
-body { padding-bottom: 60px; }
-::selection { background: var(--accent); color: #000; }
-a { color: var(--accent); text-decoration: none; }
-
-/* === APP FOOTER (responsible gambling + copyright) === */
-.app-footer {
-  margin-top: 32px;
-  padding: 20px 0 80px;
-  border-top: 1px solid var(--border);
-  background: var(--surface);
-}
-.ft-inner {
-  max-width: 1280px; margin: 0 auto;
-  padding: 0 16px;
-  font-family: var(--font-mono);
-  color: var(--text-3);
-}
-.ft-disclaimer {
-  font-size: 11px; line-height: 1.55;
-  margin-bottom: 8px;
-}
-.ft-disclaimer strong {
-  color: var(--text-2); font-weight: 700; letter-spacing: 0.2px;
-}
-.ft-disclaimer a {
-  color: var(--accent); font-weight: 600; text-decoration: underline;
-}
-.ft-copy {
-  font-size: 10px; letter-spacing: 0.5px;
-  color: var(--text-3); opacity: 0.6;
-}
-
-/* ============================================================
-   AUTH GATE — full-screen overlay shown until auth succeeds.
-   z-index 99999 above everything. JS adds .unlocked to fade
-   and remove it once the user enters the correct password.
-   ============================================================ */
-.auth-overlay {
-  position: fixed; inset: 0; z-index: 99999;
-  background: rgba(8, 10, 14, 0.96);
-  backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
-  display: grid; place-items: center;
-  padding: 20px;
-  opacity: 1; transition: opacity 0.25s ease;
-}
-.auth-overlay.unlocked { opacity: 0; pointer-events: none; }
-.auth-card {
-  width: 100%; max-width: 380px;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  padding: 28px 26px 22px;
-  box-shadow: 0 20px 60px rgba(0,0,0,0.5), 0 0 0 1px rgba(255,255,255,0.04);
-}
-.auth-brand {
-  display: flex; align-items: center; gap: 12px;
-  margin-bottom: 24px;
-}
-.auth-logo { flex-shrink: 0; }
-.auth-title {
-  font-family: var(--font-display); font-weight: 800;
-  font-size: 18px; color: var(--text); letter-spacing: 0.3px;
-}
-.auth-sub {
-  font-family: var(--font-mono); font-size: 9px; font-weight: 600;
-  color: var(--text-3); letter-spacing: 1px; margin-top: 2px;
-}
-.auth-form { display: flex; flex-direction: column; gap: 10px; }
-.auth-label {
-  font-family: var(--font-mono); font-size: 10px; font-weight: 600;
-  color: var(--text-2); letter-spacing: 0.5px;
-  text-transform: uppercase;
-}
-.auth-input {
-  width: 100%;
-  background: var(--surface-2);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 12px 14px;
-  color: var(--text);
-  font-family: var(--font-mono); font-size: 14px; letter-spacing: 1.5px;
-  outline: none;
-  transition: border-color 0.15s, background 0.15s;
-}
-.auth-input:focus {
-  border-color: var(--accent);
-  background: var(--surface-3);
-}
-.auth-input.error {
-  border-color: #ef4444;
-  background: rgba(239,68,68,0.05);
-  animation: auth-shake 0.32s cubic-bezier(0.36, 0.07, 0.19, 0.97);
-}
-@keyframes auth-shake {
-  10%, 90% { transform: translateX(-2px); }
-  20%, 80% { transform: translateX(3px); }
-  30%, 50%, 70% { transform: translateX(-5px); }
-  40%, 60% { transform: translateX(5px); }
-}
-.auth-btn {
-  margin-top: 4px;
-  width: 100%;
-  background: var(--accent);
-  color: #000;
-  border: 0; border-radius: 6px;
-  padding: 12px 18px;
-  font-family: var(--font-display); font-weight: 800; font-size: 13px;
-  letter-spacing: 1.2px;
-  cursor: pointer;
-  display: flex; align-items: center; justify-content: center; gap: 8px;
-  transition: background 0.12s, transform 0.08s;
-}
-.auth-btn:hover { background: #1de17c; }
-.auth-btn:active { transform: scale(0.985); }
-.auth-btn:disabled {
-  opacity: 0.55; cursor: not-allowed;
-  background: var(--surface-3); color: var(--text-3);
-}
-.auth-btn i { font-size: 16px; }
-.auth-msg {
-  min-height: 16px;
-  font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.3px;
-  text-align: center;
-  margin-top: 2px;
-}
-.auth-msg.error   { color: #f87171; }
-.auth-msg.success { color: #4ade80; }
-.auth-footer {
-  margin-top: 22px; padding-top: 16px;
-  border-top: 1px solid var(--border);
-  font-family: var(--font-mono); font-size: 11px;
-  color: var(--text-3); text-align: center;
-}
-.auth-footer a { color: var(--accent); font-weight: 600; }
-body.auth-locked { overflow: hidden; }
-
-/* === HEADER / TOPBAR === */
-.topbar {
-  position: sticky; top: 0; z-index: 50;
-  background: var(--bg); border-bottom: 1px solid var(--border);
-  padding: 12px 16px;
-  display: flex; align-items: center; justify-content: space-between;
-}
-.brand { display: flex; align-items: center; gap: 9px; }
-.logo-check {
-  width: 28px; height: 28px; border-radius: 50%;
-  display: flex; align-items: center; justify-content: center;
-  flex-shrink: 0;
-}
-.logo-check svg { width: 28px; height: 28px; display: block; }
-.brand-text {
-  font-family: var(--font-display); font-weight: 900;
-  font-size: 18px; letter-spacing: -0.02em; line-height: 1; color: #fff;
-}
-.brand-text .sub {
-  display: block; font-size: 10px; color: var(--text-3); font-weight: 600;
-  letter-spacing: 1.5px; margin-top: 3px; text-transform: uppercase;
-}
-.topbar-meta {
-  display: flex; align-items: center; gap: 12px;
-  font-family: var(--font-mono); font-size: 10px; color: var(--text-3);
-}
-
-/* === CROSS-LINK PILL (e.g. "back to AFL" from WC tool) === */
-.cross-link {
-  display: inline-flex; align-items: center; gap: 4px;
-  padding: 4px 8px;
-  background: var(--surface-2); border: 1px solid var(--border);
-  border-radius: 5px;
-  color: var(--text-2) !important;
-  font-weight: 700; font-size: 10px; letter-spacing: 0.8px;
-  text-decoration: none;
-  transition: background 0.12s, color 0.12s, border-color 0.12s;
-}
-.cross-link:hover {
-  background: var(--accent); color: #000 !important; border-color: var(--accent);
-}
-.cross-link i { font-size: 13px; }
-.cross-link-label { letter-spacing: 0.5px; }
-@media (max-width: 480px) {
-  .cross-link-label { display: none; }
-  .cross-link { padding: 4px 6px; }
-}
-
-/* === FRESHNESS PILL (data update indicator) === */
-.freshness-pill {
-  display: inline-flex; align-items: center; gap: 5px;
-  padding: 3px 8px;
-  background: var(--surface-2);
-  border: 1px solid var(--border);
-  border-radius: 3px;
-  font-family: var(--font-mono); font-size: 10px; font-weight: 600;
-  color: var(--text-3);
-  letter-spacing: 0.4px;
-}
-.freshness-pill::before {
-  content: ""; width: 6px; height: 6px; border-radius: 50%;
-  background: var(--accent);
-}
-.freshness-pill.stale::before      { background: var(--warn); }
-.freshness-pill.very-stale::before { background: var(--bad); }
-
-/* === LIVE TICKER (pulsing dot for in-play games) === */
-.ticker { display: flex; align-items: center; gap: 6px; }
-.ticker-dot {
-  width: 6px; height: 6px; border-radius: 50%;
-  background: var(--accent);
-  animation: pulse 2s ease-in-out infinite;
-}
-@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
-
-/* === TAB NAV === */
-.tabnav {
-  display: flex; background: var(--bg);
-  border-bottom: 1px solid var(--border);
-  position: sticky; top: 57px; z-index: 49;
-}
-.tab {
-  flex: 1; padding: 14px 8px; text-align: center;
-  font-family: var(--font-display); font-weight: 600;
-  font-size: 14px; letter-spacing: 1px; text-transform: uppercase;
-  color: var(--text-2); cursor: pointer; border: none; background: transparent;
-  border-bottom: 2px solid transparent;
-  transition: color 0.15s, border-color 0.15s;
-}
-.tab:hover { color: var(--text); }
-.tab.active { color: var(--accent); border-bottom-color: var(--accent); }
-.tab i { display: block; font-size: 16px; margin-bottom: 2px; }
-
-/* === PAGE CONTAINER === */
-.page { padding: 16px; max-width: 1100px; margin: 0 auto; }
-.page-header {
-  display: flex; align-items: baseline; justify-content: space-between;
-  margin-bottom: 16px; flex-wrap: wrap; gap: 8px;
-}
-.page-title {
-  font-family: var(--font-display); font-weight: 700;
-  font-size: 22px; letter-spacing: 0.5px; line-height: 1;
-}
-.page-sub {
-  font-family: var(--font-mono); font-size: 10px;
-  color: var(--text-3); letter-spacing: 1px; text-transform: uppercase;
-}
-
-/* === FILTER BAR (generic toggle row) === */
-.filterbar {
-  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
-  background: var(--surface); border: 1px solid var(--border);
-  border-radius: 6px; padding: 8px;
-  margin-bottom: 16px;
-}
-.filter-toggle {
-  display: inline-flex;
-  background: var(--surface-2); border-radius: 4px;
-  padding: 2px; gap: 2px;
-}
-.filter-toggle button {
-  background: transparent; color: var(--text-2); border: none;
-  padding: 6px 12px;
-  font-family: var(--font-display); font-weight: 600;
-  font-size: 12px; letter-spacing: 1px; text-transform: uppercase;
-  border-radius: 3px; cursor: pointer;
-}
-.filter-toggle button.active { background: var(--surface-3); color: var(--accent); }
-
-/* === SECTION TITLE (page-level section headers) === */
-.section-title {
-  font-family: var(--font-display); font-weight: 700; font-size: 16px;
-  letter-spacing: 1px; text-transform: uppercase; margin: 20px 0 10px;
-  display: flex; align-items: center; gap: 8px;
-}
-.section-title::before {
-  content: ''; width: 3px; height: 14px;
-  background: var(--accent);
-}
-
-/* === CREW TILE GRID (Degen Crew home page) === */
-.crew-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
-  gap: 10px;
-}
-.crew-tile {
-  background: var(--surface); border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 16px 12px; cursor: pointer;
-  display: flex; flex-direction: column;
-  align-items: center; justify-content: center;
-  min-height: 110px; text-align: center;
-  transition: border-color 0.15s, background 0.15s, transform 0.1s;
-}
-.crew-tile:hover  { border-color: var(--accent); background: var(--surface-2); }
-.crew-tile:active { transform: scale(0.98); }
-.crew-tile-icon {
-  width: 36px; height: 36px;
-  display: grid; place-items: center;
-  color: var(--accent); margin-bottom: 8px; font-size: 24px;
-}
-.crew-tile-name {
-  font-family: var(--font-display); font-weight: 700; font-size: 14px;
-  letter-spacing: 0.5px; line-height: 1.1; text-transform: uppercase;
-}
-.crew-tile-sub {
-  font-family: var(--font-mono); font-size: 9px; color: var(--text-3);
-  letter-spacing: 0.5px; margin-top: 4px;
-}
-
-/* === EMPTY STATE === */
-.empty {
-  background: var(--surface);
-  border: 1px dashed var(--border);
-  border-radius: 6px;
-  padding: 32px 16px; text-align: center;
-  color: var(--text-3); font-family: var(--font-mono); font-size: 12px;
-}
-.empty .ico { font-size: 28px; margin-bottom: 8px; opacity: 0.5; }
-
-/* === BACK BUTTON === */
-.back-btn {
-  background: transparent; border: 1px solid var(--border);
-  color: var(--text-2);
-  font-family: var(--font-display); font-weight: 600; font-size: 11px;
-  letter-spacing: 1px; text-transform: uppercase;
-  padding: 6px 12px; border-radius: 4px; cursor: pointer;
-  display: inline-flex; align-items: center; gap: 6px;
-  margin-bottom: 12px;
-}
-.back-btn:hover { color: var(--accent); border-color: var(--accent); }
-
-/* === DATA STATUS PANEL === */
-.data-status {
-  background: var(--surface); border: 1px solid var(--border);
-  border-radius: 6px; padding: 12px;
-  font-family: var(--font-mono); font-size: 11px; color: var(--text-2);
-  margin-bottom: 16px;
-}
-.data-status-row { display: flex; justify-content: space-between; padding: 3px 0; }
-.data-status .ok      { color: var(--good); }
-.data-status .pending { color: var(--warn); }
-.data-status .err     { color: var(--bad); }
-
-/* === BOOT OVERLAY (branded initial load screen) === */
-.boot-overlay {
-  position: fixed; inset: 0;
-  background: var(--bg);
-  z-index: 99998;
-  display: flex; flex-direction: column;
-  align-items: center; justify-content: center;
-  gap: 18px;
-  transition: opacity 0.25s ease;
-}
-.boot-overlay.hide { opacity: 0; pointer-events: none; }
-.boot-logo {
-  width: 64px; height: 64px;
-  border-radius: 50%;
-  background: var(--accent);
-  display: grid; place-items: center;
-  box-shadow: 0 0 0 4px rgba(34,197,94,0.18);
-}
-.boot-logo i { font-size: 32px; color: #0a0a0a; }
-.boot-title {
-  font-family: var(--font-display); font-weight: 800;
-  font-size: 22px; color: var(--text);
-  letter-spacing: 0.5px;
-  margin-top: 4px;
-}
-.boot-sub {
-  font-family: var(--font-mono); font-size: 10px;
-  color: var(--text-3); letter-spacing: 1.5px;
-  text-transform: uppercase;
-}
-.boot-dots { display: flex; gap: 6px; margin-top: 10px; }
-.boot-dot {
-  width: 6px; height: 6px;
-  border-radius: 50%;
-  background: var(--accent);
-  opacity: 0.3;
-  animation: bootPulse 1.2s ease-in-out infinite;
-}
-.boot-dot:nth-child(2) { animation-delay: 0.2s; }
-.boot-dot:nth-child(3) { animation-delay: 0.4s; }
-@keyframes bootPulse {
-  0%, 80%, 100% { opacity: 0.3; transform: scale(0.85); }
-  40%           { opacity: 1;   transform: scale(1.1);  }
-}
-.boot-status {
-  font-family: var(--font-mono); font-size: 10px;
-  color: var(--text-3); letter-spacing: 0.5px;
-  margin-top: 12px; min-height: 14px;
-}
-
-/* === LOADER CARD (file-input fallback when autoload fails) === */
-.loader-card {
-  background: var(--surface); border: 1px solid var(--border);
-  border-radius: 6px; padding: 24px; text-align: center;
-  margin-bottom: 16px;
-}
-.loader-card .file-input-wrap {
-  margin-top: 12px;
-  display: flex; flex-direction: column; gap: 8px;
-}
-.loader-card input[type=file] {
-  background: var(--surface-2); border: 1px solid var(--border);
-  color: var(--text); padding: 8px; border-radius: 4px;
-  font-family: var(--font-mono); font-size: 11px; width: 100%;
-}
-.loader-card label {
-  font-family: var(--font-display); font-size: 12px; font-weight: 600;
-  color: var(--text-2); letter-spacing: 1px; text-transform: uppercase;
-  text-align: left;
-}
-
-/* === META BAR (pill row at top of focused entity) === */
-.meta-bar {
-  display: flex; flex-wrap: wrap; gap: 16px;
-  margin-bottom: 12px; padding: 8px 12px;
-  background: var(--surface); border: 1px solid var(--border);
-  border-radius: 6px;
-  font-family: var(--font-mono); font-size: 10px;
-  color: var(--text-2); letter-spacing: 0.5px;
-}
-.meta-bar .meta-item { display: flex; align-items: center; gap: 6px; }
-.meta-bar .meta-item i { color: var(--accent); font-size: 13px; }
-.meta-bar .meta-key { color: var(--text-3); text-transform: uppercase; }
-.meta-bar .meta-val { color: var(--text); font-weight: 500; }
-
-/* === UNIVERSAL DATA FILTER STRIP ===
-   Use for "Last 12mo / All time" + "Exclude friendlies" type toggles
-   that filter the data fed into downstream sections. */
-.data-filter-strip {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-left: 3px solid var(--accent);
-  border-radius: 6px;
-  padding: 10px 12px;
-  margin-bottom: 12px;
-  display: flex; flex-direction: column; gap: 8px;
-}
-.dfilt-row {
-  display: flex; align-items: center; gap: 10px;
-  flex-wrap: wrap;
-}
-.dfilt-lbl {
-  display: inline-flex; align-items: center; gap: 6px;
-  font-family: var(--font-mono); font-size: 10px;
-  color: var(--text-3); letter-spacing: 0.5px;
-  text-transform: uppercase;
-  min-width: 110px;
-}
-.dfilt-lbl i { color: var(--accent); font-size: 14px; }
-.dfilt-chips {
-  display: inline-flex; gap: 4px; flex-wrap: wrap;
-}
-.dfilt-chip {
-  background: var(--surface-2); color: var(--text-2);
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  padding: 5px 10px;
-  font-family: var(--font-display); font-weight: 600;
-  font-size: 11px; letter-spacing: 0.4px;
-  cursor: pointer;
-  transition: background 0.12s, color 0.12s, border-color 0.12s;
-}
-.dfilt-chip:hover { border-color: var(--accent); color: var(--text); }
-.dfilt-chip.active {
-  background: var(--accent); color: #0a0a0a;
-  border-color: var(--accent);
-}
-.dfilt-note {
-  font-family: var(--font-mono); font-size: 9px;
-  color: var(--text-3); font-style: italic;
-  letter-spacing: 0.3px;
-}
-
-/* === TP-COLLAPSE (universal collapsible section) ===
-   Used everywhere there's a "click to expand" pattern. Built on the
-   native <details>/<summary> element so it works without JS.
-
-   Markup:
-     <details class="tp-collapse" open>
-       <summary class="tp-collapse-sum">
-         <i class="ti ti-icon" aria-hidden="true"></i>
-         <span class="tp-collapse-title">Section name</span>
-         <i class="ti ti-chevron-down tp-collapse-chev" aria-hidden="true"></i>
-       </summary>
-       <div class="tp-collapse-body">
-         <div class="tp-body-meta">Optional context line (sample size, window)</div>
-         <!-- content -->
-       </div>
-     </details>
-*/
-.tp-collapse {
-  background: var(--surface); border: 1px solid var(--border);
-  border-radius: 6px; margin: 0 0 16px;
-  overflow: hidden;
-}
-.tp-collapse-sum {
-  list-style: none; cursor: pointer; padding: 11px 14px;
-  display: flex; align-items: center; gap: 8px;
-  font-family: var(--font-display); font-weight: 700; font-size: 13px;
-  color: var(--text);
-  transition: background 0.12s;
-}
-.tp-collapse-sum::-webkit-details-marker { display: none; }
-.tp-collapse-sum:hover { background: var(--surface-2); }
-.tp-collapse-sum > i:first-child { color: var(--accent); font-size: 16px; }
-.tp-collapse-title { letter-spacing: 0.2px; }
-.tp-collapse-chev {
-  margin-left: auto; color: var(--text-3); font-size: 14px;
-  transition: transform 0.18s ease;
-}
-.tp-collapse[open] .tp-collapse-chev { transform: rotate(180deg); }
-.tp-collapse-body {
-  border-top: 1px solid var(--border);
-  background: var(--surface-2);
-  padding: 10px 12px;
-}
-/* Dashed subtitle inside a collapse body — sample size, window, opponent
-   reference. Replaces "summary meta pill" pattern so closed sections stay
-   clean and the context only shows on expand. */
-.tp-body-meta {
-  font-family: var(--font-mono); font-size: 10px;
-  color: var(--text-3); letter-spacing: 0.4px;
-  text-transform: uppercase;
-  padding-bottom: 8px;
-  margin-bottom: 8px;
-  border-bottom: 1px dashed var(--border);
-}
-/* Toolbar slot inside the collapse body for in-section controls
-   (toggle, sort, filter). Right-aligned so it doesn't fight with body content. */
-.tp-toolbar {
-  display: flex; justify-content: flex-end; align-items: center;
-  margin-bottom: 8px;
-  flex-wrap: wrap; gap: 4px;
-}
-
-/* === GENERIC PILL VOCABULARY ===
-   Base pill class for chips, badges, statuses. Apply modifier classes
-   to color it. Sport-specific tools should extend this rather than
-   reinvent — keeps the visual language consistent. */
-.jtt-pill {
-  display: inline-flex; align-items: center; gap: 5px;
-  padding: 4px 9px; border-radius: 4px;
-  font-family: var(--font-mono); font-size: 10px;
-  letter-spacing: 0.4px; font-weight: 600;
-  background: var(--surface-2);
-  border: 1px solid var(--border);
-  color: var(--text-2);
-}
-.jtt-pill i { font-size: 12px; }
-.jtt-pill.accent  { background: var(--accent-bg);             color: var(--accent);  border-color: rgba(34,197,94,0.30); }
-.jtt-pill.warn    { background: rgba(234,179,8,0.10);         color: #facc15;        border-color: rgba(234,179,8,0.30); }
-.jtt-pill.bad     { background: rgba(239,68,68,0.10);         color: #f87171;        border-color: rgba(239,68,68,0.30); }
-.jtt-pill.info    { background: rgba(59,130,246,0.10);        color: #60a5fa;        border-color: rgba(59,130,246,0.30); }
-.jtt-pill.purple  { background: rgba(168,139,250,0.10);       color: #a78bfa;        border-color: rgba(168,139,250,0.30); }
-
-/* === CMB FAB (floating "Check My Bet" trigger) ===
-   Sits fixed bottom-right on every page. Click opens the .cmb-overlay. */
-.cmb-fab {
-  position: fixed;
-  bottom: 18px; right: 18px;
-  z-index: 9000;
-  background: var(--accent);
-  color: #0a0a0a;
-  border: none; border-radius: 24px;
-  padding: 11px 16px 11px 14px;
-  font-family: var(--font-display); font-weight: 700;
-  font-size: 13px; letter-spacing: 0.5px;
-  display: inline-flex; align-items: center; gap: 6px;
-  cursor: pointer;
-  box-shadow: 0 4px 14px rgba(0,0,0,0.5), 0 0 0 1px rgba(74,222,128,0.5);
-  transition: transform 0.15s, box-shadow 0.15s;
-}
-.cmb-fab:hover {
-  transform: translateY(-1px);
-  box-shadow: 0 6px 18px rgba(0,0,0,0.6), 0 0 0 1px rgba(74,222,128,0.8);
-}
-.cmb-fab i { font-size: 18px; }
-@media (max-width: 480px) {
-  .cmb-fab { bottom: 14px; right: 14px; padding: 10px 13px; font-size: 12px; }
-  .cmb-fab-lbl { display: none; }
-  .cmb-fab i { font-size: 20px; }
-}
-
-/* === CMB OVERLAY + MODAL (Check My Bet container) ===
-   Drop in your sport-specific prop validation UI inside .cmb-modal. */
-.cmb-overlay {
-  display: none;
-  position: fixed; inset: 0;
-  background: rgba(0,0,0,0.78);
-  backdrop-filter: blur(4px);
-  z-index: 9500;
-  padding: 24px 16px;
-  overflow-y: auto;
-  align-items: flex-start; justify-content: center;
-}
-.cmb-overlay.open { display: flex; }
-.cmb-modal {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  max-width: 560px; width: 100%;
-  padding: 16px 14px 20px;
-  max-height: calc(100vh - 48px);
-  overflow-y: auto;
-}
-@media (max-width: 480px) {
-  .cmb-overlay { padding: 0; }
-  .cmb-modal { border-radius: 0; max-height: 100vh; min-height: 100vh; }
-}
-.cmb-hdr {
-  display: flex; align-items: center; justify-content: space-between;
-  margin-bottom: 12px;
-}
-.cmb-hdr h2 {
-  font-family: var(--font-display); font-weight: 700;
-  font-size: 17px; margin: 0;
-  display: inline-flex; align-items: center; gap: 7px;
-  color: var(--text);
-}
-.cmb-hdr h2 i { color: var(--accent); font-size: 19px; }
-.cmb-close {
-  background: none; border: none; color: var(--text-2);
-  font-size: 26px; line-height: 1; cursor: pointer;
-  padding: 0 6px;
-}
-.cmb-close:hover { color: var(--text); }
-.cmb-tabs {
-  display: flex; gap: 4px;
-  background: var(--surface-2); border-radius: 5px;
-  padding: 3px;
-  margin-bottom: 12px;
-}
-.cmb-tab {
-  flex: 1;
-  background: none; border: none;
-  color: var(--text-2);
-  padding: 7px 8px;
-  font-family: var(--font-display); font-weight: 600; font-size: 12px;
-  letter-spacing: 0.3px;
-  border-radius: 4px; cursor: pointer;
-  display: inline-flex; align-items: center; justify-content: center; gap: 5px;
-  transition: background 0.15s, color 0.15s;
-}
-.cmb-tab:hover { color: var(--text); }
-.cmb-tab.cmb-tab-active { background: var(--surface); color: var(--accent); }
-.cmb-tab i { font-size: 14px; }
-
-/* === FORM FIELDS (used in CMB modal + filter areas) === */
-.jtt-field { display: flex; flex-direction: column; gap: 4px; margin-bottom: 10px; }
-.jtt-field label {
-  font-family: var(--font-mono); font-size: 9px;
-  color: var(--text-3); letter-spacing: 0.6px; text-transform: uppercase;
-}
-.jtt-field input, .jtt-field select {
-  background: var(--surface-2); border: 1px solid var(--border);
-  color: var(--text); border-radius: 4px;
-  padding: 8px 10px;
-  font-family: var(--font-mono); font-size: 13px;
-  outline: none;
-}
-.jtt-field input:focus, .jtt-field select:focus {
-  border-color: var(--accent);
-}
-
-/* === CHECKBOX / TOGGLE (data filter chips, etc.) === */
-.jtt-check {
-  display: inline-flex; align-items: center; gap: 8px;
-  cursor: pointer; user-select: none;
-  font-family: var(--font-mono); font-size: 11px;
-  color: var(--text-2); letter-spacing: 0.3px;
-}
-.jtt-check input[type=checkbox] {
-  appearance: none; -webkit-appearance: none;
-  width: 16px; height: 16px;
-  border: 1px solid var(--border-light);
-  background: var(--surface-2);
-  border-radius: 3px;
-  position: relative; cursor: pointer;
-  transition: background 0.12s, border-color 0.12s;
-}
-.jtt-check input[type=checkbox]:checked {
-  background: var(--accent); border-color: var(--accent);
-}
-.jtt-check input[type=checkbox]:checked::after {
-  content: ''; position: absolute;
-  left: 4px; top: 1px;
-  width: 5px; height: 9px;
-  border: solid #0a0a0a;
-  border-width: 0 2px 2px 0;
-  transform: rotate(45deg);
-}
-
-/* === MOBILE RESPONSIVE BASE === */
-@media (max-width: 540px) {
-  .page { padding: 12px; }
-  .page-title { font-size: 19px; }
-  .tab { font-size: 12px; padding: 12px 6px; }
-  .tab i { font-size: 14px; }
-  .meta-bar { gap: 10px; padding: 6px 10px; font-size: 9px; }
-  .data-filter-strip { padding: 8px 10px; }
-  .tp-collapse-sum { padding: 9px 12px; font-size: 12px; }
-  .tp-collapse-body { padding: 8px 10px; }
-  .section-title { font-size: 14px; margin: 16px 0 8px; }
-  .crew-grid { grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 8px; }
-  .crew-tile { min-height: 95px; padding: 12px 8px; }
-  .crew-tile-icon { font-size: 22px; }
-  .crew-tile-name { font-size: 12px; }
-}
-
-@media (max-width: 380px) {
-  .brand-text { font-size: 16px; }
-  .brand-text .sub { font-size: 9px; }
-  .topbar { padding: 10px 12px; }
-  .freshness-pill { font-size: 9px; }
-}
-
-  </style>
-
-  <style>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>JTT NRL 2026</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;600;700;800;900&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@2.47.0/tabler-icons.min.css">
+<style>
   /* ============================================================
-     SPORT-SPECIFIC STYLES
-     ============================================================
-     Build your tool's custom styles here. Don't override the
-     core tokens (--accent, --bg, etc.) unless intentional —
-     you'll break visual consistency across the JTT family.
-
-     Reach for jtt-core.css classes first (.tp-collapse, .meta-bar,
-     .jtt-pill, .data-filter-strip, etc.) before writing new ones.
+     JTT CORE — design tokens + universal chrome lifted from JTT WC
+     so JTT NRL is visually identical brand chrome.
      ============================================================ */
-
-  /* ===== NRL TRY EDITION — sport-specific ===== */
-  .dim{color:var(--text-3)} .good{color:var(--good)} .warn{color:var(--warn)} .bad{color:var(--bad)}
-
-  /* team dot + position tag */
-  .nrl-dot{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:6px;vertical-align:middle;flex-shrink:0}
-  .nrl-pos{display:inline-block;font-family:var(--font-mono);font-weight:700;font-size:9px;letter-spacing:.5px;
-    padding:2px 5px;border-radius:4px;background:color-mix(in srgb,var(--pc) 16%,transparent);color:var(--pc);margin-left:7px;vertical-align:middle}
-
-  /* fixture grid */
-  .nrl-fx-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:10px;margin-top:4px}
-  .nrl-fx{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:14px;cursor:pointer;
-    transition:.15s;display:grid;grid-template-columns:1fr auto 1fr;align-items:center;gap:8px;position:relative}
-  .nrl-fx:hover{border-color:var(--accent);transform:translateY(-2px)}
-  .nrl-fx-side{display:flex;align-items:center;gap:8px;min-width:0}
-  .nrl-fx-side.away{flex-direction:row-reverse}
-  .nrl-fx-nm{font-family:var(--font-display);font-weight:800;font-size:16px;letter-spacing:.3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  .nrl-fx-v{color:var(--text-3);font-weight:700;font-size:12px}
-  .nrl-fx-meta{position:absolute;bottom:-7px;left:50%;transform:translateX(-50%);font-family:var(--font-mono);
-    font-size:9px;color:var(--text-3);background:var(--surface);padding:1px 8px;white-space:nowrap}
-
-  /* focused fixture blocks */
-  .nrl-focus-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:12px}
-  .nrl-block{background:var(--surface);border:1px solid var(--border);border-radius:12px;overflow:hidden}
-  .nrl-block-hd{display:flex;align-items:center;gap:8px;padding:11px 14px;border-bottom:1px solid var(--border);
-    font-family:var(--font-display);font-weight:800;font-size:16px}
-  .nrl-block-sub{margin-left:auto;font-family:var(--font-mono);font-weight:500;font-size:10px;color:var(--text-3)}
-
-  /* tables */
-  .nrl-tbl-wrap{border:1px solid var(--border);border-radius:12px;overflow-x:auto;background:var(--surface)}
-  .nrl-tbl{width:100%;border-collapse:collapse;font-family:var(--font-mono);font-size:12px;white-space:nowrap}
-  .nrl-tbl th{font-family:var(--font-display);font-weight:700;font-size:11px;letter-spacing:.6px;text-transform:uppercase;
-    color:var(--text-3);text-align:right;padding:10px 11px;border-bottom:1px solid var(--border);cursor:pointer}
-  .nrl-tbl th.on{color:var(--accent)}
-  .nrl-tbl th:first-child,.nrl-tbl td:first-child{text-align:left}
-  .nrl-tbl td{padding:8px 11px;text-align:right;border-bottom:1px solid rgba(255,255,255,.04)}
-  .nrl-tbl tbody tr:last-child td{border-bottom:none}
-  .nrl-tbl tbody tr:hover td{background:rgba(255,255,255,.025)}
-  .nrl-tbl .nm{font-family:var(--font-display);font-weight:700;font-size:14px;letter-spacing:.2px;color:var(--text)}
-  .nrl-tbl.big .nm{font-size:14px}
-  .nrl-block .nrl-tbl{border:none}
-  .nrl-tbl td.leak-hot{color:var(--bad);font-weight:700}
-  .nrl-tbl td.leak-warm{color:var(--warn)}
-
-  /* notes */
-  .nrl-note{display:flex;align-items:center;gap:8px;background:var(--accent-bg);border:1px solid rgba(34,197,94,.2);
-    border-radius:8px;padding:9px 12px;font-family:var(--font-mono);font-size:11px;color:var(--text-2);margin-bottom:12px}
-  .nrl-note i{color:var(--accent)}
-
-  /* mini buttons */
-  .nrl-mini{background:var(--surface-2);border:1px solid var(--border-light);color:var(--text-2);font-family:var(--font-mono);
-    font-weight:600;font-size:10px;padding:4px 8px;border-radius:6px;cursor:pointer;display:inline-flex;align-items:center;gap:3px}
-  .nrl-mini:hover{border-color:var(--accent);color:var(--text)}
-  .nrl-mini.grn{background:var(--accent);border-color:var(--accent);color:#04210f}
-
-  /* CMB */
-  .nrl-cmb-add{display:flex;gap:8px;margin-bottom:14px}
-  .nrl-cmb-add .jtt-field{flex:1;min-width:0}
-  .nrl-legs{display:flex;flex-direction:column;gap:8px}
-  .nrl-leg{display:grid;grid-template-columns:1fr auto auto auto;align-items:center;gap:10px;
-    background:var(--surface-2);border:1px solid var(--border);border-radius:9px;padding:9px 12px}
-  .nrl-leg-main{display:flex;align-items:center;gap:4px;min-width:0}
-  .nrl-leg-main .nm{font-family:var(--font-display);font-weight:700;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  .nrl-leg-mk{display:flex;gap:3px}
-  .nrl-leg-mk button{background:var(--surface-3);border:1px solid var(--border);color:var(--text-3);font-family:var(--font-mono);
-    font-weight:700;font-size:10px;padding:4px 8px;border-radius:5px;cursor:pointer}
-  .nrl-leg-mk button.on{background:var(--accent-bg);border-color:var(--accent);color:var(--accent)}
-  .nrl-leg-rate{font-family:var(--font-mono);font-weight:700;font-size:14px;min-width:42px;text-align:right}
-  .nrl-leg-x{background:none;border:none;color:var(--text-3);cursor:pointer;font-size:14px;padding:2px}
-  .nrl-leg-x:hover{color:var(--bad)}
-  .nrl-verdict{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:14px;
-    border-radius:10px;padding:14px 16px;border:1px solid var(--border)}
-  .nrl-verdict.good{background:var(--accent-bg);border-color:rgba(34,197,94,.3)}
-  .nrl-verdict.warn{background:rgba(234,179,8,.08);border-color:rgba(234,179,8,.3)}
-  .nrl-verdict.bad{background:rgba(239,68,68,.08);border-color:rgba(239,68,68,.3)}
-  .nrl-verdict-lbl{font-family:var(--font-mono);font-size:10px;color:var(--text-3);text-transform:uppercase;letter-spacing:.5px}
-  .nrl-verdict-big{font-family:var(--font-display);font-weight:900;font-size:32px;line-height:1;margin-top:2px}
-  .nrl-verdict.good .nrl-verdict-big{color:var(--good)} .nrl-verdict.warn .nrl-verdict-big{color:var(--warn)} .nrl-verdict.bad .nrl-verdict-big{color:var(--bad)}
-  .nrl-verdict-tag{font-family:var(--font-display);font-weight:800;font-size:14px;text-transform:uppercase;letter-spacing:.5px;text-align:right}
-
-  @media(max-width:680px){
-    .nrl-fx-grid,.nrl-focus-grid{grid-template-columns:1fr}
-    .nrl-fx-nm{font-size:15px}
+  :root {
+    --bg: #0a0a0a; --surface: #111; --surface-2: #161616; --surface-3: #1d1d1d;
+    --border: #1f1f1f; --border-light: #2a2a2a;
+    --text: #f0f0f0; --text-2: #c4c4c4; --text-3: #8c8c8c;
+    --accent: #22c55e; --accent-dim: #16a34a; --accent-bg: rgba(34,197,94,0.08);
+    --warn: #eab308; --bad: #ef4444; --neutral: #888; --good: #22c55e;
+    --font-display: 'Montserrat', system-ui, sans-serif;
+    --font-mono: 'IBM Plex Mono', ui-monospace, monospace;
   }
+  * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { background: var(--bg); color: var(--text); font-family: var(--font-display); font-weight: 400; min-height: 100vh; overscroll-behavior-y: none; }
+  body { padding-bottom: 60px; }
+  body.auth-locked { overflow: hidden; }
+  ::selection { background: var(--accent); color: #000; }
+  a { color: var(--accent); text-decoration: none; }
 
-  </style>
+  /* ---- AUTH GATE ---- */
+  .auth-overlay { position: fixed; inset: 0; z-index: 99999; background: var(--bg); display: flex; align-items: center; justify-content: center; padding: 24px; transition: opacity 0.3s ease; }
+  .auth-overlay.unlocked { opacity: 0; pointer-events: none; }
+  .auth-card { width: 100%; max-width: 360px; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 28px 24px; }
+  .auth-brand { display: flex; align-items: center; gap: 12px; margin-bottom: 22px; }
+  .auth-title { font-family: var(--font-display); font-weight: 800; font-size: 20px; letter-spacing: 0.3px; }
+  .auth-sub { font-family: var(--font-mono); font-size: 9px; color: var(--text-3); letter-spacing: 1.5px; margin-top: 2px; }
+  .auth-label { display: block; font-family: var(--font-mono); font-size: 10px; color: var(--text-3); letter-spacing: 0.5px; text-transform: uppercase; margin-bottom: 8px; }
+  .auth-input { width: 100%; background: var(--surface-2); border: 1px solid var(--border-light); color: var(--text); padding: 12px 14px; border-radius: 6px; font-family: var(--font-mono); font-size: 15px; letter-spacing: 2px; }
+  .auth-input:focus { outline: none; border-color: var(--accent); }
+  .auth-input.error { border-color: var(--bad); animation: shake 0.4s; }
+  @keyframes shake { 0%,100%{transform:translateX(0)} 25%{transform:translateX(-6px)} 75%{transform:translateX(6px)} }
+  .auth-btn { width: 100%; margin-top: 12px; background: var(--accent); color: #0a0a0a; border: none; padding: 12px; border-radius: 6px; font-family: var(--font-display); font-weight: 700; font-size: 14px; letter-spacing: 0.5px; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 8px; }
+  .auth-btn:hover { background: #1de17c; }
+  .auth-btn:active { transform: scale(0.985); }
+  .auth-btn:disabled { opacity: 0.5; cursor: default; }
+  .auth-btn i { font-size: 16px; }
+  .auth-msg { margin-top: 10px; font-family: var(--font-mono); font-size: 11px; min-height: 14px; text-align: center; }
+  .auth-msg.error { color: #f87171; }
+  .auth-msg.success { color: #4ade80; }
+  .auth-footer { margin-top: 18px; text-align: center; font-family: var(--font-mono); font-size: 10px; color: var(--text-3); }
+
+  /* ---- TOP BAR / TICKER / FRESHNESS ---- */
+  .topbar { display: flex; align-items: center; gap: 10px; padding: 10px 16px; border-bottom: 1px solid var(--border); background: var(--surface); position: sticky; top: 0; z-index: 50; }
+  .tb-logo { width: 28px; height: 28px; }
+  .tb-name { font-family: var(--font-display); font-weight: 800; font-size: 15px; letter-spacing: 0.3px; }
+  .tb-name span { color: var(--accent); }
+  .freshness-pill { margin-left: auto; font-family: var(--font-mono); font-size: 9px; color: var(--text-3); letter-spacing: 0.5px; display: inline-flex; align-items: center; gap: 6px; padding: 3px 8px; border: 1px solid var(--border); border-radius: 999px; }
+  .freshness-pill::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
+  .freshness-pill.stale::before { background: var(--warn); }
+
+  /* ---- TAB NAV ---- */
+  .tabnav { display: flex; background: var(--surface); border-bottom: 1px solid var(--border); position: sticky; top: 49px; z-index: 49; overflow-x: auto; }
+  .tab { flex: 1; min-width: 72px; background: none; border: none; border-bottom: 2px solid transparent; color: var(--text-3); font-family: var(--font-display); font-weight: 600; font-size: 11px; letter-spacing: 0.4px; padding: 10px 6px 8px; cursor: pointer; text-transform: uppercase; }
+  .tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+  .tab i { display: block; font-size: 16px; margin-bottom: 2px; }
+
+  /* ---- PAGE ---- */
+  .page { padding: 16px; max-width: 1100px; margin: 0 auto; }
+  .page-header { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 16px; flex-wrap: wrap; gap: 8px; }
+  .page-title { font-family: var(--font-display); font-weight: 700; font-size: 22px; letter-spacing: 0.5px; line-height: 1; }
+  .page-sub { font-family: var(--font-mono); font-size: 10px; color: var(--text-3); letter-spacing: 1px; text-transform: uppercase; }
+
+  /* ---- BOOT OVERLAY ---- */
+  .boot-overlay { position: fixed; inset: 0; background: var(--bg); z-index: 99998; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; transition: opacity 0.25s ease; }
+  .boot-overlay.hide { opacity: 0; pointer-events: none; }
+  .boot-logo { width: 64px; height: 64px; border-radius: 50%; background: var(--accent); display: grid; place-items: center; box-shadow: 0 0 0 4px rgba(34,197,94,0.18); }
+  .boot-logo i { font-size: 32px; color: #0a0a0a; }
+  .boot-title { font-family: var(--font-display); font-weight: 800; font-size: 22px; letter-spacing: 0.5px; margin-top: 4px; }
+  .boot-sub { font-family: var(--font-mono); font-size: 10px; color: var(--text-3); letter-spacing: 1.5px; text-transform: uppercase; }
+  .boot-dots { display: flex; gap: 6px; margin-top: 8px; }
+  .boot-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); opacity: 0.3; animation: bootPulse 1.2s ease-in-out infinite; }
+  .boot-dot:nth-child(2) { animation-delay: 0.2s; }
+  .boot-dot:nth-child(3) { animation-delay: 0.4s; }
+  @keyframes bootPulse { 0%,80%,100%{opacity:.3;transform:scale(.85)} 40%{opacity:1;transform:scale(1.1)} }
+  .boot-status { font-family: var(--font-mono); font-size: 10px; color: var(--text-3); letter-spacing: 0.5px; margin-top: 10px; min-height: 14px; }
+
+  .loader-card { background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 24px; text-align: center; margin-bottom: 16px; }
+  .loader-card h3 { font-family: var(--font-display); font-size: 16px; margin-bottom: 6px; }
+  .loader-card p { font-family: var(--font-mono); font-size: 11px; color: var(--text-3); }
+  .loader-card .file-input-wrap { margin-top: 14px; display: flex; flex-direction: column; gap: 8px; text-align: left; }
+  .loader-card input[type=file] { background: var(--surface-2); border: 1px solid var(--border); color: var(--text); padding: 8px; border-radius: 4px; font-family: var(--font-mono); font-size: 11px; }
+  .loader-card label { font-family: var(--font-mono); font-size: 10px; color: var(--text-3); text-transform: uppercase; letter-spacing: 0.5px; }
+
+  /* ---- META BAR ---- */
+  .meta-bar { display: flex; flex-wrap: wrap; gap: 16px; margin-bottom: 12px; padding: 8px 12px; background: var(--surface); border: 1px solid var(--border); border-radius: 6px; font-family: var(--font-mono); font-size: 10px; color: var(--text-2); letter-spacing: 0.5px; }
+  .meta-bar .meta-item { display: flex; align-items: center; gap: 6px; }
+  .meta-bar .meta-item i { color: var(--accent); font-size: 13px; }
+  .meta-bar .meta-key { color: var(--text-3); text-transform: uppercase; }
+  .meta-bar .meta-val { color: var(--text); font-weight: 500; }
+
+  /* ---- DATA FILTER STRIP ---- */
+  .data-filter-strip { background: var(--surface); border: 1px solid var(--border); border-left: 3px solid var(--accent); border-radius: 6px; padding: 10px 12px; margin-bottom: 12px; display: flex; flex-direction: column; gap: 8px; }
+  .dfilt-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .dfilt-lbl { display: inline-flex; align-items: center; gap: 6px; font-family: var(--font-mono); font-size: 10px; color: var(--text-3); letter-spacing: 0.5px; text-transform: uppercase; min-width: 90px; }
+  .dfilt-lbl i { color: var(--accent); font-size: 14px; }
+  .dfilt-chips { display: inline-flex; gap: 4px; flex-wrap: wrap; }
+  .dfilt-chip { background: var(--surface-2); color: var(--text-2); border: 1px solid var(--border); border-radius: 4px; padding: 5px 10px; font-family: var(--font-display); font-weight: 600; font-size: 11px; letter-spacing: 0.4px; cursor: pointer; transition: all 0.12s; }
+  .dfilt-chip:hover { border-color: var(--accent); color: var(--text); }
+  .dfilt-chip.active { background: var(--accent); color: #0a0a0a; border-color: var(--accent); }
+
+  /* ---- TP COLLAPSE ---- */
+  .tp-collapse { background: var(--surface); border: 1px solid var(--border); border-radius: 6px; margin: 0 0 16px; overflow: hidden; }
+  .tp-collapse-sum { list-style: none; cursor: pointer; padding: 11px 14px; display: flex; align-items: center; gap: 8px; font-family: var(--font-display); font-weight: 700; font-size: 13px; color: var(--text); transition: background 0.12s; }
+  .tp-collapse-sum::-webkit-details-marker { display: none; }
+  .tp-collapse-sum:hover { background: var(--surface-2); }
+  .tp-collapse-sum > i:first-child { color: var(--accent); font-size: 16px; }
+  .tp-collapse-title { letter-spacing: 0.2px; }
+  .tp-collapse-meta { font-family: var(--font-mono); font-size: 10px; color: var(--text-3); font-weight: 500; background: var(--surface-3); padding: 1px 6px; border-radius: 3px; }
+  .tp-collapse-chev { margin-left: auto; color: var(--text-3); font-size: 14px; transition: transform 0.18s ease; }
+  .tp-collapse[open] .tp-collapse-chev { transform: rotate(180deg); }
+  .tp-collapse-body { border-top: 1px solid var(--border); background: var(--surface-2); padding: 10px 12px; }
+  .tp-body-meta { font-family: var(--font-mono); font-size: 10px; color: var(--text-3); letter-spacing: 0.4px; margin-bottom: 8px; }
+
+  /* ---- MODAL ---- */
+  .pm-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.7); z-index: 9000; display: none; overflow-y: auto; padding: 24px 12px; }
+  .pm-overlay.open { display: block; }
+  .pm-modal { max-width: 560px; margin: 0 auto; background: var(--surface); border: 1px solid var(--border-light); border-radius: 10px; overflow: hidden; }
+  @media (max-width: 560px) { .pm-modal { margin: 0; border-radius: 0; min-height: 100vh; } }
+
+  /* ============================================================
+     NRL — sport-specific styles only
+     ============================================================ */
+  .nrl-fix-grid { display: grid; grid-template-columns: 1fr; gap: 8px; }
+  @media (min-width: 620px) { .nrl-fix-grid { grid-template-columns: 1fr 1fr; } }
+  .nrl-fix-card { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 12px 14px; cursor: pointer; transition: border-color 0.12s, background 0.12s; }
+  .nrl-fix-card:hover { border-color: var(--accent); background: var(--surface-2); }
+  .nrl-fix-teams { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  .nrl-fix-team { font-family: var(--font-display); font-weight: 700; font-size: 15px; }
+  .nrl-fix-vs { font-family: var(--font-mono); font-size: 10px; color: var(--text-3); }
+  .nrl-fix-sub { font-family: var(--font-mono); font-size: 9px; color: var(--text-3); letter-spacing: 0.5px; margin-top: 6px; text-transform: uppercase; }
+
+  .tier-badge { font-family: var(--font-mono); font-size: 9px; font-weight: 600; letter-spacing: 0.5px; padding: 2px 7px; border-radius: 3px; text-transform: uppercase; }
+
+  /* Top Bet pills */
+  .topbet-row { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 14px; }
+  .topbet-pill { background: var(--surface-2); border: 1px solid var(--border); border-left: 3px solid var(--accent); border-radius: 6px; padding: 8px 11px; min-width: 150px; flex: 1; }
+  .tbp-player { font-family: var(--font-display); font-weight: 700; font-size: 13px; }
+  .tbp-market { font-family: var(--font-mono); font-size: 10px; color: var(--accent); letter-spacing: 0.4px; margin-top: 1px; }
+  .tbp-stat { font-family: var(--font-mono); font-size: 10px; color: var(--text-3); margin-top: 4px; display: flex; gap: 10px; }
+  .tbp-stat b { color: var(--text); font-weight: 600; }
+
+  /* Stat / DVP tables */
+  .nrl-tbl { width: 100%; border-collapse: collapse; font-family: var(--font-mono); font-size: 11px; }
+  .nrl-tbl th { text-align: right; padding: 6px 8px; color: var(--text-3); font-weight: 500; text-transform: uppercase; font-size: 9px; letter-spacing: 0.5px; border-bottom: 1px solid var(--border); cursor: pointer; white-space: nowrap; }
+  .nrl-tbl th:first-child, .nrl-tbl td:first-child { text-align: left; }
+  .nrl-tbl th.active { color: var(--accent); }
+  .nrl-tbl td { text-align: right; padding: 6px 8px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+  .nrl-tbl tbody tr { cursor: pointer; }
+  .nrl-tbl tbody tr:hover { background: var(--surface-2); }
+  .nrl-name { font-family: var(--font-display); font-weight: 600; color: var(--text); }
+  .nrl-pos { color: var(--text-3); font-size: 9px; }
+
+  .stat-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(78px, 1fr)); gap: 6px; }
+  .stat-cell { background: var(--surface-3); border: 1px solid var(--border); border-radius: 5px; padding: 7px 8px; text-align: center; }
+  .stat-cell .sc-val { font-family: var(--font-mono); font-weight: 600; font-size: 15px; color: var(--text); }
+  .stat-cell .sc-lbl { font-family: var(--font-mono); font-size: 8px; color: var(--text-3); text-transform: uppercase; letter-spacing: 0.4px; margin-top: 2px; }
+
+  .hit-good { color: var(--good); } .hit-mid { color: var(--warn); } .hit-bad { color: var(--bad); }
+
+  .input, select.input { width: 100%; background: var(--surface-2); border: 1px solid var(--border-light); color: var(--text); padding: 9px 11px; border-radius: 6px; font-family: var(--font-mono); font-size: 13px; }
+  .input:focus { outline: none; border-color: var(--accent); }
+
+  /* Search results dropdown (CMB / players) */
+  .search-wrap { position: relative; }
+  .search-results { position: absolute; left: 0; right: 0; top: 100%; margin-top: 4px; background: var(--surface-2); border: 1px solid var(--border-light); border-radius: 6px; max-height: 220px; overflow-y: auto; z-index: 20; display: none; }
+  .search-results.open { display: block; }
+  .search-item { padding: 8px 11px; cursor: pointer; font-family: var(--font-display); font-size: 13px; border-bottom: 1px solid var(--border); }
+  .search-item:hover { background: var(--surface-3); }
+  .search-item small { color: var(--text-3); font-family: var(--font-mono); font-size: 10px; }
+
+  /* Degen Crew */
+  .crew-tabs { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 14px; }
+  .crew-tab { background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 8px 11px; cursor: pointer; font-family: var(--font-display); font-weight: 600; font-size: 11px; color: var(--text-2); display: flex; align-items: center; gap: 6px; }
+  .crew-tab i { color: var(--accent); font-size: 14px; }
+  .crew-tab.active { border-color: var(--accent); color: var(--text); background: var(--surface-2); }
+  .crew-sub { font-family: var(--font-mono); font-size: 10px; color: var(--text-3); margin-bottom: 12px; letter-spacing: 0.3px; }
+  .crew-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 8px; }
+  .crew-card { background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 10px 12px; }
+  .cc-top { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+  .cc-player { font-family: var(--font-display); font-weight: 700; font-size: 14px; }
+  .cc-team { font-family: var(--font-mono); font-size: 9px; color: var(--text-3); }
+  .cc-line { font-family: var(--font-mono); font-size: 11px; margin-top: 6px; display: flex; gap: 12px; }
+  .cc-line b { color: var(--text); }
+
+  /* CMB FAB + overlay */
+  .cmb-fab { position: fixed; bottom: 18px; right: 18px; z-index: 8000; background: var(--accent); color: #0a0a0a; border: none; border-radius: 999px; padding: 12px 16px; font-family: var(--font-display); font-weight: 700; font-size: 13px; display: flex; align-items: center; gap: 8px; cursor: pointer; box-shadow: 0 4px 18px rgba(0,0,0,0.4); }
+  .cmb-fab i { font-size: 18px; }
+  @media (max-width: 560px) { .cmb-fab-lbl { display: none; } }
+  .cmb-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.7); z-index: 8500; display: none; align-items: flex-start; justify-content: center; padding: 32px 12px; overflow-y: auto; }
+  .cmb-overlay.open { display: flex; }
+  .cmb-modal { width: 100%; max-width: 440px; background: var(--surface); border: 1px solid var(--border-light); border-radius: 10px; overflow: hidden; }
+  .cmb-hdr { display: flex; align-items: center; padding: 14px 16px; border-bottom: 1px solid var(--border); }
+  .cmb-hdr h2 { font-family: var(--font-display); font-size: 16px; font-weight: 700; display: flex; align-items: center; gap: 8px; }
+  .cmb-hdr h2 i { color: var(--accent); }
+  .cmb-close { margin-left: auto; background: none; border: none; color: var(--text-3); font-size: 20px; cursor: pointer; }
+  .cmb-body { padding: 16px; }
+  .cmb-field { margin-bottom: 12px; }
+  .cmb-field label { display: block; font-family: var(--font-mono); font-size: 10px; color: var(--text-3); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 5px; }
+  .cmb-field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+
+  .app-footer { margin-top: 32px; padding: 20px 16px 80px; border-top: 1px solid var(--border); background: var(--surface); }
+  .ft-disclaimer { font-family: var(--font-mono); font-size: 11px; line-height: 1.55; color: var(--text-3); max-width: 1100px; margin: 0 auto 8px; }
+  .ft-disclaimer strong { color: var(--text-2); }
+  .ft-copy { font-family: var(--font-mono); font-size: 10px; color: var(--text-3); opacity: 0.6; max-width: 1100px; margin: 0 auto; letter-spacing: 0.5px; }
+  .empty { padding: 40px 16px; text-align: center; font-family: var(--font-mono); font-size: 12px; color: var(--text-3); }
+</style>
 </head>
 <body class="auth-locked">
 
-  <!-- ============================================================
-       AUTH GATE — full-screen overlay shown until password matches
-       AUTH_HASH below. Hides itself + persists 30 days in localStorage.
-       Delete this block if your tool is public.
-       ============================================================ -->
-  <div class="auth-overlay" id="auth-overlay">
-    <div class="auth-card">
-      <div class="auth-brand">
-        <div class="auth-logo">
-          <!-- JTT logo (green circle, white check) -->
-          <svg width="36" height="36" viewBox="0 0 36 36" xmlns="http://www.w3.org/2000/svg">
-            <circle cx="18" cy="18" r="18" fill="#22c55e"/>
-            <path d="M11 18.5 L16 23.5 L25 13" stroke="#0a0a0a" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
-          </svg>
-        </div>
-        <div>
-          <div class="auth-title">Just The Tip</div>
-          <div class="auth-sub">NRL · SUBSCRIBER ACCESS</div>
-        </div>
+<!-- ============== AUTH GATE ============== -->
+<div id="auth-overlay" class="auth-overlay" role="dialog" aria-modal="true">
+  <div class="auth-card">
+    <div class="auth-brand">
+      <svg viewBox="0 0 28 28" width="38" height="38"><circle cx="14" cy="14" r="14" fill="#22c55e"/><polyline points="7 15 12 20 21 9" fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      <div>
+        <div class="auth-title">Just The Tip</div>
+        <div class="auth-sub">NRL 2026 · SUBSCRIBER ACCESS</div>
       </div>
-      <form class="auth-form" id="auth-form" onsubmit="return _authSubmit(event)">
-        <label class="auth-label" for="auth-pw">Password</label>
-        <input type="password" id="auth-pw" class="auth-input" autocomplete="current-password" autofocus>
-        <button type="submit" class="auth-btn" id="auth-btn">
-          <i class="ti ti-key"></i> Unlock
-        </button>
-        <div class="auth-msg" id="auth-msg"></div>
-      </form>
-      <div class="auth-footer">
-        Not a member? <a href="https://dubclub.win/JustTheTipAUS/" target="_blank" rel="noopener">Subscribe via DubClub</a>
-      </div>
+    </div>
+    <form class="auth-form" id="auth-form" autocomplete="off">
+      <label class="auth-label" for="auth-pwd">Enter your access code</label>
+      <input type="password" id="auth-pwd" class="auth-input" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false" placeholder="••••••••">
+      <button type="submit" class="auth-btn" id="auth-btn"><span>UNLOCK</span><i class="ti ti-arrow-right"></i></button>
+      <div class="auth-msg" id="auth-msg" aria-live="polite"></div>
+    </form>
+    <div class="auth-footer">Need access? <a href="https://dubclub.win/JustTheTipAUS/" target="_blank" rel="noopener">Subscribe via DubClub →</a></div>
+  </div>
+</div>
+
+<!-- ============== BOOT OVERLAY ============== -->
+<div class="boot-overlay" id="boot-overlay">
+  <div class="boot-logo"><i class="ti ti-ball-american-football"></i></div>
+  <div class="boot-title">Just The Tip</div>
+  <div class="boot-sub">NRL 2026</div>
+  <div class="boot-dots"><span class="boot-dot"></span><span class="boot-dot"></span><span class="boot-dot"></span></div>
+  <div class="boot-status" id="boot-status">Loading data…</div>
+</div>
+
+<!-- ============== TOP BAR ============== -->
+<div class="topbar">
+  <svg class="tb-logo" viewBox="0 0 28 28"><circle cx="14" cy="14" r="14" fill="#22c55e"/><polyline points="7 15 12 20 21 9" fill="none" stroke="#0a0a0a" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg>
+  <div class="tb-name">JUST THE TIP <span>NRL</span></div>
+  <span id="freshness" class="freshness-pill" style="display:none"></span>
+</div>
+
+<!-- ============== TAB NAV ============== -->
+<nav class="tabnav">
+  <button class="tab active" data-tab="fixtures"><i class="ti ti-layout-grid"></i>Fixtures</button>
+  <button class="tab" data-tab="players"><i class="ti ti-users"></i>Players</button>
+  <button class="tab" data-tab="crew"><i class="ti ti-bolt"></i>Degen Crew</button>
+  <button class="tab" data-tab="ladder"><i class="ti ti-list-numbers"></i>Ladder</button>
+</nav>
+
+<!-- ============== PAGES ============== -->
+<main id="page-fixtures" class="page">
+  <div class="loader-card" id="data-loader" style="display:none">
+    <h3>Load NRL data</h3>
+    <p>Auto-load failed. Drop the JSON files below.</p>
+    <div class="file-input-wrap">
+      <label>Player logs<input type="file" id="file-logs" accept=".json"></label>
+      <label>Team stats<input type="file" id="file-team" accept=".json"></label>
+      <label>Ladder<input type="file" id="file-ladder" accept=".json"></label>
+      <label>Injuries<input type="file" id="file-inj" accept=".json"></label>
     </div>
   </div>
+  <div id="fixtures-content"></div>
+</main>
 
-  <!-- ============================================================
-       BOOT OVERLAY — branded initial load screen. Shown while
-       tryAutoLoadData() runs. Hidden as soon as data lands.
-       ============================================================ -->
-  <div class="boot-overlay" id="boot-overlay">
-    <div class="boot-logo">
-      <i class="ti ti-check"></i>
-    </div>
-    <div class="boot-title">Just The Tip</div>
-    <div class="boot-sub">NRL · LOADING</div>
-    <div class="boot-dots">
-      <div class="boot-dot"></div>
-      <div class="boot-dot"></div>
-      <div class="boot-dot"></div>
-    </div>
-    <div class="boot-status" id="boot-status"></div>
+<main id="page-players" class="page" style="display:none"></main>
+<main id="page-crew" class="page" style="display:none"></main>
+<main id="page-ladder" class="page" style="display:none"></main>
+
+<!-- player modal -->
+<div id="pm-overlay" class="pm-overlay" onclick="if(event.target===this) closePlayerModal()">
+  <div class="pm-modal" id="pm-modal"></div>
+</div>
+
+<!-- CMB -->
+<button class="cmb-fab" onclick="openCMB()"><i class="ti ti-target-arrow"></i><span class="cmb-fab-lbl">Check My Bet</span></button>
+<div id="cmb-overlay" class="cmb-overlay" onclick="if(event.target===this) closeCMB()">
+  <div class="cmb-modal">
+    <div class="cmb-hdr"><h2><i class="ti ti-target-arrow"></i> Check My Bet</h2><button class="cmb-close" onclick="closeCMB()">×</button></div>
+    <div class="cmb-body" id="cmb-body"></div>
   </div>
+</div>
 
-  <!-- ============================================================
-       HEADER / TOPBAR
-       ============================================================ -->
-  <header class="topbar">
-    <div class="brand">
-      <div class="logo-check">
-        <svg viewBox="0 0 28 28" xmlns="http://www.w3.org/2000/svg">
-          <circle cx="14" cy="14" r="14" fill="#22c55e"/>
-          <path d="M8.5 14.5 L12.5 18.5 L19.5 10.5" stroke="#0a0a0a" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
-        </svg>
-      </div>
-      <div class="brand-text">
-        Just The Tip
-        <span class="sub">NRL</span>
-      </div>
-    </div>
-    <div class="topbar-meta">
-      <!-- Cross-link to another JTT tool. Edit href + label per build. -->
-      <a class="cross-link" href="https://justthetipaus.com" title="JTT home">
-        <i class="ti ti-arrow-left"></i>
-        <span class="cross-link-label">JTT</span>
-      </a>
-      <span class="freshness-pill" id="freshness-pill">Loading...</span>
-    </div>
-  </header>
+<footer class="app-footer">
+  <div class="ft-disclaimer"><strong>Gamble responsibly.</strong> JTT NRL is a research tool, not betting advice. Past performance does not guarantee future results. 18+. For help call Gambling Help on 1800 858 858 or visit gamblinghelponline.org.au.</div>
+  <div class="ft-copy">JUST THE TIP · NRL 2026 · DATA VIA CHAMPION DATA</div>
+</footer>
 
-  <!-- ============================================================
-       TAB NAV — edit TABS in JS to change. Icons are Tabler.
-       ============================================================ -->
-  <nav class="tabnav" id="tabnav"></nav>
-
-  <!-- ============================================================
-       PAGE CONTENT SLOT — renderTab() outputs into here
-       ============================================================ -->
-  <main class="page" id="page-content">
-    <!-- Initial empty state -->
-  </main>
-
-  <!-- ============================================================
-       FLOATING CHECK MY BET BUTTON
-       ============================================================ -->
-  <button class="cmb-fab" id="cmb-fab" onclick="_cmbOpen()" aria-label="Check My Bet">
-    <i class="ti ti-checks"></i>
-    <span class="cmb-fab-lbl">Check My Bet</span>
-  </button>
-
-  <!-- ============================================================
-       CMB MODAL — fill in #cmb-modal with sport-specific prop UI
-       ============================================================ -->
-  <div class="cmb-overlay" id="cmb-overlay" onclick="if(event.target===this)_cmbClose()">
-    <div class="cmb-modal" id="cmb-modal">
-      <div class="cmb-hdr">
-        <h2><i class="ti ti-checks"></i> Check My Bet</h2>
-        <button class="cmb-close" onclick="_cmbClose()" aria-label="Close">&times;</button>
-      </div>
-      <div id="cmb-body"></div>
-    </div>
-  </div>
-
-  <!-- ============================================================
-       APP FOOTER — responsible gambling notice
-       ============================================================ -->
-  <footer class="app-footer">
-    <div class="ft-inner">
-      <div class="ft-disclaimer">
-        <strong>Gamble responsibly.</strong> Information provided is for entertainment and research purposes only.
-        Past performance does not guarantee future results. Set deposit limits and seek help if gambling becomes a problem.
-        Call <a href="https://www.gamblinghelponline.org.au/" target="_blank" rel="noopener">Gambling Help Online</a> (1800 858 858)
-        or visit <a href="https://www.responsiblewagering.org.au/" target="_blank" rel="noopener">Responsible Wagering Australia</a>.
-        18+ only.
-      </div>
-      <div class="ft-copy">© <span id="ft-year"></span> Just The Tip. All rights reserved.</div>
-    </div>
-  </footer>
-
-  <script>
-  /* ============================================================
-     JTT SPORT TEMPLATE — JS scaffolding
-     ============================================================
-     Sections in order:
-       1. Config (BRAND, AUTH_HASH, DATA_FILES, TABS)
-       2. State container
-       3. Auth gate (SHA-256, 30-day localStorage TTL)
-       4. Boot overlay management
-       5. Data loader (config-driven JSON fetch)
-       6. Tab nav rendering + routing
-       7. CMB modal open/close
-       8. Freshness pill update
-       9. Footer year
-      10. App init
-      11. [SPORT-SPECIFIC ENGINE — implement renderTab here]
-     ============================================================ */
-
-  // ─── 1. CONFIG ─────────────────────────────────────────────
-  // SHA-256 hash of the access password.
-  // To generate a new hash, run in browser console:
-  //   crypto.subtle.digest('SHA-256', new TextEncoder().encode('your-password'))
-  //     .then(b => console.log(Array.from(new Uint8Array(b)).map(x=>x.toString(16).padStart(2,'0')).join('')))
-  const AUTH_HASH = '8c3fc7be747b0acdccf578e0bac963135e084207b10828e8d11cc77c0d826486';
-  const AUTH_TTL_DAYS = 30;
-  const AUTH_STORAGE_KEY = 'jtt_auth_v1';
-
-  // Data files autoloaded on boot. Add/remove per sport. Keys land
-  // on state.data automatically (e.g. fixtures: ... → state.data.fixtures).
-  const DATA_FILES = {
-    logs:    'data/player_logs.json',  // per-round player rows from nrlR fetch_player_stats (enriched w/ opponent)
-    fixture: 'data/fixture.json',      // upcoming round from nrlR fetch_fixture
-    ladder:  'data/ladder.json',       // standings from nrlR fetch_ladder
-    meta:    'data/meta.json',         // {season, round, src, updated}
-  };
-
-  // Tabs in the top nav. Order = display order. Each tab calls renderTab(name).
-  const TABS = [
-    { name: 'fixture', label: 'Fixture', icon: 'ti-calendar-event' },
-    { name: 'players', label: 'Players', icon: 'ti-users' },
-    { name: 'teams',   label: 'Tries Conceded', icon: 'ti-shield-half' },
-    { name: 'crew',    label: 'Degen',   icon: 'ti-flame' },
-  ];
-
-  // ─── 2. STATE CONTAINER ────────────────────────────────────
-  const state = {
-    data:           {},         // populated by autoload — keys match DATA_FILES
-    dataVersion:    null,
-    view: {
-      activeTab:    TABS[0].name,
-      selectedId:   null,       // currently-focused entity (fixture, team, player)
-    },
-  };
-
-  // ─── 3. AUTH GATE ──────────────────────────────────────────
-  async function _sha256(text) {
-    const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
-    return Array.from(new Uint8Array(buf)).map(x => x.toString(16).padStart(2, '0')).join('');
-  }
-
-  function _authCheckPersisted() {
-    // Check for a valid auth token in localStorage. If still inside the TTL,
-    // skip the gate entirely.
-    try {
-      const raw = localStorage.getItem(AUTH_STORAGE_KEY);
-      if (!raw) return false;
-      const data = JSON.parse(raw);
-      if (!data.unlockedAt) return false;
-      const age = Date.now() - data.unlockedAt;
-      if (age > AUTH_TTL_DAYS * 86400 * 1000) {
-        localStorage.removeItem(AUTH_STORAGE_KEY);
-        return false;
-      }
-      return data.hash === AUTH_HASH;
-    } catch (e) { return false; }
-  }
-
-  function _authUnlock() {
-    const overlay = document.getElementById('auth-overlay');
-    overlay.classList.add('unlocked');
-    document.body.classList.remove('auth-locked');
-    // Persist
-    try {
-      localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify({
-        unlockedAt: Date.now(), hash: AUTH_HASH,
-      }));
-    } catch (e) {}
-    // Remove from DOM after fade completes
-    setTimeout(() => { overlay.remove(); }, 320);
-    // Kick off the app
-    _appBoot();
-  }
-
-  async function _authSubmit(ev) {
-    ev.preventDefault();
-    const input = document.getElementById('auth-pw');
-    const msg   = document.getElementById('auth-msg');
-    const btn   = document.getElementById('auth-btn');
-    const pw    = input.value;
-    if (!pw) return false;
-    btn.disabled = true;
-    msg.textContent = '';
-    msg.className = 'auth-msg';
-    try {
-      const h = await _sha256(pw);
-      if (h === AUTH_HASH) {
-        msg.textContent = 'Unlocked';
-        msg.className = 'auth-msg success';
-        setTimeout(_authUnlock, 250);
-      } else {
-        input.classList.add('error');
-        msg.textContent = 'Incorrect password';
-        msg.className = 'auth-msg error';
-        setTimeout(() => input.classList.remove('error'), 400);
-        btn.disabled = false;
-      }
-    } catch (e) {
-      msg.textContent = 'Auth error — try again';
-      msg.className = 'auth-msg error';
-      btn.disabled = false;
-    }
-    return false;
-  }
-
-  // ─── 4. BOOT OVERLAY ───────────────────────────────────────
-  function _bootStatus(text) {
-    const el = document.getElementById('boot-status');
-    if (el) el.textContent = text || '';
-  }
-  function _bootHide() {
-    const el = document.getElementById('boot-overlay');
-    if (!el) return;
-    el.classList.add('hide');
-    setTimeout(() => { el.remove(); }, 320);
-  }
-
-  // ─── 5. DATA LOADER ────────────────────────────────────────
-  async function tryAutoLoadData() {
-    const prefix = './';
-    // Append a cache-busting version param if version.txt exists
-    let version = '';
-    try {
-      const v = await fetch(prefix + 'data/version.txt', { cache: 'no-cache' });
-      if (v.ok) { version = (await v.text()).trim(); }
-    } catch (e) {}
-    if (version) state.dataVersion = version;
-    const cacheBust = version ? '?v=' + version : '';
-
-    _bootStatus('Loading data…');
-    let anyLoaded = false;
-    const promises = Object.entries(DATA_FILES).map(async ([key, url]) => {
-      try {
-        const r = await fetch(prefix + url + cacheBust, { cache: 'no-cache' });
-        if (!r.ok) return;
-        const json = await r.json();
-        state.data[key] = json;
-        anyLoaded = true;
-      } catch (e) {
-        console.warn('Data load failed for', key, e);
-      }
+<script>
+// ============================================================
+// AUTH GATE — loads auth.json (sha256 passwordHash). If missing, gate off.
+// ============================================================
+(function authGateInit() {
+  const LS_KEY = 'jtt_nrl_auth', TTL_MS = 30 * 864e5;
+  const overlay = document.getElementById('auth-overlay');
+  const form = document.getElementById('auth-form'), input = document.getElementById('auth-pwd');
+  const btn = document.getElementById('auth-btn'), msg = document.getElementById('auth-msg');
+  async function sha256(t){ const b=new TextEncoder().encode(t); const h=await crypto.subtle.digest('SHA-256',b); return Array.from(new Uint8Array(h)).map(x=>x.toString(16).padStart(2,'0')).join(''); }
+  function unlock(){ overlay.classList.add('unlocked'); document.body.classList.remove('auth-locked'); setTimeout(()=>overlay.style.display='none',320); boot(); }
+  let stored=null; try{ stored=JSON.parse(localStorage.getItem(LS_KEY)); }catch{}
+  const prefix = new URLSearchParams(location.search).get('data') || '';
+  (async ()=>{
+    let auth=null;
+    try{ const r=await fetch(prefix+'auth.json?t='+Date.now(),{cache:'no-store'}); if(r.ok) auth=await r.json(); }catch{}
+    if(!auth || !auth.passwordHash){ unlock(); return; }
+    if(stored && stored.h===auth.passwordHash && stored.e>Date.now()){ unlock(); return; }
+    form.addEventListener('submit', async (e)=>{
+      e.preventDefault(); btn.disabled=true;
+      const h=await sha256(input.value);
+      if(h===auth.passwordHash){ msg.className='auth-msg success'; msg.textContent='Access granted'; try{localStorage.setItem(LS_KEY,JSON.stringify({h,e:Date.now()+TTL_MS}));}catch{} unlock(); }
+      else { msg.className='auth-msg error'; msg.textContent='Incorrect access code'; input.classList.add('error'); setTimeout(()=>input.classList.remove('error'),420); btn.disabled=false; }
     });
-    await Promise.all(promises);
-
-    if (anyLoaded) {
-      _bootStatus('Ready');
-      _updateFreshnessPill();
-      _renderApp();
-    } else {
-      // No data loaded — show fallback file inputs
-      _bootStatus('No data — manual upload required');
-      _showLoaderFallback();
-    }
-    _bootHide();
-  }
-
-  function _showLoaderFallback() {
-    const page = document.getElementById('page-content');
-    page.innerHTML = '<div class="loader-card">' +
-      '<div class="ico" style="font-size:32px;color:var(--warn);margin-bottom:8px;">' +
-        '<i class="ti ti-database-off"></i>' +
-      '</div>' +
-      '<div style="font-family:var(--font-display);font-weight:700;margin-bottom:6px;">No data loaded</div>' +
-      '<div style="font-family:var(--font-mono);font-size:11px;color:var(--text-3);">' +
-        'Place your data JSON files in /data/ and reload. ' +
-        'Expected files: ' + Object.keys(DATA_FILES).join(', ') +
-      '</div>' +
-    '</div>';
-  }
-
-  // ─── 6. TAB NAV + ROUTING ──────────────────────────────────
-  function _renderTabnav() {
-    const nav = document.getElementById('tabnav');
-    nav.innerHTML = TABS.map(t =>
-      '<button class="tab' + (t.name === state.view.activeTab ? ' active' : '') + '" ' +
-              'data-tab="' + t.name + '" onclick="_switchTab(\'' + t.name + '\')">' +
-        '<i class="ti ' + t.icon + '"></i>' + t.label +
-      '</button>'
-    ).join('');
-  }
-  function _switchTab(name) {
-    state.view.activeTab = name;
-    state.view.selectedId = null;
-    _renderTabnav();
-    _renderApp();
-    window.scrollTo({ top: 0, behavior: 'smooth' });
-  }
-  function _renderApp() {
-    const page = document.getElementById('page-content');
-    try {
-      page.innerHTML = renderTab(state.view.activeTab) || '';
-    } catch (e) {
-      console.error('renderTab error', e);
-      page.innerHTML = '<div class="empty">' +
-        '<div class="ico"><i class="ti ti-alert-triangle"></i></div>' +
-        'Render error — see console for details' +
-      '</div>';
-    }
-  }
-
-  // ─── 7. CMB MODAL ──────────────────────────────────────────
-  function _cmbOpen()  { document.getElementById('cmb-overlay').classList.add('open'); }
-  function _cmbClose() { document.getElementById('cmb-overlay').classList.remove('open'); }
-  document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape') _cmbClose();
-  });
-
-  // ─── 8. FRESHNESS PILL ─────────────────────────────────────
-  function _updateFreshnessPill() {
-    const el = document.getElementById('freshness-pill');
-    if (!el) return;
-    if (!state.dataVersion) {
-      el.textContent = 'Loaded';
-      return;
-    }
-    const ts = parseInt(state.dataVersion, 10);
-    if (!ts) { el.textContent = 'Loaded'; return; }
-    const ageMs = Date.now() - (ts * 1000);
-    const ageHours = ageMs / (1000 * 60 * 60);
-    let label;
-    if      (ageHours < 1)   label = 'Updated just now';
-    else if (ageHours < 24)  label = 'Updated ' + Math.floor(ageHours) + 'h ago';
-    else                     label = 'Updated ' + Math.floor(ageHours / 24) + 'd ago';
-    el.textContent = label;
-    el.classList.remove('stale', 'very-stale');
-    if (ageHours > 48)       el.classList.add('very-stale');
-    else if (ageHours > 24)  el.classList.add('stale');
-  }
-
-  // ─── 9. FOOTER YEAR ────────────────────────────────────────
-  document.getElementById('ft-year').textContent = new Date().getFullYear();
-
-  // ─── 10. APP INIT ──────────────────────────────────────────
-  function _appBoot() {
-    _renderTabnav();
-    tryAutoLoadData();
-  }
-
-  // Run auth check first. If already unlocked, skip the gate entirely.
-  (function () {
-    if (_authCheckPersisted()) {
-      _authUnlock();
-    }
-    // Otherwise the gate stays visible and waits for password submission.
   })();
+})();
 
-  /* ============================================================
-     11. SPORT-SPECIFIC ENGINE — NRL TRY EDITION
-     ============================================================ */
+// ============================================================
+// STATE + DATA LOAD
+// ============================================================
+const state = { data:{}, version:null, round:null, fixtureMatch:null, crewTab:'try-scorers', playerSort:'tries', cmbPlayer:null };
 
-  // ─── NRL 2026 teams (canonical short name = nrlR naming) ───
-  const TEAMS = [
-    {name:'Broncos',      abbr:'BRI', c:'#fdb813'},
-    {name:'Raiders',      abbr:'CAN', c:'#3fbf3f'},
-    {name:'Bulldogs',     abbr:'CBY', c:'#1e5bb8'},
-    {name:'Sharks',       abbr:'CRO', c:'#00b3c7'},
-    {name:'Dolphins',     abbr:'DOL', c:'#e2231b'},
-    {name:'Titans',       abbr:'GCT', c:'#0096d6'},
-    {name:'Sea Eagles',   abbr:'MAN', c:'#9c1c39'},
-    {name:'Storm',        abbr:'MEL', c:'#7c3aed'},
-    {name:'Knights',      abbr:'NEW', c:'#1f6fd6'},
-    {name:'Warriors',     abbr:'NZL', c:'#cccccc'},
-    {name:'Cowboys',      abbr:'NQL', c:'#1d5fb0'},
-    {name:'Eels',         abbr:'PAR', c:'#1276c4'},
-    {name:'Panthers',     abbr:'PEN', c:'#9aa0a6'},
-    {name:'Rabbitohs',    abbr:'SOU', c:'#1f9d54'},
-    {name:'Dragons',      abbr:'SGI', c:'#e2231b'},
-    {name:'Roosters',     abbr:'SYD', c:'#2456a6'},
-    {name:'Wests Tigers', abbr:'WTI', c:'#f68b1f'},
-  ];
-  const TEAM_BY = {};
-  TEAMS.forEach(t => { TEAM_BY[t.name.toLowerCase()] = t; TEAM_BY[t.abbr.toLowerCase()] = t; });
-  // loose normaliser for whatever string the feed hands us
-  function teamOf(s){
-    if(!s) return {name:s||'?', abbr:'?', c:'#555'};
-    const k = String(s).toLowerCase().trim();
-    if(TEAM_BY[k]) return TEAM_BY[k];
-    for(const t of TEAMS){ if(k.includes(t.name.toLowerCase()) || t.name.toLowerCase().includes(k)) return t; }
-    // common long forms
-    if(k.includes('manly')) return TEAM_BY['sea eagles'];
-    if(k.includes('canterbury')||k.includes('bankstown')) return TEAM_BY['bulldogs'];
-    if(k.includes('south sydney')||k.includes('souths')) return TEAM_BY['rabbitohs'];
-    if(k.includes('st george')||k.includes('illawarra')) return TEAM_BY['dragons'];
-    if(k.includes('sydney roosters')||k==='roosters') return TEAM_BY['roosters'];
-    if(k.includes('north queensland')) return TEAM_BY['cowboys'];
-    if(k.includes('parramatta')) return TEAM_BY['eels'];
-    if(k.includes('new zealand')||k.includes('nz ')) return TEAM_BY['warriors'];
-    if(k.includes('gold coast')) return TEAM_BY['titans'];
-    return {name:s, abbr:String(s).slice(0,3).toUpperCase(), c:'#555'};
+const DATA_FILES = { logs:'nrl_player_logs.json', team:'nrl_team_stats.json', ladder:'nrl_ladder.json', inj:'nrl_injuries.json' };
+
+async function boot() {
+  const status = document.getElementById('boot-status');
+  const prefix = new URLSearchParams(location.search).get('data') || '';
+  let v=''; try{ const r=await fetch(prefix+'version.txt?t='+Date.now(),{cache:'no-store'}); if(r.ok){ state.version=(await r.text()).trim(); v='?t='+Date.now(); } }catch{}
+  await Promise.all(Object.entries(DATA_FILES).map(async ([k,f])=>{
+    try{ const r=await fetch(prefix+f+v,{cache:'no-cache'}); if(r.ok) state.data[k]=await r.json(); }catch{}
+  }));
+  if (state.data.logs && state.data.logs.length) { buildIndexes(); hideBoot(); renderAll(); }
+  else { document.getElementById('boot-overlay').style.display='none'; document.getElementById('data-loader').style.display=''; }
+}
+function hideBoot(){ const b=document.getElementById('boot-overlay'); b.classList.add('hide'); setTimeout(()=>b.style.display='none',260); }
+
+// manual file fallback
+['logs','team','ladder','inj'].forEach(k=>{
+  const map={logs:'file-logs',team:'file-team',ladder:'file-ladder',inj:'file-inj'};
+  const el=document.getElementById(map[k]); if(!el) return;
+  el.addEventListener('change', e=>{ const f=e.target.files[0]; if(!f) return; const rd=new FileReader();
+    rd.onload=()=>{ try{ state.data[k]=JSON.parse(rd.result); if(state.data.logs){ buildIndexes(); document.getElementById('data-loader').style.display='none'; renderAll(); } }catch(err){ alert('Bad JSON: '+err.message); } }; rd.readAsText(f); });
+});
+
+// ============================================================
+// ENGINE
+// ============================================================
+const BETTABLE = [
+  { key:'tries', label:'Tries', line:0.5 },
+  { key:'tackles', label:'Tackles', line:24.5 },
+  { key:'tackleBreaks', label:'Tackle Breaks', line:3.5 },
+  { key:'runMetres', label:'Run Metres', line:100.5 },
+  { key:'lineBreaks', label:'Line Breaks', line:0.5 },
+  { key:'offloads', label:'Offloads', line:1.5 },
+  { key:'runs', label:'Runs', line:12.5 },
+  { key:'tryAssists', label:'Try Assists', line:0.5 },
+  { key:'postContactMetres', label:'Post Contact M', line:40.5 },
+  { key:'kicksGeneralPlay', label:'Kicks', line:2.5 },
+  { key:'points', label:'Points', line:4.5 },
+  { key:'missedTackles', label:'Missed Tackles', line:2.5 },
+];
+const BET_BY_KEY = Object.fromEntries(BETTABLE.map(b=>[b.key,b]));
+const POS_ORDER = ['Fullback','Wing','Centre','Five-Eighth','Halfback','Hooker','Prop','Second Row','Lock','Interchange'];
+
+let PLAYERS={}, MATCHES={}, ROUNDS=[], TEAMS={}, DVP={}, TIER={};
+
+function num(v){ return (v===null||v===undefined||v==='')?0:(+v||0); }
+
+function buildIndexes() {
+  PLAYERS={}; MATCHES={}; TEAMS={}; DVP={}; TIER={};
+  const logs = state.data.logs;
+  // matches: two teams per match_id
+  logs.forEach(r=>{
+    const mid=r.match_id;
+    if(!MATCHES[mid]) MATCHES[mid]={ match_id:mid, round:r.round, utc:r.utc_start, teams:{} };
+    MATCHES[mid].teams[r.team_location]=r.team_name;
+  });
+  // opponent lookup
+  const oppOf = (r)=>{ const m=MATCHES[r.match_id]; if(!m) return null; return r.team_location==='home'?m.teams.away:m.teams.home; };
+  // players
+  logs.forEach(r=>{
+    const id=r.playerId; if(!PLAYERS[id]) PLAYERS[id]={ id, name:r.player||((r.firstname||'')+' '+(r.surname||'')).trim(), team:r.team_name, rows:[], posCount:{} };
+    const p=PLAYERS[id]; p.team=r.team_name;
+    if(r.position){ p.posCount[r.position]=(p.posCount[r.position]||0)+1; }
+    p.rows.push(r);
+    TEAMS[r.team_name]=true;
+  });
+  Object.values(PLAYERS).forEach(p=>{
+    p.rows.sort((a,b)=>a.round-b.round);
+    p.position = Object.entries(p.posCount).sort((a,b)=>b[1]-a[1])[0]?.[0] || '—';
+  });
+  ROUNDS=[...new Set(logs.map(r=>r.round))].sort((a,b)=>a-b);
+  state.round = state.round || ROUNDS[ROUNDS.length-1];
+  // DVP: team concedes stat to position
+  const acc={};
+  logs.forEach(r=>{
+    const opp=oppOf(r); if(!opp||!r.position) return;
+    acc[opp]=acc[opp]||{};
+    acc[opp][r.position]=acc[opp][r.position]||{};
+    BETTABLE.forEach(b=>{ const c=acc[opp][r.position]; c[b.key]=c[b.key]||{s:0,n:0}; c[b.key].s+=num(r[b.key]); c[b.key].n++; });
+  });
+  Object.entries(acc).forEach(([team,byPos])=>{ DVP[team]={}; Object.entries(byPos).forEach(([pos,stats])=>{ DVP[team][pos]={}; Object.entries(stats).forEach(([k,o])=>{ DVP[team][pos][k]= o.n? o.s/o.n : 0; }); }); });
+  // tiers from ladder
+  buildTiers();
+}
+
+function buildTiers() {
+  const lad = state.data.ladder;
+  TIER={};
+  if(!lad || !lad.length) return;
+  const sorted=[...lad].sort((a,b)=> (b.points-a.points) || (b.points_diff-a.points_diff));
+  sorted.forEach((row,i)=>{ const t= i<4?'Elite': i<8?'Strong': i<13?'Mid':'Weak'; TIER[row.team]=t; });
+}
+const TIER_COLOR={ Elite:'#ff5a5a', Strong:'#ffb84d', Mid:'#9aa3b0', Weak:'#22c55e' };
+function shortName(full){
+  if(!full) return '—';
+  // match against ladder nicknames
+  const lad=state.data.ladder||[];
+  for(const r of lad){ if(full.includes(r.team)) return r.team; }
+  return full.split(' ').slice(-1)[0];
+}
+function tierFor(full){ return TIER[shortName(full)] || 'Mid'; }
+
+// stat helpers
+function avg(rows, key){ if(!rows.length) return 0; return rows.reduce((s,r)=>s+num(r[key]),0)/rows.length; }
+function lastN(rows, n){ return rows.slice(-n); }
+function hitRate(rows, key, line, side){ // side 'over'|'under'
+  if(!rows.length) return {pct:0,hits:0,n:0};
+  let hits=0; rows.forEach(r=>{ const v=num(r[key]); if(side==='under'? v<line : v>line) hits++; });
+  return { pct: hits/rows.length, hits, n:rows.length };
+}
+function hitClass(pct){ return pct>=0.7?'hit-good': pct>=0.5?'hit-mid':'hit-bad'; }
+function fmt(v, dp=1){ return (Math.round(v*Math.pow(10,dp))/Math.pow(10,dp)).toFixed(dp); }
+
+// ============================================================
+// RENDER — tabs
+// ============================================================
+document.querySelectorAll('.tabnav .tab').forEach(btn=>{
+  btn.addEventListener('click', ()=>{
+    document.querySelectorAll('.tabnav .tab').forEach(b=>b.classList.remove('active'));
+    btn.classList.add('active');
+    const t=btn.dataset.tab;
+    ['fixtures','players','crew','ladder'].forEach(p=>{ document.getElementById('page-'+p).style.display = p===t?'block':'none'; });
+  });
+});
+
+function renderAll(){ renderFreshness(); renderFixtures(); renderPlayers(); renderCrew(); renderLadder(); }
+
+function renderFreshness(){
+  if(!state.version) return;
+  const el=document.getElementById('freshness'); el.style.display='inline-flex';
+  el.innerHTML = 'UPDATED '+state.version;
+}
+
+// ---- FIXTURES ----
+function fixturesForRound(rd){
+  return Object.values(MATCHES).filter(m=>m.round===rd).sort((a,b)=>(a.utc||'').localeCompare(b.utc||''));
+}
+function renderFixtures(){
+  const c=document.getElementById('fixtures-content');
+  const chips = ROUNDS.map(r=>`<button class="dfilt-chip ${r===state.round?'active':''}" onclick="setRound(${r})">R${r}</button>`).join('');
+  let html = `<div class="page-header"><div><div class="page-title">FIXTURES</div><div class="page-sub">${Object.keys(PLAYERS).length} players · ${ROUNDS.length} rounds</div></div></div>`;
+  html += `<div class="data-filter-strip"><div class="dfilt-row"><span class="dfilt-lbl"><i class="ti ti-calendar"></i>Round</span><span class="dfilt-chips">${chips}</span></div></div>`;
+  if(state.fixtureMatch){ html += renderFixtureDetail(state.fixtureMatch); }
+  else {
+    const fx=fixturesForRound(state.round);
+    html += `<div class="nrl-fix-grid">`+ fx.map(m=>{
+      const h=m.teams.home, a=m.teams.away;
+      return `<div class="nrl-fix-card" onclick="openFixture(${m.match_id})">
+        <div class="nrl-fix-teams"><span class="nrl-fix-team">${shortName(h)}</span><span class="nrl-fix-vs">vs</span><span class="nrl-fix-team">${shortName(a)}</span></div>
+        <div class="nrl-fix-sub">Round ${m.round} · tap for markets</div></div>`;
+    }).join('') + `</div>`;
+    if(!fx.length) html+=`<div class="empty">No fixtures for round ${state.round}.</div>`;
   }
+  c.innerHTML=html;
+}
+function setRound(r){ state.round=r; state.fixtureMatch=null; renderFixtures(); }
+function openFixture(mid){ state.fixtureMatch=mid; renderFixtures(); window.scrollTo(0,0); }
+function closeFixture(){ state.fixtureMatch=null; renderFixtures(); }
 
-  // ─── positions → 2-char code, colour, try-likelihood weight ───
-  const POS = {
-    Fullback:    {code:'FB', c:'#22c55e', w:0.95},
-    Wing:        {code:'WG', c:'#38bdf8', w:1.00},
-    Winger:      {code:'WG', c:'#38bdf8', w:1.00},
-    Centre:      {code:'CE', c:'#a78bfa', w:0.85},
-    'Five-eighth':{code:'FE', c:'#f59e0b', w:0.45},
-    'Five-Eighth':{code:'FE', c:'#f59e0b', w:0.45},
-    Halfback:    {code:'HB', c:'#f59e0b', w:0.35},
-    Hooker:      {code:'HK', c:'#fb7185', w:0.30},
-    'Second-row':{code:'SR', c:'#94a3b8', w:0.40},
-    'Second Row':{code:'SR', c:'#94a3b8', w:0.40},
-    Lock:        {code:'LK', c:'#94a3b8', w:0.30},
-    Prop:        {code:'PR', c:'#94a3b8', w:0.18},
-    Interchange: {code:'IN', c:'#6b7280', w:0.25},
-  };
-  function posOf(p){ return POS[p] || {code:(p||'?').slice(0,2).toUpperCase(), c:'#888', w:0.3}; }
-  const POS_ORDER = ['FB','WG','CE','FE','HB','HK','SR','LK','PR'];
+function teamRosterForMatch(team, beforeRound){
+  // players on team who played the selected round (or most recent)
+  return Object.values(PLAYERS).filter(p=>p.team===team).map(p=>{
+    const upTo = p.rows.filter(r=>r.round<=beforeRound);
+    return { p, rows: upTo.length?upTo:p.rows };
+  }).filter(x=>x.rows.length);
+}
 
-  // ─── degen crew (try edition) ───
-  const CREW = [
-    {id:'targets', ic:'ti-target',       nm:'Try Targets',    sub:'Top ATS plays this round'},
-    {id:'green',   ic:'ti-circle-check', nm:'Green Lights',   sub:'High-confidence locks'},
-    {id:'first',   ic:'ti-flag',         nm:'First Try',      sub:'Best FTS value (approx)'},
-    {id:'streak',  ic:'ti-flame',        nm:'Streakers',      sub:'Scored 3+ on the trot'},
-    {id:'elite',   ic:'ti-star',         nm:'Elite Matchups', sub:'Gun back vs leaky edge'},
-    {id:'bunnies', ic:'ti-mood-happy',   nm:'Bunnies',        sub:'Soft positional matchups'},
-    {id:'death',   ic:'ti-skull',        nm:'Death Riders',   sub:'Cold & capped — fade'},
-    {id:'form',    ic:'ti-trending-up',  nm:'Form Alerts',    sub:'Trending up & down'},
-    {id:'multi',   ic:'ti-stack-2',      nm:'Multi Builder',  sub:'Stack the best ATS legs'},
-  ];
+function renderFixtureDetail(mid){
+  const m=MATCHES[mid]; if(!m) return '';
+  const h=m.teams.home, a=m.teams.away;
+  const badge=(full)=>{ const t=tierFor(full); return `<span class="tier-badge" style="background:${TIER_COLOR[t]}22;color:${TIER_COLOR[t]}">${t}</span>`; };
+  let html=`<div style="margin-bottom:12px"><button class="dfilt-chip" onclick="closeFixture()">← All fixtures</button></div>`;
+  html+=`<div class="meta-bar"><div class="meta-item"><i class="ti ti-shield"></i><span class="meta-key">Home</span><span class="meta-val">${shortName(h)}</span>${badge(h)}</div><div class="meta-item"><i class="ti ti-shield-half"></i><span class="meta-key">Away</span><span class="meta-val">${shortName(a)}</span>${badge(a)}</div><div class="meta-item"><i class="ti ti-calendar"></i><span class="meta-key">Round</span><span class="meta-val">${m.round}</span></div></div>`;
+  // Top Bet pills — scan both rosters
+  html+=`<div class="page-sub" style="margin-bottom:8px">TOP BETS</div><div class="topbet-row">${topBets(h,a)}</div>`;
+  // DVP + roster per team
+  [h,a].forEach(team=>{ html+=teamSection(team, MATCHES[mid].teams.home===team?a:h); });
+  return html;
+}
 
-  // ─── model: normalise loaded (or demo) data into players/teams/fixture ───
-  function buildModel() {
-    const logs    = state.data.logs    || [];
-    const fixture = state.data.fixture || [];
-    const ladder  = state.data.ladder  || [];
-
-    // aggregate players from per-round logs
-    const pmap = {};
-    logs.forEach(r => {
-      const key = (r.player_name||r.name) + '|' + (r.team||'');
-      if(!pmap[key]) pmap[key] = {
-        name:r.player_name||r.name, team:teamOf(r.team).name,
-        pos:posOf(r.position||r.pos).code, games:0, tries:0, scored:0, doubles:0, fts:0, log:[]
-      };
-      const p = pmap[key];
-      const t = +(r.tries||0);
-      p.games++; p.tries += t;
-      if(t>=1) p.scored++; if(t>=2) p.doubles++;
-      if(r.first_try) p.fts++;
-      p.log.push({rnd:+r.round, opp:teamOf(r.opponent||r.opp).abbr, tries:t});
-    });
-    const players = Object.values(pmap).filter(p=>p.games>0)
-      .map(p=>{ p.log.sort((a,b)=>a.rnd-b.rnd); return p; });
-
-    // teams: tries conceded by position (the DVP edge) — from opponent tags on logs
-    const tmap = {};
-    TEAMS.forEach(t => tmap[t.name] = {name:t.name, abbr:t.abbr, gamesAg:new Set(), concededByPos:{}, triesAgainst:0});
-    logs.forEach(r => {
-      const opp = teamOf(r.opponent||r.opp).name;
-      if(!tmap[opp]) return;
-      const code = posOf(r.position||r.pos).code, t=+(r.tries||0);
-      tmap[opp].concededByPos[code] = (tmap[opp].concededByPos[code]||0) + t;
-      tmap[opp].triesAgainst += t;
-      tmap[opp].gamesAg.add(r.round + '|' + teamOf(r.team).abbr);
-    });
-    // ladder gives points/wins; merge for/against if present
-    const lmap = {}; ladder.forEach(l=> lmap[teamOf(l.team).name]=l);
-    const teams = TEAMS.map(t => {
-      const m = tmap[t.name];
-      const g = Math.max(1, (m.gamesAg.size || (lmap[t.name]?lmap[t.name].played:1)));
-      const cbp = {};
-      POS_ORDER.forEach(c => cbp[c] = +((m.concededByPos[c]||0)/g).toFixed(2));
-      return {name:t.name, abbr:t.abbr, c:t.c, games:g,
-        triesAgainst:m.triesAgainst, taPg:+(m.triesAgainst/g).toFixed(2), concededByPos:cbp,
-        ladder: lmap[t.name]||null};
-    });
-
-    return {players, teams, fixture, meta: state.data.meta || {}};
-  }
-
-  let MODEL = null;
-  let sortKey = 'ats', sortDir = -1;
-  let selGame = null;
-
-  // ─── derived rates ───
-  const ats  = p => p.games ? p.scored/p.games : 0;
-  const twoR = p => p.games ? p.doubles/p.games : 0;
-  const tpg  = p => p.games ? p.tries/p.games : 0;
-  const ftsR = p => p.games ? (p.fts ? p.fts/p.games : tpg(p)*0.22) : 0; // approx if no event data
-  const pct  = n => Math.round(n*100)+'%';
-  const rcls = r => r>=.6 ? 'good' : r>=.4 ? 'warn' : 'dim';
-  const dot  = name => '<span class="nrl-dot" style="background:'+teamOf(name).c+'"></span>';
-  const ptag = code => '<span class="nrl-pos" style="--pc:'+(Object.values(POS).find(x=>x.code===code)||{c:'#888'}).c+'">'+code+'</span>';
-
-  // ─── tab routing ───
-  function renderTab(name) {
-    if(!MODEL) MODEL = buildModel();
-    if(!MODEL.players.length && !MODEL.fixture.length)
-      return emptyState('No data yet', 'Drop nrlR JSON into <code>/data/</code> and reload, or hit Demo.');
-    if(name==='fixture') return selGame!=null ? renderFocus(selGame) : renderFixture();
-    if(name==='players') return renderPlayers();
-    if(name==='teams')   return renderTeams();
-    if(name==='crew')    return renderCrew();
-    return '';
-  }
-
-  function emptyState(t,s){
-    return '<div class="empty"><div class="ico"><i class="ti ti-database-off"></i></div>'+
-      '<div style="font-family:var(--font-display);font-weight:700;font-size:16px;color:var(--text)">'+t+'</div>'+
-      '<div style="margin-top:6px;font-size:12px">'+s+'</div>'+
-      '<button class="back-btn" style="margin-top:14px" onclick="injectDemo()"><i class="ti ti-bolt"></i> Load demo data</button></div>';
-  }
-
-  // ─── FIXTURE ───
-  function renderFixture(){
-    const head = '<div class="page-header"><div class="page-title">Round '+(MODEL.meta.round||'')+
-      '</div><div class="page-sub">'+MODEL.fixture.length+' games · tap a fixture for the try angle</div></div>';
-    const cards = MODEL.fixture.map((g,i)=>{
-      const h=teamOf(g.home_team||g.home), a=teamOf(g.away_team||g.away);
-      return '<div class="nrl-fx" onclick="openGame('+i+')">'+
-        '<div class="nrl-fx-side"><span class="nrl-dot" style="background:'+h.c+'"></span><span class="nrl-fx-nm">'+h.name+'</span></div>'+
-        '<span class="nrl-fx-v">v</span>'+
-        '<div class="nrl-fx-side away"><span class="nrl-fx-nm">'+a.name+'</span><span class="nrl-dot" style="background:'+a.c+'"></span></div>'+
-        '<div class="nrl-fx-meta">'+(g.venue||'')+'</div></div>';
-    }).join('');
-    return head + '<div class="nrl-fx-grid">'+cards+'</div>';
-  }
-  function openGame(i){ selGame=i; state.view.selectedId=i; _renderApp(); window.scrollTo({top:0,behavior:'smooth'}); }
-  function backFixture(){ selGame=null; state.view.selectedId=null; _renderApp(); }
-
-  function renderFocus(i){
-    const g = MODEL.fixture[i];
-    const h=teamOf(g.home_team||g.home), a=teamOf(g.away_team||g.away);
-    const leak = abbr => { const t=MODEL.teams.find(t=>t.abbr===abbr); return t?t.concededByPos:{}; };
-    const topPlays = (teamName) => MODEL.players.filter(p=>p.team===teamName).sort((x,y)=>ats(y)-ats(x)).slice(0,5);
-    const block = (team, oppAbbr) => {
-      const lk = leak(oppAbbr);
-      const rows = topPlays(team.name).map(p=>{
-        const l = lk[p.pos]||0, r=ats(p);
-        return '<tr><td class="nm">'+p.name+ptag(p.pos)+'</td>'+
-          '<td><b class="'+rcls(r)+'">'+pct(r)+'</b></td><td>'+tpg(p).toFixed(2)+'</td>'+
-          '<td class="'+(l>=1?'good':'dim')+'">'+l.toFixed(2)+'</td></tr>';
-      }).join('') || '<tr><td colspan="4" class="dim">No player data</td></tr>';
-      return '<div class="nrl-block"><div class="nrl-block-hd"><span class="nrl-dot" style="background:'+team.c+'"></span>'+
-        team.name+'<span class="nrl-block-sub">ATS vs '+teamOf(oppAbbr).name+'</span></div>'+
-        '<table class="nrl-tbl"><thead><tr><th>Player</th><th>ATS%</th><th>TPG</th><th>Opp leak</th></tr></thead>'+
-        '<tbody>'+rows+'</tbody></table></div>';
-    };
-    return '<button class="back-btn" onclick="backFixture()"><i class="ti ti-arrow-left"></i> Round '+(MODEL.meta.round||'')+'</button>'+
-      '<div class="page-header"><div class="page-title">'+h.name+' <span style="color:var(--text-3)">v</span> '+a.name+'</div>'+
-      '<div class="page-sub">'+(g.venue||'')+' · top plays vs the opponent\'s positional leak (tries conceded/game)</div></div>'+
-      '<div class="nrl-focus-grid">'+block(h,a.abbr)+block(a,h.abbr)+'</div>';
-  }
-
-  // ─── PLAYERS ───
-  function renderPlayers(){
-    const cols = [
-      {k:'name', l:'Player', f:p=>p.name, txt:1},
-      {k:'team', l:'Tm',     f:p=>p.team, txt:1},
-      {k:'gp',   l:'GP',     f:p=>p.games},
-      {k:'t',    l:'T',      f:p=>p.tries},
-      {k:'ats',  l:'ATS%',   f:ats},
-      {k:'tpg',  l:'TPG',    f:tpg},
-      {k:'two',  l:'2+%',    f:twoR},
-      {k:'fts',  l:'FTS%*',  f:ftsR},
-    ];
-    const c = cols.find(c=>c.k===sortKey) || cols[4];
-    const players = [...MODEL.players].sort((a,b)=>{
-      const va=c.f(a), vb=c.f(b);
-      return (c.txt ? String(va).localeCompare(String(vb)) : va-vb) * sortDir;
-    });
-    const th = cols.map(co=>'<th class="'+(co.k===sortKey?'on':'')+'" onclick="setSort(\''+co.k+'\')">'+co.l+'</th>').join('');
-    const rows = players.map(p=>{
-      const r=ats(p);
-      return '<tr><td class="nm">'+p.name+ptag(p.pos)+'</td><td>'+dot(p.team)+p.team+'</td>'+
-        '<td>'+p.games+'</td><td>'+p.tries+'</td><td><b class="'+rcls(r)+'">'+pct(r)+'</b></td>'+
-        '<td>'+tpg(p).toFixed(2)+'</td><td>'+pct(twoR(p))+'</td><td class="dim">'+pct(ftsR(p))+'</td></tr>';
-    }).join('');
-    return '<div class="page-header"><div class="page-title">Players</div>'+
-      '<div class="page-sub">Try-scorer rates · tap a header to sort · <span class="dim">*FTS approximated until event data wired</span></div></div>'+
-      '<div class="nrl-tbl-wrap"><table class="nrl-tbl big"><thead><tr>'+th+'</tr></thead><tbody>'+rows+'</tbody></table></div>';
-  }
-  function setSort(k){ if(sortKey===k) sortDir*=-1; else { sortKey=k; sortDir=-1; } _renderApp(); }
-
-  // ─── TEAMS (tries conceded by position = DVP edge) ───
-  function renderTeams(){
-    const teams = [...MODEL.teams].sort((a,b)=>b.taPg-a.taPg);
-    const th = '<th>Team</th><th>TA/g</th>'+POS_ORDER.map(c=>'<th>'+c+'</th>').join('');
-    const rows = teams.map(t=>{
-      const cells = POS_ORDER.map(c=>{
-        const v=t.concededByPos[c]||0;
-        const cl = v>=1.1?'leak-hot':v>=0.7?'leak-warm':'dim';
-        return '<td class="'+cl+'">'+v.toFixed(2)+'</td>';
-      }).join('');
-      return '<tr><td class="nm">'+dot(t.name)+t.name+'</td><td><b>'+t.taPg.toFixed(2)+'</b></td>'+cells+'</tr>';
-    }).join('');
-    return '<div class="page-header"><div class="page-title">Tries Conceded · by Position</div>'+
-      '<div class="page-sub">The NRL matchup edge. Red = leaking tries to that position per game. Sorted by total leaked.</div></div>'+
-      '<div class="nrl-tbl-wrap"><table class="nrl-tbl big"><thead><tr>'+th+'</tr></thead><tbody>'+rows+'</tbody></table></div>';
-  }
-
-  // ─── DEGEN CREW ───
-  let crewView = null;
-  function renderCrew(){
-    if(crewView) return renderCrewSub(crewView);
-    const tiles = CREW.map(d=>'<div class="crew-tile" onclick="openCrew(\''+d.id+'\')">'+
-      '<div class="crew-tile-icon"><i class="ti '+d.ic+'"></i></div>'+
-      '<div class="crew-tile-name">'+d.nm+'</div><div class="crew-tile-sub">'+d.sub+'</div></div>').join('');
-    return '<div class="page-header"><div class="page-title">Degen Crew</div>'+
-      '<div class="page-sub">Nine angles on the try markets · tap to open</div></div>'+
-      '<div class="crew-grid">'+tiles+'</div>';
-  }
-  function openCrew(id){ crewView=id; _renderApp(); window.scrollTo({top:0,behavior:'smooth'}); }
-  function backCrew(){ crewView=null; _renderApp(); }
-  function crewTable(list, cols){
-    const th = cols.map(c=>'<th>'+c.l+'</th>').join('');
-    const rows = list.map(p=>'<tr>'+cols.map(c=>c.f(p)).join('')+'</tr>').join('') ||
-      '<tr><td colspan="'+cols.length+'" class="dim">Not enough data</td></tr>';
-    return '<div class="nrl-tbl-wrap"><table class="nrl-tbl big"><thead><tr>'+th+'</tr></thead><tbody>'+rows+'</tbody></table></div>';
-  }
-  function renderCrewSub(id){
-    const d = CREW.find(x=>x.id===id);
-    const nameCell = p => '<td class="nm">'+p.name+ptag(p.pos)+'</td>';
-    const teamCell = p => '<td>'+dot(p.team)+p.team+'</td>';
-    let body;
-    const P = MODEL.players;
-    if(id==='targets' || id==='green'){
-      const min = id==='green' ? 4 : 1;
-      const list = P.filter(p=>p.games>=min).sort((a,b)=>ats(b)-ats(a)).slice(0,15);
-      body = crewTable(list, [
-        {l:'Player', f:nameCell},{l:'Tm', f:teamCell},
-        {l:'ATS%', f:p=>'<td><b class="'+rcls(ats(p))+'">'+pct(ats(p))+'</b></td>'},
-        {l:'TPG', f:p=>'<td>'+tpg(p).toFixed(2)+'</td>'},
-        {l:'2+%', f:p=>'<td>'+pct(twoR(p))+'</td>'} ]);
-    } else if(id==='first'){
-      const list = [...P].sort((a,b)=>ftsR(b)-ftsR(a)).slice(0,15);
-      body = '<div class="nrl-note"><i class="ti ti-info-circle"></i> FTS approximated from try rate until match-event data is wired into the feed.</div>'+
-        crewTable(list, [
-        {l:'Player', f:nameCell},{l:'Tm', f:teamCell},
-        {l:'FTS%*', f:p=>'<td><b class="'+rcls(ftsR(p)*1.6)+'">'+pct(ftsR(p))+'</b></td>'},
-        {l:'ATS%', f:p=>'<td>'+pct(ats(p))+'</td>'} ]);
-    } else if(id==='streak'){
-      const onStreak = p => { let s=0; for(let i=p.log.length-1;i>=0;i--){ if(p.log[i].tries>=1) s++; else break; } return s; };
-      const list = P.map(p=>({...p,_s:onStreak(p)})).filter(p=>p._s>=3).sort((a,b)=>b._s-a._s).slice(0,15);
-      body = crewTable(list, [
-        {l:'Player', f:nameCell},{l:'Tm', f:teamCell},
-        {l:'Streak', f:p=>'<td><b class="good">'+p._s+' 🔥</b></td>'},
-        {l:'ATS%', f:p=>'<td>'+pct(ats(p))+'</td>'} ]);
-    } else if(id==='death'){
-      const list = P.filter(p=>p.games>=6).sort((a,b)=>ats(a)-ats(b)).slice(0,15);
-      body = '<div class="nrl-note"><i class="ti ti-skull"></i> Cold & capped — the fade list (6+ games).</div>'+
-        crewTable(list, [
-        {l:'Player', f:nameCell},{l:'Tm', f:teamCell},
-        {l:'ATS%', f:p=>'<td><b class="bad">'+pct(ats(p))+'</b></td>'},
-        {l:'TPG', f:p=>'<td>'+tpg(p).toFixed(2)+'</td>'},
-        {l:'GP', f:p=>'<td>'+p.games+'</td>'} ]);
-    } else if(id==='elite'){
-      // gun backs (ATS>=.5) whose next opp leaks to their position
-      const leakFor = (teamName,pos) => {
-        const g = MODEL.fixture.find(g=>{const h=teamOf(g.home_team||g.home).name,a=teamOf(g.away_team||g.away).name;return h===teamName||a===teamName;});
-        if(!g) return null;
-        const h=teamOf(g.home_team||g.home).name, opp = h===teamName ? teamOf(g.away_team||g.away) : teamOf(g.home_team||g.home);
-        const t = MODEL.teams.find(t=>t.abbr===opp.abbr); return t? {opp, v:t.concededByPos[pos]||0} : null;
-      };
-      const list = P.filter(p=>ats(p)>=0.45).map(p=>{const lk=leakFor(p.team,p.pos);return {...p,_lk:lk};})
-        .filter(p=>p._lk && p._lk.v>=0.8).sort((a,b)=>b._lk.v-a._lk.v).slice(0,15);
-      body = crewTable(list, [
-        {l:'Player', f:nameCell},{l:'ATS%', f:p=>'<td><b class="'+rcls(ats(p))+'">'+pct(ats(p))+'</b></td>'},
-        {l:'vs', f:p=>'<td>'+dot(p._lk.opp.name)+p._lk.opp.abbr+'</td>'},
-        {l:'Leak', f:p=>'<td class="good">'+p._lk.v.toFixed(2)+'</td>'} ]);
-    } else if(id==='bunnies'){
-      const teams = [...MODEL.teams].sort((a,b)=>b.taPg-a.taPg).slice(0,6);
-      body = '<div class="nrl-note"><i class="ti ti-mood-happy"></i> Softest defences right now — target their next opponent\'s outside backs.</div>'+
-        crewTable(teams, [
-        {l:'Team', f:t=>'<td class="nm">'+dot(t.name)+t.name+'</td>'},
-        {l:'TA/g', f:t=>'<td><b class="bad">'+t.taPg.toFixed(2)+'</b></td>'},
-        {l:'WG leak', f:t=>'<td class="leak-hot">'+(t.concededByPos.WG||0).toFixed(2)+'</td>'},
-        {l:'FB leak', f:t=>'<td>'+(t.concededByPos.FB||0).toFixed(2)+'</td>'},
-        {l:'CE leak', f:t=>'<td>'+(t.concededByPos.CE||0).toFixed(2)+'</td>'} ]);
-    } else if(id==='form'){
-      const recent = p => { const l=p.log.slice(-3); return l.length? l.filter(x=>x.tries>=1).length/l.length : 0; };
-      const list = P.filter(p=>p.games>=4).map(p=>({...p,_r:recent(p),_d:recent(p)-ats(p)})).sort((a,b)=>b._d-a._d);
-      const up=list.slice(0,8), down=list.slice(-8).reverse();
-      const tbl = (arr,cls)=>crewTable(arr,[
-        {l:'Player', f:nameCell},{l:'Tm', f:teamCell},
-        {l:'L3', f:p=>'<td>'+pct(p._r)+'</td>'},
-        {l:'Season', f:p=>'<td class="dim">'+pct(ats(p))+'</td>'},
-        {l:'Δ', f:p=>'<td class="'+cls+'">'+(p._d>=0?'+':'')+pct(p._d)+'</td>'} ]);
-      body = '<div class="section-title"><i class="ti ti-trending-up"></i> Heating up</div>'+tbl(up,'good')+
-             '<div class="section-title" style="margin-top:18px"><i class="ti ti-trending-down"></i> Cooling off</div>'+tbl(down,'bad');
-    } else if(id==='multi'){
-      body = '<div class="nrl-note"><i class="ti ti-stack-2"></i> Best ATS legs — add them to Check My Bet to stack a multi.</div>'+
-        crewTable(P.filter(p=>p.games>=4).sort((a,b)=>ats(b)-ats(a)).slice(0,10), [
-        {l:'Player', f:nameCell},{l:'Tm', f:teamCell},
-        {l:'ATS%', f:p=>'<td><b class="'+rcls(ats(p))+'">'+pct(ats(p))+'</b></td>'},
-        {l:'', f:p=>'<td><button class="nrl-mini" onclick="cmbAdd(\''+p.name.replace(/'/g,"\\'")+'\')">+ CMB</button></td>'} ]);
-    } else { body='<div class="empty">Coming soon.</div>'; }
-    return '<button class="back-btn" onclick="backCrew()"><i class="ti ti-arrow-left"></i> Degen Crew</button>'+
-      '<div class="page-header"><div class="page-title"><i class="ti '+d.ic+'"></i> '+d.nm+'</div>'+
-      '<div class="page-sub">'+d.sub+'</div></div>'+body;
-  }
-  function posOf2(code){ const x=Object.values(POS).find(p=>p.code===code); return x?x.w:0.3; }
-
-  // ─── CHECK MY BET (try props) ───
-  let cmbLegs = [];
-  function cmbAdd(name){
-    if(!MODEL) return;
-    const p = MODEL.players.find(p=>p.name===name);
-    if(!p || cmbLegs.find(l=>l.name===name)) { _cmbOpen(); cmbRender(); return; }
-    cmbLegs.push({name:p.name, market:'ATS'});
-    _cmbOpen(); cmbRender();
-  }
-  function cmbRemove(i){ cmbLegs.splice(i,1); cmbRender(); }
-  function cmbSetMarket(i,m){ cmbLegs[i].market=m; cmbRender(); }
-  function cmbClear(){ cmbLegs=[]; cmbRender(); }
-  function cmbRate(leg){
-    const p = MODEL.players.find(p=>p.name===leg.name); if(!p) return 0;
-    return leg.market==='2+' ? twoR(p) : ats(p);
-  }
-  function cmbRender(){
-    const box = document.getElementById('cmb-body'); if(!box) return;
-    if(!MODEL){ box.innerHTML='<div class="empty">Load data first.</div>'; return; }
-    const opts = MODEL.players.slice().sort((a,b)=>a.name.localeCompare(b.name))
-      .map(p=>'<option value="'+p.name.replace(/"/g,'')+'">'+p.name+' ('+p.team+')</option>').join('');
-    const legHtml = cmbLegs.map((l,i)=>{
-      const p=MODEL.players.find(p=>p.name===l.name); const r=cmbRate(l);
-      return '<div class="nrl-leg"><div class="nrl-leg-main"><span class="nm">'+l.name+'</span>'+
-        (p?ptag(p.pos)+dot(p.team):'')+'</div>'+
-        '<div class="nrl-leg-mk"><button class="'+(l.market==='ATS'?'on':'')+'" onclick="cmbSetMarket('+i+',\'ATS\')">ATS</button>'+
-        '<button class="'+(l.market==='2+'?'on':'')+'" onclick="cmbSetMarket('+i+',\'2+\')">2+</button></div>'+
-        '<div class="nrl-leg-rate '+rcls(r)+'">'+pct(r)+'</div>'+
-        '<button class="nrl-leg-x" onclick="cmbRemove('+i+')"><i class="ti ti-x"></i></button></div>';
-    }).join('');
-    let verdict='';
-    if(cmbLegs.length){
-      const rates = cmbLegs.map(cmbRate);
-      const combined = rates.reduce((a,b)=>a*b,1);
-      const weakest = Math.min(...rates);
-      const vc = combined>=.25?'good':combined>=.12?'warn':'bad';
-      const vtxt = combined>=.25?'Live multi':combined>=.12?'Speculative':'Lottery ticket';
-      verdict = '<div class="nrl-verdict '+vc+'"><div><div class="nrl-verdict-lbl">'+cmbLegs.length+'-leg combined (independent est.)</div>'+
-        '<div class="nrl-verdict-big">'+pct(combined)+'</div></div>'+
-        '<div class="nrl-verdict-side"><div class="nrl-verdict-tag">'+vtxt+'</div>'+
-        '<div class="dim" style="font-size:10px;margin-top:4px">weakest leg '+pct(weakest)+'</div></div></div>';
-    }
-    box.innerHTML =
-      '<div class="nrl-cmb-add"><select id="cmb-sel" class="jtt-field">'+opts+'</select>'+
-      '<select id="cmb-mk" class="jtt-field" style="max-width:90px"><option value="ATS">ATS</option><option value="2+">2+ Tries</option></select>'+
-      '<button class="nrl-mini grn" onclick="cmbAddFromSel()"><i class="ti ti-plus"></i> Add</button></div>'+
-      (cmbLegs.length ? '<div class="nrl-legs">'+legHtml+'</div>'+verdict+
-        '<button class="back-btn" style="margin-top:12px" onclick="cmbClear()"><i class="ti ti-trash"></i> Clear all</button>'
-        : '<div class="empty" style="padding:28px 14px"><div class="ico"><i class="ti ti-clipboard-list"></i></div>Add legs to check combined ATS / 2+ hit rates.</div>');
-  }
-  function cmbAddFromSel(){
-    const name=document.getElementById('cmb-sel').value, mk=document.getElementById('cmb-mk').value;
-    if(cmbLegs.find(l=>l.name===name)){ const l=cmbLegs.find(l=>l.name===name); l.market=mk; }
-    else cmbLegs.push({name, market:mk});
-    cmbRender();
-  }
-  // re-render CMB whenever it opens
-  const _origCmbOpen = _cmbOpen;
-  _cmbOpen = function(){ _origCmbOpen(); cmbRender(); };
-
-  // ─── DEMO DATA (nrlR-shaped logs so the real pipeline path is exercised) ───
-  const F=['Jahrome','Reece','Brian','Hamiso','Alex','Dom','Selwyn','Ryan','Xavier','Zac','Jacob','Will','Tom','Murray','Daine','Greg','Tyrell','Sunia','Mark','Campbell','Kalyn','Valentine','Jesse','Joseph','Sione','Mitch','Bradman','Sam','Latrell','Roger'];
-  const L=['Hughes','Walsh','Too','Tabuai','Johnston','Young','Cobbo','Papenhuyzen','Coates','Lomax','Preston','Kennedy','Trbojevic','Taulagi','Laurie','Marzhew','Sloan','Turuva','Nawaqanitawase','Graham','Ponga','Holmes','Ramien','Manu','Katoa','Moses','Best','Walker','Mitchell','Tuivasa'];
-  function injectDemo(){
-    const ROUND=14, NG=8;
-    const roster=['Wing','Wing','Centre','Centre','Fullback','Five-eighth','Halfback','Hooker','Second-row','Second-row','Prop','Prop','Lock'];
-    // build round-by-round fixtures so opponents are consistent
-    const order=[...TEAMS]; const sched=[];
-    for(let r=1;r<=ROUND;r++){
-      const pool=[...order]; const games=[];
-      while(pool.length>=2){
-        const h=pool.splice(Math.floor(Math.random()*pool.length),1)[0];
-        const a=pool.splice(Math.floor(Math.random()*pool.length),1)[0];
-        games.push([h,a]);
-      }
-      sched.push(games);
-    }
-    const logs=[]; let li=0;
-    // assign rosters per team once
-    const teamRosters={}; TEAMS.forEach(t=>{ teamRosters[t.name]=roster.map(pos=>({name:F[Math.floor(Math.random()*F.length)]+' '+L[(li++)%L.length], pos})); });
-    sched.forEach((games,ri)=>{
-      const rnd=ri+1;
-      games.forEach(([h,a])=>{
-        [[h,a],[a,h]].forEach(([tm,opp])=>{
-          teamRosters[tm.name].forEach(pl=>{
-            const w=posOf(pl.pos).w;
-            const tpgRate=Math.max(0,w*0.8+(Math.random()*0.3-0.12));
-            const tries = Math.random()<tpgRate ? (Math.random()<tpgRate*0.4?2:1) : 0;
-            logs.push({player_name:pl.name, team:tm.name, position:pl.pos, round:rnd,
-              tries, opponent:opp.name, first_try: tries>0 && Math.random()<0.22 ? 1:0});
-          });
-        });
+function topBets(home, away){
+  const cands=[];
+  [home,away].forEach(team=>{
+    teamRosterForMatch(team, state.round).forEach(({p,rows})=>{
+      const l5=lastN(rows,5);
+      BETTABLE.forEach(b=>{
+        const hr=hitRate(l5, b.key, b.line, 'over');
+        if(hr.n>=3 && hr.pct>=0.6 && avg(rows,b.key)>0){
+          cands.push({ p, b, hr, season:avg(rows,b.key), l5avg:avg(l5,b.key) });
+        }
       });
     });
-    // upcoming fixture = round ROUND+1
-    const pool=[...TEAMS]; const fixture=[];
-    while(pool.length>=2){
-      const h=pool.splice(Math.floor(Math.random()*pool.length),1)[0];
-      const a=pool.splice(Math.floor(Math.random()*pool.length),1)[0];
-      fixture.push({round:ROUND+1, home_team:h.name, away_team:a.name,
-        venue:['Suncorp Stadium','Accor Stadium','AAMI Park','CommBank Stadium','GIO Stadium','4 Pines Park','Allianz Stadium','McDonald Jones Stadium'][Math.floor(Math.random()*8)]});
-    }
-    const ladder=TEAMS.map((t,i)=>({position:i+1, team:t.name, played:ROUND, wins:Math.round(Math.random()*ROUND)}));
-    state.data.logs=logs; state.data.fixture=fixture; state.data.ladder=ladder;
-    state.data.meta={season:2026, round:ROUND+1, src:'DEMO'};
-    MODEL=null; selGame=null; crewView=null;
-    document.getElementById('freshness-pill').textContent='Demo data';
-    _renderApp();
-  }
+  });
+  cands.sort((x,y)=> y.hr.pct-x.hr.pct || y.l5avg-x.l5avg);
+  const top=cands.slice(0,6);
+  if(!top.length) return `<div class="empty" style="padding:14px">No strong edges in last-5 for this fixture.</div>`;
+  return top.map(c=>`<div class="topbet-pill" onclick="openPlayer(${c.p.id})" style="cursor:pointer">
+    <div class="tbp-player">${c.p.name}</div>
+    <div class="tbp-market">${c.b.label} o${c.b.line}</div>
+    <div class="tbp-stat"><span class="${hitClass(c.hr.pct)}">${Math.round(c.hr.pct*100)}% L5</span><span>Avg <b>${fmt(c.season)}</b></span></div></div>`).join('');
+}
 
-  // expose
-  window.renderTab=renderTab; window.openGame=openGame; window.backFixture=backFixture;
-  window.setSort=setSort; window.openCrew=openCrew; window.backCrew=backCrew;
-  window.injectDemo=injectDemo; window.cmbAdd=cmbAdd; window.cmbRemove=cmbRemove;
-  window.cmbSetMarket=cmbSetMarket; window.cmbClear=cmbClear; window.cmbAddFromSel=cmbAddFromSel;
+function teamSection(team, opp){
+  const roster=teamRosterForMatch(team, state.round);
+  const dvp = DVP[opp]||{};
+  let body=`<div class="tp-body-meta">Markets vs ${shortName(opp)} defence · season averages · ▲ = opp concedes above-average to this position</div>`;
+  body+=`<table class="nrl-tbl"><thead><tr><th>Player</th><th>Pos</th><th>Tries</th><th>Tackles</th><th>T-Breaks</th><th>Run M</th><th>L.Brk</th></tr></thead><tbody>`;
+  roster.sort((x,y)=>avg(y.rows,'runMetres')-avg(x.rows,'runMetres')).forEach(({p,rows})=>{
+    const cell=(k)=>{ const v=avg(rows,k); const d=dvp[p.position]?.[k]; const up = d && v>0 && d> (leagueAvgPos(p.position,k)||0)*1.05; return `<td>${fmt(v, k==='runMetres'?0:1)}${up?' <span style="color:var(--good)">▲</span>':''}</td>`; };
+    body+=`<tr onclick="openPlayer(${p.id})"><td class="nrl-name">${p.name}</td><td class="nrl-pos">${p.position}</td>${cell('tries')}${cell('tackles')}${cell('tackleBreaks')}${cell('runMetres')}${cell('lineBreaks')}</tr>`;
+  });
+  body+=`</tbody></table>`;
+  return `<details class="tp-collapse"><summary class="tp-collapse-sum"><i class="ti ti-users"></i><span class="tp-collapse-title">${shortName(team)}</span><span class="tp-collapse-meta">${roster.length} players</span><i class="ti ti-chevron-down tp-collapse-chev"></i></summary><div class="tp-collapse-body">${body}</div></details>`;
+}
 
-  // if autoload found nothing, light up demo so the tool is explorable
-  (function(){
-    const _origTry = tryAutoLoadData;
-    tryAutoLoadData = async function(){
-      await _origTry();
-      setTimeout(()=>{ if(!state.data.logs && !state.data.fixture){ injectDemo(); } }, 60);
-    };
-  })();
+// league avg by position for a stat (for DVP ▲ baseline)
+let _LAP={};
+function leagueAvgPos(pos, key){
+  const ck=pos+'|'+key; if(_LAP[ck]!==undefined) return _LAP[ck];
+  const rows=state.data.logs.filter(r=>r.position===pos);
+  _LAP[ck]= rows.length? rows.reduce((s,r)=>s+num(r[key]),0)/rows.length : 0;
+  return _LAP[ck];
+}
 
-  </script>
+// ---- PLAYERS ----
+function renderPlayers(){
+  const c=document.getElementById('page-players');
+  const sortKey=state.playerSort;
+  const list=Object.values(PLAYERS).filter(p=>p.rows.length>=3);
+  list.sort((a,b)=>avg(b.rows,sortKey)-avg(a.rows,sortKey));
+  const cols=['tries','tackles','tackleBreaks','runMetres','lineBreaks','offloads','tryAssists'];
+  let html=`<div class="page-header"><div><div class="page-title">PLAYERS</div><div class="page-sub">${list.length} players · min 3 games · sorted by ${BET_BY_KEY[sortKey]?.label||sortKey}</div></div></div>`;
+  html+=`<div class="search-wrap" style="margin-bottom:12px"><input class="input" id="pl-search" placeholder="Search player…" oninput="filterPlayers(this.value)"></div>`;
+  html+=`<div style="overflow-x:auto"><table class="nrl-tbl"><thead><tr><th>Player</th><th>Pos</th><th>Team</th>`;
+  cols.forEach(k=>{ html+=`<th class="${k===sortKey?'active':''}" onclick="setPlayerSort('${k}')">${BET_BY_KEY[k].label.replace('Tackle Breaks','T-Brk').replace('Run Metres','Run M').replace('Line Breaks','L.Brk').replace('Try Assists','T.Ast')}</th>`; });
+  html+=`</tr></thead><tbody id="pl-body">`;
+  html+=list.map(p=>playerRow(p,cols)).join('');
+  html+=`</tbody></table></div>`;
+  c.innerHTML=html;
+}
+function playerRow(p,cols){
+  return `<tr data-name="${p.name.toLowerCase()}" onclick="openPlayer(${p.id})"><td class="nrl-name">${p.name}</td><td class="nrl-pos">${p.position}</td><td class="nrl-pos">${shortName(p.team)}</td>`+
+    cols.map(k=>`<td>${fmt(avg(p.rows,k), k==='runMetres'?0:1)}</td>`).join('')+`</tr>`;
+}
+function setPlayerSort(k){ state.playerSort=k; renderPlayers(); }
+function filterPlayers(q){ q=q.toLowerCase(); document.querySelectorAll('#pl-body tr').forEach(tr=>{ tr.style.display = tr.dataset.name.includes(q)?'':'none'; }); }
+
+// ---- PLAYER MODAL ----
+function openPlayer(id){
+  const p=PLAYERS[id]; if(!p) return;
+  const l5=lastN(p.rows,5);
+  const grid=(rows,title)=>{ return `<div class="page-sub" style="margin:10px 0 6px">${title}</div><div class="stat-grid">`+
+    BETTABLE.slice(0,8).map(b=>`<div class="stat-cell"><div class="sc-val">${fmt(avg(rows,b.key), b.key==='runMetres'||b.key==='postContactMetres'?0:1)}</div><div class="sc-lbl">${b.label}</div></div>`).join('')+`</div>`; };
+  let html=`<div style="padding:16px 18px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:12px">
+    <div style="flex:1"><div style="font-family:var(--font-display);font-weight:800;font-size:20px">${p.name}</div>
+    <div style="font-family:var(--font-mono);font-size:11px;color:var(--text-3);margin-top:2px">${p.position} · ${shortName(p.team)} · ${p.rows.length} games</div></div>
+    <button class="cmb-close" onclick="closePlayerModal()">×</button></div><div style="padding:14px 18px">`;
+  html+=grid(p.rows,'SEASON AVERAGE');
+  html+=grid(l5,'LAST 5');
+  // recent games
+  html+=`<div class="page-sub" style="margin:14px 0 6px">RECENT GAMES</div><div style="overflow-x:auto"><table class="nrl-tbl"><thead><tr><th>Rd</th><th>Pos</th><th>Try</th><th>Tkl</th><th>TB</th><th>Run M</th><th>LB</th><th>Off</th></tr></thead><tbody>`;
+  lastN(p.rows,8).reverse().forEach(r=>{ html+=`<tr style="cursor:default"><td style="text-align:left">${r.round}</td><td class="nrl-pos">${r.position||'—'}</td><td>${num(r.tries)}</td><td>${num(r.tackles)}</td><td>${num(r.tackleBreaks)}</td><td>${num(r.runMetres)}</td><td>${num(r.lineBreaks)}</td><td>${num(r.offloads)}</td></tr>`; });
+  html+=`</tbody></table></div></div>`;
+  document.getElementById('pm-modal').innerHTML=html;
+  document.getElementById('pm-overlay').classList.add('open');
+}
+function closePlayerModal(){ document.getElementById('pm-overlay').classList.remove('open'); }
+document.addEventListener('keydown',e=>{ if(e.key==='Escape'){ closePlayerModal(); closeCMB(); } });
+
+// ---- DEGEN CREW ----
+const CREW = {
+  'try-scorers': { name:'TRY SCORERS', icon:'ti-ball-american-football', sub:'Anytime try threats — highest L5 try rate', key:'tries', line:0.5 },
+  'line-engaged': { name:'LINE ENGAGED', icon:'ti-arrows-split', sub:'Tackle-break merchants beating the line', key:'tackleBreaks', line:3.5 },
+  'brick-wall': { name:'BRICK WALL', icon:'ti-shield', sub:'Defensive workhorses racking tackles', key:'tackles', line:30.5 },
+  'metre-eaters': { name:'METRE EATERS', icon:'ti-ruler-2', sub:'Run-metre monsters', key:'runMetres', line:120.5 },
+  'playmakers': { name:'PLAYMAKERS', icon:'ti-wand', sub:'Try + line-break assist creators', key:'tryAssists', line:0.5 },
+  'bin-magnets': { name:'BIN MAGNETS', icon:'ti-square-letter-x', sub:'Penalty & sin-bin risk', key:'penaltiesConceded', line:1.5 },
+};
+function renderCrew(){
+  const c=document.getElementById('page-crew');
+  const tabs=Object.entries(CREW).map(([k,v])=>`<div class="crew-tab ${k===state.crewTab?'active':''}" onclick="setCrew('${k}')"><i class="ti ${v.icon}"></i>${v.name}</div>`).join('');
+  const cfg=CREW[state.crewTab];
+  // leaders by L5 average of key
+  const list=Object.values(PLAYERS).filter(p=>p.rows.length>=3).map(p=>{ const l5=lastN(p.rows,5); return { p, l5avg:avg(l5,cfg.key), season:avg(p.rows,cfg.key), hr:hitRate(l5,cfg.key,cfg.line,'over') }; })
+    .filter(x=>x.l5avg>0).sort((a,b)=> b.hr.pct-a.hr.pct || b.l5avg-a.l5avg).slice(0,18);
+  let html=`<div class="page-header"><div><div class="page-title">DEGEN CREW</div><div class="page-sub">signals from last-5 form</div></div></div>`;
+  html+=`<div class="crew-tabs">${tabs}</div><div class="crew-sub">${cfg.sub}</div>`;
+  html+=`<div class="crew-grid">`+ list.map(x=>`<div class="crew-card" onclick="openPlayer(${x.p.id})" style="cursor:pointer">
+    <div class="cc-top"><span class="cc-player">${x.p.name}</span><span class="cc-team">${shortName(x.p.team)}</span></div>
+    <div class="cc-line"><span>L5 <b>${fmt(x.l5avg, cfg.key==='runMetres'?0:1)}</b></span><span>Szn <b>${fmt(x.season, cfg.key==='runMetres'?0:1)}</b></span><span class="${hitClass(x.hr.pct)}">${Math.round(x.hr.pct*100)}% o${cfg.line}</span></div></div>`).join('')+`</div>`;
+  if(!list.length) html+=`<div class="empty">No data for this signal.</div>`;
+  c.innerHTML=html;
+}
+function setCrew(k){ state.crewTab=k; renderCrew(); }
+
+// ---- LADDER ----
+function renderLadder(){
+  const c=document.getElementById('page-ladder');
+  const lad=state.data.ladder;
+  let html=`<div class="page-header"><div><div class="page-title">LADDER</div><div class="page-sub">2026 NRL Premiership</div></div></div>`;
+  if(!lad||!lad.length){ c.innerHTML=html+`<div class="empty">Ladder not loaded.</div>`; return; }
+  const sorted=[...lad].sort((a,b)=>(b.points-a.points)||(b.points_diff-a.points_diff));
+  html+=`<div style="overflow-x:auto"><table class="nrl-tbl"><thead><tr><th>#</th><th>Team</th><th>P</th><th>W</th><th>L</th><th>PD</th><th>Pts</th><th>Form</th></tr></thead><tbody>`;
+  sorted.forEach((r,i)=>{ const t=TIER[r.team]; html+=`<tr style="cursor:default"><td style="text-align:left">${i+1}</td><td class="nrl-name">${r.team} <span class="tier-badge" style="background:${TIER_COLOR[t]}22;color:${TIER_COLOR[t]}">${t}</span></td><td>${r.played}</td><td>${r.wins}</td><td>${r.losses}</td><td>${r.points_diff>0?'+':''}${r.points_diff}</td><td><b>${r.points}</b></td><td class="nrl-pos" style="text-align:right">${r.streak||r.form||''}</td></tr>`; });
+  html+=`</tbody></table></div>`;
+  c.innerHTML=html;
+}
+
+// ---- CHECK MY BET ----
+function openCMB(){ if(!Object.keys(PLAYERS).length){ return; } renderCMB(); document.getElementById('cmb-overlay').classList.add('open'); }
+function closeCMB(){ document.getElementById('cmb-overlay').classList.remove('open'); }
+function renderCMB(){
+  const opts=BETTABLE.map(b=>`<option value="${b.key}">${b.label}</option>`).join('');
+  document.getElementById('cmb-body').innerHTML=`
+    <div class="cmb-field search-wrap"><label>Player</label><input class="input" id="cmb-search" placeholder="Search player…" oninput="cmbSearch(this.value)" autocomplete="off"><div class="search-results" id="cmb-results"></div></div>
+    <div class="cmb-field-row">
+      <div class="cmb-field"><label>Market</label><select class="input" id="cmb-market" onchange="cmbResult()">${opts}</select></div>
+      <div class="cmb-field"><label>Line</label><input class="input" id="cmb-line" type="number" step="0.5" value="0.5" oninput="cmbResult()"></div>
+    </div>
+    <div class="cmb-field"><label>Side</label><select class="input" id="cmb-side" onchange="cmbResult()"><option value="over">Over</option><option value="under">Under</option></select></div>
+    <div id="cmb-out"></div>`;
+  document.getElementById('cmb-market').addEventListener('change',()=>{ const k=document.getElementById('cmb-market').value; document.getElementById('cmb-line').value=BET_BY_KEY[k].line; cmbResult(); });
+}
+function cmbSearch(q){
+  const box=document.getElementById('cmb-results'); q=q.trim().toLowerCase();
+  if(q.length<2){ box.classList.remove('open'); return; }
+  const hits=Object.values(PLAYERS).filter(p=>p.name.toLowerCase().includes(q)).slice(0,8);
+  box.innerHTML=hits.map(p=>`<div class="search-item" onclick="cmbPick(${p.id})">${p.name} <small>${p.position} · ${shortName(p.team)}</small></div>`).join('');
+  box.classList.add('open');
+}
+function cmbPick(id){ state.cmbPlayer=id; document.getElementById('cmb-search').value=PLAYERS[id].name; document.getElementById('cmb-results').classList.remove('open'); cmbResult(); }
+function cmbResult(){
+  const p=PLAYERS[state.cmbPlayer]; const out=document.getElementById('cmb-out'); if(!p){ out.innerHTML=''; return; }
+  const key=document.getElementById('cmb-market').value, line=+document.getElementById('cmb-line').value, side=document.getElementById('cmb-side').value;
+  const season=avg(p.rows,key), l5=lastN(p.rows,5), l5avg=avg(l5,key);
+  const hrAll=hitRate(p.rows,key,line,side), hr5=hitRate(l5,key,line,side);
+  const verdict= hr5.pct>=0.7?'STRONG':'fair'.length&&hr5.pct>=0.5?'LEAN':'AVOID';
+  const vc= hr5.pct>=0.7?'var(--good)': hr5.pct>=0.5?'var(--warn)':'var(--bad)';
+  out.innerHTML=`<div style="background:var(--surface-2);border:1px solid var(--border);border-radius:8px;padding:12px;margin-top:6px">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px"><div style="font-family:var(--font-display);font-weight:700">${p.name}</div><div class="tier-badge" style="background:${vc}22;color:${vc};font-size:11px">${verdict}</div></div>
+    <div class="stat-grid">
+      <div class="stat-cell"><div class="sc-val">${fmt(season, key==='runMetres'?0:1)}</div><div class="sc-lbl">Season</div></div>
+      <div class="stat-cell"><div class="sc-val">${fmt(l5avg, key==='runMetres'?0:1)}</div><div class="sc-lbl">L5 avg</div></div>
+      <div class="stat-cell"><div class="sc-val ${hitClass(hr5.pct)}">${Math.round(hr5.pct*100)}%</div><div class="sc-lbl">L5 hit</div></div>
+      <div class="stat-cell"><div class="sc-val ${hitClass(hrAll.pct)}">${Math.round(hrAll.pct*100)}%</div><div class="sc-lbl">Season hit</div></div>
+    </div>
+    <div style="font-family:var(--font-mono);font-size:10px;color:var(--text-3);margin-top:10px">${side.toUpperCase()} ${line} ${BET_BY_KEY[key].label} · ${hr5.hits}/${hr5.n} last 5 · ${hrAll.hits}/${hrAll.n} season</div>
+  </div>`;
+}
+</script>
 </body>
 </html>
