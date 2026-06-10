@@ -4,7 +4,7 @@
 #
 # Usage: Rscript fetch_nrl_data.R 2026
 #
-# Writes to working dir:
+# Writes to NRL/data/ (matches WC/MLB convention):
 #   nrl_player_logs.json   (workhorse — per player per game, 63 stat cols)
 #   nrl_team_stats.json    (team aggregates — tier / style / DVP)
 #   nrl_fixtures.json      (match picker)            [best-effort]
@@ -36,7 +36,8 @@ wrote <- function(df, path) {
   ts(sprintf("  [ok]   %s (%d rows)", path, nrow(df))); invisible(TRUE)
 }
 
-ts(sprintf("JTT NRL fetcher | nrlR %s | season %d", as.character(utils::packageVersion("nrlR")), SEASON))
+dir.create("data", showWarnings = FALSE)
+ts(sprintf("JTT NRL fetcher | nrlR %s | season %d -> data/", as.character(utils::packageVersion("nrlR")), SEASON))
 
 # ---- 1. resolve the CURRENT-SEASON NRL Premiership comp id ----
 comps <- timed("fetch_cd_comps()", fetch_cd_comps())
@@ -59,19 +60,25 @@ if (!is.null(logs) && nrow(logs) > 0) {
   if (all(c("firstname","surname") %in% names(logs)))
     logs$player <- trimws(paste(logs$firstname, logs$surname))
 }
-wrote(logs, "nrl_player_logs.json")
+wrote(logs, "data/nrl_player_logs.json")
 
 # ---- 3. team stats (tier / style / DVP) ----
 team <- timed("team stats", fetch_team_stats_championdata(comp = NRL_COMP_ID))
-wrote(team, "nrl_team_stats.json")
+wrote(team, "data/nrl_team_stats.json")
 
-# ---- 4. fixture (match picker) — best-effort, signature unknown so try forms ----
-fixture <- timed("fixture", {
-  out <- tryCatch(fetch_fixture_nrl(season = SEASON), error = function(e) NULL)
-  if (is.null(out)) out <- tryCatch(fetch_fixture(season = SEASON, league = "nrl"), error = function(e) NULL)
-  out
+# ---- 4. fixture (match picker) — NRL.com, comp=111, scoped per round_number ----
+# fetch_fixture(season, round_number, comp=111, source="NRL"). No round_number
+# returns nothing, so loop the rounds and bind. Includes UPCOMING rounds.
+fixture <- timed("fixture (all rounds)", {
+  parts <- list()
+  for (r in 1:30) {
+    fr <- tryCatch(fetch_fixture(season = SEASON, round_number = r, source = "NRL"),
+                   error = function(e) NULL)
+    if (!is.null(fr) && is.data.frame(fr) && nrow(fr) > 0) parts[[length(parts) + 1]] <- fr
+  }
+  if (length(parts)) dplyr::bind_rows(parts) else NULL
 })
-wrote(fixture, "nrl_fixtures.json")
+wrote(fixture, "data/nrl_fixtures.json")
 
 # ---- 5. ladder — best-effort ----
 ladder <- timed("ladder", {
@@ -79,11 +86,11 @@ ladder <- timed("ladder", {
   if (is.null(out)) out <- tryCatch(fetch_ladder(season = SEASON, league = "nrl"), error = function(e) NULL)
   out
 })
-wrote(ladder, "nrl_ladder.json")
+wrote(ladder, "data/nrl_ladder.json")
 
 # ---- 6. injuries / suspensions — availability + rep-duty signal ----
 inj <- timed("injuries/suspensions", tryCatch(fetch_injuries_suspensions(), error = function(e) NULL))
-wrote(inj, "nrl_injuries.json")
+wrote(inj, "data/nrl_injuries.json")
 
-writeLines(format(Sys.time(), "%Y-%m-%d %H:%M"), "version.txt")
+writeLines(format(Sys.time(), "%Y-%m-%d %H:%M"), "data/version.txt")
 ts("FETCH COMPLETE.")
