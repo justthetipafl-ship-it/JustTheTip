@@ -1,5 +1,5 @@
 # .github/workflows/refresh-tennis.yml   (MUST live at repo root under .github/workflows/ to run)
-# Injects the auth hash from a repo secret, refreshes JTT Tennis data, commits back.
+# Injects auth hash from the TENNIS_PASSWORD secret, refreshes data, commits back.
 # Cloudflare Pages redeploys on the commit. Live at justthetipaus.com/tennis/
 name: Refresh tennis data
 
@@ -13,7 +13,7 @@ permissions:
 
 defaults:
   run:
-    working-directory: tennis   # script steps run inside /tennis, so data/ == tennis/data/
+    working-directory: tennis
 
 jobs:
   refresh:
@@ -21,24 +21,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Inject the auth hash from the TENNIS_PASSWORD repo secret into the placeholder.
-      # The secret may hold EITHER the plaintext password OR the 64-char SHA-256 hash —
-      # this step hashes it if it's plaintext, so either works. The client compares
-      # SHA-256(typed password) to this value, so a hash must end up in the file.
+      # TENNIS_PASSWORD holds the PLAINTEXT password. Hash it and overwrite the whole
+      # AUTH_HASH line (not a one-time placeholder), so re-running with a new password
+      # actually takes effect.
       - name: Inject auth hash
         env:
           SECRET: ${{ secrets.TENNIS_PASSWORD }}
         run: |
           if [ -z "$SECRET" ]; then
-            echo "WARNING: TENNIS_PASSWORD secret not set — placeholder left in place"
+            echo "WARNING: TENNIS_PASSWORD secret not set — leaving AUTH_HASH unchanged"
           else
-            SECRET="$(printf '%s' "$SECRET" | tr -d '\r\n')"   # strip stray newlines GitHub may keep
-            if printf '%s' "$SECRET" | grep -qiE '^[0-9a-f]{64}$'; then
-              HASH="$(printf '%s' "$SECRET" | tr 'A-F' 'a-f')"; echo "secret looks like a hash — using as-is"
-            else
-              HASH=$(printf '%s' "$SECRET" | sha256sum | cut -d' ' -f1); echo "secret hashed from plaintext"
-            fi
-            sed -i "s/REPLACE_WITH_SHA256_OF_YOUR_PASSWORD/$HASH/" index.html
+            CLEAN="$(printf '%s' "$SECRET" | tr -d '\r\n')"
+            HASH=$(printf '%s' "$CLEAN" | sha256sum | cut -d' ' -f1)
+            sed -i -E "s/(const AUTH_HASH = ')[^']*(';)/\1$HASH\2/" index.html
             echo "auth hash injected (len ${#HASH})"
           fi
 
@@ -48,7 +43,6 @@ jobs:
 
       - uses: r-lib/actions/setup-r@v2
         with: { r-version: 'release', use-public-rspm: true }
-        # build.R is base-R only — no install.packages step needed.
 
       - name: Download Sackmann match files
         run: |
@@ -68,7 +62,7 @@ jobs:
         run: Rscript build.R
 
       - name: Commit refreshed data + injected index
-        working-directory: ${{ github.workspace }}    # back to repo root for git
+        working-directory: ${{ github.workspace }}
         run: |
           date +%s > tennis/data/version.txt
           git config user.name  "jtt-bot"
