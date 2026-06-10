@@ -140,6 +140,8 @@
   .cmp-table td:first-child{text-align:left;color:var(--text);font-family:var(--font-display);font-weight:700;font-size:12px;}
   .cmp-table td.hi{color:var(--accent);font-weight:700;}
   .cmp-table .mkt{display:block;font-family:var(--font-mono);font-weight:400;font-size:8px;color:var(--text-3);text-transform:uppercase;letter-spacing:.4px;margin-top:1px;}
+  .cmp-table.fa5 th,.cmp-table.fa5 td{padding:6px 5px;font-size:11px;}
+  .cmp-table.fa5 td.vs{color:var(--text-3);}
   /* trend tiles */
   .tt-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px;margin-bottom:8px;}
   .tt-tile{background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:10px 12px;}
@@ -261,7 +263,7 @@
 
   <script>
   /* ===== CONFIG ===== */
-  const AUTH_HASH = '8176fcb0a9b2d2d2dd6fe9170c1cc921cd43952173f7b9550e98204f687beb8e'; // demo: jtt-mlb-demo — workflow injects real hash
+  const AUTH_HASH = 'aab47a4d89b7b3de88f7a1684dd71f8eccfe06cafda2e5b1bf33505a1051955b'; // demo: jtt-mlb-demo — workflow injects real hash
   const AUTH_TTL_DAYS = 30, AUTH_STORAGE_KEY = 'jtt_mlb_auth_v1';
   const DATA_FILES = { bundle: 'data/mlb_bundle.json' };
   const TABS = [
@@ -529,37 +531,39 @@
         '<div class="tt-tile"><div class="tt-lbl">'+g.home.abbr+' team total</div><div class="tt-val">'+(homeExp*pk.runFactor).toFixed(1)+'</div></div>'+
         (g.lines?'<div class="tt-tile"><div class="tt-lbl">Book line</div><div class="tt-val">'+line+'</div><div class="tt-lean mid">O/U</div></div>':'')+
       '</div></div></details>';
-    // For / Against — team betting-market comparison (away vs home, per game)
+    // For / Against — each team's gets (for) and allows (vs), per game
     const tA=g.away, tH=g.home;
-    const aO=teamOffense(tA.teamId), hO=teamOffense(tH.teamId);
+    const aF=teamFor(tA.teamId), aV=teamVs(tA.teamId), hF=teamFor(tH.teamId), hV=teamVs(tH.teamId);
     const aSP=starterFacing(tA.teamId), hSP=starterFacing(tH.teamId);
     const aRow=teamRow(tA.abbr), hRow=teamRow(tH.abbr);
     const num=(v,d)=>v==null?'—':v.toFixed(d);
-    function cmpRow(label,mkt,av,hv,dec){
-      if(av==null&&hv==null)return '';
-      const aHi=(av!=null&&hv!=null&&av>hv), hHi=(av!=null&&hv!=null&&hv>av);
+    function faRow(label,mkt,key,dec){
+      const af=aF?aF[key]:null, av=aV?aV[key]:null, hf=hF?hF[key]:null, hv=hV?hV[key]:null;
+      if(af==null&&av==null&&hf==null&&hv==null)return '';
       return '<tr><td>'+label+'<span class="mkt">'+mkt+'</span></td>'+
-        '<td class="'+(aHi?'hi':'')+'">'+num(av,dec)+'</td>'+
-        '<td class="'+(hHi?'hi':'')+'">'+num(hv,dec)+'</td></tr>';
+        '<td>'+num(af,dec)+'</td><td class="vs">'+num(av,dec)+'</td>'+
+        '<td>'+num(hf,dec)+'</td><td class="vs">'+num(hv,dec)+'</td></tr>';
     }
-    let fa='<div class="tp-body-meta">Per-game team rates — the inputs behind team-total &amp; team-prop markets</div>'+
-      '<table class="cmp-table"><thead><tr><th>Per game</th><th>'+tA.abbr+'</th><th>'+tH.abbr+'</th></tr></thead><tbody>'+
-      cmpRow('Runs','team total / game total',aR.rf,hR.rf,2)+
-      cmpRow('Runs allowed','opp team total',aR.ra,hR.ra,2)+
-      cmpRow('Hits','team hits O/U',aO.H,hO.H,1)+
-      cmpRow('Total bases','team total bases',aO.TB,hO.TB,1)+
-      cmpRow('Home runs','team HR / 1+ HR',aO.HR,hO.HR,2)+
-      cmpRow('Walks','team walks',aO.BB,hO.BB,2)+
-      cmpRow('Strikeouts','team Ks O/U',aO.SO,hO.SO,1)+
-      cmpRow('Stolen bases','team SB',aO.SB,hO.SB,2)+
-      cmpRow('Win %','moneyline',aRow?aRow.pct*100:null,hRow?hRow.pct*100:null,1)+
-      cmpRow('Opposing SP ERA','team hits/runs',aSP?aSP.season.ERA:null,hSP?hSP.season.ERA:null,2)+
-      cmpRow('Opposing SP K/9','team Ks',aSP?aSP.season.K9:null,hSP?hSP.season.K9:null,1)+
-      '</tbody></table>';
+    const faFoot='<div class="sig-sub" style="margin-top:6px">'+
+      (aRow?tA.abbr+' '+Math.round(aRow.pct*100)+'% win':'')+(hRow?' · '+tH.abbr+' '+Math.round(hRow.pct*100)+'% win':'')+
+      (aSP?' · '+tA.abbr+' face '+esc(aSP.name)+' ('+aSP.season.ERA.toFixed(2)+' ERA)':'')+
+      (hSP?' · '+tH.abbr+' face '+esc(hSP.name)+' ('+hSP.season.ERA.toFixed(2)+' ERA)':'')+'</div>';
+    let fa='<div class="tp-body-meta">Per game — what each team gets (for) vs allows (vs). Drives team-total &amp; team-prop markets.</div>'+
+      '<table class="cmp-table fa5"><thead><tr><th>Per game</th><th>'+tA.abbr+' for</th><th>'+tA.abbr+' vs</th><th>'+tH.abbr+' for</th><th>'+tH.abbr+' vs</th></tr></thead><tbody>'+
+      faRow('Runs','team total','R',2)+
+      faRow('Hits','team hits O/U','H',1)+
+      faRow('Home runs','team HR / 1+ HR','HR',2)+
+      faRow('Walks','team walks','BB',2)+
+      faRow('Strikeouts','team Ks O/U','SO',1)+
+      faRow('Total bases','team total bases','TB',1)+
+      faRow('Stolen bases','team SB','SB',2)+
+      '</tbody></table>'+faFoot;
     h+='<details class="tp-collapse"><summary class="tp-collapse-sum"><i class="ti ti-arrows-left-right"></i><span class="tp-collapse-title">For / Against</span><i class="ti ti-chevron-down tp-collapse-chev"></i></summary>'+
       '<div class="tp-collapse-body">'+fa+'</div></details>';
     return h;
   }
+  function teamFor(tid){const t=TEAM(tid);if(t.forStats)return t.forStats;const o=teamOffense(tid);if(o.H==null)return null;const r=teamRPG(tid);return {R:r.rf,H:o.H,HR:o.HR,BB:o.BB,SO:o.SO,SB:o.SB,TB:o.TB};}
+  function teamVs(tid){const t=TEAM(tid);if(t.vsStats)return t.vsStats;const r=teamRPG(tid);return {R:r.ra,H:null,HR:null,BB:null,SO:null};}
 
   // ---------- TEAM PANEL ----------
   function sct(icon,label){return '<div class="section-title"><i class="ti '+icon+'" style="color:var(--accent);margin-right:7px"></i>'+label+'</div>';}
@@ -598,7 +602,7 @@
         '<div class="tp-sub" style="margin-top:10px"><i class="ti ti-target-arrow"></i>Top Exploiters</div>';
       const exploit=bs.map(b=>({b,mu:batMatchup(b)})).sort((a,b)=>b.mu.score-a.mu.score).slice(0,4);
       exploit.forEach(x=>dv+='<div class="dvp-target" onclick="openPlayerModal('+x.b.id+')"><span class="pname">'+esc(x.b.name)+'</span> <span class="ptag">'+x.b.bats+'</span><span style="margin-left:auto">'+muBadge(x.mu.score)+'</span></div>');
-      h+=collapse('Starter Matchup (DVP)','ti-shield','c-green','',dv,false);}
+      h+=collapse('Starter Matchup','ti-shield','c-green','',dv,false);}
     // Player Spotlight
     let spot=null;bs.forEach(b=>{const best=bestBatMarket(b);if(!spot||best.r.prob>spot.best.r.prob)spot={b,best};});
     if(spot){const b=spot.b,best=spot.best;
@@ -616,7 +620,7 @@
   function renderTeamSignals(g,side){
     const team=g[side]; const tid=team.teamId;
     const bs=teamBatters(tid);
-    const sect=(title,icon,color,arr,render)=>arr.length?collapse(title,icon,color,arr.length,arr.map(render).join(''),false):'';
+    const sect=(title,icon,color,arr,render)=>arr.length?collapse(title,icon,color,'',arr.map(render).join(''),false):'';
     const gl=greenLights(bs), dr=deathRiders(bs), sk=streakers(bs), pb=parkBombers(bs);
     const bun=bvpList(bs,'bunny'), bog=bvpList(bs,'bogey');
     const sb=bagSnatchers(bs), bb=freePasses(bs);
@@ -628,13 +632,13 @@
     const fired=gl.length+dr.length+sk.length+pb.length+bun.length+bog.length+ks.length+sb.length+bb.length+wr.length+cb.length+ts.length+ps.length+gth.length+due.length+hot.length;
     let h='<div class="signals-head"><i class="ti ti-flame" style="color:var(--accent)"></i><span class="lbl">Degen Signals</span><span class="fired">'+fired+' FIRED</span></div>';
     h+=sect('Green Lights','ti-circle-check','c-green',gl,glCard);
-    h+=sect('Platoon Smash','ti-arrows-left-right','c-green',ps,x=>'<div class="sig-card" onclick="openPlayerModal('+x.b.id+')"><div class="sig-row"><div><div class="pname">'+esc(x.b.name)+' <span class="ptag">'+x.b.abbr+' '+x.b.bats+' vs '+x.p.throws+'HP</span></div><div class="sig-sub">vs '+x.p.throws+'HP SLG '+x.sp.SLG.toFixed(3).replace(/^0/,'')+' vs '+x.b.season.SLG.toFixed(3).replace(/^0/,'')+' overall ('+x.sp.PA+' PA)</div></div><div class="sig-metric">+'+Math.round((x.ratio-1)*100)+'%<small>SLG edge</small></div></div></div>');
-    h+=sect('Table Setters','ti-arrow-up-right','c-green',ts,x=>'<div class="sig-card" onclick="openPlayerModal('+x.b.id+')"><div class="sig-row"><div><div class="pname">'+esc(x.b.name)+' <span class="ptag">'+x.b.abbr+' bat '+x.b.order+'</span></div><div class="sig-sub">1+ run · '+winLbl()+' R '+avgOf(x.b.gameLog,'R').toFixed(2)+'/g · vs '+esc(x.p.name)+' '+x.p.season.WHIP.toFixed(2)+' WHIP</div></div><div class="sig-metric">'+Math.round(x.prob*100)+'%<small>run prob</small></div></div></div>');
+    h+=sect('Sluggers','ti-arrows-left-right','c-green',ps,x=>'<div class="sig-card" onclick="openPlayerModal('+x.b.id+')"><div class="sig-row"><div><div class="pname">'+esc(x.b.name)+' <span class="ptag">'+x.b.abbr+' '+x.b.bats+' vs '+x.p.throws+'HP</span></div><div class="sig-sub">vs '+x.p.throws+'HP SLG '+x.sp.SLG.toFixed(3).replace(/^0/,'')+' vs '+x.b.season.SLG.toFixed(3).replace(/^0/,'')+' overall ('+x.sp.PA+' PA)</div></div><div class="sig-metric">+'+Math.round((x.ratio-1)*100)+'%<small>SLG edge</small></div></div></div>');
+    h+=sect('Runners','ti-arrow-up-right','c-green',ts,x=>'<div class="sig-card" onclick="openPlayerModal('+x.b.id+')"><div class="sig-row"><div><div class="pname">'+esc(x.b.name)+' <span class="ptag">'+x.b.abbr+' bat '+x.b.order+'</span></div><div class="sig-sub">1+ run · '+winLbl()+' R '+avgOf(x.b.gameLog,'R').toFixed(2)+'/g · vs '+esc(x.p.name)+' '+x.p.season.WHIP.toFixed(2)+' WHIP</div></div><div class="sig-metric">'+Math.round(x.prob*100)+'%<small>run prob</small></div></div></div>');
     h+=sect('Due / Unlucky','ti-trending-up','c-green',due,x=>'<div class="sig-card" onclick="openPlayerModal('+x.b.id+')"><div class="sig-row"><div><div class="pname">'+esc(x.b.name)+' <span class="ptag">'+x.b.abbr+' '+x.b.pos+'</span></div><div class="sig-sub">xwOBA '+x.s.xwoba.toFixed(3).replace(/^0/,'')+' vs wOBA '+x.s.woba.toFixed(3).replace(/^0/,'')+(x.s.barrelPct!=null?' · '+x.s.barrelPct+'% barrel':'')+' — quality says back him</div></div><div class="sig-metric">+'+(x.gap*1000).toFixed(0)+'<small>xwOBA pts</small></div></div></div>');
-    h+=sect('Strikeout Kings','ti-ball-baseball','c-blue',ks,x=>'<div class="sig-card" onclick="openPlayerModal('+x.p.id+')"><div class="sig-row"><div><div class="pname">'+esc(x.p.name)+' <span class="ptag">'+x.p.abbr+' '+x.p.throws+'HP · vs '+(x.k.opp?x.k.opp.abbr:'?')+'</span></div><div class="sig-sub">O'+x.k.line+' K · '+winLbl()+' K/9 '+x.k.k9.toFixed(1)+' · hit '+Math.round(x.k.hitRate*100)+'%</div></div><div class="sig-metric">'+x.k.proj.toFixed(1)+'<small>proj K</small></div></div></div>');
-    h+=sect('Park Bombers','ti-bolt','c-amber',pb,x=>{const w=(gameForTeam(x.b.teamId)||{}).weather;const wt=w&&w.effect==='out'?' · wind OUT':w&&w.effect==='in'?' · wind IN':'';return '<div class="sig-card warn" onclick="openPlayerModal('+x.b.id+')"><div class="sig-row"><div><div class="pname">'+esc(x.b.name)+' <span class="ptag">'+x.b.abbr+' '+x.b.pos+'</span></div><div class="sig-sub">'+parkForTeam(x.b.teamId).name+' '+(parkForTeam(x.b.teamId).hrFactor*weatherMult(x.b.teamId)).toFixed(2)+'x'+wt+' · '+x.b.season.HR+' HR</div></div><div class="sig-metric warn">'+Math.round(x.prob*100)+'%<small>HR prob</small></div></div></div>';});
+    h+=sect('Strike','ti-ball-baseball','c-blue',ks,x=>'<div class="sig-card" onclick="openPlayerModal('+x.p.id+')"><div class="sig-row"><div><div class="pname">'+esc(x.p.name)+' <span class="ptag">'+x.p.abbr+' '+x.p.throws+'HP · vs '+(x.k.opp?x.k.opp.abbr:'?')+'</span></div><div class="sig-sub">O'+x.k.line+' K · '+winLbl()+' K/9 '+x.k.k9.toFixed(1)+' · hit '+Math.round(x.k.hitRate*100)+'%</div></div><div class="sig-metric">'+x.k.proj.toFixed(1)+'<small>proj K</small></div></div></div>');
+    h+=sect('Homers','ti-bolt','c-amber',pb,x=>{const w=(gameForTeam(x.b.teamId)||{}).weather;const wt=w&&w.effect==='out'?' · wind OUT':w&&w.effect==='in'?' · wind IN':'';return '<div class="sig-card warn" onclick="openPlayerModal('+x.b.id+')"><div class="sig-row"><div><div class="pname">'+esc(x.b.name)+' <span class="ptag">'+x.b.abbr+' '+x.b.pos+'</span></div><div class="sig-sub">'+parkForTeam(x.b.teamId).name+' '+(parkForTeam(x.b.teamId).hrFactor*weatherMult(x.b.teamId)).toFixed(2)+'x'+wt+' · '+x.b.season.HR+' HR</div></div><div class="sig-metric warn">'+Math.round(x.prob*100)+'%<small>HR prob</small></div></div></div>';});
     h+=sect('Bag Snatchers','ti-run','c-green',sb,x=>'<div class="sig-card" onclick="openPlayerModal('+x.b.id+')"><div class="sig-row"><div><div class="pname">'+esc(x.b.name)+' <span class="ptag">'+x.b.abbr+' '+x.b.pos+'</span></div><div class="sig-sub">'+winLbl()+' SB rate '+avgOf(x.b.gameLog,'SB').toFixed(2)+'/g · '+x.b.season.SB+' SB this season</div></div><div class="sig-metric">'+Math.round(x.prob*100)+'%<small>SB prob</small></div></div></div>');
-    h+=sect('Free Passes','ti-walk','c-purple',bb,x=>'<div class="sig-card" onclick="openPlayerModal('+x.b.id+')"><div class="sig-row"><div><div class="pname">'+esc(x.b.name)+' <span class="ptag">'+x.b.abbr+' '+x.b.pos+'</span></div><div class="sig-sub">'+winLbl()+' BB '+avgOf(x.b.gameLog,'BB').toFixed(2)+'/g'+(x.st&&x.st.season.BB9?' · vs '+esc(x.st.name)+' '+x.st.season.BB9.toFixed(1)+' BB/9':'')+'</div></div><div class="sig-metric">'+Math.round(x.prob*100)+'%<small>walk prob</small></div></div></div>');
+    h+=sect('Sneaky Buggers','ti-walk','c-purple',bb,x=>'<div class="sig-card" onclick="openPlayerModal('+x.b.id+')"><div class="sig-row"><div><div class="pname">'+esc(x.b.name)+' <span class="ptag">'+x.b.abbr+' '+x.b.pos+'</span></div><div class="sig-sub">'+winLbl()+' BB '+avgOf(x.b.gameLog,'BB').toFixed(2)+'/g'+(x.st&&x.st.season.BB9?' · vs '+esc(x.st.name)+' '+x.st.season.BB9.toFixed(1)+' BB/9':'')+'</div></div><div class="sig-metric">'+Math.round(x.prob*100)+'%<small>walk prob</small></div></div></div>');
     h+=sect('Streakers','ti-flame','c-amber',sk,x=>'<div class="sig-card warn" onclick="openPlayerModal('+x.b.id+')"><div class="sig-row"><div><div class="pname">'+esc(x.b.name)+' <span class="ptag">'+x.b.abbr+'</span></div><div class="sig-sub">'+x.kind+' · '+spark(x.b.gameLog,x.stat,x.line)+'</div></div><div class="sig-metric warn">'+x.n+'<small>game streak</small></div></div></div>');
     h+=sect('Bunnies','ti-mood-happy','c-amber',bun,x=>bvpCard(x,'warn'));
     h+=sect('Get To Him','ti-alert-triangle','c-red',gth,x=>'<div class="sig-card red" onclick="openPlayerModal('+x.p.id+')"><div class="sig-row"><div><div class="pname">'+esc(x.p.name)+' <span class="ptag">'+x.p.abbr+' '+x.p.throws+'HP</span></div><div class="sig-sub">fade the arm · '+x.tags.join(' · ')+'</div></div><div class="sig-metric red">'+x.sc+'<small>fade score</small></div></div></div>');
