@@ -32,13 +32,14 @@ jobs:
           if [ -z "$SECRET" ]; then
             echo "WARNING: TENNIS_PASSWORD secret not set — placeholder left in place"
           else
+            SECRET="$(printf '%s' "$SECRET" | tr -d '\r\n')"   # strip stray newlines GitHub may keep
             if printf '%s' "$SECRET" | grep -qiE '^[0-9a-f]{64}$'; then
-              HASH="$SECRET"; echo "secret looks like a hash — using as-is"
+              HASH="$(printf '%s' "$SECRET" | tr 'A-F' 'a-f')"; echo "secret looks like a hash — using as-is"
             else
               HASH=$(printf '%s' "$SECRET" | sha256sum | cut -d' ' -f1); echo "secret hashed from plaintext"
             fi
             sed -i "s/REPLACE_WITH_SHA256_OF_YOUR_PASSWORD/$HASH/" index.html
-            echo "auth hash injected"
+            echo "auth hash injected (len ${#HASH})"
           fi
 
       - uses: actions/setup-python@v5
