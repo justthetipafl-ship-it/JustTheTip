@@ -121,6 +121,29 @@
   .mu-soft{background:var(--accent-bg);color:var(--accent);border-color:rgba(34,197,94,.3);}
   .mu-tough{background:rgba(239,68,68,.1);color:#f87171;border-color:rgba(239,68,68,.3);}
   .mu-neutral{background:var(--surface);color:var(--text-3);}
+  .sig-exp{background:var(--surface);border:1px solid var(--border);border-left:3px solid var(--accent);border-radius:6px;margin-bottom:6px;overflow:hidden;}
+  .sig-exp.c-green{border-left-color:var(--accent);}
+  .sig-exp.c-amber{border-left-color:#f5a623;}
+  .sig-exp.c-red{border-left-color:#f87171;}
+  .sig-exp.c-blue{border-left-color:#5b9dff;}
+  .sig-exp.c-purple{border-left-color:#a78bfa;}
+  .sig-exp-sum{list-style:none;cursor:pointer;display:flex;align-items:center;gap:9px;padding:9px 11px;}
+  .sig-exp-sum::-webkit-details-marker{display:none;}
+  .sig-exp-name{min-width:0;flex:1;overflow:hidden;}
+  .sig-exp-name .pname{font-family:var(--font-display);font-weight:700;font-size:13px;}
+  .sig-exp-metric{font-family:var(--font-mono);font-size:11px;color:var(--text-2);white-space:nowrap;}
+  .sig-exp-chev{color:var(--text-3);font-size:14px;transition:transform .15s;flex-shrink:0;}
+  .sig-exp[open] .sig-exp-chev{transform:rotate(180deg);}
+  .sig-exp-body{padding:6px 12px 11px;border-top:1px solid var(--border);}
+  .bd-row{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:6px 0;border-bottom:1px solid rgba(255,255,255,.045);}
+  .bd-row:last-of-type{border-bottom:none;}
+  .bd-k{color:var(--text-3);font-family:var(--font-mono);font-size:9px;text-transform:uppercase;letter-spacing:.5px;white-space:nowrap;}
+  .bd-v{color:var(--text);text-align:right;font-family:var(--font-mono);font-size:12px;}
+  .bd-avg{color:var(--text-3);}
+  .bd-why{margin-top:9px;font-size:11px;color:var(--text-2);background:var(--surface-2);border-radius:5px;padding:8px 10px;line-height:1.45;}
+  .bd-why i{color:var(--accent);margin-right:4px;}
+  .bd-more{margin-top:10px;width:100%;background:var(--surface-2);border:1px solid var(--border);color:var(--text-2);font-family:var(--font-mono);font-size:10px;text-transform:uppercase;letter-spacing:.5px;padding:8px;border-radius:5px;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:6px;}
+  .bd-more:hover{border-color:var(--accent);color:var(--text);}
   .sig-card{background:var(--surface);border:1px solid var(--border);border-left:3px solid var(--accent);border-radius:6px;
     padding:9px 12px;margin-bottom:8px;cursor:pointer;}
   .sig-card.red{border-left-color:#f87171;} .sig-card.warn{border-left-color:#facc15;}
@@ -269,7 +292,7 @@
 
   <script>
   /* ===== CONFIG ===== */
-  const AUTH_HASH = '46a4c6b519324e367bee933ac9f08683b10e15170159e4a97f066e5eb0e54ee2'; // demo: jtt-mlb-demo — workflow injects real hash
+  const AUTH_HASH = 'aab47a4d89b7b3de88f7a1684dd71f8eccfe06cafda2e5b1bf33505a1051955b'; // demo: jtt-mlb-demo — workflow injects real hash
   const AUTH_TTL_DAYS = 30, AUTH_STORAGE_KEY = 'jtt_mlb_auth_v1';
   const DATA_FILES = { bundle: 'data/mlb_bundle.json' };
   const TABS = [
@@ -405,22 +428,22 @@
   /* ---- signals ---- */
   function teamBatters(tid){return Object.values(BATTERS()).filter(b=>b.teamId===tid&&b.gameLog&&b.gameLog.length);}
   function gameBatters(g){return [...teamBatters(g.away.teamId),...teamBatters(g.home.teamId)];}
-  function greenLights(bs){return bs.map(b=>{const best=bestBatMarket(b);return {b,best,mu:best.r.mu};}).filter(x=>x.mu.score>=18&&x.best.r.prob>=.55).sort((a,b)=>(b.mu.score*.5+b.best.r.prob*50)-(a.mu.score*.5+a.best.r.prob*50));}
-  function deathRiders(bs){return bs.map(b=>{const best=bestBatMarket(b);return {b,best,mu:best.r.mu};}).filter(x=>x.mu.score<=-18&&x.best.r.prob<=.5).sort((a,b)=>(a.mu.score+a.best.r.prob*60)-(b.mu.score+b.best.r.prob*60));}
+  function greenLights(bs){return bs.map(b=>{const best=bestBatMarket(b);return {b,best,mu:best.r.mu};}).filter(x=>x.mu.score>=20&&x.best.r.prob>=.55).sort((a,b)=>(b.mu.score*.5+b.best.r.prob*50)-(a.mu.score*.5+a.best.r.prob*50));}
+  function deathRiders(bs){return bs.map(b=>{const best=bestBatMarket(b);return {b,best,mu:best.r.mu};}).filter(x=>x.mu.score<=-20&&x.best.r.prob<=.45).sort((a,b)=>(a.mu.score+a.best.r.prob*60)-(b.mu.score+b.best.r.prob*60));}
   function streakers(bs){const o=[];for(const b of bs){const h=streakOf(b.gameLog,'H',1),t=streakOf(b.gameLog,'TB',2);if(h>=5)o.push({b,kind:'1+ Hit',n:h,stat:'H',line:1});if(t>=5)o.push({b,kind:'2+ TB',n:t,stat:'TB',line:2});}return o.sort((a,b)=>b.n-a.n);}
-  function bvpList(bs,dir){const o=[];for(const b of bs){const st=starterFacing(b.teamId);if(!st||!b.bvp||!b.bvp[st.id])continue;const v=b.bvp[st.id];if(v.PA<8)continue;if(dir==='bunny'&&v.AVG>=.330)o.push({b,st,v});if(dir==='bogey'&&v.AVG<=.170)o.push({b,st,v});}return o.sort((a,b)=>dir==='bunny'?b.v.AVG-a.v.AVG:a.v.AVG-b.v.AVG);}
-  function parkBombers(bs){return bs.map(b=>{const r=projBat(b,{k:'HR',line:0.5,stat:'HR'});return {b,r,prob:r.prob};}).filter(x=>x.prob>=.13&&x.b.season.HR>=8&&((parkForTeam(x.b.teamId).hrFactor*weatherMult(x.b.teamId))>=1.0||x.r.mu.score>=15)).sort((a,b)=>b.prob-a.prob);}
-  function bagSnatchers(bs){return bs.map(b=>{const r=projBat(b,{k:'SB',line:0.5,stat:'SB'});return {b,r,prob:r.prob};}).filter(x=>x.prob>=.18&&x.b.season.SB>=8).sort((a,b)=>b.prob-a.prob);}
-  function freePasses(bs){return bs.map(b=>{const r=projBat(b,{k:'BB',line:0.5,stat:'BB'});const st=starterFacing(b.teamId);return {b,r,st,prob:r.prob};}).filter(x=>x.prob>=.34&&avgOf(x.b.gameLog,'BB')>=0.35).sort((a,b)=>b.prob-a.prob);}
+  function bvpList(bs,dir){const o=[];for(const b of bs){const st=starterFacing(b.teamId);if(!st||!b.bvp||!b.bvp[st.id])continue;const v=b.bvp[st.id];if(v.PA<10)continue;if(dir==='bunny'&&v.AVG>=.350)o.push({b,st,v});if(dir==='bogey'&&v.AVG<=.150)o.push({b,st,v});}return o.sort((a,b)=>dir==='bunny'?b.v.AVG-a.v.AVG:a.v.AVG-b.v.AVG);}
+  function parkBombers(bs){return bs.map(b=>{const r=projBat(b,{k:'HR',line:0.5,stat:'HR'});return {b,r,prob:r.prob};}).filter(x=>x.prob>=.20&&x.b.season.HR>=10&&((parkForTeam(x.b.teamId).hrFactor*weatherMult(x.b.teamId))>=1.0||x.r.mu.score>=15)).sort((a,b)=>b.prob-a.prob);}
+  function bagSnatchers(bs){return bs.map(b=>{const r=projBat(b,{k:'SB',line:0.5,stat:'SB'});return {b,r,prob:r.prob};}).filter(x=>x.prob>=.25&&x.b.season.SB>=12).sort((a,b)=>b.prob-a.prob);}
+  function freePasses(bs){return bs.map(b=>{const r=projBat(b,{k:'BB',line:0.5,stat:'BB'});const st=starterFacing(b.teamId);return {b,r,st,prob:r.prob};}).filter(x=>x.prob>=.40&&avgOf(x.b.gameLog,'BB')>=0.40).sort((a,b)=>b.prob-a.prob);}
   const LG_K9=8.6, LG_ERA=4.10;
   // Whiff Risk — batter likely to strike out (high K hitter vs high-K starter)
   function batKProj(b){const base=blendedRate(b,'SO');const p=starterFacing(b.teamId);let f=1;if(p&&p.season.K9)f*=_clamp(p.season.K9/LG_K9,.8,1.35);const proj=base*f;return {proj,prob:poissonAtLeast(proj,1),p};}
   function whiffRisk(bs){return bs.map(b=>{const k=batKProj(b);return {b,k,prob:k.prob};}).filter(x=>x.prob>=.66&&((x.k.p&&x.k.p.season.K9>=8.8)||avgOf(x.b.gameLog,'SO')>=1.1)).sort((a,b)=>b.prob-a.prob);}
   // Cold Bats — pure form fade (hitless skid)
   function coldStreak(b){let n=0;for(const r of (b.gameLog||[])){if((r.H||0)<1)n++;else break;}return n;}
-  function coldBats(bs){return bs.map(b=>({b,n:coldStreak(b)})).filter(x=>x.n>=3&&(x.b.gameLog||[]).length>=5).sort((a,b)=>b.n-a.n);}
+  function coldBats(bs){return bs.map(b=>({b,n:coldStreak(b)})).filter(x=>x.n>=4&&(x.b.gameLog||[]).length>=5).sort((a,b)=>b.n-a.n);}
   // Table Setters — top-of-order run scorers vs a baserunner-prone starter
-  function tableSetters(bs){return bs.map(b=>{const r=projBat(b,{k:'R',line:0.5,stat:'R'});const p=starterFacing(b.teamId);return {b,r,p,prob:r.prob};}).filter(x=>(x.b.order||9)<=3&&x.prob>=.42&&x.p&&(x.p.season.WHIP>=1.25||x.p.season.BB9>=3.3)).sort((a,b)=>b.prob-a.prob);}
+  function tableSetters(bs){return bs.map(b=>{const r=projBat(b,{k:'R',line:0.5,stat:'R'});const p=starterFacing(b.teamId);return {b,r,p,prob:r.prob};}).filter(x=>(x.b.order||9)<=3&&x.prob>=.50&&x.p&&(x.p.season.WHIP>=1.25||x.p.season.BB9>=3.3)).sort((a,b)=>b.prob-a.prob);}
   // Get To Him — starter in a bad spot (back the opposing bats / under his Ks)
   function getToHimPitcher(g,p){if(!p)return null;const pk=PARK(g.parkId);const wxOut=g.weather&&g.weather.effect==='out';const effHr=pk.hrFactor*((g.weather&&g.weather.hrMult)?g.weather.hrMult:1);
     let sc=0;const tags=[];
@@ -432,12 +455,12 @@
     if(p.season.ERA>=4.50){sc+=1;tags.push(p.season.ERA.toFixed(2)+' ERA');}
     return sc>=3?{p,sc,tags}:null;}
   // Platoon Smash — extreme handedness edge into the disadvantaged arm
-  function platoonSmash(bs){return bs.map(b=>{const p=starterFacing(b.teamId);if(!p)return null;const sp=p.throws==='L'?b.splitVsL:b.splitVsR;const ratio=b.season.SLG?sp.SLG/b.season.SLG:1;return {b,p,sp,ratio};}).filter(x=>x&&x.ratio>=1.15&&x.sp.PA>=20).sort((a,b)=>b.ratio-a.ratio);}
+  function platoonSmash(bs){return bs.map(b=>{const p=starterFacing(b.teamId);if(!p)return null;const sp=p.throws==='L'?b.splitVsL:b.splitVsR;const ratio=b.season.SLG?sp.SLG/b.season.SLG:1;return {b,p,sp,ratio};}).filter(x=>x&&x.ratio>=1.20&&x.sp.PA>=25).sort((a,b)=>b.ratio-a.ratio);}
   // Statcast — Due (unlucky, back) & Running Hot (overperforming, fade)
   const LG_BARREL=8.0;
   function statcastGap(b){const s=b.statcast;return (s&&s.xwoba!=null&&s.woba!=null)?s.xwoba-s.woba:null;}
-  function dueRegression(bs){return bs.map(b=>({b,gap:statcastGap(b),s:b.statcast})).filter(x=>x.gap!=null&&x.gap>=0.020&&x.s.xwoba>=0.320).sort((a,b)=>b.gap-a.gap);}
-  function runningHot(bs){return bs.map(b=>({b,gap:statcastGap(b),s:b.statcast})).filter(x=>x.gap!=null&&x.gap<=-0.025).sort((a,b)=>a.gap-b.gap);}
+  function dueRegression(bs){return bs.map(b=>({b,gap:statcastGap(b),s:b.statcast})).filter(x=>x.gap!=null&&x.gap>=0.028&&x.s.xwoba>=0.330).sort((a,b)=>b.gap-a.gap);}
+  function runningHot(bs){return bs.map(b=>({b,gap:statcastGap(b),s:b.statcast})).filter(x=>x.gap!=null&&x.gap<=-0.032).sort((a,b)=>a.gap-b.gap);}
 
   /* ============================================================
      RENDERERS
@@ -654,6 +677,35 @@
   function spark(log,key,line){return '<span class="spark">'+slice(log).slice(0,12).reverse().map(r=>(r[key]>=line)?'<span class="hit">\u25CF</span>':'<span class="miss">\u25CB</span>').join('')+'</span>';}
 
   // ---------- DEGEN SIGNALS (per game) ----------
+  function sigExp(color,pid,name,tag,metric,body){
+    return '<details class="sig-exp '+color+'"><summary class="sig-exp-sum">'+
+      '<div class="sig-exp-name"><span class="pname">'+esc(name)+'</span> <span class="ptag">'+tag+'</span></div>'+
+      (metric?'<span class="sig-exp-metric">'+metric+'</span>':'')+
+      '<i class="ti ti-chevron-down sig-exp-chev"></i></summary>'+
+      '<div class="sig-exp-body">'+body+
+      (pid?'<button class="bd-more" onclick="openPlayerModal('+pid+')">Full player profile <i class="ti ti-arrow-up-right"></i></button>':'')+
+      '</div></details>';
+  }
+  function bdRow(k,v){return '<div class="bd-row"><span class="bd-k">'+k+'</span><span class="bd-v">'+v+'</span></div>';}
+  function bdSpark(log,stat,line,label){return bdRow('Recent '+label,spark(log,stat,line)+' <span class="bd-avg">'+avgOf(log,stat).toFixed(2)+'/g</span>');}
+  function bdWhy(t){return '<div class="bd-why"><i class="ti ti-info-circle"></i> '+t+'</div>';}
+  function bdPitch(b,which){const p=starterFacing(b.teamId);if(!p)return '';
+    let h=bdRow('Faces',esc(p.name)+' ('+p.throws+'HP)');const split=b.bats==='L'?p.splitVsL:p.splitVsR;
+    if(which.indexOf('k9')>=0)h+=bdRow('Opp K/9',p.season.K9.toFixed(1)+(p.season.K9>=LG_K9?' · misses bats':' · contact arm'));
+    if(which.indexOf('hr9')>=0)h+=bdRow('Opp HR/9',p.season.HR9.toFixed(2)+(p.season.HR9>=LG_HR9?' · HR-prone':''));
+    if(which.indexOf('bb9')>=0)h+=bdRow('Opp BB/9',p.season.BB9.toFixed(1)+(p.season.BB9>=3.3?' · wild':''));
+    if(which.indexOf('whip')>=0)h+=bdRow('Opp WHIP',p.season.WHIP.toFixed(2)+(p.season.WHIP>=1.25?' · runners on':''));
+    if(which.indexOf('contact')>=0)h+=bdRow('Opp AVG vs '+b.bats+'HB',split.oppAVG.toFixed(3).replace(/^0/,'')+(split.oppAVG>=LG_OPPAVG?' · hittable':' · stingy'));
+    return h;}
+  function bdPark(b){const pk=parkForTeam(b.teamId),w=(gameForTeam(b.teamId)||{}).weather;
+    let h=bdRow('Park',esc(pk.name)+' · '+(pk.hrFactor*weatherMult(b.teamId)).toFixed(2)+'x HR');
+    if(w&&w.effect==='out')h+=bdRow('Wind','blowing OUT '+w.windMph+'mph');
+    else if(w&&w.effect==='in')h+=bdRow('Wind','blowing IN '+w.windMph+'mph');
+    return h;}
+  function bdStatcast(b){const sc=b.statcast;if(!sc)return '';let h='';
+    if(sc.barrelPct!=null)h+=bdRow('Barrel%',sc.barrelPct+'%');
+    if(sc.xwoba!=null)h+=bdRow('xwOBA',sc.xwoba.toFixed(3).replace(/^0/,''));
+    return h;}
   function renderTeamSignals(g,side){
     _ctxGame=g;
     const team=g[side]; const tid=team.teamId;
@@ -669,25 +721,29 @@
     const fired=gl.length+dr.length+sk.length+pb.length+bun.length+bog.length+ks.length+sb.length+bb.length+wr.length+cb.length+ts.length+ps.length+due.length+hot.length;
     let h='<div class="signals-head"><i class="ti ti-flame" style="color:var(--accent)"></i><span class="lbl">Degen Signals</span><span class="fired">'+fired+' FIRED</span></div>';
     h+=sect('Green Lights','ti-circle-check','c-green',gl,glCard);
-    h+=sect('Sluggers','ti-arrows-left-right','c-green',ps,x=>'<div class="sig-card" onclick="openPlayerModal('+x.b.id+')"><div class="sig-row"><div><div class="pname">'+esc(x.b.name)+' <span class="ptag">'+x.b.abbr+' '+x.b.bats+' vs '+x.p.throws+'HP</span></div><div class="sig-sub">vs '+x.p.throws+'HP SLG '+x.sp.SLG.toFixed(3).replace(/^0/,'')+' vs '+x.b.season.SLG.toFixed(3).replace(/^0/,'')+' overall ('+x.sp.PA+' PA)</div></div><div class="sig-metric">+'+Math.round((x.ratio-1)*100)+'%<small>SLG edge</small></div></div></div>');
-    h+=sect('Runners','ti-arrow-up-right','c-green',ts,x=>'<div class="sig-card" onclick="openPlayerModal('+x.b.id+')"><div class="sig-row"><div><div class="pname">'+esc(x.b.name)+' <span class="ptag">'+x.b.abbr+' bat '+x.b.order+'</span></div><div class="sig-sub">1+ run · '+winLbl()+' R '+avgOf(x.b.gameLog,'R').toFixed(2)+'/g · vs '+esc(x.p.name)+' '+x.p.season.WHIP.toFixed(2)+' WHIP</div></div><div class="sig-metric">'+Math.round(x.prob*100)+'%<small>run prob</small></div></div></div>');
-    h+=sect('Due / Unlucky','ti-trending-up','c-green',due,x=>'<div class="sig-card" onclick="openPlayerModal('+x.b.id+')"><div class="sig-row"><div><div class="pname">'+esc(x.b.name)+' <span class="ptag">'+x.b.abbr+' '+x.b.pos+'</span></div><div class="sig-sub">xwOBA '+x.s.xwoba.toFixed(3).replace(/^0/,'')+' vs wOBA '+x.s.woba.toFixed(3).replace(/^0/,'')+(x.s.barrelPct!=null?' · '+x.s.barrelPct+'% barrel':'')+' — quality says back him</div></div><div class="sig-metric">+'+(x.gap*1000).toFixed(0)+'<small>xwOBA pts</small></div></div></div>');
-    h+=sect('Strike Time','ti-ball-baseball','c-blue',ks,x=>'<div class="sig-card" onclick="openPlayerModal('+x.p.id+')"><div class="sig-row"><div><div class="pname">'+esc(x.p.name)+' <span class="ptag">'+x.p.abbr+' '+x.p.throws+'HP · vs '+(x.k.opp?x.k.opp.abbr:'?')+'</span></div><div class="sig-sub">O'+x.k.line+' K · '+winLbl()+' K/9 '+x.k.k9.toFixed(1)+' · hit '+Math.round(x.k.hitRate*100)+'%</div></div><div class="sig-metric">'+x.k.proj.toFixed(1)+'<small>proj K</small></div></div></div>');
-    h+=sect('Homers','ti-bolt','c-amber',pb,x=>{const w=(gameForTeam(x.b.teamId)||{}).weather;const wt=w&&w.effect==='out'?' · wind OUT':w&&w.effect==='in'?' · wind IN':'';return '<div class="sig-card warn" onclick="openPlayerModal('+x.b.id+')"><div class="sig-row"><div><div class="pname">'+esc(x.b.name)+' <span class="ptag">'+x.b.abbr+' '+x.b.pos+'</span></div><div class="sig-sub">'+parkForTeam(x.b.teamId).name+' '+(parkForTeam(x.b.teamId).hrFactor*weatherMult(x.b.teamId)).toFixed(2)+'x'+wt+' · '+x.b.season.HR+' HR</div></div><div class="sig-metric warn">'+Math.round(x.prob*100)+'%<small>HR prob</small></div></div></div>';});
-    h+=sect('Sneaky Buggers','ti-run','c-green',sb,x=>'<div class="sig-card" onclick="openPlayerModal('+x.b.id+')"><div class="sig-row"><div><div class="pname">'+esc(x.b.name)+' <span class="ptag">'+x.b.abbr+' '+x.b.pos+'</span></div><div class="sig-sub">'+winLbl()+' SB rate '+avgOf(x.b.gameLog,'SB').toFixed(2)+'/g · '+x.b.season.SB+' SB this season</div></div><div class="sig-metric">'+Math.round(x.prob*100)+'%<small>SB prob</small></div></div></div>');
-    h+=sect('Walk Don\'t Run','ti-walk','c-purple',bb,x=>'<div class="sig-card" onclick="openPlayerModal('+x.b.id+')"><div class="sig-row"><div><div class="pname">'+esc(x.b.name)+' <span class="ptag">'+x.b.abbr+' '+x.b.pos+'</span></div><div class="sig-sub">'+winLbl()+' BB '+avgOf(x.b.gameLog,'BB').toFixed(2)+'/g'+(x.st&&x.st.season.BB9?' · vs '+esc(x.st.name)+' '+x.st.season.BB9.toFixed(1)+' BB/9':'')+'</div></div><div class="sig-metric">'+Math.round(x.prob*100)+'%<small>walk prob</small></div></div></div>');
-    h+=sect('Streakers','ti-flame','c-amber',sk,x=>'<div class="sig-card warn" onclick="openPlayerModal('+x.b.id+')"><div class="sig-row"><div><div class="pname">'+esc(x.b.name)+' <span class="ptag">'+x.b.abbr+'</span></div><div class="sig-sub">'+x.kind+' · '+spark(x.b.gameLog,x.stat,x.line)+'</div></div><div class="sig-metric warn">'+x.n+'<small>game streak</small></div></div></div>');
-    h+=sect('Bunnies','ti-mood-happy','c-amber',bun,x=>bvpCard(x,'warn'));
-    h+=sect('Whiff Risk','ti-circle-x','c-red',wr,x=>'<div class="sig-card red" onclick="openPlayerModal('+x.b.id+')"><div class="sig-row"><div><div class="pname">'+esc(x.b.name)+' <span class="ptag">'+x.b.abbr+' '+x.b.pos+'</span></div><div class="sig-sub">1+ K · '+winLbl()+' SO '+avgOf(x.b.gameLog,'SO').toFixed(2)+'/g'+(x.k.p?' · vs '+esc(x.k.p.name)+' '+x.k.p.season.K9.toFixed(1)+' K/9':'')+'</div></div><div class="sig-metric red">'+Math.round(x.prob*100)+'%<small>K prob</small></div></div></div>');
-    h+=sect('Running Hot','ti-trending-down','c-red',hot,x=>'<div class="sig-card red" onclick="openPlayerModal('+x.b.id+')"><div class="sig-row"><div><div class="pname">'+esc(x.b.name)+' <span class="ptag">'+x.b.abbr+' '+x.b.pos+'</span></div><div class="sig-sub">wOBA '+x.s.woba.toFixed(3).replace(/^0/,'')+' vs xwOBA '+x.s.xwoba.toFixed(3).replace(/^0/,'')+' — overperforming, regression risk</div></div><div class="sig-metric red">'+(x.gap*1000).toFixed(0)+'<small>xwOBA pts</small></div></div></div>');
-    h+=sect('Cold Bats','ti-snowflake','c-red',cb,x=>'<div class="sig-card red" onclick="openPlayerModal('+x.b.id+')"><div class="sig-row"><div><div class="pname">'+esc(x.b.name)+' <span class="ptag">'+x.b.abbr+' '+x.b.pos+'</span></div><div class="sig-sub">'+x.n+' straight hitless · '+spark(x.b.gameLog,'H',1)+'</div></div><div class="sig-metric red">'+x.n+'<small>cold streak</small></div></div></div>');
-    h+=sect('Death Riders','ti-skull','c-red',dr,x=>'<div class="sig-card red" onclick="openPlayerModal('+x.b.id+')"><div class="sig-row"><div><div class="pname">'+esc(x.b.name)+' <span class="ptag">'+x.b.abbr+' '+x.b.pos+'</span></div><div class="sig-sub">fade '+x.best.m.label+' · '+(x.mu.tags.join(', ')||'tough spot')+'</div></div><div class="sig-metric red">'+x.mu.score+'<small>matchup</small></div></div></div>');
-    h+=sect('Bogey','ti-mood-sad','c-red',bog,x=>bvpCard(x,'red'));
+    h+=sect('Sluggers','ti-arrows-left-right','c-green',ps,x=>{const b=x.b;const body=bdRow('vs '+x.p.throws+'HP',x.sp.SLG.toFixed(3).replace(/^0/,'')+' SLG ('+x.sp.PA+' PA)')+bdRow('Overall SLG',b.season.SLG.toFixed(3).replace(/^0/,''))+bdRow('Edge','+'+Math.round((x.ratio-1)*100)+'% vs his own power')+bdPitch(b,['contact'])+bdStatcast(b)+bdWhy('Big handedness edge — crushes '+x.p.throws+'HP relative to his overall power, and draws a '+x.p.throws+'HP starter today.');return sigExp('c-green',b.id,b.name,b.abbr+' '+b.bats+'HB',x.sp.SLG.toFixed(3).replace(/^0/,'')+' SLG',body);});
+    h+=sect('Runners','ti-arrow-up-right','c-green',ts,x=>{const b=x.b;const body=bdSpark(b.gameLog,'R',0.5,'runs')+bdRow('Lineup spot','bats '+b.order)+bdPitch(b,['whip','bb9'])+bdWhy('Top-of-order run scorer against a starter who lets runners on. More PAs and traffic ahead = run chances.');return sigExp('c-green',b.id,b.name,b.abbr+' bat '+b.order,avgOf(b.gameLog,'R').toFixed(2)+' R/g',body);});
+    h+=sect('Due / Unlucky','ti-trending-up','c-green',due,x=>{const b=x.b,s=x.s;const body=bdRow('xwOBA',s.xwoba.toFixed(3).replace(/^0/,''))+bdRow('Actual wOBA',s.woba.toFixed(3).replace(/^0/,''))+bdRow('Gap','+'+(x.gap*1000).toFixed(0)+' pts (unlucky)')+(s.barrelPct!=null?bdRow('Barrel%',s.barrelPct+'%'):'')+(s.xba!=null&&s.ba!=null?bdRow('xBA vs BA',s.xba.toFixed(3).replace(/^0/,'')+' vs '+s.ba.toFixed(3).replace(/^0/,'')):'')+bdSpark(b.gameLog,'H',1,'hits')+bdWhy('Quality of contact (xwOBA) well ahead of his actual results — due for positive regression. Back him.');return sigExp('c-green',b.id,b.name,b.abbr+' '+b.pos,'+'+(x.gap*1000).toFixed(0)+' xwOBA',body);});
+    h+=sect('Strike Time','ti-ball-baseball','c-blue',ks,x=>{const p=x.p,k=x.k;const body=bdSpark(p.gameLog,'K',k.line,'Ks')+bdRow('Projected','~'+k.proj.toFixed(1)+' K · O'+k.line)+bdRow('His K/9',k.k9.toFixed(1))+bdRow('Opp K-rate',(k.opp?(k.opp.kRate*100).toFixed(0)+'%':'?')+(k.oppF>1?' · whiffs a lot':''))+bdRow('Est. innings','~'+k.expIP.toFixed(1)+' IP')+bdWhy('Strikeout arm against a lineup that fans at an above-league rate. Cleared this line in '+Math.round(k.hitRate*100)+'% of recent starts.');return sigExp('c-blue',p.id,p.name,p.abbr+' '+p.throws+'HP',k.proj.toFixed(1)+' proj K',body);});
+    h+=sect('Homers','ti-bolt','c-amber',pb,x=>{const b=x.b;const body=bdSpark(b.gameLog,'HR',0.5,'HR')+bdPark(b)+bdPitch(b,['hr9'])+bdStatcast(b)+bdRow('Season',b.season.HR+' HR · '+b.season.SLG.toFixed(3).replace(/^0/,'')+' SLG')+bdWhy('Power bat in a home-run-friendly spot — park, weather, opposing arm and barrel profile all point up.');return sigExp('c-amber',b.id,b.name,b.abbr+' '+b.pos,b.season.HR+' HR',body);});
+    h+=sect('Sneaky Buggers','ti-run','c-green',sb,x=>{const b=x.b;const body=bdSpark(b.gameLog,'SB',0.5,'SB')+bdRow('Season SB',b.season.SB)+bdPitch(b,['whip'])+bdWhy('Genuine basestealing threat with chances to reach base. Steal / first-to-steal markets.');return sigExp('c-green',b.id,b.name,b.abbr+' '+b.pos,b.season.SB+' SB',body);});
+    h+=sect('Walk Don\'t Run','ti-walk','c-purple',bb,x=>{const b=x.b;const body=bdSpark(b.gameLog,'BB',0.5,'walks')+bdRow('Season',b.season.BB+' BB · '+b.season.OBP.toFixed(3).replace(/^0/,'')+' OBP')+bdPitch(b,['bb9'])+bdWhy('Patient hitter into a starter with control issues — 1+ walk value.');return sigExp('c-purple',b.id,b.name,b.abbr+' '+b.pos,avgOf(b.gameLog,'BB').toFixed(2)+' BB/g',body);});
+    h+=sect('Streakers','ti-flame','c-amber',sk,x=>{const b=x.b;const body=bdRow('Streak',x.n+' straight games · '+x.kind)+bdRow('Recent',spark(b.gameLog,x.stat,x.line))+bdPitch(b,['contact'])+bdWhy('Riding a '+x.n+'-game '+x.kind+' run. Pure form play — ride it until it breaks.');return sigExp('c-amber',b.id,b.name,b.abbr,x.n+'g '+x.kind,body);});
+    h+=sect('Bunnies','ti-mood-happy','c-amber',bun,x=>bvpCard(x,'c-amber',false));
+    h+=sect('Whiff Risk','ti-circle-x','c-red',wr,x=>{const b=x.b;const body=bdSpark(b.gameLog,'SO',0.5,'Ks')+bdRow('Season K-rate',(b.season.PA?Math.round(b.season.SO/b.season.PA*100):0)+'%')+bdPitch(b,['k9'])+bdWhy('High-strikeout hitter into a swing-and-miss starter — 1+ K lean, or fade his contact props.');return sigExp('c-red',b.id,b.name,b.abbr+' '+b.pos,avgOf(b.gameLog,'SO').toFixed(2)+' K/g',body);});
+    h+=sect('Running Hot','ti-trending-down','c-red',hot,x=>{const b=x.b,s=x.s;const body=bdRow('Actual wOBA',s.woba.toFixed(3).replace(/^0/,''))+bdRow('xwOBA',s.xwoba.toFixed(3).replace(/^0/,''))+bdRow('Gap',(x.gap*1000).toFixed(0)+' pts (overperforming)')+(s.barrelPct!=null?bdRow('Barrel%',s.barrelPct+'%'):'')+bdSpark(b.gameLog,'H',1,'hits')+bdWhy('Results running ahead of contact quality — regression-down risk. Fade the hot streak.');return sigExp('c-red',b.id,b.name,b.abbr+' '+b.pos,(x.gap*1000).toFixed(0)+' xwOBA',body);});
+    h+=sect('Cold Bats','ti-snowflake','c-red',cb,x=>{const b=x.b;const body=bdRow('Skid',x.n+' straight hitless games')+bdRow('Recent',spark(b.gameLog,'H',1))+bdStatcast(b)+bdWhy('Ice cold — '+x.n+' games without a hit. Fade until it breaks, or a contrarian bounce-back.');return sigExp('c-red',b.id,b.name,b.abbr+' '+b.pos,x.n+'g cold',body);});
+    h+=sect('Death Riders','ti-skull','c-red',dr,x=>{const b=x.b,mu=x.mu;const body=bdRow('Fade market',x.best.m.label)+bdRow('Why',(mu.tags.join(', ')||'tough spot'))+bdPitch(b,['k9','contact'])+bdPark(b)+bdWhy('One of the worst projected spots on the slate — tough arm, poor park/platoon. Strong fade / under.');return sigExp('c-red',b.id,b.name,b.abbr+' '+b.pos,mu.score+' matchup',body);});
+    h+=sect('Bogey','ti-mood-sad','c-red',bog,x=>bvpCard(x,'c-red',true));
     if(!fired)h+='<div class="empty"><div class="ico"><i class="ti ti-mood-empty"></i></div>No standout signals for this team in the current window.</div>';
     return h;
   }
-  function glCard(x){const best=x.best,mu=x.mu;return '<div class="sig-card" onclick="openPlayerModal('+x.b.id+')"><div class="sig-row"><div><div class="pname">'+esc(x.b.name)+' <span class="ptag">'+x.b.abbr+' '+x.b.pos+'</span></div><div class="sig-sub">'+best.m.label+' · '+winLbl()+' avg '+best.r.proj.toFixed(2)+(mu.tags.length?' · '+mu.tags.slice(0,2).join(', '):'')+'</div></div><div class="sig-metric">'+Math.round(best.r.prob*100)+'%<small>'+muBadge(mu.score).replace(/<[^>]+>/g,'')+'</small></div></div></div>';}
-  function bvpCard(x,cls){return '<div class="sig-card '+cls+'" onclick="openPlayerModal('+x.b.id+')"><div class="sig-row"><div><div class="pname">'+esc(x.b.name)+' <span class="ptag">'+x.b.abbr+'</span></div><div class="sig-sub">vs '+esc(x.st.name)+' · '+x.v.H+'-for-'+Math.round(x.v.PA*.88)+' · '+x.v.HR+' HR ('+x.v.PA+' PA)</div><div class="bvp-warn"><i class="ti ti-alert-triangle"></i> small sample — context only</div></div><div class="sig-metric '+(cls==='red'?'red':'warn')+'">'+x.v.AVG.toFixed(3).replace(/^0/,'')+'<small>BvP AVG</small></div></div></div>';}
+  function glCard(x){const b=x.b,best=x.best,mu=x.mu;
+    const body=bdSpark(b.gameLog,best.m.stat,best.m.line,best.m.label)+bdPitch(b,['contact','k9'])+bdPark(b)+bdStatcast(b)+
+      bdRow('Season',b.season.AVG.toFixed(3).replace(/^0/,'')+' AVG · '+b.season.OPS.toFixed(3).replace(/^0/,'')+' OPS')+
+      bdWhy('Best market is '+best.m.label+' — '+(mu.tags.slice(0,3).join(', ')||'favourable matchup')+'. Model read: '+muBadge(mu.score).replace(/<[^>]+>/g,'')+'.');
+    return sigExp('c-green',b.id,b.name,b.abbr+' '+b.pos,best.m.label,body);}
+  function bvpCard(x,color,fade){const b=x.b;const body=bdRow('vs '+esc(x.st.name),x.v.H+'-for-'+Math.round(x.v.PA*.88)+' · '+x.v.AVG.toFixed(3).replace(/^0/,'')+' AVG')+bdRow('Power',x.v.HR+' HR')+bdRow('Sample',x.v.PA+' career PA — small')+bdWhy((fade?'Has historically struggled badly against this arm.':'Has historically mashed this pitcher.')+' Tiny sample — a tiebreaker, not a thesis.');return sigExp(color,b.id,b.name,b.abbr+' vs '+x.st.abbr,x.v.AVG.toFixed(3).replace(/^0/,'')+' BvP',body);}
 
   // ---------- LEAGUE PAGE ----------
   function renderLeague(){
