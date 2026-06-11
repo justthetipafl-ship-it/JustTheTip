@@ -120,6 +120,7 @@ build_log <- function(m) {
       surf = m$surf,
       round = m$round,
       best_of = m$best_of,
+      score = m$score,
       player_id = m[[paste0(ifelse(side=="w","winner","loser"), "_id")]],
       player_name = m[[paste0(ifelse(side=="w","winner","loser"), "_name")]],
       ioc = m[[paste0(ifelse(side=="w","winner","loser"), "_ioc")]],
@@ -206,6 +207,22 @@ agg_block <- function(d) {
   )
 }
 
+# ---- parse sets won/lost from a Sackmann score string, player-relative ------
+parse_sets <- function(score, won) {
+  if (is.na(score) || !nzchar(score)) return(c(NA_integer_, NA_integer_))
+  sc <- gsub("\\([^)]*\\)", "", score)            # drop tiebreak detail (7)
+  toks <- strsplit(trimws(sc), "\\s+")[[1]]
+  w <- 0L; l <- 0L
+  for (t in toks) {
+    mm <- regmatches(t, regexec("^([0-9]+)-([0-9]+)$", t))[[1]]
+    if (length(mm) == 3) {
+      a <- as.integer(mm[2]); b <- as.integer(mm[3])
+      if (a > b) w <- w + 1L else if (b > a) l <- l + 1L
+    }
+  }
+  if (isTRUE(won == 1)) c(w, l) else c(l, w)        # score is winner-perspective
+}
+
 # ---- main -------------------------------------------------------------------
 cat("JTT Tennis build.R\n")
 atp <- load_tour("atp", CFG$atp_years)
@@ -250,6 +267,15 @@ for (tr in c("atp", "wta")) {
       if (nrow(ds) > 0) surf_splits[[s]] <- agg_block(ds)
     }
     last10 <- tail(d$won, 10)
+    # recent per-match detail (most-recent-first) for streak signals
+    dr <- tail(d, 12)
+    recent <- lapply(rev(seq_len(nrow(dr))), function(i) {
+      ss <- parse_sets(dr$score[i], dr$won[i])
+      list(surf = dr$surf[i], won = as.integer(dr$won[i]),
+           ace = if (is.na(dr$ace[i])) NULL else as.integer(dr$ace[i]),
+           sw = if (is.na(ss[1])) NULL else ss[1],
+           sl = if (is.na(ss[2])) NULL else ss[2])
+    })
     players_out[[pid]] <- list(
       id = pid,
       name = d$player_name[nrow(d)],
@@ -267,7 +293,8 @@ for (tr in c("atp", "wta")) {
       serve_recent = recent,
       serve_surface = surf_splits,
       form_last10 = paste(ifelse(rev(last10) == 1, "W", "L"), collapse = ""),
-      win_pct_recent = round(mean(tail(d$won, CFG$recent_n), na.rm = TRUE), 3)
+      win_pct_recent = round(mean(tail(d$won, CFG$recent_n), na.rm = TRUE), 3),
+      recent = recent
     )
   }
 
