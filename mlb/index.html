@@ -12,6 +12,12 @@
   <style>
   /* ===== MLB-specific styles — mirrors the WC component vocabulary, on jtt-core tokens ===== */
   .filterbar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:14px;}
+  .day-toggle{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;}
+  .day-btn{background:var(--surface);border:1px solid var(--border);color:var(--text-2);font-family:var(--font-mono);font-size:11px;letter-spacing:.3px;padding:8px 14px;border-radius:8px;cursor:pointer;display:flex;align-items:center;gap:6px;transition:all .12s;}
+  .day-btn:hover{border-color:var(--accent);color:var(--text);}
+  .day-btn.active{background:var(--accent);border-color:var(--accent);color:#06140c;font-weight:700;}
+  .day-done{font-size:8px;text-transform:uppercase;letter-spacing:.5px;background:rgba(255,255,255,.12);padding:1px 5px;border-radius:4px;opacity:.85;}
+  .day-btn.active .day-done{background:rgba(0,0,0,.18);}
   .filter-meta{font-family:var(--font-mono);font-size:10px;color:var(--text-3);letter-spacing:.5px;}
   .team-chip{display:inline-grid;place-items:center;min-width:48px;height:34px;padding:0 10px;border-radius:7px;
     background:var(--surface-2);border:1px solid var(--border);font-family:var(--font-display);font-weight:800;
@@ -263,7 +269,7 @@
 
   <script>
   /* ===== CONFIG ===== */
-  const AUTH_HASH = '46a4c6b519324e367bee933ac9f08683b10e15170159e4a97f066e5eb0e54ee2'; // demo: jtt-mlb-demo — workflow injects real hash
+  const AUTH_HASH = 'aab47a4d89b7b3de88f7a1684dd71f8eccfe06cafda2e5b1bf33505a1051955b'; // demo: jtt-mlb-demo — workflow injects real hash
   const AUTH_TTL_DAYS = 30, AUTH_STORAGE_KEY = 'jtt_mlb_auth_v1';
   const DATA_FILES = { bundle: 'data/mlb_bundle.json' };
   const TABS = [
@@ -271,7 +277,7 @@
     { name: 'league',   label: 'League',           icon: 'ti-trophy' },
   ];
   const state = { data:{}, dataVersion:null,
-    view:{ activeTab:TABS[0].name, selectedId:null, window:10 } };
+    view:{ activeTab:TABS[0].name, selectedId:null, window:10, day:null } };
 
   /* ===== AUTH (scaffold) ===== */
   async function _sha256(t){const b=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(t));return Array.from(new Uint8Array(b)).map(x=>x.toString(16).padStart(2,'0')).join('');}
@@ -314,7 +320,8 @@
     return '<span class="tlogo-wrap '+(size||'md')+'"><img class="tlogo" src="'+logoUrl(tid)+'" alt="'+a+'" '+
       'onerror="this.parentNode.classList.add(\'fallback\');this.parentNode.textContent=\''+a+'\'"></span>';}
 
-  function gameForTeam(tid){return SLATE().find(g=>g.away.teamId===tid||g.home.teamId===tid);}
+  let _ctxGame=null;
+  function gameForTeam(tid){if(_ctxGame&&(_ctxGame.away.teamId===tid||_ctxGame.home.teamId===tid))return _ctxGame;return SLATE().find(g=>g.away.teamId===tid||g.home.teamId===tid);}
   function starterFacing(tid){const g=gameForTeam(tid);if(!g)return null;const opp=g.home.teamId===tid?g.away:g.home;return PITCHERS()[opp.probablePitcher.id]||null;}
   function parkForTeam(tid){const g=gameForTeam(tid);return g?PARK(g.parkId):PARK(null);}
   function weatherMult(tid){const g=gameForTeam(tid);const w=g&&g.weather;return (w&&w.hrMult)?w.hrMult:1;}
@@ -400,7 +407,7 @@
   function gameBatters(g){return [...teamBatters(g.away.teamId),...teamBatters(g.home.teamId)];}
   function greenLights(bs){return bs.map(b=>{const best=bestBatMarket(b);return {b,best,mu:best.r.mu};}).filter(x=>x.mu.score>=18&&x.best.r.prob>=.55).sort((a,b)=>(b.mu.score*.5+b.best.r.prob*50)-(a.mu.score*.5+a.best.r.prob*50));}
   function deathRiders(bs){return bs.map(b=>{const best=bestBatMarket(b);return {b,best,mu:best.r.mu};}).filter(x=>x.mu.score<=-18&&x.best.r.prob<=.5).sort((a,b)=>(a.mu.score+a.best.r.prob*60)-(b.mu.score+b.best.r.prob*60));}
-  function streakers(bs){const o=[];for(const b of bs){const h=streakOf(b.gameLog,'H',1),t=streakOf(b.gameLog,'TB',2);if(h>=4)o.push({b,kind:'1+ Hit',n:h,stat:'H',line:1});if(t>=4)o.push({b,kind:'2+ TB',n:t,stat:'TB',line:2});}return o.sort((a,b)=>b.n-a.n);}
+  function streakers(bs){const o=[];for(const b of bs){const h=streakOf(b.gameLog,'H',1),t=streakOf(b.gameLog,'TB',2);if(h>=5)o.push({b,kind:'1+ Hit',n:h,stat:'H',line:1});if(t>=5)o.push({b,kind:'2+ TB',n:t,stat:'TB',line:2});}return o.sort((a,b)=>b.n-a.n);}
   function bvpList(bs,dir){const o=[];for(const b of bs){const st=starterFacing(b.teamId);if(!st||!b.bvp||!b.bvp[st.id])continue;const v=b.bvp[st.id];if(v.PA<8)continue;if(dir==='bunny'&&v.AVG>=.330)o.push({b,st,v});if(dir==='bogey'&&v.AVG<=.170)o.push({b,st,v});}return o.sort((a,b)=>dir==='bunny'?b.v.AVG-a.v.AVG:a.v.AVG-b.v.AVG);}
   function parkBombers(bs){return bs.map(b=>{const r=projBat(b,{k:'HR',line:0.5,stat:'HR'});return {b,r,prob:r.prob};}).filter(x=>x.prob>=.13&&x.b.season.HR>=8&&((parkForTeam(x.b.teamId).hrFactor*weatherMult(x.b.teamId))>=1.0||x.r.mu.score>=15)).sort((a,b)=>b.prob-a.prob);}
   function bagSnatchers(bs){return bs.map(b=>{const r=projBat(b,{k:'SB',line:0.5,stat:'SB'});return {b,r,prob:r.prob};}).filter(x=>x.prob>=.18&&x.b.season.SB>=8).sort((a,b)=>b.prob-a.prob);}
@@ -456,11 +463,24 @@
   function gameTimeFull(g){const d=_gdate(g);if(!d)return (B().asOf||'')+(g.time?' · '+g.time:'');try{return d.toLocaleString([],{weekday:'short',day:'numeric',month:'short',hour:'numeric',minute:'2-digit',timeZoneName:'short'});}catch(e){return (B().asOf||'')+(g.time?' · '+g.time:'');}}
 
   // ---------- FIXTURE PICKER ----------
+  function _isFinal(g){const s=(g.status||'').toLowerCase();return s.indexOf('final')>=0||s.indexOf('game over')>=0||s.indexOf('completed')>=0;}
+  function slateDates(){return [...new Set(SLATE().map(g=>g.date))].filter(Boolean).sort();}
+  function dayLabel(dateStr,i){const g=SLATE().find(x=>x.date===dateStr);const d=g?_gdate(g):null;
+    const rel=i===0?'Today':i===1?'Tomorrow':'';const wk=d?d.toLocaleDateString([],{weekday:'short',day:'numeric',month:'short'}):dateStr;
+    return rel?rel+' · '+wk:wk;}
+  function defaultDay(){const ds=slateDates();if(ds.length<2)return ds[0]||null;
+    const first=SLATE().filter(g=>g.date===ds[0]);return (first.length&&first.every(_isFinal))?ds[1]:ds[0];}
+  function setDay(d){state.view.day=d;state.view.selectedId=null;_renderApp();window.scrollTo({top:0});}
   function renderFixturePicker(){
-    const games=SLATE();
-    let h='<div class="page-header"><div><div class="page-title">Focused Fixtures</div><div class="page-sub">'+(B().asOf||'')+' · tap a game for the full breakdown</div></div></div>';
-    h+='<div class="filterbar"><span class="filter-meta">'+games.length+' GAME'+(games.length===1?'':'S')+' · TODAY</span></div>';
-    if(!games.length)return h+'<div class="empty"><div class="ico"><i class="ti ti-calendar-off"></i></div>No games loaded for today.</div>';
+    const dates=slateDates();
+    if(!state.view.day||dates.indexOf(state.view.day)<0)state.view.day=defaultDay();
+    const sel=state.view.day;
+    const games=SLATE().filter(g=>g.date===sel);
+    let h='<div class="page-header"><div><div class="page-title">Focused Fixtures</div><div class="page-sub">tap a game for the full breakdown</div></div></div>';
+    if(dates.length>1){h+='<div class="day-toggle">'+dates.map((d,i)=>'<button class="day-btn'+(d===sel?' active':'')+'" onclick="setDay(\''+d+'\')">'+dayLabel(d,i)+(SLATE().filter(g=>g.date===d).every(_isFinal)?' <span class="day-done">done</span>':'')+'</button>').join('')+'</div>';}
+    const allDone=games.length&&games.every(_isFinal);
+    h+='<div class="filterbar"><span class="filter-meta">'+games.length+' GAME'+(games.length===1?'':'S')+(allDone?' · ALL FINAL':'')+'</span></div>';
+    if(!games.length)return h+'<div class="empty"><div class="ico"><i class="ti ti-calendar-off"></i></div>No games loaded for this day.</div>';
     for(const g of games){const pk=PARK(g.parkId);
       h+='<div class="fixture-row" onclick="state.view.selectedId='+g.gamePk+';_renderApp();window.scrollTo({top:0})">'+
         '<div class="fxr-team">'+teamLogo(g.away.teamId,g.away.abbr,'lg')+'<div class="fxr-name">'+g.away.abbr+'</div><div class="fxr-sp">'+esc(g.away.probablePitcher.name)+' ('+g.away.probablePitcher.throws+'HP)</div></div>'+
@@ -473,6 +493,7 @@
   // ---------- FOCUSED GAME ----------
   function renderGameDetail(gamePk){
     const g=SLATE().find(x=>x.gamePk===gamePk);if(!g)return renderFixturePicker();
+    _ctxGame=g;
     const pk=PARK(g.parkId);
     let h='<button class="back-btn" onclick="state.view.selectedId=null;_renderApp()"><i class="ti ti-arrow-left"></i> Back to fixtures</button>';
     // header
@@ -487,7 +508,7 @@
       '<div class="meta-item"><i class="ti ti-bolt"></i><span class="meta-key">HR</span><span class="meta-val">'+pk.hrFactor.toFixed(2)+'x</span></div>'+
       '<div class="meta-item"><i class="ti ti-run"></i><span class="meta-key">Runs</span><span class="meta-val">'+pk.runFactor.toFixed(2)+'x</span></div>'+
       '<div class="meta-item"><i class="ti ti-cloud"></i><span class="meta-key">Roof</span><span class="meta-val">'+pk.roof+'</span></div>'+
-      (g.weather&&g.weather.effect&&g.weather.effect!=='indoor'?'<div class="meta-item"><i class="ti ti-wind"></i><span class="meta-key">Wind</span><span class="meta-val">'+g.weather.windMph+'mph '+windArrow(g.weather.windFromDeg)+' ('+g.weather.effect+')</span></div>':'')+
+      (g.weather&&g.weather.effect&&g.weather.effect!=='indoor'?'<div class="meta-item"><i class="ti ti-wind"></i><span class="meta-key">Wind</span><span class="meta-val">'+(g.weather.windMph!=null?g.weather.windMph:'?')+'mph '+(g.weather.windFromDeg!=null?windArrow(g.weather.windFromDeg):'')+' ('+g.weather.effect+')</span></div>':'')+
       (g.lines&&g.lines.total!=null?'<div class="meta-item"><i class="ti ti-target"></i><span class="meta-key">Total</span><span class="meta-val">'+g.lines.total+'</span></div>':'')+
     '</div>';
     // venue conditions
@@ -510,16 +531,16 @@
     const cls=w.effect==='out'?'accent':w.effect==='in'?'bad':'info';
     const ico=w.effect==='out'?'ti-arrow-up-right':w.effect==='in'?'ti-arrow-down-left':'ti-wind';
     const lbl=w.effect==='out'?'Wind OUT':w.effect==='in'?'Wind IN':'Crosswind';
-    return '<span class="jtt-pill '+cls+'"><i class="ti '+ico+'"></i> '+lbl+' · '+w.windMph+'mph '+windArrow(w.windFromDeg)+'</span>';
+    return '<span class="jtt-pill '+cls+'"><i class="ti '+ico+'"></i> '+lbl+' · '+(w.windMph!=null?w.windMph:'?')+'mph '+(w.windFromDeg!=null?windArrow(w.windFromDeg):'')+'</span>';
   }
   function renderVenueConditions(g,pk){
     const w=g.weather;
     const effectNote=!w?'Forecast unavailable.'
       :w.effect==='indoor'?'Roofed venue — wind &amp; temp neutralised.'
-      :w.effect==='out'?('Wind helping the ball carry — HR factor nudged to '+(pk.hrFactor*w.hrMult).toFixed(2)+'x for this game.')
-      :w.effect==='in'?('Wind knocking the ball down — HR factor cut to '+(pk.hrFactor*w.hrMult).toFixed(2)+'x for this game.')
+      :w.effect==='out'?('Wind helping the ball carry — HR factor nudged to '+(pk.hrFactor*(w.hrMult||1)).toFixed(2)+'x for this game.')
+      :w.effect==='in'?('Wind knocking the ball down — HR factor cut to '+(pk.hrFactor*(w.hrMult||1)).toFixed(2)+'x for this game.')
       :'Crosswind — limited HR impact this game.';
-    const effHr=w?(pk.hrFactor*w.hrMult):pk.hrFactor;
+    const effHr=w?(pk.hrFactor*(w.hrMult||1)):pk.hrFactor;
     return '<details class="tp-collapse" open><summary class="tp-collapse-sum"><i class="ti ti-map-pin"></i><span class="tp-collapse-title">Match Details</span><i class="ti ti-chevron-down tp-collapse-chev"></i></summary>'+
       '<div class="tp-collapse-body"><div class="tp-body-meta">'+esc(pk.name)+' · '+pk.roof+(w&&w.tempF!=null&&w.effect!=='indoor'?' · '+w.tempF+'\u00B0F':'')+'</div>'+
       '<div style="margin:6px 0 2px">'+weatherPill(w)+(w&&w.precipPct>=30?' <span class="jtt-pill warn"><i class="ti ti-droplet"></i> '+w.precipPct+'% rain</span>':'')+'</div>'+
@@ -634,6 +655,7 @@
 
   // ---------- DEGEN SIGNALS (per game) ----------
   function renderTeamSignals(g,side){
+    _ctxGame=g;
     const team=g[side]; const tid=team.teamId;
     const bs=teamBatters(tid);
     const sect=(title,icon,color,arr,render)=>arr.length?collapse(title,icon,color,'',arr.map(render).join(''),false):'';
@@ -643,21 +665,19 @@
     const wr=whiffRisk(bs), cb=coldBats(bs), ts=tableSetters(bs), ps=platoonSmash(bs);
     const due=dueRegression(bs), hot=runningHot(bs);
     const ownP=PITCHERS()[team.probablePitcher.id];
-    const ks=ownP?[{p:ownP,k:pitcherKProj(ownP)}]:[];
-    const gthOne=getToHimPitcher(g,ownP); const gth=gthOne?[gthOne]:[];
-    const fired=gl.length+dr.length+sk.length+pb.length+bun.length+bog.length+ks.length+sb.length+bb.length+wr.length+cb.length+ts.length+ps.length+gth.length+due.length+hot.length;
+    const ownK=ownP?pitcherKProj(ownP):null;const ks=(ownK&&ownK.proj>=6&&ownK.oppF>=1.02)?[{p:ownP,k:ownK}]:[];
+    const fired=gl.length+dr.length+sk.length+pb.length+bun.length+bog.length+ks.length+sb.length+bb.length+wr.length+cb.length+ts.length+ps.length+due.length+hot.length;
     let h='<div class="signals-head"><i class="ti ti-flame" style="color:var(--accent)"></i><span class="lbl">Degen Signals</span><span class="fired">'+fired+' FIRED</span></div>';
     h+=sect('Green Lights','ti-circle-check','c-green',gl,glCard);
     h+=sect('Sluggers','ti-arrows-left-right','c-green',ps,x=>'<div class="sig-card" onclick="openPlayerModal('+x.b.id+')"><div class="sig-row"><div><div class="pname">'+esc(x.b.name)+' <span class="ptag">'+x.b.abbr+' '+x.b.bats+' vs '+x.p.throws+'HP</span></div><div class="sig-sub">vs '+x.p.throws+'HP SLG '+x.sp.SLG.toFixed(3).replace(/^0/,'')+' vs '+x.b.season.SLG.toFixed(3).replace(/^0/,'')+' overall ('+x.sp.PA+' PA)</div></div><div class="sig-metric">+'+Math.round((x.ratio-1)*100)+'%<small>SLG edge</small></div></div></div>');
     h+=sect('Runners','ti-arrow-up-right','c-green',ts,x=>'<div class="sig-card" onclick="openPlayerModal('+x.b.id+')"><div class="sig-row"><div><div class="pname">'+esc(x.b.name)+' <span class="ptag">'+x.b.abbr+' bat '+x.b.order+'</span></div><div class="sig-sub">1+ run · '+winLbl()+' R '+avgOf(x.b.gameLog,'R').toFixed(2)+'/g · vs '+esc(x.p.name)+' '+x.p.season.WHIP.toFixed(2)+' WHIP</div></div><div class="sig-metric">'+Math.round(x.prob*100)+'%<small>run prob</small></div></div></div>');
     h+=sect('Due / Unlucky','ti-trending-up','c-green',due,x=>'<div class="sig-card" onclick="openPlayerModal('+x.b.id+')"><div class="sig-row"><div><div class="pname">'+esc(x.b.name)+' <span class="ptag">'+x.b.abbr+' '+x.b.pos+'</span></div><div class="sig-sub">xwOBA '+x.s.xwoba.toFixed(3).replace(/^0/,'')+' vs wOBA '+x.s.woba.toFixed(3).replace(/^0/,'')+(x.s.barrelPct!=null?' · '+x.s.barrelPct+'% barrel':'')+' — quality says back him</div></div><div class="sig-metric">+'+(x.gap*1000).toFixed(0)+'<small>xwOBA pts</small></div></div></div>');
-    h+=sect('Strike','ti-ball-baseball','c-blue',ks,x=>'<div class="sig-card" onclick="openPlayerModal('+x.p.id+')"><div class="sig-row"><div><div class="pname">'+esc(x.p.name)+' <span class="ptag">'+x.p.abbr+' '+x.p.throws+'HP · vs '+(x.k.opp?x.k.opp.abbr:'?')+'</span></div><div class="sig-sub">O'+x.k.line+' K · '+winLbl()+' K/9 '+x.k.k9.toFixed(1)+' · hit '+Math.round(x.k.hitRate*100)+'%</div></div><div class="sig-metric">'+x.k.proj.toFixed(1)+'<small>proj K</small></div></div></div>');
+    h+=sect('Strike Time','ti-ball-baseball','c-blue',ks,x=>'<div class="sig-card" onclick="openPlayerModal('+x.p.id+')"><div class="sig-row"><div><div class="pname">'+esc(x.p.name)+' <span class="ptag">'+x.p.abbr+' '+x.p.throws+'HP · vs '+(x.k.opp?x.k.opp.abbr:'?')+'</span></div><div class="sig-sub">O'+x.k.line+' K · '+winLbl()+' K/9 '+x.k.k9.toFixed(1)+' · hit '+Math.round(x.k.hitRate*100)+'%</div></div><div class="sig-metric">'+x.k.proj.toFixed(1)+'<small>proj K</small></div></div></div>');
     h+=sect('Homers','ti-bolt','c-amber',pb,x=>{const w=(gameForTeam(x.b.teamId)||{}).weather;const wt=w&&w.effect==='out'?' · wind OUT':w&&w.effect==='in'?' · wind IN':'';return '<div class="sig-card warn" onclick="openPlayerModal('+x.b.id+')"><div class="sig-row"><div><div class="pname">'+esc(x.b.name)+' <span class="ptag">'+x.b.abbr+' '+x.b.pos+'</span></div><div class="sig-sub">'+parkForTeam(x.b.teamId).name+' '+(parkForTeam(x.b.teamId).hrFactor*weatherMult(x.b.teamId)).toFixed(2)+'x'+wt+' · '+x.b.season.HR+' HR</div></div><div class="sig-metric warn">'+Math.round(x.prob*100)+'%<small>HR prob</small></div></div></div>';});
-    h+=sect('Bag Snatchers','ti-run','c-green',sb,x=>'<div class="sig-card" onclick="openPlayerModal('+x.b.id+')"><div class="sig-row"><div><div class="pname">'+esc(x.b.name)+' <span class="ptag">'+x.b.abbr+' '+x.b.pos+'</span></div><div class="sig-sub">'+winLbl()+' SB rate '+avgOf(x.b.gameLog,'SB').toFixed(2)+'/g · '+x.b.season.SB+' SB this season</div></div><div class="sig-metric">'+Math.round(x.prob*100)+'%<small>SB prob</small></div></div></div>');
-    h+=sect('Sneaky Buggers','ti-walk','c-purple',bb,x=>'<div class="sig-card" onclick="openPlayerModal('+x.b.id+')"><div class="sig-row"><div><div class="pname">'+esc(x.b.name)+' <span class="ptag">'+x.b.abbr+' '+x.b.pos+'</span></div><div class="sig-sub">'+winLbl()+' BB '+avgOf(x.b.gameLog,'BB').toFixed(2)+'/g'+(x.st&&x.st.season.BB9?' · vs '+esc(x.st.name)+' '+x.st.season.BB9.toFixed(1)+' BB/9':'')+'</div></div><div class="sig-metric">'+Math.round(x.prob*100)+'%<small>walk prob</small></div></div></div>');
+    h+=sect('Sneaky Buggers','ti-run','c-green',sb,x=>'<div class="sig-card" onclick="openPlayerModal('+x.b.id+')"><div class="sig-row"><div><div class="pname">'+esc(x.b.name)+' <span class="ptag">'+x.b.abbr+' '+x.b.pos+'</span></div><div class="sig-sub">'+winLbl()+' SB rate '+avgOf(x.b.gameLog,'SB').toFixed(2)+'/g · '+x.b.season.SB+' SB this season</div></div><div class="sig-metric">'+Math.round(x.prob*100)+'%<small>SB prob</small></div></div></div>');
+    h+=sect('Walk Don\'t Run','ti-walk','c-purple',bb,x=>'<div class="sig-card" onclick="openPlayerModal('+x.b.id+')"><div class="sig-row"><div><div class="pname">'+esc(x.b.name)+' <span class="ptag">'+x.b.abbr+' '+x.b.pos+'</span></div><div class="sig-sub">'+winLbl()+' BB '+avgOf(x.b.gameLog,'BB').toFixed(2)+'/g'+(x.st&&x.st.season.BB9?' · vs '+esc(x.st.name)+' '+x.st.season.BB9.toFixed(1)+' BB/9':'')+'</div></div><div class="sig-metric">'+Math.round(x.prob*100)+'%<small>walk prob</small></div></div></div>');
     h+=sect('Streakers','ti-flame','c-amber',sk,x=>'<div class="sig-card warn" onclick="openPlayerModal('+x.b.id+')"><div class="sig-row"><div><div class="pname">'+esc(x.b.name)+' <span class="ptag">'+x.b.abbr+'</span></div><div class="sig-sub">'+x.kind+' · '+spark(x.b.gameLog,x.stat,x.line)+'</div></div><div class="sig-metric warn">'+x.n+'<small>game streak</small></div></div></div>');
     h+=sect('Bunnies','ti-mood-happy','c-amber',bun,x=>bvpCard(x,'warn'));
-    h+=sect('Get To Him','ti-alert-triangle','c-red',gth,x=>'<div class="sig-card red" onclick="openPlayerModal('+x.p.id+')"><div class="sig-row"><div><div class="pname">'+esc(x.p.name)+' <span class="ptag">'+x.p.abbr+' '+x.p.throws+'HP</span></div><div class="sig-sub">fade the arm · '+x.tags.join(' · ')+'</div></div><div class="sig-metric red">'+x.sc+'<small>fade score</small></div></div></div>');
     h+=sect('Whiff Risk','ti-circle-x','c-red',wr,x=>'<div class="sig-card red" onclick="openPlayerModal('+x.b.id+')"><div class="sig-row"><div><div class="pname">'+esc(x.b.name)+' <span class="ptag">'+x.b.abbr+' '+x.b.pos+'</span></div><div class="sig-sub">1+ K · '+winLbl()+' SO '+avgOf(x.b.gameLog,'SO').toFixed(2)+'/g'+(x.k.p?' · vs '+esc(x.k.p.name)+' '+x.k.p.season.K9.toFixed(1)+' K/9':'')+'</div></div><div class="sig-metric red">'+Math.round(x.prob*100)+'%<small>K prob</small></div></div></div>');
     h+=sect('Running Hot','ti-trending-down','c-red',hot,x=>'<div class="sig-card red" onclick="openPlayerModal('+x.b.id+')"><div class="sig-row"><div><div class="pname">'+esc(x.b.name)+' <span class="ptag">'+x.b.abbr+' '+x.b.pos+'</span></div><div class="sig-sub">wOBA '+x.s.woba.toFixed(3).replace(/^0/,'')+' vs xwOBA '+x.s.xwoba.toFixed(3).replace(/^0/,'')+' — overperforming, regression risk</div></div><div class="sig-metric red">'+(x.gap*1000).toFixed(0)+'<small>xwOBA pts</small></div></div></div>');
     h+=sect('Cold Bats','ti-snowflake','c-red',cb,x=>'<div class="sig-card red" onclick="openPlayerModal('+x.b.id+')"><div class="sig-row"><div><div class="pname">'+esc(x.b.name)+' <span class="ptag">'+x.b.abbr+' '+x.b.pos+'</span></div><div class="sig-sub">'+x.n+' straight hitless · '+spark(x.b.gameLog,'H',1)+'</div></div><div class="sig-metric red">'+x.n+'<small>cold streak</small></div></div></div>');
@@ -672,9 +692,8 @@
   // ---------- LEAGUE PAGE ----------
   function renderLeague(){
     let h='<div class="page-header"><div><div class="page-title">League</div><div class="page-sub">Standings · stat leaders · scoring trends</div></div></div>';
-    h+=renderScoringTrends();
-    h+=renderStandings();
-    h+=renderLeagueLeaders();
+    const body=renderScoringTrends()+renderStandings()+renderLeagueLeaders();
+    h+=body||'<div class="empty"><div class="ico"><i class="ti ti-database-off"></i></div>League data (standings, leaders, scoring trends) hasn\'t loaded yet — it populates from the daily data update.</div>';
     return h;
   }
   function renderScoringTrends(){
@@ -706,12 +725,13 @@
         return '<div class="ldr-row" '+click+'><span class="ldr-rank">'+(i+1)+'</span><span class="pname">'+esc(r.name)+'</span> <span class="ptag">'+r.abbr+'</span><span class="ldr-val">'+(fmt?fmt(r.val):r.val)+'</span></div>';}).join('')+'</div>';};
     const v3=v=>(typeof v==='number'?v.toFixed(3).replace(/^0/,''):v);
     const v2=v=>(typeof v==='number'?v.toFixed(2):v);
+    const BAT=L.batting||{},PIT=L.pitching||{};
     let h=sct('ti-trophy','Stat Leaders');
     h+='<details class="tp-collapse" open><summary class="tp-collapse-sum"><i class="ti ti-ball-baseball"></i><span class="tp-collapse-title">Batting</span><i class="ti ti-chevron-down tp-collapse-chev"></i></summary><div class="tp-collapse-body">';
-    h+=col('Home Runs',L.batting.HR)+col('Batting Avg',L.batting.AVG,v3)+col('RBI',L.batting.RBI)+col('OPS',L.batting.OPS,v3)+col('Stolen Bases',L.batting.SB);
+    h+=col('Home Runs',BAT.HR)+col('Batting Avg',BAT.AVG,v3)+col('RBI',BAT.RBI)+col('OPS',BAT.OPS,v3)+col('Stolen Bases',BAT.SB);
     h+='</div></details>';
     h+='<details class="tp-collapse"><summary class="tp-collapse-sum"><i class="ti ti-ball-baseball"></i><span class="tp-collapse-title">Pitching</span><i class="ti ti-chevron-down tp-collapse-chev"></i></summary><div class="tp-collapse-body">';
-    h+=col('ERA',L.pitching.ERA,v2)+col('Strikeouts',L.pitching.K)+col('WHIP',L.pitching.WHIP,v2);
+    h+=col('ERA',PIT.ERA,v2)+col('Strikeouts',PIT.K)+col('WHIP',PIT.WHIP,v2);
     h+='</div></details>';
     return h;
   }
