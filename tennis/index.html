@@ -39,6 +39,10 @@
   .tn-seed{font-family:var(--font-mono);font-size:.6rem;color:var(--text-3);
     border:1px solid var(--border);border-radius:4px;padding:.05em .3em;flex:none;}
   .tn-flag{font-family:var(--font-mono);font-size:.62rem;color:var(--text-3);flex:none;}
+  .flag-img{width:18px;height:auto;border-radius:2px;vertical-align:-3px;display:inline-block;
+    box-shadow:0 0 0 1px rgba(255,255,255,.08);flex:none;}
+  .flag-ph{font-family:var(--font-mono);font-size:.6rem;color:var(--text-3);
+    border:1px solid var(--border);border-radius:3px;padding:0 .25em;flex:none;}
   .tn-prob{font-family:var(--font-mono);font-weight:700;font-size:.86rem;flex:none;}
 
   /* win-probability split bar */
@@ -174,7 +178,7 @@
 
   <script>
   /* ===== 1. CONFIG ===== */
-  const AUTH_HASH = 'f1996a7cda48bca0dc87f700b183266eed3a770330d924fb1507b3036e37b0ff';
+  const AUTH_HASH = 'REPLACE_WITH_SHA256_OF_YOUR_PASSWORD';
   const AUTH_TTL_DAYS = 30;
   const AUTH_STORAGE_KEY = 'jtt_tennis_auth_v1';
 
@@ -284,6 +288,13 @@
   const pct = x => (x==null||isNaN(x))?'—':(Math.round(x*100)+'%');
   const num = (x,d=1) => (x==null||isNaN(x))?'—':Number(x).toFixed(d);
   function surfChip(s){const c=['Grass','Clay','Hard'].includes(s)?s:'na';return '<span class="surf-chip surf-'+c+'">'+(s||'—')+'</span>';}
+  const IOC2ISO={AUS:'au',USA:'us',GBR:'gb',ESP:'es',FRA:'fr',GER:'de',ITA:'it',SUI:'ch',NED:'nl',RUS:'ru',SRB:'rs',GRE:'gr',AUT:'at',BEL:'be',ARG:'ar',BRA:'br',CAN:'ca',CHN:'cn',JPN:'jp',KOR:'kr',CZE:'cz',POL:'pl',CRO:'hr',DEN:'dk',NOR:'no',SWE:'se',FIN:'fi',POR:'pt',HUN:'hu',BUL:'bg',ROU:'ro',SVK:'sk',SLO:'si',SVN:'si',UKR:'ua',KAZ:'kz',GEO:'ge',IND:'in',TPE:'tw',THA:'th',CHI:'cl',COL:'co',ECU:'ec',PER:'pe',URU:'uy',VEN:'ve',MEX:'mx',RSA:'za',TUN:'tn',MAR:'ma',EGY:'eg',ISR:'il',TUR:'tr',LAT:'lv',LTU:'lt',EST:'ee',BLR:'by',MDA:'md',BIH:'ba',CYP:'cy',LUX:'lu',IRL:'ie',NZL:'nz',MON:'mc',KSA:'sa',UAE:'ae',ALG:'dz',ZIM:'zw',PAR:'py',BOL:'bo',CRC:'cr',DOM:'do',PUR:'pr',PHI:'ph',INA:'id',VIE:'vn',HKG:'hk',SGP:'sg',JAM:'jm',ARM:'am',AZE:'az',UZB:'uz',MKD:'mk',MNE:'me',ALB:'al',LIE:'li',MLT:'mt',ISL:'is'};
+  function flagFor(ioc){
+    if(!ioc)return '';
+    const code=IOC2ISO[String(ioc).toUpperCase()];
+    if(!code)return '<span class="flag-ph">'+esc(String(ioc).slice(0,3))+'</span>';
+    return '<img class="flag-img" src="https://flagcdn.com/w40/'+code+'.png" srcset="https://flagcdn.com/w80/'+code+'.png 2x" loading="lazy" alt="'+esc(ioc)+'">';
+  }
   function formStr(f){if(!f)return '<span class="form-str">—</span>';return '<span class="form-str">'+f.split('').map(c=>c==='W'?'<span class="w">W</span>':'<span class="l">L</span>').join('')+'</span>';}
   function eloPills(p){
     if(!p)return '';
@@ -327,7 +338,7 @@
     let prob0=null;if(pr&&pr.players){prob0=pr.players[0].win_prob;}
     const fav0=prob0!=null&&prob0>=0.5;
     const seed=p=>p.seed?'<span class="tn-seed">'+p.seed+'</span>':(p.rank?'<span class="tn-seed">#'+p.rank+'</span>':'');
-    const flag=p=>p.ioc?'<span class="tn-flag">'+esc(p.ioc)+'</span>':'';
+    const flag=p=>flagFor(p.ioc);
     return '<button class="tn-match" onclick="openMatch(\''+esc(f.match_id)+'\')">'+
       '<div class="tn-match-top"><div class="tn-match-meta">'+surfChip(prSurf(f))+' <span>'+esc(f.round||'')+'</span></div>'+
       (pr?'<span class="tn-match-meta">model</span>':'<span class="tn-match-meta" style="color:var(--text-3)">no model</span>')+'</div>'+
@@ -353,7 +364,7 @@
       '<input class="search-box" placeholder="Search player…" value="'+esc(fl.q)+'" oninput="setFilter(\'q\',this.value)">'+tourPills();
     if(!top.length)return out+'<div class="empty"><div class="ico"><i class="ti ti-user-off"></i></div>No players match.</div>';
     out+=top.map(p=>'<button class="pl-row" onclick="openPlayer(\''+esc(p.id)+'\')">'+
-      '<div class="tn-name">'+esc(p.name)+' <span class="tn-flag">'+esc(p.ioc||'')+'</span></div>'+
+      '<div class="tn-name">'+flagFor(p.ioc)+' '+esc(p.name)+'</div>'+
       '<div style="display:flex;gap:.6rem;align-items:center">'+formStr((p.form_last10||'').slice(-5))+
       '<span class="pl-elo">'+Math.round(p.elo_overall)+'</span></div></button>').join('');
     if(list.length>120)out+='<div class="dfilt-note" style="text-align:center;margin-top:.5rem">Showing top 120 by Elo — search to narrow.</div>';
@@ -366,7 +377,7 @@
     let out='<button class="back-btn" onclick="state.view.player=null;_renderApp()"><i class="ti ti-arrow-left"></i> Players</button>';
     out+='<div class="page-header"><div class="page-title">'+esc(p.name)+'</div></div>';
     out+='<div class="meta-bar">'+
-      '<span class="meta-item"><i class="ti ti-flag"></i>'+esc(p.ioc||'—')+'</span>'+
+      '<span class="meta-item">'+flagFor(p.ioc)+' '+esc(p.ioc||'—')+'</span>'+
       '<span class="meta-item"><i class="ti ti-ball-tennis"></i>'+p.tour.toUpperCase()+'</span>'+
       '<span class="meta-item"><i class="ti ti-history"></i>'+p.n_matches+' matches</span>'+
       '<span class="meta-item">'+formStr((p.form_last10||'').slice(-10))+'</span></div>';
@@ -414,9 +425,9 @@
       return out;
     }
     const a=pr.players[0],b=pr.players[1];const pa=P(a.sackmann_id),pb=P(b.sackmann_id);
-    out+='<div class="tn-row"><div class="tn-name'+(a.win_prob>=0.5?' fav':'')+'" style="font-size:1.05rem">'+esc(a.name)+'</div><span class="tn-prob">'+pct(a.win_prob)+'</span></div>';
+    out+='<div class="tn-row"><div class="tn-name'+(a.win_prob>=0.5?' fav':'')+'" style="font-size:1.05rem">'+flagFor(pa?pa.ioc:null)+' '+esc(a.name)+'</div><span class="tn-prob">'+pct(a.win_prob)+'</span></div>';
     out+=winBar(a.win_prob);
-    out+='<div class="tn-row"><div class="tn-name'+(b.win_prob>0.5?' fav':'')+'" style="font-size:1.05rem">'+esc(b.name)+'</div><span class="tn-prob">'+pct(b.win_prob)+'</span></div>';
+    out+='<div class="tn-row"><div class="tn-name'+(b.win_prob>0.5?' fav':'')+'" style="font-size:1.05rem">'+flagFor(pb?pb.ioc:null)+' '+esc(b.name)+'</div><span class="tn-prob">'+pct(b.win_prob)+'</span></div>';
     // projection tiles
     out+='<div class="proj-tiles">'+
       '<div class="proj-tile"><div class="v">'+num(pr.proj_total_games)+'</div><div class="k">Proj. total games</div></div>'+
@@ -469,19 +480,37 @@
 
   /* ---- DEGEN CREW ---- */
   const CREW=[
-    {id:'greenlights',name:'Green Lights',icon:'ti-traffic-lights',sub:'Model\u2019s most confident calls'},
+    {id:'multi',name:'Multi Builders',icon:'ti-stack-2',sub:'Highest-chance winners to stack'},
     {id:'aces',name:'Ace Merchants',icon:'ti-flame',sub:'Highest projected aces'},
-    {id:'kryptonite',name:'Kryptonite',icon:'ti-skull',sub:'Owns this opponent (H2H)'},
-    {id:'streakers',name:'Streakers',icon:'ti-trending-up',sub:'Riding a win streak'},
+    {id:'bunnies',name:'Bunnies',icon:'ti-carrot',sub:'Owns this opponent (H2H)'},
+    {id:'streakers',name:'Streakers',icon:'ti-trending-up',sub:'Win / loss / ace / set / surface runs'},
     {id:'grinders',name:'Grinders',icon:'ti-arrows-maximize',sub:'Long matches \u2192 games over'},
     {id:'elite',name:'Elite Matchups',icon:'ti-stars',sub:'Two top-rated players'},
   ];
+  function streaksFor(p,surf){
+    const r=p.recent||[];
+    const lead=pred=>{let n=0;for(const m of r){if(pred(m))n++;else break;}return n;};
+    const aceTh=p.tour==='wta'?5:8;
+    const win=lead(m=>m.won===1), loss=lead(m=>m.won===0), ace=lead(m=>m.ace!=null&&m.ace>=aceTh);
+    let setS=0;for(const m of r){if(m.won===1&&(m.sl==null||m.sl===0)&&m.sw){setS+=m.sw;}else break;}
+    let surfS=0;if(surf){for(const m of r.filter(x=>x.surf===surf)){if(m.won===1)surfS++;else break;}}
+    return {win,loss,ace,set:setS,surf:surfS,aceTh};
+  }
+  function bestStreak(p,surf){
+    const s=streaksFor(p,surf), c=[];
+    if(s.surf>=3)c.push({note:s.surf+' straight on '+surf,score:s.surf*10+6});
+    if(s.win>=3) c.push({note:s.win+' wins in a row',score:s.win*10});
+    if(s.ace>=3) c.push({note:s.ace+' matches '+s.aceTh+'+ aces',score:s.ace*8+2});
+    if(s.set>=6) c.push({note:'won last '+s.set+' sets',score:s.set*3});
+    if(s.loss>=3)c.push({note:s.loss+' losses in a row (fade)',score:s.loss*9});
+    return c.sort((a,b)=>b.score-a.score)[0]||null;
+  }
   function crewData(id){
     const fx=upcomingSingles().filter(f=>PR(f.match_id));
-    if(id==='greenlights')return fx.map(f=>{const pr=PR(f.match_id),mx=Math.max(pr.players[0].win_prob,pr.players[1].win_prob),fav=pr.players[0].win_prob>=pr.players[1].win_prob?pr.players[0]:pr.players[1];return{f,mx,note:esc(fav.name)+' '+pct(mx),sort:mx};}).filter(x=>x.mx>=0.70).sort((a,b)=>b.sort-a.sort);
+    if(id==='multi')return fx.map(f=>{const pr=PR(f.match_id),mx=Math.max(pr.players[0].win_prob,pr.players[1].win_prob),fav=pr.players[0].win_prob>=pr.players[1].win_prob?pr.players[0]:pr.players[1];return{f,mx,note:esc(fav.name)+' '+pct(mx),sort:mx};}).filter(x=>x.mx>=0.65).sort((a,b)=>b.sort-a.sort);
     if(id==='aces')return fx.map(f=>{const pr=PR(f.match_id);const best=(pr.players[0].proj_aces||0)>=(pr.players[1].proj_aces||0)?pr.players[0]:pr.players[1];return{f,note:esc(best.name)+' ~'+num(best.proj_aces)+' aces',sort:best.proj_aces||0};}).filter(x=>x.sort>=8).sort((a,b)=>b.sort-a.sort);
-    if(id==='kryptonite')return fx.map(f=>{const pr=PR(f.match_id),k=[pr.players[0].sackmann_id,pr.players[1].sackmann_id].sort().join('_'),h=IDX.h2h[k];if(!h)return null;const tot=h.a_wins+h.b_wins,diff=Math.abs(h.a_wins-h.b_wins);if(tot<3||diff<2)return null;const domId=h.a_wins>h.b_wins?h.a:h.b,dom=P(domId);return{f,note:(dom?esc(dom.name):'—')+' leads '+Math.max(h.a_wins,h.b_wins)+'\u2013'+Math.min(h.a_wins,h.b_wins),sort:diff};}).filter(Boolean).sort((a,b)=>b.sort-a.sort);
-    if(id==='streakers')return fx.map(f=>{const pr=PR(f.match_id);let best=null;pr.players.forEach(pp=>{const p=P(pp.sackmann_id);if(!p||!p.form_last10)return;const m=p.form_last10.match(/W+$/);const st=m?m[0].length:0;if(st>=4&&(!best||st>best.st))best={name:p.name,st};});if(!best)return null;return{f,note:esc(best.name)+' '+best.st+' wins in a row',sort:best.st};}).filter(Boolean).sort((a,b)=>b.sort-a.sort);
+    if(id==='bunnies')return fx.map(f=>{const pr=PR(f.match_id),k=[pr.players[0].sackmann_id,pr.players[1].sackmann_id].sort().join('_'),h=IDX.h2h[k];if(!h)return null;const tot=h.a_wins+h.b_wins,diff=Math.abs(h.a_wins-h.b_wins);if(tot<3||diff<2)return null;const domId=h.a_wins>h.b_wins?h.a:h.b,dom=P(domId);return{f,note:(dom?esc(dom.name):'—')+' leads '+Math.max(h.a_wins,h.b_wins)+'\u2013'+Math.min(h.a_wins,h.b_wins),sort:diff};}).filter(Boolean).sort((a,b)=>b.sort-a.sort);
+    if(id==='streakers')return fx.map(f=>{const pr=PR(f.match_id),surf=prSurf(f);let best=null;pr.players.forEach(pp=>{const p=P(pp.sackmann_id);if(!p)return;const bs=bestStreak(p,surf);if(bs&&(!best||bs.score>best.score))best={name:p.name,...bs};});if(!best)return null;return{f,note:esc(best.name)+' \u2014 '+best.note,sort:best.score};}).filter(Boolean).sort((a,b)=>b.sort-a.sort);
     if(id==='grinders')return fx.map(f=>{const pr=PR(f.match_id);return{f,note:'~'+num(pr.proj_total_games)+' games',sort:pr.proj_total_games||0};}).sort((a,b)=>b.sort-a.sort).slice(0,12);
     if(id==='elite')return fx.map(f=>{const pr=PR(f.match_id),lo=Math.min(pr.players[0].elo,pr.players[1].elo);return{f,note:Math.round(pr.players[0].elo)+' vs '+Math.round(pr.players[1].elo),sort:lo};}).filter(x=>x.sort>=1700).sort((a,b)=>b.sort-a.sort);
     return [];
