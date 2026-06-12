@@ -19,11 +19,7 @@ from pathlib import Path
 # Try common fixtures-file paths. The first one that exists is used.
 # Add your actual path here if none of these match.
 FIXTURES_PATHS = [
-    Path("wc/data/wc_fixtures.json"),
-    Path("wc/data/fixtures.json"),
-    Path("wc/data/wc_intl_fixtures.json"),
-    Path("data/wc_fixtures.json"),
-    Path("wc_fixtures.json"),
+    Path("wc/data/worldcup_fixtures_2026.json"),
 ]
 
 WINDOW_START_MIN = 50
