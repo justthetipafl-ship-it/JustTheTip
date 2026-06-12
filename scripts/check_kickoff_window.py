@@ -112,7 +112,7 @@ def main():
     if gh_output:
         with open(gh_output, "a") as f:
             f.write("refresh=false\n")
-    sys.exit(1)
+    sys.exit(0)
 
 
 if __name__ == "__main__":
