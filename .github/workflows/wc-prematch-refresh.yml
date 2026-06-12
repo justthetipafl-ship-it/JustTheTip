@@ -1,0 +1,85 @@
+name: WC Pre-Match Refresh
+
+# Runs every 10 minutes. The gate script exits immediately unless a
+# fixture is in the 50-65 min pre-kickoff window, so the vast majority
+# of runs are ~15 second no-ops.
+on:
+  schedule:
+    - cron: '*/10 * * * *'
+  workflow_dispatch:
+
+# Prevent overlapping runs in case a refresh is slow.
+concurrency:
+  group: wc-prematch
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Check if any kickoff is in the window
+        id: gate
+        run: python scripts/check_kickoff_window.py
+        continue-on-error: true
+
+      # Everything below only runs when the gate exited 0 (refresh=true).
+      - name: Install Python dependencies
+        if: steps.gate.outputs.refresh == 'true'
+        run: |
+          if [ -f requirements.txt ]; then
+            pip install -r requirements.txt
+          else
+            pip install requests python-dateutil
+          fi
+
+      - name: Fetch events / fixtures
+        if: steps.gate.outputs.refresh == 'true'
+        env:
+          API_FOOTBALL_KEY: ${{ secrets.API_FOOTBALL_KEY }}
+        run: python fetch_wc_events.py
+
+      - name: Fetch lineups
+        if: steps.gate.outputs.refresh == 'true'
+        env:
+          API_FOOTBALL_KEY: ${{ secrets.API_FOOTBALL_KEY }}
+        run: python fetch_wc_lineups.py
+
+      - name: Fetch odds
+        if: steps.gate.outputs.refresh == 'true'
+        env:
+          API_FOOTBALL_KEY: ${{ secrets.API_FOOTBALL_KEY }}
+        run: python fetch_wc_odds.py
+
+      - name: Fetch weather
+        if: steps.gate.outputs.refresh == 'true'
+        env:
+          API_FOOTBALL_KEY: ${{ secrets.API_FOOTBALL_KEY }}
+        run: python fetch_wc_weather.py
+
+      - name: Run incremental update
+        if: steps.gate.outputs.refresh == 'true'
+        env:
+          API_FOOTBALL_KEY: ${{ secrets.API_FOOTBALL_KEY }}
+        run: python fetch_wc_update.py
+
+      - name: Commit refreshed data
+        if: steps.gate.outputs.refresh == 'true'
+        run: |
+          git config user.email "actions@github.com"
+          git config user.name  "github-actions[bot]"
+          git add wc/
+          if git diff --staged --quiet; then
+            echo "No data changes to commit."
+          else
+            git commit -m "Pre-match refresh $(date -u +'%Y-%m-%d %H:%M UTC')"
+            git push
+          fi
