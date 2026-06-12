@@ -122,6 +122,35 @@
   .mu-tough{background:rgba(239,68,68,.1);color:#f87171;border-color:rgba(239,68,68,.3);}
   .mu-neutral{background:var(--surface);color:var(--text-3);}
   .sig-exp{background:var(--surface);border:1px solid var(--border);border-left:3px solid var(--accent);border-radius:6px;margin-bottom:6px;overflow:hidden;}
+  /* ---- CMB upgrade ---- */
+  .cmb-tabs{display:flex;gap:6px;margin-bottom:14px;}
+  .cmb-tab{flex:1;background:var(--surface);border:1px solid var(--border);color:var(--text-2);font-family:var(--font-mono);font-size:11px;letter-spacing:.3px;padding:9px;border-radius:7px;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:6px;}
+  .cmb-tab.active{background:var(--accent);border-color:var(--accent);color:#06140c;font-weight:700;}
+  .cmb-ac{position:absolute;left:0;right:0;top:100%;z-index:30;background:var(--surface-2);border:1px solid var(--border);border-radius:0 0 7px 7px;max-height:230px;overflow:auto;display:none;}
+  .cmb-ac-item{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:9px 11px;cursor:pointer;border-bottom:1px solid var(--border);}
+  .cmb-ac-item:hover{background:var(--surface);}
+  .cmb-ac-item .pname{font-family:var(--font-display);font-weight:700;font-size:13px;}
+  .cmb-recent{margin-bottom:12px;}
+  .cmb-recent-lbl{font-family:var(--font-mono);font-size:9px;text-transform:uppercase;letter-spacing:.5px;color:var(--text-3);margin-bottom:6px;}
+  .cmb-chips{display:flex;flex-wrap:wrap;gap:6px;}
+  .cmb-chip{background:var(--surface);border:1px solid var(--border);color:var(--text-2);font-family:var(--font-mono);font-size:10px;padding:5px 9px;border-radius:20px;cursor:pointer;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .cmb-chip:hover{border-color:var(--accent);color:var(--text);}
+  .cmb-field-row{display:flex;gap:8px;align-items:flex-start;margin-bottom:10px;}
+  .cmb-add{background:var(--accent);color:#06140c;border:none;font-family:var(--font-mono);font-size:11px;font-weight:700;padding:0 14px;height:42px;border-radius:7px;cursor:pointer;display:flex;align-items:center;gap:5px;white-space:nowrap;}
+  .cmb-leg{display:flex;align-items:center;gap:10px;background:var(--surface);border:1px solid var(--border);border-left:3px solid var(--accent);border-radius:6px;padding:9px 11px;margin-bottom:6px;}
+  .cmb-leg>div:first-child{flex:1;min-width:0;}
+  .cmb-leg-x{background:none;border:none;color:var(--text-3);font-size:20px;cursor:pointer;line-height:1;padding:0 4px;}
+  .cmb-leg-x:hover{color:#f87171;}
+  .cmb-multi-head{display:flex;align-items:center;gap:7px;margin:14px 0 10px;font-family:var(--font-display);font-weight:800;font-size:15px;}
+  .cmb-mt{letter-spacing:.5px;} .cmb-vs{font-family:var(--font-mono);font-size:10px;color:var(--text-3);font-weight:400;}
+  .cmb-mleg-n{margin-left:auto;font-family:var(--font-mono);font-size:9px;text-transform:uppercase;letter-spacing:.5px;color:var(--text-3);background:var(--surface-2);padding:3px 8px;border-radius:5px;}
+  .cmb-h2h{background:var(--surface-2);border:1px solid var(--border);border-radius:8px;padding:14px;display:flex;align-items:center;gap:14px;margin-bottom:10px;}
+  .cmb-h2h-big{font-family:var(--font-display);font-weight:800;font-size:34px;color:var(--accent);line-height:1;}
+  .cmb-h2h-big span{font-size:18px;color:var(--text-3);}
+  .cmb-h2h-lbl{font-size:11px;color:var(--text-2);line-height:1.45;}
+  .cmb-h2h-pct{display:inline-block;margin-left:4px;color:var(--accent);font-family:var(--font-mono);font-weight:700;}
+  .cmb-break{margin-top:10px;} .cmb-legverdicts{margin-top:8px;border-top:1px solid var(--border);padding-top:4px;}
+  .sig-exp-placeholder{display:none;}
   .sig-exp.c-green{border-left-color:var(--accent);}
   .sig-exp.c-amber{border-left-color:#f5a623;}
   .sig-exp.c-red{border-left-color:#f87171;}
@@ -292,7 +321,7 @@
 
   <script>
   /* ===== CONFIG ===== */
-  const AUTH_HASH = '46a4c6b519324e367bee933ac9f08683b10e15170159e4a97f066e5eb0e54ee2'; // demo: jtt-mlb-demo — workflow injects real hash
+  const AUTH_HASH = 'aab47a4d89b7b3de88f7a1684dd71f8eccfe06cafda2e5b1bf33505a1051955b'; // demo: jtt-mlb-demo — workflow injects real hash
   const AUTH_TTL_DAYS = 30, AUTH_STORAGE_KEY = 'jtt_mlb_auth_v1';
   const DATA_FILES = { bundle: 'data/mlb_bundle.json' };
   const TABS = [
@@ -859,17 +888,88 @@
     {re:/\bruns?\b(?! batted)/i,m:{k:'R',label:'Runs',stat:'R'}},
     {re:/\bhits?\b/i,m:{k:'H',label:'Hits',stat:'H'}},
   ];
-  function _cmbRender(){document.getElementById('cmb-body').innerHTML=
-    '<div class="jtt-field"><label class="auth-label" style="margin-bottom:4px">Paste a prop</label><input id="cmb-in" class="auth-input" placeholder="e.g. Aaron Judge over 1.5 total bases" onkeydown="if(event.key===\'Enter\')_cmbRun()"></div>'+
-    '<button class="auth-btn" onclick="_cmbRun()"><i class="ti ti-checks"></i> Check</button><div id="cmb-result" style="margin-top:12px"></div>';
-    setTimeout(()=>{const el=document.getElementById('cmb-in');if(el)el.focus();},50);}
+  let _cmbTab='single', _cmbLegs=[];
+  const CMB_RECENT_KEY='jtt_mlb_cmb_recent';
+  function _cmbRecent(){try{return JSON.parse(localStorage.getItem(CMB_RECENT_KEY)||'[]');}catch(e){return [];}}
+  function _cmbSaveRecent(q){try{let r=_cmbRecent().filter(x=>x.toLowerCase()!==q.toLowerCase());r.unshift(q);localStorage.setItem(CMB_RECENT_KEY,JSON.stringify(r.slice(0,8)));}catch(e){}}
+  function _cmbParse(q){const pl=_findPlayer(q);const numM=q.match(/(\d+(\.\d+)?)/);const line=numM?parseFloat(numM[1]):0.5;const isUnder=/under|\bu\b/i.test(q);let mk=null;for(const kw of CMB_KEYWORDS){if(kw.re.test(q)){mk=kw.m;break;}}return {pl,line,isUnder,mk};}
+  function _cmbMatches(typed){typed=(typed||'').toLowerCase().trim();if(typed.length<2)return [];
+    const namePart=(typed.split(/\s+(?:over|under|o|u)\s|\s*\d/)[0]||typed).trim();if(namePart.length<2)return [];
+    const all=[...Object.values(BATTERS()),...Object.values(PITCHERS())];const out=[],seen={};
+    for(const p of all){if(seen[p.id])continue;if(p.name.toLowerCase().includes(namePart)){out.push(p);seen[p.id]=1;}if(out.length>=6)break;}
+    return out;}
+  function _cmbSuggest(inputId,listId,onpick){const v=document.getElementById(inputId).value;const list=document.getElementById(listId);const m=_cmbMatches(v);
+    if(!m.length){list.style.display='none';list.innerHTML='';return;}
+    list.innerHTML=m.map(p=>'<div class="cmb-ac-item" onclick="'+onpick+'('+p.id+')"><span class="pname">'+esc(p.name)+'</span><span class="ptag">'+p.abbr+' '+(BATTERS()[p.id]?p.pos:'SP')+'</span></div>').join('');list.style.display='block';}
+  function _cmbPick(pid){const p=BATTERS()[pid]||PITCHERS()[pid];const inp=document.getElementById('cmb-in');inp.value=p.name+' ';document.getElementById('cmb-ac').style.display='none';inp.focus();}
+  function _cmbMPick(pid){const p=BATTERS()[pid]||PITCHERS()[pid];const inp=document.getElementById('cmb-mleg');inp.value=p.name+' ';document.getElementById('cmb-mac').style.display='none';inp.focus();}
+  function _cmbFill(btn){const inp=document.getElementById('cmb-in');inp.value=btn.getAttribute('data-q');_cmbRun();}
+
+  function _cmbRender(){
+    document.getElementById('cmb-body').innerHTML=
+      '<div class="cmb-tabs"><button class="cmb-tab'+(_cmbTab==='single'?' active':'')+'" onclick="_cmbSetTab(\'single\')"><i class="ti ti-checks"></i> Single</button>'+
+      '<button class="cmb-tab'+(_cmbTab==='multi'?' active':'')+'" onclick="_cmbSetTab(\'multi\')"><i class="ti ti-stack"></i> Same-Game Multi</button></div>'+
+      '<div id="cmb-tabbody">'+(_cmbTab==='single'?_cmbRenderSingle():_cmbRenderMulti())+'</div>';
+    setTimeout(()=>{const el=document.getElementById(_cmbTab==='single'?'cmb-in':'cmb-mleg');if(el)el.focus();},60);}
+  function _cmbSetTab(t){_cmbTab=t;_cmbRender();}
+  function _cmbRecentHTML(){const r=_cmbRecent();if(!r.length)return '';
+    return '<div class="cmb-recent"><div class="cmb-recent-lbl">Recent searches</div><div class="cmb-chips">'+r.map(q=>'<button class="cmb-chip" data-q="'+q.replace(/"/g,'&quot;')+'" onclick="_cmbFill(this)">'+esc(q)+'</button>').join('')+'</div></div>';}
+  function _cmbRenderSingle(){
+    return '<div id="cmb-recent-wrap">'+_cmbRecentHTML()+'</div>'+
+      '<div class="jtt-field" style="position:relative"><label class="auth-label" style="margin-bottom:4px">Your bet</label>'+
+      '<input id="cmb-in" class="auth-input" autocomplete="off" placeholder="e.g. Aaron Judge over 1.5 total bases" oninput="_cmbSuggest(\'cmb-in\',\'cmb-ac\',\'_cmbPick\')" onkeydown="if(event.key===\'Enter\')_cmbRun()">'+
+      '<div class="cmb-ac" id="cmb-ac"></div></div>'+
+      '<button class="auth-btn" onclick="_cmbRun()"><i class="ti ti-checks"></i> Check bet</button><div id="cmb-result" style="margin-top:14px"></div>';}
+  function _cmbRun(){const q=(document.getElementById('cmb-in').value||'').trim();const out=document.getElementById('cmb-result');
+    document.getElementById('cmb-ac').style.display='none';
+    if(!q){out.innerHTML='';return;}const P=_cmbParse(q);
+    if(!P.pl){out.innerHTML='<div class="empty">Couldn\u2019t match a player. Try "First Last over X market".</div>';return;}
+    _cmbSaveRecent(q);out.innerHTML='<div class="calc-out">'+verdictBody(P.pl,P.mk,P.line,P.isUnder)+'</div>';
+    const w=document.getElementById('cmb-recent-wrap');if(w)w.innerHTML=_cmbRecentHTML();}
+
+  // ----- Same-Game Multi -----
+  function _cmbRenderMulti(){
+    return '<div class="cmb-field-row"><div class="jtt-field" style="position:relative;flex:1;margin:0">'+
+      '<input id="cmb-mleg" class="auth-input" autocomplete="off" placeholder="Add a leg: Aaron Judge over 0.5 HR" oninput="_cmbSuggest(\'cmb-mleg\',\'cmb-mac\',\'_cmbMPick\')" onkeydown="if(event.key===\'Enter\')_cmbAddLeg()">'+
+      '<div class="cmb-ac" id="cmb-mac"></div></div><button class="cmb-add" onclick="_cmbAddLeg()"><i class="ti ti-plus"></i> Add</button></div>'+
+      '<div id="cmb-legs">'+_cmbLegsHTML()+'</div><div id="cmb-multi-result">'+(_cmbLegs.length>=2?_cmbMultiResult():'')+'</div>';}
+  function _cmbAddLeg(){const q=(document.getElementById('cmb-mleg').value||'').trim();if(!q)return;const P=_cmbParse(q);if(!P.pl)return;
+    const isPit=!!PITCHERS()[P.pl.id];const mk=P.mk||(isPit?{stat:'K',label:'Strikeouts'}:{stat:'H',label:'Hits'});
+    _cmbLegs.push({pid:P.pl.id,name:P.pl.name,teamId:P.pl.teamId,abbr:P.pl.abbr,market:mk.stat,mlabel:mk.label,line:P.line,isUnder:P.isUnder});
+    document.getElementById('cmb-mleg').value='';document.getElementById('cmb-mac').style.display='none';_cmbRefreshMulti();}
+  function _cmbRemoveLeg(i){_cmbLegs.splice(i,1);_cmbRefreshMulti();}
+  function _cmbRefreshMulti(){const L=document.getElementById('cmb-legs');if(L)L.innerHTML=_cmbLegsHTML();const R=document.getElementById('cmb-multi-result');if(R)R.innerHTML=_cmbLegs.length>=2?_cmbMultiResult():'';}
+  function _cmbLegsHTML(){if(!_cmbLegs.length)return '<div class="empty" style="padding:18px 10px">Add 2 or more legs to back-test a same-game multi.</div>';
+    return _cmbLegs.map((l,i)=>'<div class="cmb-leg"><div style="min-width:0"><div class="pname">'+esc(l.name)+' <span class="ptag">'+l.abbr+'</span></div><div class="sig-sub">'+(l.isUnder?'Under':'Over')+' '+l.line+' '+l.mlabel+'</div></div><button class="cmb-leg-x" onclick="_cmbRemoveLeg('+i+')">&times;</button></div>').join('');}
+  function _legProb(pl,l){const isPit=!!PITCHERS()[pl.id];let base;
+    if(isPit&&l.market==='K')base=hitRate(pl.gameLog,'K',l.line);
+    else if(!isPit){const r=projBat(pl,{k:l.market,stat:l.market,line:l.line});base=(l.market==='HR'||l.market==='SB'||l.market==='BB')?r.prob:hitRate(pl.gameLog,l.market,l.line);}
+    else base=hitRate(pl.gameLog,l.market,l.line);
+    return l.isUnder?1-base:base;}
+  function _cmbTwoTeams(){const tids=[...new Set(_cmbLegs.map(l=>l.teamId))];
+    if(tids.length>2)return {err:'These legs span more than two teams — not a single same-game multi.'};
+    for(const g of SLATE()){const gt=[g.away.teamId,g.home.teamId];if(tids.every(t=>gt.indexOf(t)>=0))return {game:g,A:g.away,B:g.home};}
+    return {err:'These players aren\u2019t matched up in the same game on the current slate.'};}
+  function _cmbMultiResult(){
+    const tt=_cmbTwoTeams();if(tt.err)return '<div class="empty">'+tt.err+'</div>';
+    const A=tt.A,B=tt.B;_ctxGame=tt.game;
+    const rows=_cmbLegs.map(l=>{const pl=BATTERS()[l.pid]||PITCHERS()[l.pid];return {l,pl,p:_legProb(pl,l)};});
+    let combined=1;rows.forEach(r=>combined*=r.p);
+    // H2H back-test via game-log opponent matching
+    const meet=_cmbLegs.map(l=>{const otherAbbr=(l.teamId===A.teamId)?B.abbr:A.abbr;const pl=BATTERS()[l.pid]||PITCHERS()[l.pid];const map={};(pl.gameLog||[]).forEach(r=>{if(r.opp===otherAbbr)map[r.date]=r;});return {l,map,dates:Object.keys(map)};});
+    let common=meet.length?meet[0].dates.slice():[];meet.forEach(m=>{common=common.filter(d=>m.dates.indexOf(d)>=0);});
+    let allHit=0;common.forEach(d=>{const ok=_cmbLegs.every((l,i)=>{const row=meet[i].map[d];if(!row)return false;const need=Math.ceil(l.line);const over=(row[l.market]||0)>=need;return l.isUnder?!over:over;});if(ok)allHit++;});
+    let h='<div class="cmb-multi-head">'+teamLogo(A.teamId,A.abbr,'sm')+'<span class="cmb-mt">'+A.abbr+'</span><span class="cmb-vs">vs</span><span class="cmb-mt">'+B.abbr+'</span>'+teamLogo(B.teamId,B.abbr,'sm')+'<span class="cmb-mleg-n">'+_cmbLegs.length+'-leg SGM</span></div>';
+    if(common.length){const pct=Math.round(allHit/common.length*100);
+      h+='<div class="cmb-h2h"><div class="cmb-h2h-big">'+allHit+'<span>/'+common.length+'</span></div><div class="cmb-h2h-lbl">past <b>'+A.abbr+' v '+B.abbr+'</b> meetings (in available logs) where <b>every leg</b> hit <span class="cmb-h2h-pct">'+pct+'%</span></div></div>';}
+    else h+='<div class="cmb-h2h"><div class="cmb-h2h-lbl">No shared past meetings between these teams in the available game logs to back-test against.</div></div>';
+    h+='<div class="cmb-break"><div class="bd-row"><span class="bd-k">Model estimate · legs independent</span><span class="bd-v">'+Math.round(combined*100)+'%</span></div></div>';
+    h+='<div class="bd-why"><i class="ti ti-info-circle"></i> Same-game legs are correlated — one big team night lifts several at once — so the real multi lands more often than the simple product suggests. The meeting count is the empirical back-test.</div>';
+    h+='<div class="cmb-legverdicts">'+rows.map(r=>'<div class="bd-row"><span class="bd-k" style="text-transform:none">'+esc(r.pl.name)+' '+(r.l.isUnder?'U':'O')+r.l.line+' '+r.l.mlabel+'</span><span class="bd-v">'+Math.round(r.p*100)+'%</span></div>').join('')+'</div>';
+    return h;}
   function _findPlayer(q){q=q.toLowerCase();const all=[...Object.values(BATTERS()),...Object.values(PITCHERS())];
     let hit=all.find(p=>p.name.toLowerCase()===q);if(!hit){const parts=q.split(/over|under|\d/)[0].trim();
       hit=all.find(p=>p.name.toLowerCase().includes(parts))||all.find(p=>parts.length>3&&parts.includes(p.name.toLowerCase().split(' ').pop()));}return hit;}
-  function _cmbRun(){const q=(document.getElementById('cmb-in').value||'').trim();const out=document.getElementById('cmb-result');
-    if(!q){out.innerHTML='';return;}const pl=_findPlayer(q);if(!pl){out.innerHTML='<div class="empty">Couldn\u2019t match a player. Try "First Last over X market".</div>';return;}
-    const numM=q.match(/(\d+(\.\d+)?)/);const line=numM?parseFloat(numM[1]):0.5;const isUnder=/under/i.test(q);
-    let mk=null;for(const kw of CMB_KEYWORDS){if(kw.re.test(q)){mk=kw.m;break;}}out.innerHTML='<div class="calc-out">'+verdictBody(pl,mk,line,isUnder)+'</div>';}
   function propCalc(pid){return '<div class="jtt-field"><input id="calc-in-'+pid+'" class="auth-input" placeholder="over 1.5 total bases" onkeydown="if(event.key===\'Enter\')_calcRun('+pid+')"></div><button class="back-btn" onclick="_calcRun('+pid+')"><i class="ti ti-calculator"></i> Calculate</button><div id="calc-out-'+pid+'"></div>';}
   function _calcRun(pid){const q=(document.getElementById('calc-in-'+pid).value||'').trim();const pl=BATTERS()[pid]||PITCHERS()[pid];
     const numM=q.match(/(\d+(\.\d+)?)/);const line=numM?parseFloat(numM[1]):0.5;const isUnder=/under/i.test(q);
@@ -887,7 +987,15 @@
     h+='<div class="ladder" style="margin-top:10px"><div class="ladder-cell hot"><div class="ll">Hit Rate</div><div class="lv">'+Math.round(prob*100)+'%</div></div>'+
       (muTxt?'<div class="ladder-cell"><div class="ll">Matchup</div><div class="lv" style="font-size:10px">'+muTxt+'</div></div>':'')+
       '<div class="ladder-cell"><div class="ll">Window</div><div class="lv" style="font-size:12px">'+winLbl()+'</div></div></div>';
-    if(!isPit)h+='<div style="margin-top:8px">'+spark(pl.gameLog,mk.stat,line)+'</div>';
+    const g=gameForTeam(pl.teamId);const oppAbbr=g?(g.away.teamId===pl.teamId?g.home.abbr:g.away.abbr):null;
+    h+='<div class="cmb-break">';
+    h+=bdRow('Recent '+mk.label,spark(pl.gameLog,mk.stat,line)+' <span class="bd-avg">'+avgOf(pl.gameLog,mk.stat).toFixed(2)+'/g</span>');
+    if(oppAbbr){const og=(pl.gameLog||[]).filter(r=>r.opp===oppAbbr);if(og.length){const need=Math.ceil(line);const ohr=og.filter(r=>(r[mk.stat]||0)>=need).length/og.length;h+=bdRow('Vs '+oppAbbr+' (logs)',Math.round(ohr*100)+'% cleared · '+og.length+'g');}}
+    if(!isPit){if(pl.season&&pl.season.G&&pl.season[mk.stat]!=null)h+=bdRow('Season rate',(pl.season[mk.stat]/pl.season.G).toFixed(2)+'/g');
+      if(pl.statcast&&pl.statcast.xwoba!=null)h+=bdRow('xwOBA',pl.statcast.xwoba.toFixed(3).replace(/^0/,''));
+      const p2=starterFacing(pl.teamId);if(p2)h+=bdRow('Faces',esc(p2.name)+' '+p2.throws+'HP · '+p2.season.K9.toFixed(1)+' K/9');}
+    else{const k2=pitcherKProj(pl);if(k2.opp)h+=bdRow('Opponent',k2.opp.abbr+' · '+(k2.opp.kRate*100).toFixed(0)+'% K-rate');}
+    h+='</div>';
     return h;
   }
   </script>
