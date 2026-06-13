@@ -84,7 +84,17 @@
   .stat-grid{display:grid;grid-template-columns:1fr 1fr;gap:.3rem .9rem;font-family:var(--font-mono);font-size:.82rem;}
   .stat-grid .s{display:flex;justify-content:space-between;border-bottom:1px dashed var(--border);padding:.18rem 0;}
   .stat-grid .s span:first-child{color:var(--text-3);}
-  .crew-tile-sub small{display:block;color:var(--text-3);font-size:.62rem;margin-top:.1rem;}
+  .crew-grid{display:grid;grid-template-columns:1fr 1fr;gap:.5rem;margin-bottom:.8rem;}
+  .crew-tile{display:flex;flex-direction:column;gap:.35rem;text-align:left;cursor:pointer;
+    background:var(--surface-2);border:1px solid var(--border);border-radius:12px;padding:.7rem .75rem;
+    color:var(--text);font:inherit;transition:border-color .15s,background .15s;}
+  .crew-tile:hover{border-color:var(--accent-dim);}
+  .crew-tile.active{border-color:var(--accent);background:rgba(34,197,94,.08);}
+  .crew-tile-icon{width:34px;height:34px;border-radius:9px;display:flex;align-items:center;justify-content:center;
+    background:rgba(34,197,94,.12);color:var(--accent);font-size:18px;}
+  .crew-tile-name{font-family:var(--font-display);font-weight:800;font-size:.95rem;color:var(--text);letter-spacing:.2px;}
+  .crew-tile-sub{font-family:var(--font-mono);font-size:.72rem;color:var(--accent);font-weight:600;}
+  .crew-tile-sub small{display:block;color:var(--text-3);font-size:.62rem;margin-top:.1rem;font-weight:400;}
   .search-box{width:100%;background:var(--surface-2);border:1px solid var(--border);border-radius:10px;
     padding:.55rem .8rem;color:var(--text);font:inherit;font-size:.9rem;margin-bottom:.6rem;}
   .cmb-field{margin-bottom:.7rem;}
@@ -178,7 +188,7 @@
 
   <script>
   /* ===== 1. CONFIG ===== */
-  const AUTH_HASH = 'f1996a7cda48bca0dc87f700b183266eed3a770330d924fb1507b3036e37b0ff';
+  const AUTH_HASH = 'REPLACE_WITH_SHA256_OF_YOUR_PASSWORD';
   const AUTH_TTL_DAYS = 30;
   const AUTH_STORAGE_KEY = 'jtt_tennis_auth_v1';
 
@@ -478,7 +488,27 @@
         cmp('Return pts won',ca.rpw,cb.rpw,pct)+
         cmp('Aces against',ca.ace_against,cb.ace_against,x=>num(x,2),'min')+
         '</div>';
-    }
+      const axa=getAdv(a),axb=getAdv(b);
+      if(axa&&axb){
+        out+='<div class="section-title">Shot making &amp; clutch</div><div class="cmp">'+
+          '<div class="l" style="font-weight:700">'+esc(lastName(a.name))+'</div><div class="lbl"></div><div class="r" style="font-weight:700">'+esc(lastName(b.name))+'</div>'+
+          cmp('Winners/m',axa.winners_pm,axb.winners_pm,x=>num(x,1))+
+          cmp('Winner:UFE',axa.w_ufe,axb.w_ufe,x=>num(x,2))+
+          cmp('BP saved',axa.bp_save_pct,axb.bp_save_pct,pct)+
+          cmp('BP won (ret)',axa.bp_conv_pct,axb.bp_conv_pct,pct)+
+          cmp('Net pts/m',axa.net_pts_pm,axb.net_pts_pm,x=>num(x,1))+
+          '</div>';
+        if(axa.rally_long_pct!=null&&axb.rally_long_pct!=null){
+          out+='<div class="section-title">Rally win rate</div><div class="cmp">'+
+            cmp('0\u20133 shots',axa.rally_short_pct,axb.rally_short_pct,pct)+
+            cmp('4\u20136 shots',axa.rally_mid_pct,axb.rally_mid_pct,pct)+
+            cmp('7+ shots',axa.rally_long_pct,axb.rally_long_pct,pct)+
+            '</div>';
+          const cl=styleClash(axa,axb,lastName(a.name),lastName(b.name),surf);
+          if(cl)out+='<div class="dfilt-note" style="margin-top:.4rem"><i class="ti ti-swords"></i> '+esc(cl.text)+'</div>';
+        }
+      }
+      }
     // H2H
     out+=h2hBlock(a.sackmann_id,b.sackmann_id,a.name,b.name);
     out+='<div class="dfilt-note" style="margin-top:.7rem">'+esc(pr.model||'')+'</div>';
@@ -509,10 +539,14 @@
   /* ---- DEGEN CREW ---- */
   const CREW=[
     {id:'multi',name:'Multi Builders',icon:'ti-stack-2',sub:'Highest-chance winners to stack'},
+    {id:'shotmakers',name:'Shot Makers',icon:'ti-target-arrow',sub:'High winners, positive winner:UFE'},
     {id:'aces',name:'Ace Merchants',icon:'ti-flame',sub:'Highest projected aces'},
     {id:'bunnies',name:'Bunnies',icon:'ti-carrot',sub:'Owns this opponent (H2H)'},
+    {id:'ice',name:'Ice',icon:'ti-snowflake',sub:'Clutch on break points'},
+    {id:'netraiders',name:'Net Raiders',icon:'ti-run',sub:'Lives at the net'},
     {id:'streakers',name:'Streakers',icon:'ti-trending-up',sub:'Win / loss / ace / set / surface runs'},
-    {id:'grinders',name:'Grinders',icon:'ti-arrows-maximize',sub:'Long matches \u2192 games over'},
+    {id:'grinders',name:'Grinders',icon:'ti-arrows-maximize',sub:'Long rallies \u2192 games over'},
+    {id:'clash',name:'Style Clash',icon:'ti-swords',sub:'Contrasting styles collide'},
     {id:'elite',name:'Elite Matchups',icon:'ti-stars',sub:'Two top-rated players'},
   ];
   function streaksFor(p,surf){
@@ -526,12 +560,23 @@
   }
   function bestStreak(p,surf){
     const s=streaksFor(p,surf), c=[];
-    if(s.surf>=3)c.push({note:s.surf+' straight on '+surf,score:s.surf*10+6});
-    if(s.win>=3) c.push({note:s.win+' wins in a row',score:s.win*10});
-    if(s.ace>=3) c.push({note:s.ace+' matches '+s.aceTh+'+ aces',score:s.ace*8+2});
-    if(s.set>=6) c.push({note:'won last '+s.set+' sets',score:s.set*3});
-    if(s.loss>=3)c.push({note:s.loss+' losses in a row (fade)',score:s.loss*9});
+    if(s.surf>=5)c.push({note:s.surf+' straight on '+surf,score:s.surf*10+6});
+    if(s.win>=5) c.push({note:s.win+' wins in a row',score:s.win*10});
+    if(s.ace>=5) c.push({note:s.ace+' matches '+s.aceTh+'+ aces',score:s.ace*8+2});
+    if(s.set>=8) c.push({note:'won last '+s.set+' sets',score:s.set*3});
+    if(s.loss>=5)c.push({note:s.loss+' losses in a row (fade)',score:s.loss*9});
     return c.sort((a,b)=>b.score-a.score)[0]||null;
+  }
+  function getAdv(pp){const e=pp&&IDX.adv[pp.sackmann_id];return e?e.adv:null;}
+  function styleClash(a,b,na,nb,surf){
+    if(a.rally_short_pct==null||a.rally_long_pct==null||b.rally_short_pct==null||b.rally_long_pct==null)return null;
+    const da=a.rally_short_pct-a.rally_long_pct, db=b.rally_short_pct-b.rally_long_pct;
+    if(Math.abs(da-db)<0.05)return null;
+    let agg,grd; if(da>db){agg=na;grd=nb;}else{agg=nb;grd=na;}
+    let lean='';
+    if(surf==='Clay')lean=' Clay rewards the grind \u2014 edge '+grd+'.';
+    else if(surf==='Grass')lean=' Grass shortens points \u2014 edge '+agg+'.';
+    return {agg,grd,strength:Math.abs(da-db),text:agg+'\u2019s short-point game vs '+grd+'\u2019s grind.'+lean};
   }
   function crewData(id){
     const fx=upcomingSingles().filter(f=>PR(f.match_id));
@@ -539,7 +584,18 @@
     if(id==='aces')return fx.map(f=>{const pr=PR(f.match_id);const best=(pr.players[0].proj_aces||0)>=(pr.players[1].proj_aces||0)?pr.players[0]:pr.players[1];return{f,note:esc(best.name)+' ~'+num(best.proj_aces)+' aces',sort:best.proj_aces||0};}).filter(x=>x.sort>=8).sort((a,b)=>b.sort-a.sort);
     if(id==='bunnies')return fx.map(f=>{const pr=PR(f.match_id),k=[pr.players[0].sackmann_id,pr.players[1].sackmann_id].sort().join('_'),h=IDX.h2h[k];if(!h)return null;const tot=h.a_wins+h.b_wins,diff=Math.abs(h.a_wins-h.b_wins);if(tot<3||diff<2)return null;const domId=h.a_wins>h.b_wins?h.a:h.b,dom=P(domId);return{f,note:(dom?esc(dom.name):'—')+' leads '+Math.max(h.a_wins,h.b_wins)+'\u2013'+Math.min(h.a_wins,h.b_wins),sort:diff};}).filter(Boolean).sort((a,b)=>b.sort-a.sort);
     if(id==='streakers')return fx.map(f=>{const pr=PR(f.match_id),surf=prSurf(f);let best=null;pr.players.forEach(pp=>{const p=P(pp.sackmann_id);if(!p)return;const bs=bestStreak(p,surf);if(bs&&(!best||bs.score>best.score))best={name:p.name,...bs};});if(!best)return null;return{f,note:esc(best.name)+' \u2014 '+best.note,sort:best.score};}).filter(Boolean).sort((a,b)=>b.sort-a.sort);
-    if(id==='grinders')return fx.map(f=>{const pr=PR(f.match_id);return{f,note:'~'+num(pr.proj_total_games)+' games',sort:pr.proj_total_games||0};}).sort((a,b)=>b.sort-a.sort).slice(0,12);
+    if(id==='grinders'){
+      const rl=fx.map(f=>{const pr=PR(f.match_id),aa=getAdv(pr.players[0]),ab=getAdv(pr.players[1]);
+        if(aa&&ab&&aa.rally_long_pct!=null&&ab.rally_long_pct!=null){const avg=(aa.rally_long_pct+ab.rally_long_pct)/2;
+          return{f,note:'both win 7+ rallies ('+pct(aa.rally_long_pct)+' / '+pct(ab.rally_long_pct)+')',sort:avg};}
+        return null;}).filter(x=>x&&x.sort>=0.50).sort((a,b)=>b.sort-a.sort);
+      if(rl.length)return rl;
+      return fx.map(f=>{const pr=PR(f.match_id);return{f,note:'~'+num(pr.proj_total_games)+' games (model)',sort:pr.proj_total_games||0};}).sort((a,b)=>b.sort-a.sort).slice(0,12);
+    }
+    if(id==='shotmakers')return fx.map(f=>{const pr=PR(f.match_id);let best=null;pr.players.forEach(pp=>{const v=getAdv(pp);if(!v||v.w_ufe==null||v.winners_pm==null)return;const P2=P(pp.sackmann_id);const thr=P2&&P2.tour==='wta'?22:27;if(v.winners_pm>=thr&&v.w_ufe>=1.0&&(!best||v.winners_pm>best.sort))best={name:P2?P2.name:'',sort:v.winners_pm,wu:v.w_ufe};});if(!best)return null;return{f,note:esc(best.name)+' '+best.sort+' W/m · '+best.wu+' W:UFE',sort:best.sort};}).filter(Boolean).sort((a,b)=>b.sort-a.sort);
+    if(id==='ice')return fx.map(f=>{const pr=PR(f.match_id);let best=null;pr.players.forEach(pp=>{const v=getAdv(pp);if(!v||v.bp_save_pct==null||v.bp_conv_pct==null)return;const sc=v.bp_save_pct+v.bp_conv_pct;const P2=P(pp.sackmann_id);if(sc>=1.05&&(!best||sc>best.sort))best={name:P2?P2.name:'',sort:sc,sv:v.bp_save_pct,cv:v.bp_conv_pct};});if(!best)return null;return{f,note:esc(best.name)+' saves '+pct(best.sv)+' · wins '+pct(best.cv)+' BP',sort:best.sort};}).filter(Boolean).sort((a,b)=>b.sort-a.sort);
+    if(id==='netraiders')return fx.map(f=>{const pr=PR(f.match_id);let best=null;pr.players.forEach(pp=>{const v=getAdv(pp);if(!v||v.net_pts_pm==null)return;const P2=P(pp.sackmann_id);if(v.net_pts_pm>=18&&(!best||v.net_pts_pm>best.sort))best={name:P2?P2.name:'',sort:v.net_pts_pm,won:v.net_won_pct};});if(!best)return null;return{f,note:esc(best.name)+' '+best.sort+' net pts/m'+(best.won!=null?' · '+pct(best.won)+' won':''),sort:best.sort};}).filter(Boolean).sort((a,b)=>b.sort-a.sort);
+    if(id==='clash')return fx.map(f=>{const pr=PR(f.match_id),aa=getAdv(pr.players[0]),ab=getAdv(pr.players[1]);if(!aa||!ab)return null;const A=P(pr.players[0].sackmann_id),B=P(pr.players[1].sackmann_id);const cl=styleClash(aa,ab,A?A.name:'',B?B.name:'',prSurf(f));if(!cl)return null;return{f,note:esc(cl.text),sort:cl.strength};}).filter(Boolean).sort((a,b)=>b.sort-a.sort);
     if(id==='elite')return fx.map(f=>{const pr=PR(f.match_id),lo=Math.min(pr.players[0].elo,pr.players[1].elo);return{f,note:Math.round(pr.players[0].elo)+' vs '+Math.round(pr.players[1].elo),sort:lo};}).filter(x=>x.sort>=1700).sort((a,b)=>b.sort-a.sort);
     return [];
   }
