@@ -110,6 +110,31 @@
   .book-sel i{font-size:15px;}
   .book-sel select{background:var(--surface-2);border:1px solid var(--border);border-radius:8px;
     color:var(--text);font:inherit;font-size:.8rem;padding:.35rem .5rem;cursor:pointer;flex:1;max-width:240px;}
+  /* MLB-style collapsibles / signals / game rows */
+  .tp-collapse.c-green{border-left:3px solid var(--accent);} .tp-collapse.c-green .tp-collapse-sum>i:first-child{color:var(--accent);}
+  .tp-collapse.c-amber{border-left:3px solid #facc15;} .tp-collapse.c-amber .tp-collapse-sum>i:first-child{color:#facc15;}
+  .tp-collapse.c-blue{border-left:3px solid #60a5fa;} .tp-collapse.c-blue .tp-collapse-sum>i:first-child{color:#60a5fa;}
+  .tp-collapse.c-red{border-left:3px solid #f87171;} .tp-collapse.c-red .tp-collapse-sum>i:first-child{color:#f87171;}
+  .tp-collapse.c-purple{border-left:3px solid #a78bfa;} .tp-collapse.c-purple .tp-collapse-sum>i:first-child{color:#a78bfa;}
+  .signals-head{display:flex;align-items:center;gap:8px;margin:18px 0 8px;}
+  .signals-head .lbl{font-family:var(--font-mono);font-size:11px;letter-spacing:1px;text-transform:uppercase;color:var(--text-2);}
+  .signals-head .fired{margin-left:auto;font-family:var(--font-mono);font-size:10px;color:var(--text-3);}
+  .sig-fire{font-family:var(--font-mono);font-size:9px;text-transform:uppercase;letter-spacing:.5px;
+    background:rgba(34,197,94,.1);color:var(--accent);border:1px solid rgba(34,197,94,.3);padding:1px 6px;border-radius:4px;margin-left:auto;}
+  .sig-cmp{display:grid;grid-template-columns:1fr 1fr;gap:10px;font-family:var(--font-mono);font-size:.82rem;}
+  .sig-cmp .nm{display:block;font-size:.64rem;color:var(--text-3);text-transform:uppercase;letter-spacing:.03em;margin-bottom:2px;}
+  .sig-cmp .q{color:var(--accent);font-weight:700;}
+  .rg-game{display:flex;align-items:center;gap:8px;background:var(--surface-2);border-radius:4px;margin:4px 0;padding:6px 9px;border-left:2px solid var(--border);}
+  .rg-game.W{border-left-color:var(--accent);} .rg-game.L{border-left-color:#f87171;}
+  .rg-res{font-family:var(--font-display);font-weight:800;font-size:12px;width:13px;flex:none;}
+  .rg-res.W{color:var(--accent);} .rg-res.L{color:#f87171;}
+  .rg-opp{font-family:var(--font-mono);font-size:.72rem;color:var(--text-2);min-width:0;}
+  .rg-score{margin-left:auto;font-family:var(--font-mono);font-size:.74rem;color:var(--text);white-space:nowrap;}
+  .rg-date{font-family:var(--font-mono);font-size:.6rem;color:var(--text-3);min-width:42px;text-align:right;flex:none;}
+  .mu-badge{display:inline-flex;align-items:center;gap:3px;padding:2px 7px;border-radius:4px;font-family:var(--font-mono);font-size:10px;font-weight:600;border:1px solid var(--border);}
+  .mu-soft{background:rgba(34,197,94,.1);color:var(--accent);border-color:rgba(34,197,94,.3);}
+  .mu-tough{background:rgba(239,68,68,.1);color:#f87171;border-color:rgba(239,68,68,.3);}
+  .mu-neutral{background:var(--surface);color:var(--text-3);}
   .search-box{width:100%;background:var(--surface-2);border:1px solid var(--border);border-radius:10px;
     padding:.55rem .8rem;color:var(--text);font:inherit;font-size:.9rem;margin-bottom:.6rem;}
   .cmb-field{margin-bottom:.7rem;}
@@ -543,7 +568,7 @@
       }
       }
     // H2H
-    out+=h2hBlock(a.sackmann_id,b.sackmann_id,a.name,b.name);
+    out+=h2hHistory(a.sackmann_id,b.sackmann_id,a.name,b.name);
     // Odds & edge
     const od=IDX.odds[mid];
     if(od&&od.h2h){
@@ -570,10 +595,68 @@
         out+='<div class="dfilt-note" style="margin-top:.5rem">Total games <b>'+tl+'</b> &nbsp; O '+(ov?num(ov.price,2):'-')+' / U '+(un?num(un.price,2):'-')+' &nbsp; vs model ~'+num(pg)+lean+'</div>';}
       out+='<div class="dfilt-note" style="margin-top:.3rem;color:var(--text-3)">Edge = model prob minus fair market. EV = expected value at the shown price. Leans, not guarantees.</div>';
     }
+    out+=matchupSignals(pr);
+    out+=vsSimilarBlock(pr);
     out+='<div class="dfilt-note" style="margin-top:.7rem">'+esc(pr.model||'')+'</div>';
     return out;
   }
   function lastName(n){if(!n)return '';const t=n.split(' ');return t[t.length-1];}
+  function fmtYr(d){const s=String(d||'');return s.length>=4?"'"+s.slice(2,4):'';}
+  function collapse(icon,title,body,color,open,extra){return '<details class="tp-collapse'+(color?' '+color:'')+'"'+(open?' open':'')+'><summary class="tp-collapse-sum"><i class="ti '+icon+'"></i><span class="tp-collapse-title">'+title+'</span>'+(extra||'')+'<i class="ti ti-chevron-down tp-collapse-chev"></i></summary><div class="tp-collapse-body">'+body+'</div></details>';}
+  function matchupSignals(pr){
+    const a=pr.players[0],b=pr.players[1];const axa=getAdv(a),axb=getAdv(b);
+    const la=lastName(a.name),lb=lastName(b.name);const Pa=P(a.sackmann_id),Pb=P(b.sackmann_id);
+    const sigs=[];
+    const cmp=(va,qa,vb,qb)=>'<div class="sig-cmp"><div><span class="nm">'+esc(la)+'</span><span'+(qa?' class="q"':'')+'>'+va+'</span></div><div><span class="nm">'+esc(lb)+'</span><span'+(qb?' class="q"':'')+'>'+vb+'</span></div></div>';
+    if(axa||axb){const ca=axa&&axa.bp_save_pct!=null&&axa.bp_conv_pct!=null,cb=axb&&axb.bp_save_pct!=null&&axb.bp_conv_pct!=null;
+      const qa=ca&&(axa.bp_save_pct+axa.bp_conv_pct)>=1.05,qb=cb&&(axb.bp_save_pct+axb.bp_conv_pct)>=1.05;
+      if(ca||cb)sigs.push({icon:'ti-snowflake',title:'Ice \u2014 clutch on break points',color:'c-blue',fires:qa||qb,
+        body:cmp(ca?'saves '+pct(axa.bp_save_pct)+' / wins '+pct(axa.bp_conv_pct):'\u2014',qa, cb?'saves '+pct(axb.bp_save_pct)+' / wins '+pct(axb.bp_conv_pct):'\u2014',qb)});}
+    if(axa||axb){const wa=axa&&axa.winners_pm!=null,wb=axb&&axb.winners_pm!=null;
+      const thrA=Pa&&Pa.tour==='wta'?22:27,thrB=Pb&&Pb.tour==='wta'?22:27;
+      const qa=wa&&axa.winners_pm>=thrA&&axa.w_ufe>=1.0,qb=wb&&axb.winners_pm>=thrB&&axb.w_ufe>=1.0;
+      if(wa||wb)sigs.push({icon:'ti-target-arrow',title:'Shot Makers',color:'c-purple',fires:qa||qb,
+        body:cmp(wa?num(axa.winners_pm,1)+' W/m \u00b7 '+num(axa.w_ufe,2)+' W:UFE':'\u2014',qa, wb?num(axb.winners_pm,1)+' W/m \u00b7 '+num(axb.w_ufe,2)+' W:UFE':'\u2014',qb)});}
+    if(axa||axb){const na=axa&&axa.net_pts_pm!=null,nb=axb&&axb.net_pts_pm!=null;
+      const qa=na&&axa.net_pts_pm>=18,qb=nb&&axb.net_pts_pm>=18;
+      if(na||nb)sigs.push({icon:'ti-run',title:'Net Raiders',color:'c-green',fires:qa||qb,
+        body:cmp(na?num(axa.net_pts_pm,1)+' net pts/m'+(axa.net_won_pct!=null?' \u00b7 '+pct(axa.net_won_pct)+' won':''):'\u2014',qa, nb?num(axb.net_pts_pm,1)+' net pts/m'+(axb.net_won_pct!=null?' \u00b7 '+pct(axb.net_won_pct)+' won':''):'\u2014',qb)});}
+    if(axa&&axb&&axa.rally_long_pct!=null&&axb.rally_long_pct!=null){const avg=(axa.rally_long_pct+axb.rally_long_pct)/2;
+      sigs.push({icon:'ti-arrows-maximize',title:'Grinders \u2014 long rallies',color:'c-amber',fires:avg>=0.50,
+        body:cmp(pct(axa.rally_long_pct)+' on 7+',axa.rally_long_pct>=0.50, pct(axb.rally_long_pct)+' on 7+',axb.rally_long_pct>=0.50)});}
+    {const qa=a.proj_aces!=null&&a.proj_aces>=8,qb=b.proj_aces!=null&&b.proj_aces>=8;
+      if(a.proj_aces!=null||b.proj_aces!=null)sigs.push({icon:'ti-flame',title:'Ace Merchants',color:'c-red',fires:qa||qb,
+        body:cmp(a.proj_aces!=null?'~'+num(a.proj_aces)+' aces':'\u2014',qa, b.proj_aces!=null?'~'+num(b.proj_aces)+' aces':'\u2014',qb)});}
+    if(!sigs.length)return '';
+    const fired=sigs.filter(s=>s.fires).length;
+    let out='<div class="signals-head"><i class="ti ti-bolt" style="color:var(--accent)"></i><span class="lbl">Degen Signals</span><span class="fired">'+fired+' of '+sigs.length+' firing</span></div>';
+    sigs.forEach(s=>{out+=collapse(s.icon,s.title,s.body,s.color,s.fires,s.fires?'<span class="sig-fire">fired</span>':'');});
+    return out;
+  }
+  function h2hHistory(id1,id2,n1,n2){
+    const k=[id1,id2].sort().join('_');const h=IDX.h2h[k];
+    if(!h)return collapse('ti-swords','Head-to-head','<div class="empty" style="padding:.7rem"><div class="ico"><i class="ti ti-swords"></i></div>No prior meetings on record.</div>','c-blue',false);
+    const w1=h.a===id1?h.a_wins:h.b_wins,w2=h.a===id1?h.b_wins:h.a_wins;
+    let body='<div class="tn-row" style="font-size:1.15rem;font-weight:700;justify-content:center;gap:.8rem;font-family:var(--font-mono);margin-bottom:.5rem">'+
+      '<span'+(w1>w2?' style="color:var(--accent)"':'')+'>'+esc(lastName(n1))+' '+w1+'</span><span style="color:var(--text-3)">-</span>'+
+      '<span'+(w2>w1?' style="color:var(--accent)"':'')+'>'+w2+' '+esc(lastName(n2))+'</span></div>';
+    (h.meetings||[]).forEach(m=>{const win1=m.winner_id===id1;const wn=P(m.winner_id),ln=P(win1?id2:id1);
+      const wl=wn?lastName(wn.name):'?',ll=ln?lastName(ln.name):'?';
+      body+='<div class="rg-game '+(win1?'W':'L')+'"><div class="rg-res '+(win1?'W':'L')+'">'+esc((win1?lastName(n1):lastName(n2)).charAt(0))+'</div>'+
+        '<div class="rg-opp"><b>'+esc(wl)+'</b> d. '+esc(ll)+' '+surfChip(m.surface)+'</div>'+
+        '<div class="rg-score">'+esc(m.score||'')+'</div><div class="rg-date">'+fmtYr(m.date)+'</div></div>';});
+    return collapse('ti-swords','Head-to-head \u2014 '+(h.meetings?h.meetings.length:0)+(h.meetings&&h.meetings.length===1?' meeting':' meetings'),body,'c-blue',(h.meetings&&h.meetings.length<=4));
+  }
+  function vsSimilarBlock(pr){
+    if(!pr.players.some(p=>p.vs_similar))return '';
+    let body='';
+    pr.players.forEach(p=>{const v=p.vs_similar;if(!v)return;const wp=v.win_pct;
+      const cls=wp>=0.6?'mu-soft':(wp<=0.4?'mu-tough':'mu-neutral');
+      body+='<div class="odds-row" style="grid-template-columns:1.2fr 1.3fr auto;padding:.4rem .2rem"><div class="on">'+esc(lastName(p.name))+'</div>'+
+        '<div class="oc" style="text-align:left;color:var(--text-3)">vs '+esc(v.label)+'</div>'+
+        '<div class="oc"><span class="mu-badge '+cls+'">'+v.w+'\u2013'+v.l+' \u00b7 '+pct(v.win_pct)+'</span></div></div>';});
+    return collapse('ti-users-group','Vs similar opponents',body+'<div class="dfilt-note" style="margin-top:.4rem;color:var(--text-3)">Record vs players with a similar style to this opponent.</div>','c-purple',false);
+  }
   function h2hBlock(id1,id2,n1,n2){
     const k=[id1,id2].sort().join('_');const h=IDX.h2h[k];
     if(!h)return '<div class="section-title">Head-to-head</div><div class="empty" style="padding:1rem"><div class="ico"><i class="ti ti-swords"></i></div>No prior meetings on record.</div>';
@@ -599,13 +682,8 @@
   const CREW=[
     {id:'value',name:'Value',icon:'ti-coins',sub:'Model probability beats the market'},
     {id:'multi',name:'Multi Builders',icon:'ti-stack-2',sub:'Highest-chance winners to stack'},
-    {id:'shotmakers',name:'Shot Makers',icon:'ti-target-arrow',sub:'High winners, positive winner:UFE'},
-    {id:'aces',name:'Ace Merchants',icon:'ti-flame',sub:'Highest projected aces'},
     {id:'bunnies',name:'Bunnies',icon:'ti-carrot',sub:'Owns this opponent (H2H)'},
-    {id:'ice',name:'Ice',icon:'ti-snowflake',sub:'Clutch on break points'},
-    {id:'netraiders',name:'Net Raiders',icon:'ti-run',sub:'Lives at the net'},
     {id:'streakers',name:'Streakers',icon:'ti-trending-up',sub:'Win / loss / ace / set / surface runs'},
-    {id:'grinders',name:'Grinders',icon:'ti-arrows-maximize',sub:'Long rallies \u2192 games over'},
     {id:'clash',name:'Style Clash',icon:'ti-swords',sub:'Contrasting styles collide'},
     {id:'elite',name:'Elite Matchups',icon:'ti-stars',sub:'Two top-rated players'},
   ];
