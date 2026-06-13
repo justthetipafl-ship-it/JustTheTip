@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;600;700;800;900&family=IBM+Plex+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/[email protected]/tabler-icons.min.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/[email protected]/dist/tabler-icons.min.css">
   <link rel="stylesheet" href="jtt-core.css">
 
   <style>
@@ -135,6 +135,25 @@
   .mu-soft{background:rgba(34,197,94,.1);color:var(--accent);border-color:rgba(34,197,94,.3);}
   .mu-tough{background:rgba(239,68,68,.1);color:#f87171;border-color:rgba(239,68,68,.3);}
   .mu-neutral{background:var(--surface);color:var(--text-3);}
+  /* matches day toggle */
+  .day-toggle{display:flex;gap:8px;margin-bottom:12px;}
+  .day-btn{flex:1;background:var(--surface);border:1px solid var(--border);color:var(--text-2);font-family:var(--font-mono);
+    font-size:12px;letter-spacing:.3px;padding:9px 14px;border-radius:8px;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:6px;transition:all .12s;}
+  .day-btn:hover{border-color:var(--accent);color:var(--text);}
+  .day-btn.active{background:var(--accent);border-color:var(--accent);color:#06140c;font-weight:700;}
+  .day-n{font-size:10px;background:rgba(255,255,255,.12);padding:1px 6px;border-radius:5px;}
+  .day-btn.active .day-n{background:rgba(0,0,0,.18);}
+  /* match flags (Style Clash / Elite) */
+  .flag-row{display:flex;gap:.4rem;flex-wrap:wrap;margin:.1rem 0 .35rem;}
+  .mflag{display:inline-flex;align-items:center;gap:3px;font-family:var(--font-mono);font-size:.62rem;font-weight:700;
+    text-transform:uppercase;letter-spacing:.04em;padding:2px 7px;border-radius:5px;border:1px solid var(--border);}
+  .mflag i{font-size:11px;}
+  .mflag.elite{background:rgba(250,204,21,.12);color:#facc15;border-color:rgba(250,204,21,.3);}
+  .mflag.clash{background:rgba(167,139,250,.12);color:#a78bfa;border-color:rgba(167,139,250,.3);}
+  /* pill odds */
+  .tn-rt{display:flex;align-items:center;gap:.4rem;}
+  .tn-odd{font-family:var(--font-mono);font-size:.74rem;color:var(--text-2);background:var(--surface-3);
+    border:1px solid var(--border);border-radius:5px;padding:1px 6px;}
   .search-box{width:100%;background:var(--surface-2);border:1px solid var(--border);border-radius:10px;
     padding:.55rem .8rem;color:var(--text);font:inherit;font-size:.9rem;margin-bottom:.6rem;}
   .cmb-field{margin-bottom:.7rem;}
@@ -228,7 +247,7 @@
 
   <script>
   /* ===== 1. CONFIG ===== */
-  const AUTH_HASH = 'f1996a7cda48bca0dc87f700b183266eed3a770330d924fb1507b3036e37b0ff';
+  const AUTH_HASH = 'REPLACE_WITH_SHA256_OF_YOUR_PASSWORD';
   const AUTH_TTL_DAYS = 30;
   const AUTH_STORAGE_KEY = 'jtt_tennis_auth_v1';
 
@@ -242,16 +261,15 @@
   };
 
   const TABS = [
-    { name: 'today',   label: 'Today',   icon: 'ti-calendar-event' },
+    { name: 'today',   label: 'Matches', icon: 'ti-calendar-event' },
     { name: 'players', label: 'Players', icon: 'ti-users' },
-    { name: 'matchup', label: 'Matchup', icon: 'ti-swords' },
     { name: 'crew',    label: 'Degen',   icon: 'ti-flame' },
   ];
 
   /* ===== 2. STATE ===== */
   const state = {
     data: {}, dataVersion: null,
-    view: { activeTab: TABS[0].name, match: null, player: null, crew: null,
+    view: { activeTab: TABS[0].name, match: null, player: null, crew: null, day: 'today',
             filters: { tour: 'all', q: '' } },
   };
 
@@ -296,7 +314,7 @@
   function _renderApp(){const p=document.getElementById('page-content');try{p.innerHTML=renderTab(state.view.activeTab)||'';}catch(e){console.error('renderTab',e);p.innerHTML='<div class="empty"><div class="ico"><i class="ti ti-alert-triangle"></i></div>Something went wrong rendering this view.</div>';}window.scrollTo(0,0);}
 
   /* navigation that preserves a focused entity */
-  function openMatch(mid){state.view.activeTab='matchup';state.view.match=mid;state.view.player=null;_renderTabnav();_renderApp();}
+  function openMatch(mid){state.view.activeTab='today';state.view.match=mid;state.view.player=null;_renderTabnav();_renderApp();}
   function openPlayer(id){state.view.activeTab='players';state.view.player=id;state.view.match=null;_renderTabnav();_renderApp();}
   function openCrew(c){state.view.crew=c;_renderApp();}
   function setFilter(k,v){state.view.filters[k]=v;_renderApp();}
@@ -388,20 +406,44 @@
   /* ---- TODAY ---- */
   function viewToday(){
     let fx=upcomingSingles().filter(passFilter);
-    let head='<div class="page-header"><div class="page-title">Today</div></div>'+
-      '<input class="search-box" placeholder="Search player or tournament…" value="'+esc(state.view.filters.q)+'" oninput="setFilter(\'q\',this.value)">'+tourPills();
-    if(!fx.length)return head+'<div class="empty"><div class="ico"><i class="ti ti-calendar-off"></i></div>No upcoming matches match these filters.</div>';
-    // group by tournament
-    const groups={};fx.forEach(f=>{(groups[f.tournament||'—']=groups[f.tournament||'—']||[]).push(f);});
+    const day=state.view.day||'today';
+    const now=new Date();
+    const dstr=d=>d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+    const todayStr=dstr(now),tmrStr=dstr(new Date(now.getTime()+86400000));
+    const dayOf=f=>{if(!f.start)return todayStr;const d=new Date(f.start);return isNaN(d)?todayStr:dstr(d);};
+    const nT=fx.filter(f=>dayOf(f)===todayStr).length,nM=fx.filter(f=>dayOf(f)===tmrStr).length;
+    const want=day==='tomorrow'?tmrStr:todayStr;
+    const dayFx=fx.filter(f=>dayOf(f)===want);
+    let head='<div class="page-header"><div class="page-title">Matches</div></div>'+
+      '<div class="day-toggle">'+
+        '<button class="day-btn'+(day==='today'?' active':'')+'" onclick="setDay(\'today\')">Today <span class="day-n">'+nT+'</span></button>'+
+        '<button class="day-btn'+(day==='tomorrow'?' active':'')+'" onclick="setDay(\'tomorrow\')">Tomorrow <span class="day-n">'+nM+'</span></button>'+
+      '</div>'+
+      '<input class="search-box" placeholder="Search player or tournament\u2026" value="'+esc(state.view.filters.q)+'" oninput="setFilter(\'q\',this.value)">'+tourPills();
+    if(!dayFx.length)return head+'<div class="empty"><div class="ico"><i class="ti ti-calendar-off"></i></div>No '+(day==='tomorrow'?'matches tomorrow':'matches today')+' match these filters.</div>';
+    const groups={};dayFx.forEach(f=>{(groups[f.tournament||'\u2014']=groups[f.tournament||'\u2014']||[]).push(f);});
     let out=head;
     Object.keys(groups).sort().forEach(tn=>{
-      const arr=groups[tn];const loc=arr[0].location?(' · '+arr[0].location):'';
+      const arr=groups[tn];const loc=arr[0].location?(' \u00b7 '+arr[0].location):'';
       out+='<div class="section-title">'+esc(tn)+'<small style="color:var(--text-3);font-weight:400">'+esc(loc)+'</small></div>';
       arr.sort((a,b)=>(a.start||'').localeCompare(b.start||''));
       arr.forEach(f=>{out+=matchCard(f);});
     });
     return out;
   }
+  function setDay(d){state.view.day=d;_renderApp();}
+  function matchFlags(f){
+    const pr=PR(f.match_id);if(!pr)return [];const fl=[];
+    const lo=Math.min(pr.players[0].elo||0,pr.players[1].elo||0);
+    if(lo>=1700)fl.push({icon:'ti-stars',label:'Elite',cls:'elite'});
+    const aa=getAdv(pr.players[0]),ab=getAdv(pr.players[1]);
+    if(aa&&ab){const A=P(pr.players[0].sackmann_id),B=P(pr.players[1].sackmann_id);
+      const cl=styleClash(aa,ab,A?A.name:'',B?B.name:'',prSurf(f));
+      if(cl)fl.push({icon:'ti-swords',label:'Style Clash',cls:'clash'});}
+    return fl;
+  }
+  function flagChips(f){const fl=matchFlags(f);if(!fl.length)return '';
+    return '<div class="flag-row">'+fl.map(x=>'<span class="mflag '+x.cls+'"><i class="ti '+x.icon+'"></i>'+x.label+'</span>').join('')+'</div>';}
   function matchCard(f){
     const pr=PR(f.match_id);const ps=f.players||[];
     const p0=ps[0]||{},p1=ps[1]||{};
@@ -409,14 +451,17 @@
     const fav0=prob0!=null&&prob0>=0.5;
     const seed=p=>p.seed?'<span class="tn-seed">'+p.seed+'</span>':(p.rank?'<span class="tn-seed">#'+p.rank+'</span>':'');
     const flag=p=>flagFor(p.ioc);
+    const od=IDX.odds[f.match_id];
+    const prc=nm=>{if(!od||!od.h2h)return '';const pf=priceFor(od.h2h[normName(nm||'')]);return pf?'<span class="tn-odd">'+num(pf.price,2)+'</span>':'';};
     return '<button class="tn-match" onclick="openMatch(\''+esc(f.match_id)+'\')">'+
       '<div class="tn-match-top"><div class="tn-match-meta">'+surfChip(prSurf(f))+' <span>'+esc(f.round||'')+'</span></div>'+
       (pr?'<span class="tn-match-meta">model</span>':'<span class="tn-match-meta" style="color:var(--text-3)">no model</span>')+'</div>'+
-      '<div class="tn-row"><div class="tn-name'+(prob0!=null&&fav0?' fav':'')+'">'+seed(p0)+esc(p0.name||'—')+' '+flag(p0)+'</div>'+
-        (prob0!=null?'<span class="tn-prob">'+pct(prob0)+'</span>':'')+'</div>'+
+      flagChips(f)+
+      '<div class="tn-row"><div class="tn-name'+(prob0!=null&&fav0?' fav':'')+'">'+seed(p0)+esc(p0.name||'\u2014')+' '+flag(p0)+'</div>'+
+        '<div class="tn-rt">'+prc(p0.name)+(prob0!=null?'<span class="tn-prob">'+pct(prob0)+'</span>':'')+'</div></div>'+
       (prob0!=null?winBar(prob0):'')+
-      '<div class="tn-row"><div class="tn-name'+(prob0!=null&&!fav0?' fav':'')+'">'+seed(p1)+esc(p1.name||'—')+' '+flag(p1)+'</div>'+
-        (prob0!=null?'<span class="tn-prob">'+pct(1-prob0)+'</span>':'')+'</div>'+
+      '<div class="tn-row"><div class="tn-name'+(prob0!=null&&!fav0?' fav':'')+'">'+seed(p1)+esc(p1.name||'\u2014')+' '+flag(p1)+'</div>'+
+        '<div class="tn-rt">'+prc(p1.name)+(prob0!=null?'<span class="tn-prob">'+pct(1-prob0)+'</span>':'')+'</div></div>'+
       '</button>';
   }
   function prSurf(f){const pr=PR(f.match_id);return (pr&&pr.surface)||f.surface||null;}
@@ -504,7 +549,7 @@
   function viewMatchup(mid){
     const f=IDX.fixtures.find(x=>x.match_id===mid);
     const pr=PR(mid);
-    let out='<button class="back-btn" onclick="_switchTab(\'today\')"><i class="ti ti-arrow-left"></i> Today</button>';
+    let out='<button class="back-btn" onclick="_switchTab(\'today\')"><i class="ti ti-arrow-left"></i> Matches</button>';
     if(!f)return out+'<div class="empty">Match not found.</div>';
     const surf=prSurf(f);
     out+='<div class="meta-bar">'+
@@ -512,6 +557,7 @@
       '<span class="meta-item">'+surfChip(surf)+'</span>'+
       '<span class="meta-item"><i class="ti ti-tournament"></i>'+esc(f.round||'')+'</span>'+
       '<span class="meta-item"><i class="ti ti-ball-tennis"></i>Best of '+(f.best_of||3)+'</span></div>';
+    out+=flagChips(f);
     const ps=f.players||[];
     if(!pr){
       out+='<div class="tn-row" style="font-size:1.05rem;font-weight:700;margin:.6rem 0">'+esc((ps[0]||{}).name||'—')+'</div>'+
@@ -680,12 +726,10 @@
 
   /* ---- DEGEN CREW ---- */
   const CREW=[
-    {id:'value',name:'Value',icon:'ti-coins',sub:'Model probability beats the market'},
+    {id:'longshots',name:'Longshots',icon:'ti-rocket',sub:'Live underdogs worth a look'},
     {id:'multi',name:'Multi Builders',icon:'ti-stack-2',sub:'Highest-chance winners to stack'},
     {id:'bunnies',name:'Bunnies',icon:'ti-carrot',sub:'Owns this opponent (H2H)'},
     {id:'streakers',name:'Streakers',icon:'ti-trending-up',sub:'Win / loss / ace / set / surface runs'},
-    {id:'clash',name:'Style Clash',icon:'ti-swords',sub:'Contrasting styles collide'},
-    {id:'elite',name:'Elite Matchups',icon:'ti-stars',sub:'Two top-rated players'},
   ];
   function streaksFor(p,surf){
     const r=p.recent||[];
@@ -718,11 +762,15 @@
   }
   function crewData(id){
     const fx=upcomingSingles().filter(f=>PR(f.match_id));
-    if(id==='value')return fx.map(f=>{const pr=PR(f.match_id),od=IDX.odds[f.match_id];if(!od||!od.h2h)return null;
-      let best=null;pr.players.forEach(pp=>{const o=od.h2h[normName(pp.name)];if(!o||o.imp==null)return;const edge=pp.win_prob-o.imp;
-        const pf=priceFor(o);
-        if(edge>=0.05&&(!best||edge>best.edge))best={name:pp.name,edge,price:pf?pf.price:null,book:pf?pf.book:null};});
-      if(!best)return null;return{f,note:esc(best.name)+' +'+pct(best.edge)+' edge'+(best.price?' @ '+num(best.price,2)+(best.book?' ('+esc(bookName(best.book))+')':''):''),sort:best.edge};}).filter(Boolean).sort((a,b)=>b.sort-a.sort);
+    if(id==='longshots')return fx.map(f=>{const pr=PR(f.match_id);
+      const dog=pr.players[0].win_prob<=pr.players[1].win_prob?pr.players[0]:pr.players[1];
+      const wp=dog.win_prob;if(wp==null||wp<0.15||wp>0.42)return null;
+      const od=IDX.odds[f.match_id];let px=null,edge=null;
+      if(od&&od.h2h){const o=od.h2h[normName(dog.name)];if(o){const pf=priceFor(o);if(pf)px=pf;if(o.imp!=null)edge=wp-o.imp;}}
+      let note=esc(dog.name)+' '+pct(wp)+' model';
+      if(px)note+=' @ '+num(px.price,2)+(px.book?' ('+esc(bookName(px.book))+')':'');
+      if(edge!=null&&edge>=0.05)note+=' \u00b7 +'+pct(edge)+' edge';
+      return{f,note,sort:(edge!=null&&edge>=0.05?1:0)+wp};}).filter(Boolean).sort((a,b)=>b.sort-a.sort);
     if(id==='multi')return fx.map(f=>{const pr=PR(f.match_id),mx=Math.max(pr.players[0].win_prob,pr.players[1].win_prob),fav=pr.players[0].win_prob>=pr.players[1].win_prob?pr.players[0]:pr.players[1];return{f,mx,note:esc(fav.name)+' '+pct(mx),sort:mx};}).filter(x=>x.mx>=0.65).sort((a,b)=>b.sort-a.sort);
     if(id==='aces')return fx.map(f=>{const pr=PR(f.match_id);const best=(pr.players[0].proj_aces||0)>=(pr.players[1].proj_aces||0)?pr.players[0]:pr.players[1];return{f,note:esc(best.name)+' ~'+num(best.proj_aces)+' aces',sort:best.proj_aces||0};}).filter(x=>x.sort>=8).sort((a,b)=>b.sort-a.sort);
     if(id==='bunnies')return fx.map(f=>{const pr=PR(f.match_id),k=[pr.players[0].sackmann_id,pr.players[1].sackmann_id].sort().join('_'),h=IDX.h2h[k];if(!h)return null;const tot=h.a_wins+h.b_wins,diff=Math.abs(h.a_wins-h.b_wins);if(tot<3||diff<2)return null;const domId=h.a_wins>h.b_wins?h.a:h.b,dom=P(domId);return{f,note:(dom?esc(dom.name):'—')+' leads '+Math.max(h.a_wins,h.b_wins)+'\u2013'+Math.min(h.a_wins,h.b_wins),sort:diff};}).filter(Boolean).sort((a,b)=>b.sort-a.sort);
@@ -810,9 +858,8 @@
   function renderTab(name){
     if(!IDX)return '<div class="empty">Loading…</div>';
     switch(name){
-      case 'today':   return viewToday();
+      case 'today':   return state.view.match?viewMatchup(state.view.match):viewToday();
       case 'players': return viewPlayers();
-      case 'matchup': return state.view.match?viewMatchup(state.view.match):viewMatchupPicker();
       case 'crew':    return viewCrew();
       default:        return viewToday();
     }
