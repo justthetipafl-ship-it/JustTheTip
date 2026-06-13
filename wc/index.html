@@ -5465,6 +5465,7 @@ const state = {
     liveStatus: null, // live_status.json content (only during matchdays)
     events: null,     // worldcup_events.json content (optional — goal/card minutes for By The Halves)
     weather: null,    // worldcup_weather.json content (optional — Open-Meteo forecast per fixture)
+    squads: null,     // worldcup_squads_2026.json content (optional — WC squad lists per team, ground truth for eligibility)
   },
   view: {
     tab: 'fixtures',           // 'fixtures' | 'crew'
@@ -5596,6 +5597,7 @@ async function tryAutoLoadData() {
     liveStatus:  prefix + 'live_status.json' + v,
     events:      prefix + 'worldcup_events.json' + v,
     weather:     prefix + 'worldcup_weather.json' + v,
+    squads:      prefix + 'worldcup_squads_2026.json' + v,
   };
 
   // Expose the version for the freshness pill below
@@ -8238,10 +8240,21 @@ function renderTeamSignals(teamId, fixture) {
         findTapInCandidates(bothTeamIds, fxArr).filter(c => c.teamId === teamId),
         renderTapInCard),
       mkSection('First Goal',    'ti-target-arrow',        'player',
-        computeFirstGoalCandidates(teamId, teamName, fixture).slice(0, 1),
+        computeFirstGoalCandidates(teamId, teamName, fixture).slice(0, 1)
+          .filter(c => {
+            // Squad/lineup guard — drop signals for players not in the WC squad/lineup.
+            if (c.playerId == null) return true;
+            const eligible = _getEligiblePlayerSet(teamId, fixture.matchId);
+            return !eligible || eligible.size === 0 || eligible.has(c.playerId);
+          }),
         c => renderFirstGoalCardInline(c, fixture.matchId)),
       mkSection('Mismatch Alert','ti-bolt',                'amber',
-        computeMismatches(teamId, oppId, oppName),
+        computeMismatches(teamId, oppId, oppName)
+          .filter(c => {
+            if (c.playerId == null) return true;
+            const eligible = _getEligiblePlayerSet(teamId, fixture.matchId);
+            return !eligible || eligible.size === 0 || eligible.has(c.playerId);
+          }),
         c => renderMismatchCardInline(c, fixture.matchId)),
       mkSection('Form Alerts',   'ti-flame',               'over',
         findFormAlerts(bothTeamIds, fxArr).filter(c => c.teamId === teamId),
@@ -17164,6 +17177,96 @@ function setLockedInFilter(key) {
   renderCrewTab('locked-in');
 }
 
+// ----- SQUAD / LINEUP ELIGIBILITY GUARD -----
+// Many players in logs.rows played internationally in the last 12 months but
+// aren't in their team's WC 2026 squad. Without filtering they appear as
+// signals for the upcoming match, which is wrong. This helper produces the
+// set of player IDs that should be eligible to surface as signals for a
+// given (teamId, matchId), using the most authoritative data we have:
+//
+//   Tier 1: WC squad list (state.data.squads[teamId]) — if a squads file
+//           is loaded, this is the ground truth (26 players per team).
+//   Tier 2: Announced match lineup (startXI + substitutes from the lineups
+//           feed) — hard truth once available, typically T-60 min pre-KO.
+//   Tier 3: Players who appeared in this team's most recent 3 matches —
+//           fallback when neither squad nor lineup data is available yet.
+//
+// The cache is rebuilt on page reload (module-scope `_eligiblePlayerCache`),
+// so a manual refresh after lineups drop will tighten the filter.
+const _eligiblePlayerCache = {};
+
+function _getEligiblePlayerSet(teamId, matchId) {
+  const key = teamId + ':' + matchId;
+  if (_eligiblePlayerCache[key]) return _eligiblePlayerCache[key];
+  const ids = new Set();
+
+  // Tier 1 — explicit squad list
+  const squads = state.data && state.data.squads;
+  const squad = squads && (squads[teamId] || squads[String(teamId)]);
+  if (squad && squad.length) {
+    squad.forEach(p => {
+      const pid = (p && (p.id != null ? p.id : p.playerId));
+      if (pid != null) ids.add(pid);
+    });
+    if (ids.size > 0) { _eligiblePlayerCache[key] = ids; return ids; }
+  }
+
+  // Tier 2 — announced lineup for this exact match
+  const byMatch = state.data && state.data.lineups && state.data.lineups.byMatch;
+  const matchLu = byMatch && (byMatch[matchId] || byMatch[String(matchId)]);
+  const teamLu  = matchLu && (matchLu[teamId] || matchLu[String(teamId)]);
+  if (teamLu && (teamLu.startXI || teamLu.substitutes)) {
+    (teamLu.startXI || []).forEach(p => { if (p && p.id != null) ids.add(p.id); });
+    (teamLu.substitutes || []).forEach(p => { if (p && p.id != null) ids.add(p.id); });
+    if (ids.size > 0) { _eligiblePlayerCache[key] = ids; return ids; }
+  }
+
+  // Tier 3 — fallback: players in this team's most recent 3 matches
+  const logs = state.data && state.data.logs;
+  if (logs && logs.rows) {
+    const teamRows = logs.rows.filter(r => r.teamId === teamId);
+    const matchDates = {};
+    teamRows.forEach(r => {
+      if (!matchDates[r.matchId] || matchDates[r.matchId] < r.date) {
+        matchDates[r.matchId] = r.date;
+      }
+    });
+    const recentMatchIds = new Set(
+      Object.entries(matchDates)
+        .sort((a, b) => b[1].localeCompare(a[1]))
+        .slice(0, 3)
+        .map(([mid]) => parseInt(mid, 10))
+    );
+    teamRows.forEach(r => {
+      if (recentMatchIds.has(r.matchId)) ids.add(r.playerId);
+    });
+  }
+
+  _eligiblePlayerCache[key] = ids;
+  return ids;
+}
+
+// Apply the eligibility guard to a list of candidates produced by a
+// find*Candidates function. Each candidate must expose .teamId and
+// .playerId. We locate the candidate's team's fixture in `scopeFixtures`,
+// then drop the candidate if its player isn't in that fixture's
+// eligible-player set. If we can't determine eligibility (no lineup,
+// no logs), we let the candidate through rather than blanking the signal.
+function _filterCandidatesByEligibility(candidates, scopeFixtures) {
+  if (!candidates || !candidates.length) return candidates || [];
+  if (!scopeFixtures || !scopeFixtures.length) return candidates;
+  return candidates.filter(c => {
+    if (!c || c.playerId == null || c.teamId == null) return true;
+    const fx = scopeFixtures.find(f =>
+      f && (f.homeTeamId === c.teamId || f.awayTeamId === c.teamId)
+    );
+    if (!fx) return true;
+    const eligible = _getEligiblePlayerSet(c.teamId, fx.matchId);
+    if (!eligible || eligible.size === 0) return true;
+    return eligible.has(c.playerId);
+  });
+}
+
 function findLockedInCandidates(scopeTeamIds, scopeFixtures) {
   const logs = state.data.logs;
   if (!logs) return [];
@@ -17268,7 +17371,7 @@ function findLockedInCandidates(scopeTeamIds, scopeFixtures) {
   // Sort: hits desc, then total apps desc, then line desc (higher line = more impressive)
   results.sort((a, b) => (b.hits - a.hits) || (b.totalApps - a.totalApps) || (b.line - a.line));
 
-  return results;
+  return _filterCandidatesByEligibility(results, scopeFixtures);
 }
 
 // Pick the highest line in the ladder that the avg comfortably clears
@@ -17694,7 +17797,7 @@ function findFallingOffCandidates(scopeTeamIds, scopeFixtures) {
       }
     }
   });
-  return sorted;
+  return _filterCandidatesByEligibility(sorted, scopeFixtures);
 }
 
 function renderFallingOffCard(c) {
@@ -17893,7 +17996,7 @@ function findFoulPlayCandidates(scopeTeamIds, scopeFixtures) {
     return (sb - sa) || (b.cardRate - a.cardRate) || (b.totalApps - a.totalApps);
   });
 
-  return results;
+  return _filterCandidatesByEligibility(results, scopeFixtures);
 }
 
 function renderFoulPlayCard(c) {
@@ -18046,7 +18149,7 @@ function findBigGameCandidates(scopeTeamIds, scopeFixtures) {
     });
   });
 
-  return results.sort((a, b) => b.composite - a.composite);
+  return _filterCandidatesByEligibility(results.sort((a, b) => b.composite - a.composite), scopeFixtures);
 }
 
 function renderBigGameCard(c) {
@@ -18237,7 +18340,7 @@ function findHereToAssistCandidates(scopeTeamIds, scopeFixtures) {
     });
   });
 
-  return results.sort((a, b) => b.score - a.score);
+  return _filterCandidatesByEligibility(results.sort((a, b) => b.score - a.score), scopeFixtures);
 }
 
 function renderHereToAssistCard(c) {
@@ -18458,7 +18561,7 @@ function findOnARunCandidates(scopeTeamIds, scopeFixtures) {
 
   // Sort: prefer higher lines (more meaningful), then longer streaks, then more apps
   results.sort((a, b) => (b.line - a.line) || (b.streak - a.streak) || (b.totalApps - a.totalApps));
-  return results;
+  return _filterCandidatesByEligibility(results, scopeFixtures);
 }
 
 function renderOnARunCard(c) {
@@ -18654,7 +18757,7 @@ function findTapInCandidates(scopeTeamIds, scopeFixtures) {
 
   // Sort by ATG prob (the actually-relevant betting signal)
   results.sort((a, b) => b.atgProb - a.atgProb);
-  return results;
+  return _filterCandidatesByEligibility(results, scopeFixtures);
 }
 
 function renderTapInCard(c) {
@@ -19319,7 +19422,7 @@ function findPenaltyTakers(scopeTeamIds, scopeFixtures) {
     if (b.penScorerProb != null) return 1;
     return (b.total - a.total) || (b.conv - a.conv);
   });
-  return results;
+  return _filterCandidatesByEligibility(results, scopeFixtures);
 }
 
 function renderPenaltyKingCard(c) {
@@ -19669,7 +19772,7 @@ function findFormAlerts(scopeTeamIds, scopeFixtures) {
     const bMax = Math.max(Math.abs(b.diff), b.statSignals[0] ? Math.abs(b.statSignals[0].delta) * 2 : 0);
     return bMax - aMax;
   });
-  return results;
+  return _filterCandidatesByEligibility(results, scopeFixtures);
 }
 
 function renderFormAlertCard(c) {
@@ -19918,7 +20021,7 @@ function findBrickWallCandidates(scopeTeamIds, scopeFixtures) {
   });
 
   candidates.sort((a, b) => b.projection - a.projection);
-  return candidates;
+  return _filterCandidatesByEligibility(candidates, scopeFixtures);
 }
 
 function renderBrickWallCard(c) {
