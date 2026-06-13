@@ -269,7 +269,7 @@ for (tr in c("atp", "wta")) {
     last10 <- tail(d$won, 10)
     # recent per-match detail (most-recent-first) for streak signals
     dr <- tail(d, 12)
-    recent <- lapply(rev(seq_len(nrow(dr))), function(i) {
+    recent_matches <- lapply(rev(seq_len(nrow(dr))), function(i) {
       ss <- parse_sets(dr$score[i], dr$won[i])
       list(surf = dr$surf[i], won = as.integer(dr$won[i]),
            ace = if (is.na(dr$ace[i])) NULL else as.integer(dr$ace[i]),
@@ -294,7 +294,7 @@ for (tr in c("atp", "wta")) {
       serve_surface = surf_splits,
       form_last10 = paste(ifelse(rev(last10) == 1, "W", "L"), collapse = ""),
       win_pct_recent = round(mean(tail(d$won, CFG$recent_n), na.rm = TRUE), 3),
-      recent = recent
+      recent = recent_matches
     )
   }
 
@@ -308,10 +308,16 @@ for (tr in c("atp", "wta")) {
     a <- ids[1]; b <- ids[2]
     a_wins <- sum(rows$player_id == a); b_wins <- sum(rows$player_id == b)
     last <- rows[which.max(rows$date), ]
+    ord <- rows[order(-rows$date), ]
+    mt <- utils::head(ord, 12)
+    meetings <- lapply(seq_len(nrow(mt)), function(i) list(
+      date = mt$date[i], tourney = mt$tourney[i], surface = mt$surf[i],
+      score = mt$score[i], winner_id = mt$player_id[i], round = mt$round[i]))
     h2h_out[[k]] <- list(
       a = a, b = b, a_wins = a_wins, b_wins = b_wins,
       last = list(date = last$date, tourney = last$tourney, surface = last$surf,
-                  winner_id = last$player_id, round = last$round)
+                  winner_id = last$player_id, round = last$round),
+      meetings = meetings
     )
   }
 }
@@ -396,6 +402,62 @@ backfill_surface <- function(tournament, location = NA, tour = "atp") {
 }
 
 # ---- projections ------------------------------------------------------------
+# ---- style similarity engine (powers "vs similar players") ------------------
+# per-player style vector [serve pts won, return pts won, ace rate], z-scored
+# within tour, then nearest-neighbour lookup + record vs that cluster.
+.sids <- names(players_out)
+.svec <- lapply(players_out, function(P) c(
+  spw = (function(x) if (is.null(x) || is.na(x)) NA_real_ else x)(P$serve_career$spw),
+  rpw = (function(x) if (is.null(x) || is.na(x)) NA_real_ else x)(P$serve_career$rpw),
+  ace = (function(x) if (is.null(x) || is.na(x)) NA_real_ else x)(P$serve_career$ace_svgm)))
+.raw  <- do.call(rbind, .svec)
+.tourv <- vapply(.sids, function(id) { t <- players_out[[id]]$tour; if (is.null(t)) NA_character_ else t }, character(1))
+.nv    <- vapply(.sids, function(id) { n <- players_out[[id]]$serve_career$n; if (is.null(n) || is.na(n)) 0L else as.integer(n) }, integer(1))
+.zmat  <- matrix(NA_real_, nrow = length(.sids), ncol = 3, dimnames = list(.sids, c("spw","rpw","ace")))
+for (tr in unique(stats::na.omit(.tourv))) {
+  idx <- which(.tourv == tr)
+  for (j in 1:3) {
+    col <- .raw[idx, j]; mu <- mean(col, na.rm = TRUE); sdv <- stats::sd(col, na.rm = TRUE)
+    if (is.na(sdv) || sdv == 0) sdv <- 1
+    .zmat[idx, j] <- (col - mu) / sdv
+  }
+}
+similar_ids <- function(target, exclude, K = 25) {
+  if (is.null(target) || !(target %in% .sids)) return(character(0))
+  tr <- .tourv[[target]]; if (is.na(tr)) return(character(0))
+  zt <- .zmat[target, ]; if (any(is.na(zt))) return(character(0))
+  cand <- .sids[.tourv == tr & .nv >= 20 & !(.sids %in% c(target, exclude))]
+  cand <- cand[stats::complete.cases(.zmat[cand, , drop = FALSE])]
+  if (!length(cand)) return(character(0))
+  d <- sqrt(rowSums((.zmat[cand, , drop = FALSE] - matrix(zt, length(cand), 3, byrow = TRUE))^2))
+  names(sort(d))[seq_len(min(K, length(cand)))]
+}
+arch_label <- function(target) {
+  if (is.null(target) || !(target %in% .sids)) return("similar players")
+  z <- .zmat[target, ]; if (any(is.na(z))) return("similar players")
+  if (z[["ace"]] >= 0.8 || z[["spw"]] >= 0.8) return("big servers")
+  if (z[["rpw"]] >= 0.8) return("strong returners")
+  if (z[["spw"]] <= -0.5 && z[["rpw"]] >= 0.2) return("grinders")
+  if (z[["spw"]] >= 0.3 && z[["rpw"]] >= 0.3) return("all-court players")
+  "similar profiles"
+}
+vs_similar <- function(focal, opponent) {
+  cand <- similar_ids(opponent, exclude = focal)
+  if (!length(cand)) return(NULL)
+  rows <- lg[lg$player_id == focal & lg$opp_id %in% cand, ]
+  if (!nrow(rows)) return(NULL)
+  w <- sum(rows$won == 1, na.rm = TRUE); l <- sum(rows$won == 0, na.rm = TRUE)
+  if ((w + l) < 3) return(NULL)
+  list(label = arch_label(opponent), n_opp = length(unique(rows$opp_id)),
+       w = w, l = l, win_pct = round(w / (w + l), 3))
+}
+mkpl <- function(sid, P, wp, elo, paces, vs) {
+  o <- list(sackmann_id = sid, name = if (!is.null(P)) P$name else NA,
+            win_prob = round(wp, 3), elo = round(elo, 1), proj_aces = paces)
+  if (!is.null(vs)) o$vs_similar <- vs
+  o
+}
+
 proj_out <- list()
 for (fx in fixtures) {
   tr <- if (fx$tour %in% names(elo_by_tour)) fx$tour else "atp"
@@ -450,10 +512,8 @@ for (fx in fixtures) {
     match_id = fx$match_id, tour = tr, tournament = fx$tournament,
     surface = surf, round = fx$round,
     players = list(
-      list(sackmann_id = s1, name = if (!is.null(P1)) P1$name else NA, win_prob = round(p1, 3),
-           elo = round(e1, 1), proj_aces = proj_ace(rate_of(P1), conc_of(P2), n_of(P2))),
-      list(sackmann_id = s2, name = if (!is.null(P2)) P2$name else NA, win_prob = round(1 - p1, 3),
-           elo = round(e2, 1), proj_aces = proj_ace(rate_of(P2), conc_of(P1), n_of(P1)))
+      mkpl(s1, P1, p1,     e1, proj_ace(rate_of(P1), conc_of(P2), n_of(P2)), vs_similar(s1, s2)),
+      mkpl(s2, P2, 1 - p1, e2, proj_ace(rate_of(P2), conc_of(P1), n_of(P1)), vs_similar(s2, s1))
     ),
     proj_total_games = proj_games,
     model = "elo-surface-blend v1; total_games + aces heuristic v1"
