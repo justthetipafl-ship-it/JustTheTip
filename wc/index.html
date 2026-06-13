@@ -276,6 +276,24 @@
   }
   .filter-toggle button.active { background: var(--surface-3); color: var(--accent); }
 
+  /* Standalone toggle pill — sits next to the scope group in the filterbar.
+     Matches the filter-toggle button typography; flips colours when active. */
+  .filterbar-pill {
+    display: inline-flex; align-items: center; gap: 6px;
+    background: var(--surface-2); color: var(--text-2);
+    border: 1px solid var(--border); border-radius: 4px;
+    padding: 6px 10px;
+    font-family: var(--font-display); font-weight: 600;
+    font-size: 12px; letter-spacing: 1px; text-transform: uppercase;
+    cursor: pointer;
+  }
+  .filterbar-pill:hover { color: var(--text-1); }
+  .filterbar-pill.active {
+    background: var(--surface-3); color: var(--accent);
+    border-color: var(--accent);
+  }
+  .filterbar-pill i { font-size: 14px; }
+
   /* === FIXTURE PICKER (Tab 1) === */
   .fixture-picker { display: flex; flex-direction: column; gap: 8px; }
   /* Visual idiom mirrors the focused-fixture detail HEADER: each team is a
@@ -5174,6 +5192,9 @@
         <button class="active" data-scope="matchday">Matchday</button>
         <button data-scope="tournament">Tournament</button>
       </div>
+      <button id="hide-completed-btn" class="filterbar-pill" onclick="toggleHideCompleted()" title="Toggle showing completed matches">
+        <i class="ti ti-eye-off" aria-hidden="true"></i><span>Hide Finished</span>
+      </button>
       <div style="font-family: var(--font-mono); font-size: 10px; color: var(--text-3); letter-spacing: 1px; margin-left: auto;" id="filter-meta"></div>
     </div>
 
@@ -5472,6 +5493,11 @@ const state = {
     crewSubTab: null,          // null when on tile grid; tile name when drilled in
     selectedFixtureId: null,   // null when on picker; fixtureId when on detail
     scope: 'matchday',         // 'matchday' | 'tournament'
+    hideCompleted: (() => {
+      // Persisted preference — load from localStorage so the toggle survives reloads
+      try { return localStorage.getItem('jtt_wc_hide_completed') === '1'; }
+      catch (e) { return false; }
+    })(),
     // Universal data filter — applied to "recent form" sections on the focused
     // fixture page. Does NOT touch Match Markets projections (they need stable
     // historical baselines).
@@ -5733,8 +5759,31 @@ function renderFixturesView() {
     display = sorted;
   }
 
+  // Hide-completed filter — drops fixtures with a finished status flag.
+  // Applied after the scope filter so the count reflects what the user sees.
+  let hiddenCount = 0;
+  if (state.view.hideCompleted) {
+    const finishedStatuses = new Set(['FT', 'AET', 'PEN']);
+    const before = display.length;
+    display = display.filter(f => !finishedStatuses.has(f.status));
+    hiddenCount = before - display.length;
+  }
+
+  // Sync the toggle button's active state with state.view.hideCompleted
+  const hideBtn = document.getElementById('hide-completed-btn');
+  if (hideBtn) {
+    hideBtn.classList.toggle('active', !!state.view.hideCompleted);
+    // Swap the icon to reflect current state — eye when off, eye-off when on
+    const icon = hideBtn.querySelector('i');
+    if (icon) {
+      icon.classList.remove('ti-eye', 'ti-eye-off');
+      icon.classList.add(state.view.hideCompleted ? 'ti-eye-off' : 'ti-eye');
+    }
+  }
+
   document.getElementById('filter-meta').textContent =
     display.length + ' MATCH' + (display.length === 1 ? '' : 'ES') +
+    (hiddenCount > 0 ? ' • ' + hiddenCount + ' HIDDEN' : '') +
     ' • SCOPE: ' + state.view.scope.toUpperCase();
 
   picker.innerHTML = '';
@@ -14717,6 +14766,17 @@ document.querySelectorAll('.filter-toggle button').forEach(btn => {
     renderFixturesView();
   });
 });
+
+// Hide-completed toggle — flips state.view.hideCompleted, persists to
+// localStorage so the preference survives reloads, and re-renders the
+// fixture picker. The button's active class is synced inside renderFixturesView.
+window.toggleHideCompleted = function() {
+  state.view.hideCompleted = !state.view.hideCompleted;
+  try {
+    localStorage.setItem('jtt_wc_hide_completed', state.view.hideCompleted ? '1' : '0');
+  } catch (e) { /* ignore — private mode, etc. */ }
+  renderFixturesView();
+};
 
 // ============================================================
 // ============================================================
