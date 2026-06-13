@@ -22,8 +22,8 @@ FIXTURES_PATHS = [
     Path("wc/data/worldcup_fixtures_2026.json"),
 ]
 
-WINDOW_START_MIN = 50
-WINDOW_END_MIN   = 65
+WINDOW_START_MIN = 30
+WINDOW_END_MIN   = 120
 
 
 def load_fixtures():
