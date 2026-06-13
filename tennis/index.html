@@ -178,7 +178,7 @@
 
   <script>
   /* ===== 1. CONFIG ===== */
-  const AUTH_HASH = 'f1996a7cda48bca0dc87f700b183266eed3a770330d924fb1507b3036e37b0ff';
+  const AUTH_HASH = 'REPLACE_WITH_SHA256_OF_YOUR_PASSWORD';
   const AUTH_TTL_DAYS = 30;
   const AUTH_STORAGE_KEY = 'jtt_tennis_auth_v1';
 
@@ -187,6 +187,7 @@
     players:     'data/tennis_players.json',
     h2h:         'data/tennis_h2h.json',
     projections: 'data/tennis_projections.json',
+    advanced:    'data/tennis_advanced.json',
   };
 
   const TABS = [
@@ -278,6 +279,7 @@
     const pr = state.data.projections && state.data.projections.projections || [];
     pr.forEach(x=>{ IDX.proj[x.match_id]=x; });
     IDX.h2h = state.data.h2h && state.data.h2h.h2h || {};
+    IDX.adv = state.data.advanced && state.data.advanced.players || {};
     IDX.fixtures = state.data.fixtures && state.data.fixtures.fixtures || [];
   }
   const P  = id => (IDX && IDX.players[id]) || null;
@@ -400,6 +402,24 @@
       keys.forEach(k=>{const s=ss[k];out+='<div style="margin-bottom:.5rem">'+surfChip(k)+' <span style="color:var(--text-3);font-family:var(--font-mono);font-size:.72rem"> '+(s.n||0)+' matches</span>'+
         '<div class="stat-grid" style="margin-top:.3rem">'+statRow('Aces/game',num(s.ace_svgm,2))+statRow('Svc pts won',pct(s.spw))+statRow('1st in',pct(s.first_pct))+statRow('Aces against',num(s.ace_against,2))+'</div></div>';});
       out+='</div></details></div>';
+    }
+    // ADVANCED (additive — only when charting/slam data exists for this player)
+    const ax=IDX.adv[id];
+    if(ax){
+      if(ax.adv){const v=ax.adv;
+        out+='<div class="section-title">Shot making <small style="color:var(--text-3);font-weight:400">'+v.charted_matches+' charted matches</small></div>';
+        out+='<div class="proj-tiles">'+
+          '<div class="proj-tile"><div class="v">'+v.winners_pm+'</div><div class="k">Winners / match</div></div>'+
+          '<div class="proj-tile"><div class="v">'+v.ufe_pm+'</div><div class="k">Unforced / match</div></div>'+
+          '<div class="proj-tile"><div class="v">'+(v.w_ufe!=null?v.w_ufe:'—')+'</div><div class="k">Winner : UFE</div></div>'+
+          '</div>';
+        const rows=[];
+        if(v.fh_winner_pct!=null)rows.push(statRow('Forehand winners',pct(v.fh_winner_pct)));
+        if(v.fh_ufe_pct!=null)rows.push(statRow('Forehand UFEs',pct(v.fh_ufe_pct)));
+        if(v.unret_pct!=null)rows.push(statRow('Serves unreturned',pct(v.unret_pct)));
+        if(v.serve_wide_pct!=null)rows.push(statRow('Serve wide / body / T',pct(v.serve_wide_pct)+' / '+pct(v.serve_body_pct)+' / '+pct(v.serve_t_pct)));
+        if(rows.length)out+='<div class="stat-grid" style="grid-template-columns:1fr">'+rows.join('')+'</div>';
+      }
     }
     return out;
   }
