@@ -1,14 +1,20 @@
 name: WC Pre-match Refresh
 
-# Polls every 10 minutes. Inside, a gate script checks whether any fixture is
-# in the T-30..120 pre-match window. If so, runs the pre-match fetchers
-# (lineups, referees, odds, weather, fixture-status update) and commits any
-# new data. If not, exits cleanly without touching the API.
+# Polls every 10 minutes. A gate script checks whether any fixture is in the
+# T-30..120 pre-match window; if so, runs the pre-match fetchers (lineups,
+# referees, odds, weather, fixture-status update) and commits any new data.
+# Manual runs from the Actions tab can tick "force" to bypass the gate and
+# run the fetchers immediately — useful for verifying everything's wired up.
 
 on:
   schedule:
     - cron: '*/10 * * * *'
-  workflow_dispatch:  # allow manual runs from the Actions tab
+  workflow_dispatch:
+    inputs:
+      force:
+        description: "Force run (bypass the kickoff window gate)"
+        type: boolean
+        default: false
 
 jobs:
   refresh:
@@ -23,12 +29,28 @@ jobs:
         with:
           python-version: "3.11"
 
+      # Gate is skipped when running manually with force=true.
       - name: Check if any kickoff is in the window
         id: gate
+        if: github.event.inputs.force != 'true'
         run: python scripts/check_kickoff_window.py
 
+      # Single decision point — gate fired OR force was ticked.
+      - name: Decide whether to refresh
+        id: should_run
+        run: |
+          if [ "${{ github.event.inputs.force }}" = "true" ]; then
+            echo "go=true" >> "$GITHUB_OUTPUT"
+            echo "Manual force run — gate bypassed."
+          elif [ "${{ steps.gate.outputs.refresh }}" = "true" ]; then
+            echo "go=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "go=false" >> "$GITHUB_OUTPUT"
+            echo "No refresh needed."
+          fi
+
       - name: Install Python dependencies
-        if: steps.gate.outputs.refresh == 'true'
+        if: steps.should_run.outputs.go == 'true'
         run: |
           if [ -f requirements.txt ]; then
             pip install -r requirements.txt
@@ -37,35 +59,35 @@ jobs:
           fi
 
       - name: Fetch lineups
-        if: steps.gate.outputs.refresh == 'true'
+        if: steps.should_run.outputs.go == 'true'
         env:
           APIFOOTBALL_KEY: ${{ secrets.APIFOOTBALL_KEY }}
         run: python fetch_wc_lineups.py
 
       - name: Fetch referees
-        if: steps.gate.outputs.refresh == 'true'
+        if: steps.should_run.outputs.go == 'true'
         env:
           APIFOOTBALL_KEY: ${{ secrets.APIFOOTBALL_KEY }}
         run: python fetch_wc_referees.py
 
       - name: Fetch odds
-        if: steps.gate.outputs.refresh == 'true'
+        if: steps.should_run.outputs.go == 'true'
         env:
           APIFOOTBALL_KEY: ${{ secrets.APIFOOTBALL_KEY }}
         run: python fetch_wc_odds.py || echo "odds fetch failed, continuing"
 
       - name: Fetch weather
-        if: steps.gate.outputs.refresh == 'true'
+        if: steps.should_run.outputs.go == 'true'
         run: python fetch_wc_weather.py || echo "weather fetch failed, continuing"
 
       - name: Fetch fixture status update
-        if: steps.gate.outputs.refresh == 'true'
+        if: steps.should_run.outputs.go == 'true'
         env:
           APIFOOTBALL_KEY: ${{ secrets.APIFOOTBALL_KEY }}
         run: python fetch_wc_update.py || echo "fixture update failed, continuing"
 
       - name: Commit fresh data
-        if: steps.gate.outputs.refresh == 'true'
+        if: steps.should_run.outputs.go == 'true'
         run: |
           git config user.email "actions@github.com"
           git config user.name "github-actions[bot]"
