@@ -95,6 +95,15 @@
   .crew-tile-name{font-family:var(--font-display);font-weight:800;font-size:.95rem;color:var(--text);letter-spacing:.2px;}
   .crew-tile-sub{font-family:var(--font-mono);font-size:.72rem;color:var(--accent);font-weight:600;}
   .crew-tile-sub small{display:block;color:var(--text-3);font-size:.62rem;margin-top:.1rem;font-weight:400;}
+  .odds-grid{font-family:var(--font-mono);font-size:.82rem;margin-top:.2rem;}
+  .odds-row{display:grid;grid-template-columns:1.4fr .8fr .8fr .8fr .9fr;gap:.3rem;align-items:center;
+    padding:.28rem .2rem;border-bottom:1px dashed var(--border);}
+  .odds-row.head{color:var(--text-3);font-size:.66rem;text-transform:uppercase;letter-spacing:.04em;border-bottom:1px solid var(--border);}
+  .odds-row .on{font-weight:700;color:var(--text);}
+  .odds-row .oc{text-align:right;color:var(--text-2);}
+  .odds-row .edge.pos{color:var(--accent);font-weight:700;}
+  .odds-row .edge.neg{color:var(--bad);}
+  .edge.pos{color:var(--accent);font-weight:700;} .edge.neg{color:var(--bad);}
   .search-box{width:100%;background:var(--surface-2);border:1px solid var(--border);border-radius:10px;
     padding:.55rem .8rem;color:var(--text);font:inherit;font-size:.9rem;margin-bottom:.6rem;}
   .cmb-field{margin-bottom:.7rem;}
@@ -198,6 +207,7 @@
     h2h:         'data/tennis_h2h.json',
     projections: 'data/tennis_projections.json',
     advanced:    'data/tennis_advanced.json',
+    odds:        'data/tennis_odds.json',
   };
 
   const TABS = [
@@ -290,6 +300,7 @@
     pr.forEach(x=>{ IDX.proj[x.match_id]=x; });
     IDX.h2h = state.data.h2h && state.data.h2h.h2h || {};
     IDX.adv = state.data.advanced && state.data.advanced.players || {};
+    IDX.odds = state.data.odds && state.data.odds.odds || {};
     IDX.fixtures = state.data.fixtures && state.data.fixtures.fixtures || [];
   }
   const P  = id => (IDX && IDX.players[id]) || null;
@@ -301,6 +312,7 @@
   const num = (x,d=1) => (x==null||isNaN(x))?'—':Number(x).toFixed(d);
   function surfChip(s){const c=['Grass','Clay','Hard'].includes(s)?s:'na';return '<span class="surf-chip surf-'+c+'">'+(s||'—')+'</span>';}
   const IOC2ISO={AUS:'au',USA:'us',GBR:'gb',ESP:'es',FRA:'fr',GER:'de',ITA:'it',SUI:'ch',NED:'nl',RUS:'ru',SRB:'rs',GRE:'gr',AUT:'at',BEL:'be',ARG:'ar',BRA:'br',CAN:'ca',CHN:'cn',JPN:'jp',KOR:'kr',CZE:'cz',POL:'pl',CRO:'hr',DEN:'dk',NOR:'no',SWE:'se',FIN:'fi',POR:'pt',HUN:'hu',BUL:'bg',ROU:'ro',SVK:'sk',SLO:'si',SVN:'si',UKR:'ua',KAZ:'kz',GEO:'ge',IND:'in',TPE:'tw',THA:'th',CHI:'cl',COL:'co',ECU:'ec',PER:'pe',URU:'uy',VEN:'ve',MEX:'mx',RSA:'za',TUN:'tn',MAR:'ma',EGY:'eg',ISR:'il',TUR:'tr',LAT:'lv',LTU:'lt',EST:'ee',BLR:'by',MDA:'md',BIH:'ba',CYP:'cy',LUX:'lu',IRL:'ie',NZL:'nz',MON:'mc',KSA:'sa',UAE:'ae',ALG:'dz',ZIM:'zw',PAR:'py',BOL:'bo',CRC:'cr',DOM:'do',PUR:'pr',PHI:'ph',INA:'id',VIE:'vn',HKG:'hk',SGP:'sg',JAM:'jm',ARM:'am',AZE:'az',UZB:'uz',MKD:'mk',MNE:'me',ALB:'al',LIE:'li',MLT:'mt',ISL:'is'};
+  function normName(s){return (s||'').normalize('NFKD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/[^a-z0-9 ]/g,'').replace(/\s+/g,' ').trim();}
   function flagFor(ioc){
     if(!ioc)return '';
     const code=IOC2ISO[String(ioc).toUpperCase()];
@@ -511,6 +523,25 @@
       }
     // H2H
     out+=h2hBlock(a.sackmann_id,b.sackmann_id,a.name,b.name);
+    // Odds & edge
+    const od=IDX.odds[mid];
+    if(od&&od.h2h){
+      const oa=od.h2h[normName(a.name)],ob=od.h2h[normName(b.name)];
+      out+='<div class="section-title">Odds &amp; edge <small style="color:var(--text-3);font-weight:400">'+(od.books||0)+' AU books</small></div>';
+      const edgeRow=(p,o)=>{if(!o)return '';const edge=p.win_prob-o.imp;const cls=edge>=0.05?'pos':(edge<=-0.05?'neg':'');
+        return '<div class="odds-row"><div class="on">'+esc(lastName(p.name))+'</div>'+
+          '<div class="oc">'+num(o.price,2)+'</div>'+
+          '<div class="oc">'+pct(o.imp)+'</div>'+
+          '<div class="oc">'+pct(p.win_prob)+'</div>'+
+          '<div class="oc edge '+cls+'">'+(edge>=0?'+':'')+pct(edge)+'</div></div>';};
+      out+='<div class="odds-grid">'+
+        '<div class="odds-row head"><div class="on"></div><div class="oc">Price</div><div class="oc">Mkt</div><div class="oc">Model</div><div class="oc">Edge</div></div>'+
+        edgeRow(a,oa)+edgeRow(b,ob)+'</div>';
+      if(od.total){const tl=od.total.line,pg=pr.proj_total_games;
+        let lean='';if(pg!=null&&tl!=null){lean=pg>tl?' <span class="edge pos">model leans OVER</span>':(pg<tl?' <span class="edge pos">model leans UNDER</span>':'');}
+        out+='<div class="dfilt-note" style="margin-top:.5rem">Total games line <b>'+tl+'</b> (O '+num(od.total.over,2)+' / U '+num(od.total.under,2)+') vs model ~'+num(pg)+lean+'</div>';}
+      out+='<div class="dfilt-note" style="margin-top:.3rem;color:var(--text-3)">Edge = model probability minus de-vigged market implied. Leans, not guarantees.</div>';
+    }
     out+='<div class="dfilt-note" style="margin-top:.7rem">'+esc(pr.model||'')+'</div>';
     return out;
   }
@@ -538,6 +569,7 @@
 
   /* ---- DEGEN CREW ---- */
   const CREW=[
+    {id:'value',name:'Value',icon:'ti-coins',sub:'Model probability beats the market'},
     {id:'multi',name:'Multi Builders',icon:'ti-stack-2',sub:'Highest-chance winners to stack'},
     {id:'shotmakers',name:'Shot Makers',icon:'ti-target-arrow',sub:'High winners, positive winner:UFE'},
     {id:'aces',name:'Ace Merchants',icon:'ti-flame',sub:'Highest projected aces'},
@@ -580,6 +612,10 @@
   }
   function crewData(id){
     const fx=upcomingSingles().filter(f=>PR(f.match_id));
+    if(id==='value')return fx.map(f=>{const pr=PR(f.match_id),od=IDX.odds[f.match_id];if(!od||!od.h2h)return null;
+      let best=null;pr.players.forEach(pp=>{const o=od.h2h[normName(pp.name)];if(!o||o.imp==null)return;const edge=pp.win_prob-o.imp;
+        if(edge>=0.05&&(!best||edge>best.edge))best={name:pp.name,edge,price:o.price};});
+      if(!best)return null;return{f,note:esc(best.name)+' +'+pct(best.edge)+' edge @ '+num(best.price,2),sort:best.edge};}).filter(Boolean).sort((a,b)=>b.sort-a.sort);
     if(id==='multi')return fx.map(f=>{const pr=PR(f.match_id),mx=Math.max(pr.players[0].win_prob,pr.players[1].win_prob),fav=pr.players[0].win_prob>=pr.players[1].win_prob?pr.players[0]:pr.players[1];return{f,mx,note:esc(fav.name)+' '+pct(mx),sort:mx};}).filter(x=>x.mx>=0.65).sort((a,b)=>b.sort-a.sort);
     if(id==='aces')return fx.map(f=>{const pr=PR(f.match_id);const best=(pr.players[0].proj_aces||0)>=(pr.players[1].proj_aces||0)?pr.players[0]:pr.players[1];return{f,note:esc(best.name)+' ~'+num(best.proj_aces)+' aces',sort:best.proj_aces||0};}).filter(x=>x.sort>=8).sort((a,b)=>b.sort-a.sort);
     if(id==='bunnies')return fx.map(f=>{const pr=PR(f.match_id),k=[pr.players[0].sackmann_id,pr.players[1].sackmann_id].sort().join('_'),h=IDX.h2h[k];if(!h)return null;const tot=h.a_wins+h.b_wins,diff=Math.abs(h.a_wins-h.b_wins);if(tot<3||diff<2)return null;const domId=h.a_wins>h.b_wins?h.a:h.b,dom=P(domId);return{f,note:(dom?esc(dom.name):'—')+' leads '+Math.max(h.a_wins,h.b_wins)+'\u2013'+Math.min(h.a_wins,h.b_wins),sort:diff};}).filter(Boolean).sort((a,b)=>b.sort-a.sort);
