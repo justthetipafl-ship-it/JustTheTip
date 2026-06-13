@@ -178,7 +178,7 @@
 
   <script>
   /* ===== 1. CONFIG ===== */
-  const AUTH_HASH = 'f1996a7cda48bca0dc87f700b183266eed3a770330d924fb1507b3036e37b0ff';
+  const AUTH_HASH = 'REPLACE_WITH_SHA256_OF_YOUR_PASSWORD';
   const AUTH_TTL_DAYS = 30;
   const AUTH_STORAGE_KEY = 'jtt_tennis_auth_v1';
 
@@ -406,14 +406,22 @@
     // ADVANCED (additive — only when charting/slam data exists for this player)
     const ax=IDX.adv[id];
     if(ax){
-      if(ax.adv){const v=ax.adv;
+      if(ax.adv){const v=ax.adv;const T=(val,k)=>'<div class="proj-tile"><div class="v">'+val+'</div><div class="k">'+k+'</div></div>';
         out+='<div class="section-title">Shot making <small style="color:var(--text-3);font-weight:400">'+v.charted_matches+' charted matches</small></div>';
-        out+='<div class="proj-tiles">'+
-          '<div class="proj-tile"><div class="v">'+v.winners_pm+'</div><div class="k">Winners / match</div></div>'+
-          '<div class="proj-tile"><div class="v">'+v.ufe_pm+'</div><div class="k">Unforced / match</div></div>'+
-          '<div class="proj-tile"><div class="v">'+(v.w_ufe!=null?v.w_ufe:'—')+'</div><div class="k">Winner : UFE</div></div>'+
-          '</div>';
+        out+='<div class="proj-tiles">'+T(v.winners_pm,'Winners / match')+T(v.ufe_pm,'Unforced / match')+T(v.w_ufe!=null?v.w_ufe:'—','Winner : UFE')+'</div>';
+        if(v.rally_short_pct!=null||v.rally_mid_pct!=null||v.rally_long_pct!=null){
+          out+='<div class="section-title">Rally win rate <small style="color:var(--text-3);font-weight:400">by rally length</small></div>';
+          out+='<div class="proj-tiles">'+
+            T(v.rally_short_pct!=null?pct(v.rally_short_pct):'—','0–3 shots')+
+            T(v.rally_mid_pct!=null?pct(v.rally_mid_pct):'—','4–6 shots')+
+            T(v.rally_long_pct!=null?pct(v.rally_long_pct):'—','7+ shots')+'</div>';
+        }
         const rows=[];
+        if(v.bp_save_pct!=null)rows.push(statRow('Break points saved (serve)',pct(v.bp_save_pct)));
+        if(v.bp_conv_pct!=null)rows.push(statRow('Break points won (return)',pct(v.bp_conv_pct)));
+        if(v.net_pts_pm!=null)rows.push(statRow('Net points / match',num(v.net_pts_pm)+(v.net_won_pct!=null?' · '+pct(v.net_won_pct)+' won':'')));
+        if(v.snv_pm!=null&&v.snv_pm>=2)rows.push(statRow('Serve & volley / match',num(v.snv_pm)+(v.snv_won_pct!=null?' · '+pct(v.snv_won_pct)+' won':'')));
+        if(v.deep_return_pct!=null)rows.push(statRow('Deep returns',pct(v.deep_return_pct)));
         if(v.fh_winner_pct!=null)rows.push(statRow('Forehand winners',pct(v.fh_winner_pct)));
         if(v.fh_ufe_pct!=null)rows.push(statRow('Forehand UFEs',pct(v.fh_ufe_pct)));
         if(v.unret_pct!=null)rows.push(statRow('Serves unreturned',pct(v.unret_pct)));
