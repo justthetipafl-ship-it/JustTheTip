@@ -271,8 +271,10 @@ for (tr in c("atp", "wta")) {
     dr <- tail(d, 12)
     recent_matches <- lapply(rev(seq_len(nrow(dr))), function(i) {
       ss <- parse_sets(dr$score[i], dr$won[i])
-      list(surf = dr$surf[i], won = as.integer(dr$won[i]),
+      list(date = dr$date[i], tourney = dr$tourney[i], round = dr$round[i], surf = dr$surf[i],
+           opp_name = dr$opp_name[i], won = as.integer(dr$won[i]), score = dr$score[i],
            ace = if (is.na(dr$ace[i])) NULL else as.integer(dr$ace[i]),
+           opp_ace = if (is.na(dr$opp_ace[i])) NULL else as.integer(dr$opp_ace[i]),
            sw = if (is.na(ss[1])) NULL else ss[1],
            sl = if (is.na(ss[2])) NULL else ss[2])
     })
@@ -312,7 +314,9 @@ for (tr in c("atp", "wta")) {
     mt <- utils::head(ord, 12)
     meetings <- lapply(seq_len(nrow(mt)), function(i) list(
       date = mt$date[i], tourney = mt$tourney[i], surface = mt$surf[i],
-      score = mt$score[i], winner_id = mt$player_id[i], round = mt$round[i]))
+      score = mt$score[i], winner_id = mt$player_id[i], round = mt$round[i],
+      w_ace = if (is.na(mt$ace[i])) NULL else as.integer(mt$ace[i]),
+      l_ace = if (is.na(mt$opp_ace[i])) NULL else as.integer(mt$opp_ace[i])))
     h2h_out[[k]] <- list(
       a = a, b = b, a_wins = a_wins, b_wins = b_wins,
       last = list(date = last$date, tourney = last$tourney, surface = last$surf,
