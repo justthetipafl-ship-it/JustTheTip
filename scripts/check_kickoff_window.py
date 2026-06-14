@@ -2,14 +2,17 @@
 """
 Gate script for pre-match data refresh.
 
-Writes refresh=true|false to $GITHUB_OUTPUT and always exits 0.
-Used by .github/workflows/wc-prematch-refresh.yml to decide whether
-to run the fetchers when a fixture is within the T-30..120 pre-match
-window.
+Writes refresh=true|false to $GITHUB_OUTPUT. Always exits 0.
 
-Supports both integer Unix timestamps (the JTT format) and ISO-format
-date strings. Integer timestamps are tried FIRST because that's what
-worldcup_fixtures_2026.json uses; ISO strings are a fallback.
+Fires (refresh=true) if ANY fixture is either:
+  - upcoming within the next 6 hours (status NS/TBD), OR
+  - currently live (1H, HT, 2H, ET, BT, P, LIVE)
+
+This wider criteria ensures the lineup fetcher runs during the actual
+window in which API-Football publishes lineups — which can be anywhere
+from T-90 minutes pre-kickoff up to a few minutes after kickoff.
+
+Used by .github/workflows/wc-prematch-refresh.yml.
 """
 import json
 import os
@@ -21,8 +24,9 @@ FIXTURES_PATHS = [
     Path("wc/data/worldcup_fixtures_2026.json"),
 ]
 
-WINDOW_START_MIN = 30
-WINDOW_END_MIN   = 120
+UPCOMING_WINDOW_HOURS = 6
+LIVE_STATUSES = {"1H", "HT", "2H", "ET", "BT", "P", "LIVE", "SUSP", "INT"}
+UPCOMING_STATUSES = {"NS", "TBD"}
 
 
 def load_fixtures():
@@ -35,21 +39,14 @@ def load_fixtures():
 
 
 def extract_kickoff(fx):
-    """Return a UTC datetime, or None if no usable kickoff time found.
-    Tries integer Unix timestamps (seconds OR milliseconds) first, then
-    common ISO string fields, then API-Football's nested fixture.date."""
-
-    # 1) Integer/float Unix timestamp — the JTT fixtures file uses this
     for key in ("timestamp", "ts", "unix", "kickoff_ts"):
         v = fx.get(key)
         if isinstance(v, (int, float)) and v > 0:
-            ts_sec = v / 1000 if v > 1e12 else v  # auto-detect ms vs s
+            ts_sec = v / 1000 if v > 1e12 else v
             try:
                 return datetime.fromtimestamp(ts_sec, tz=timezone.utc)
             except (OSError, ValueError, OverflowError):
                 continue
-
-    # 2) ISO-format string
     for key in ("commence_time", "kickoff", "date", "datetime", "utcDate"):
         v = fx.get(key)
         if v and isinstance(v, str):
@@ -57,23 +54,21 @@ def extract_kickoff(fx):
                 return datetime.fromisoformat(v.replace("Z", "+00:00"))
             except ValueError:
                 continue
-
-    # 3) API-Football nested shape: {"fixture": {"date": "..."}}
     nested = fx.get("fixture") or {}
-    nested_date = nested.get("date") if isinstance(nested, dict) else None
-    if isinstance(nested_date, str):
-        try:
-            return datetime.fromisoformat(nested_date.replace("Z", "+00:00"))
-        except ValueError:
-            pass
-    nested_ts = nested.get("timestamp") if isinstance(nested, dict) else None
-    if isinstance(nested_ts, (int, float)) and nested_ts > 0:
-        ts_sec = nested_ts / 1000 if nested_ts > 1e12 else nested_ts
-        try:
-            return datetime.fromtimestamp(ts_sec, tz=timezone.utc)
-        except (OSError, ValueError, OverflowError):
-            pass
-
+    if isinstance(nested, dict):
+        d = nested.get("date")
+        if isinstance(d, str):
+            try:
+                return datetime.fromisoformat(d.replace("Z", "+00:00"))
+            except ValueError:
+                pass
+        ts = nested.get("timestamp")
+        if isinstance(ts, (int, float)) and ts > 0:
+            ts_sec = ts / 1000 if ts > 1e12 else ts
+            try:
+                return datetime.fromtimestamp(ts_sec, tz=timezone.utc)
+            except (OSError, ValueError, OverflowError):
+                pass
     return None
 
 
@@ -83,21 +78,25 @@ def extract_team_names(fx):
     if home and away:
         return home, away
     teams = fx.get("teams") or {}
-    h = teams.get("home") if isinstance(teams, dict) else None
-    a = teams.get("away") if isinstance(teams, dict) else None
-    return (h.get("name") if isinstance(h, dict) else (h or "?"),
-            a.get("name") if isinstance(a, dict) else (a or "?"))
+    if isinstance(teams, dict):
+        h = teams.get("home"); a = teams.get("away")
+        return (h.get("name") if isinstance(h, dict) else (h or "?"),
+                a.get("name") if isinstance(a, dict) else (a or "?"))
+    return "?", "?"
 
 
 def main():
     data, src = load_fixtures()
-    if data is None:
-        print(f"ERROR: no fixtures file found. Tried: {[str(p) for p in FIXTURES_PATHS]}",
-              file=sys.stderr)
-        gh_output = os.environ.get("GITHUB_OUTPUT")
+    gh_output = os.environ.get("GITHUB_OUTPUT")
+
+    def write_output(refresh):
         if gh_output:
             with open(gh_output, "a") as f:
-                f.write("refresh=false\n")
+                f.write(f"refresh={'true' if refresh else 'false'}\n")
+
+    if data is None:
+        print(f"ERROR: no fixtures file found.", file=sys.stderr)
+        write_output(False)
         sys.exit(0)
 
     if isinstance(data, list):
@@ -111,51 +110,44 @@ def main():
         fixtures = []
 
     now = datetime.now(timezone.utc)
-    window_start = now + timedelta(minutes=WINDOW_START_MIN)
-    window_end   = now + timedelta(minutes=WINDOW_END_MIN)
+    upcoming_horizon = now + timedelta(hours=UPCOMING_WINDOW_HOURS)
 
+    live = []
+    upcoming = []
     parsed_count = 0
-    matching = []
-    upcoming_within_day = []  # for diagnostics
 
     for fx in fixtures:
         if not isinstance(fx, dict):
             continue
+        status = fx.get("status", "")
         kickoff = extract_kickoff(fx)
-        if not kickoff:
+        if kickoff:
+            parsed_count += 1
+        # Live match — fire immediately
+        if status in LIVE_STATUSES:
+            live.append((fx, kickoff))
             continue
-        parsed_count += 1
-        if window_start <= kickoff <= window_end:
-            matching.append((fx, kickoff))
-        elif now <= kickoff <= now + timedelta(hours=24):
-            upcoming_within_day.append((fx, kickoff))
+        # Upcoming within window
+        if status in UPCOMING_STATUSES and kickoff and now <= kickoff <= upcoming_horizon:
+            upcoming.append((fx, kickoff))
 
-    gh_output = os.environ.get("GITHUB_OUTPUT")
-
-    # Diagnostic line — shows fixtures parsed (catches the silent zero-match bug)
     print(f"Gate: parsed {parsed_count} fixtures with valid kickoff times (source: {src}).")
+    print(f"  - live: {len(live)} matches")
+    print(f"  - upcoming within {UPCOMING_WINDOW_HOURS}h: {len(upcoming)} matches")
 
-    if matching:
-        print(f"REFRESH NEEDED — {len(matching)} fixture(s) in T-{WINDOW_START_MIN}..{WINDOW_END_MIN} window:")
-        for fx, ko in matching:
+    if live or upcoming:
+        for fx, ko in live:
+            home, away = extract_team_names(fx)
+            print(f"  LIVE: {home} vs {away} ({fx.get('status')})")
+        for fx, ko in upcoming:
             home, away = extract_team_names(fx)
             mins = int((ko - now).total_seconds() / 60)
-            print(f"  - {home} vs {away}  (kickoff in {mins} min, at {ko.isoformat()})")
-        if gh_output:
-            with open(gh_output, "a") as f:
-                f.write("refresh=true\n")
+            print(f"  UPCOMING: {home} vs {away} (KO in {mins} min)")
+        write_output(True)
         sys.exit(0)
 
-    print(f"No fixtures in T-{WINDOW_START_MIN}..{WINDOW_END_MIN} window. Skipping refresh.")
-    if upcoming_within_day:
-        print(f"  (Diagnostic: {len(upcoming_within_day)} fixture(s) within the next 24h:)")
-        for fx, ko in upcoming_within_day[:5]:
-            home, away = extract_team_names(fx)
-            mins = int((ko - now).total_seconds() / 60)
-            print(f"    - {home} vs {away}  (kickoff in {mins} min)")
-    if gh_output:
-        with open(gh_output, "a") as f:
-            f.write("refresh=false\n")
+    print("No active or imminent matches. Skipping refresh.")
+    write_output(False)
     sys.exit(0)
 
 
