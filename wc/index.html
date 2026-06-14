@@ -5650,6 +5650,7 @@ const state = {
     weather: null,    // worldcup_weather.json content (optional — Open-Meteo forecast per fixture)
     squads: null,     // worldcup_squads_2026.json content (optional — WC squad lists per team, ground truth for eligibility)
     picks: null,      // jtt_picks_2026.json content — Ant's curated picks per matchId
+    refereesManual: null,  // wc_referees_manual.json content — admin-set referees for upcoming matches
   },
   view: {
     tab: 'fixtures',           // 'fixtures' | 'crew'
@@ -5788,6 +5789,7 @@ async function tryAutoLoadData() {
     weather:     prefix + 'worldcup_weather.json' + v,
     squads:      prefix + 'worldcup_squads_2026.json' + v,
     picks:       prefix + 'jtt_picks_2026.json' + v,
+    refereesManual: prefix + 'wc_referees_manual.json' + v,
   };
 
   // Expose the version for the freshness pill below
@@ -5807,6 +5809,15 @@ async function tryAutoLoadData() {
     }
   });
   await Promise.all(promises);
+
+  // Merge manual referee assignments into state.data.referees.byMatch so all
+  // downstream code (renderRefereeSection, getRefereeForFixture, getRefExtendedStats,
+  // signal projections that depend on ref stats) sees them transparently.
+  // Two sources to merge:
+  //   1. wc/data/wc_referees_manual.json — shipped to subscribers
+  //   2. localStorage selections (jtt_wc_user_refs) — per-subscriber, browser-local
+  _mergeManualReferees();
+
   // Core files needed to boot the app: logs + fixtures. If either missing,
   // surface the file-input fallback so the user can supply them manually.
   if (state.data.logs && state.data.fixtures) {
@@ -10875,7 +10886,20 @@ function refereeTendency(stats, fieldKey) {
 
 function renderRefereeSection(fixture) {
   const ref = getRefereeForFixture(fixture.matchId);
-  if (!ref) return '';
+
+  // When no referee is set (API hasn't populated for this fixture yet),
+  // show a selector so the subscriber can pick the appointed ref themselves.
+  // Their choice is saved in their own localStorage — flows through to ref
+  // stats display and any signal/projection that uses ref tendencies.
+  if (!ref) {
+    return '<details class="tp-collapse ref-collapse">' +
+      '<summary class="tp-collapse-sum">' +
+        '<i class="ti ti-whistle" aria-hidden="true"></i>' +
+        '<span class="tp-collapse-title" style="color:var(--text-3);font-style:italic;">Referee not announced yet</span>' +
+        '<button class="admin-add-pick-btn" style="margin-left:auto;margin-bottom:0;padding:6px 12px;" onclick="event.stopPropagation();event.preventDefault();_openSetRefereeModal(' + fixture.matchId + ')">Select Referee</button>' +
+      '</summary>' +
+    '</details>';
+  }
 
   const ext = getRefExtendedStats();
   const refExt = ext ? ext[ref.name] : null;
@@ -10936,6 +10960,7 @@ function renderRefereeSection(fixture) {
       '<span class="tp-collapse-title">' + escapeHtml(ref.name) +
         (ref.country ? ' <span class="ref-country">' + escapeHtml(ref.country) + '</span>' : '') +
       '</span>' +
+      '<button class="admin-add-pick-btn" style="margin-left:auto;margin-right:8px;margin-bottom:0;padding:4px 10px;font-size:11px;" onclick="event.stopPropagation();event.preventDefault();_openSetRefereeModal(' + fixture.matchId + ')">Change</button>' +
       '<i class="ti ti-chevron-down tp-collapse-chev" aria-hidden="true"></i>' +
     '</summary>' +
     '<div class="tp-collapse-body">' +
@@ -11452,6 +11477,142 @@ window._deletePick = function(matchId, idx) {
   if (fx) showFixture(fx);
 };
 
+// === REFEREE ADMIN — manual ref assignment for upcoming matches ===
+// API-Football doesn't publish referees for WC 2026 fixtures pre-match.
+// Backfill catches them post-completion, but until then subscribers see
+// nothing in the ref section. This admin tool lets the user manually
+// assign a ref name to a fixture — the existing ref display + downstream
+// signal calculations (cards markets, BTTS/Goals overlays driven by ref
+// penalty rate) flow through unchanged.
+
+function _mergeManualReferees() {
+  if (!state.data.referees) {
+    state.data.referees = { byMatch: {}, refStats: {} };
+  }
+  if (!state.data.referees.byMatch) state.data.referees.byMatch = {};
+
+  // 1. Shipped manual file (Ant can optionally curate refs centrally)
+  const shipped = state.data.refereesManual && state.data.refereesManual.byMatch;
+  if (shipped) {
+    Object.keys(shipped).forEach(mid => {
+      const entry = shipped[mid];
+      if (entry && entry.name) {
+        state.data.referees.byMatch[mid] = entry;
+      }
+    });
+  }
+
+  // 2. Per-user localStorage selections — every subscriber can pick their
+  //    own ref for a fixture. Their choice wins over the shipped/auto data
+  //    in their own browser only. Storage key: jtt_wc_user_refs.
+  try {
+    const userPicks = JSON.parse(localStorage.getItem('jtt_wc_user_refs') || '{}');
+    if (userPicks.byMatch) {
+      Object.keys(userPicks.byMatch).forEach(mid => {
+        const entry = userPicks.byMatch[mid];
+        if (entry && entry.name) {
+          state.data.referees.byMatch[mid] = entry;
+        } else if (entry === null) {
+          delete state.data.referees.byMatch[mid];
+        }
+      });
+    }
+  } catch (e) {}
+
+  _refExtendedCache = null;
+}
+
+function _getKnownRefereeNames() {
+  const names = new Set();
+  if (state.data.referees) {
+    const refStats = state.data.referees.refStats || {};
+    Object.keys(refStats).forEach(n => n && names.add(n));
+    const byMatch = state.data.referees.byMatch || {};
+    Object.values(byMatch).forEach(e => {
+      if (e && e.name) names.add(e.name);
+    });
+  }
+  return Array.from(names).sort();
+}
+
+window._openSetRefereeModal = function(matchId) {
+  const matchIdStr = String(matchId);
+  const currentEntry = (state.data.referees && state.data.referees.byMatch &&
+                        (state.data.referees.byMatch[matchId] ||
+                         state.data.referees.byMatch[matchIdStr])) || null;
+  const currentName    = (currentEntry && currentEntry.name)    || '';
+  const currentCountry = (currentEntry && currentEntry.country) || '';
+  const knownNames     = _getKnownRefereeNames();
+
+  const overlay = document.createElement('div');
+  overlay.className = 'admin-modal-overlay';
+  overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
+
+  const datalistOptions = knownNames.map(n => '<option value="' + escapeHtml(n) + '">').join('');
+
+  overlay.innerHTML =
+    '<div class="admin-modal">' +
+      '<h3>Select Referee</h3>' +
+      '<p style="font-size:13px;color:var(--text-2);margin-bottom:12px;">' +
+        'Start typing — known referees autocomplete from previous matches. Their tendency stats (cards/game, pens/game) will flow through to the ref panel and any signals that adjust for ref style. Your selection is saved locally to your browser.' +
+      '</p>' +
+      '<div class="admin-form-row">' +
+        '<label>Referee name</label>' +
+        '<input id="ref-name" type="text" list="ref-options" autocomplete="off" value="' + escapeHtml(currentName) + '">' +
+        '<datalist id="ref-options">' + datalistOptions + '</datalist>' +
+      '</div>' +
+      '<div class="admin-form-row">' +
+        '<label>Country (optional)</label>' +
+        '<input id="ref-country" type="text" value="' + escapeHtml(currentCountry) + '" placeholder="Senegal, Germany, ...">' +
+      '</div>' +
+      '<div class="admin-modal-actions">' +
+        (currentName ?
+          '<button onclick="_clearReferee(' + matchId + ')" style="color:#ff5252;">Clear</button>' : '') +
+        '<button onclick="this.closest(\'.admin-modal-overlay\').remove()">Cancel</button>' +
+        '<button class="primary" onclick="_saveReferee(' + matchId + ')">Save</button>' +
+      '</div>' +
+    '</div>';
+  document.body.appendChild(overlay);
+  setTimeout(() => { const e = document.getElementById('ref-name'); if (e) e.focus(); }, 50);
+};
+
+window._saveReferee = function(matchId) {
+  const name    = document.getElementById('ref-name').value.trim();
+  const country = document.getElementById('ref-country').value.trim();
+  if (!name) { alert('Referee name is required.'); return; }
+
+  let drafts = {};
+  try { drafts = JSON.parse(localStorage.getItem('jtt_wc_user_refs') || '{}'); } catch (e) {}
+  if (!drafts.byMatch) drafts.byMatch = {};
+  const entry = country ? { name, country } : { name };
+  drafts.byMatch[String(matchId)] = entry;
+  try { localStorage.setItem('jtt_wc_user_refs', JSON.stringify(drafts)); } catch (e) {}
+
+  state.data.referees.byMatch[String(matchId)] = entry;
+  _refExtendedCache = null;
+
+  document.querySelector('.admin-modal-overlay')?.remove();
+  const fx = (state.data.fixtures.fixtures || []).find(f => f.matchId == matchId);
+  if (fx) showFixture(fx);
+};
+
+window._clearReferee = function(matchId) {
+  if (!confirm('Clear your referee selection for this match?')) return;
+  let drafts = {};
+  try { drafts = JSON.parse(localStorage.getItem('jtt_wc_user_refs') || '{}'); } catch (e) {}
+  if (!drafts.byMatch) drafts.byMatch = {};
+  drafts.byMatch[String(matchId)] = null;
+  try { localStorage.setItem('jtt_wc_user_refs', JSON.stringify(drafts)); } catch (e) {}
+
+  delete state.data.referees.byMatch[String(matchId)];
+  delete state.data.referees.byMatch[matchId];
+  _refExtendedCache = null;
+
+  document.querySelector('.admin-modal-overlay')?.remove();
+  const fx = (state.data.fixtures.fixtures || []).find(f => f.matchId == matchId);
+  if (fx) showFixture(fx);
+};
+
 window._openExportModal = function() {
   let drafts = {};
   try { drafts = JSON.parse(localStorage.getItem('jtt_wc_admin_picks') || '{}'); } catch (e) {}
@@ -11477,7 +11638,7 @@ window._openExportModal = function() {
       '</p>' +
       '<textarea class="admin-export-json" id="export-json-text" readonly>' + escapeHtml(json) + '</textarea>' +
       '<div class="admin-modal-actions">' +
-        '<button onclick="if(confirm(\'Clear all admin drafts? Make sure you have committed the JSON first.\')){localStorage.removeItem(\'jtt_wc_admin_picks\');this.closest(\'.admin-modal-overlay\').remove();location.reload();}">Clear Drafts</button>' +
+        '<button onclick="if(confirm(\'Clear all admin pick drafts? Make sure you have committed the JSON first.\')){localStorage.removeItem(\'jtt_wc_admin_picks\');this.closest(\'.admin-modal-overlay\').remove();location.reload();}">Clear Drafts</button>' +
         '<button onclick="this.closest(\'.admin-modal-overlay\').remove()">Close</button>' +
         '<button class="primary" onclick="navigator.clipboard.writeText(document.getElementById(\'export-json-text\').value).then(()=>{this.textContent=\'Copied!\';setTimeout(()=>{this.textContent=\'Copy to Clipboard\';},2000);})">Copy to Clipboard</button>' +
       '</div>' +
