@@ -1,0 +1,32 @@
+name: Diagnose API
+
+# Manual workflow — runs diagnose_api.py against a specific fixture ID to
+# see exactly what API-Football returns. Use this when lineups/referees
+# aren't showing up to determine whether the issue is upstream (API empty)
+# or in our extraction code.
+
+on:
+  workflow_dispatch:
+    inputs:
+      fixture_id:
+        description: "API-Football fixture ID (find one from worldcup_fixtures_2026.json)"
+        required: true
+        type: string
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install requests
+
+      - name: Probe API
+        env:
+          APIFOOTBALL_KEY: ${{ secrets.APIFOOTBALL_KEY }}
+        run: python diagnose_api.py --fixture=${{ github.event.inputs.fixture_id }}
