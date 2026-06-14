@@ -1,35 +1,38 @@
 #!/usr/bin/env python3
 """
-fetch_wc_lineups.py — matchday lineup poller. Runs every ~10-15 minutes during
-matchday windows to catch lineup announcements (~60-90 mins before kick-off).
+fetch_wc_lineups.py — lineup poller. Polls API-Football for fixtures that
+are upcoming, live, or recently kicked off but not yet in our cache.
 
-WHAT IT DOES:
-  1. Reads wc/data/worldcup_fixtures_2026.json (the WC tool's fixtures file).
-  2. Filters to fixtures starting in the next N hours (so we catch lineups
-     as soon as the API has them, but don't waste calls on next-week games).
-  3. For each, calls /fixtures/lineups?fixture=X.
-  4. Merges results into wc/data/wc_lineups.json (preserving historical data).
-  5. Bumps wc/data/version.txt for cache busting.
+WHAT'S NEW:
+  Previously this only polled fixtures with status in ("NS", "TBD"). That
+  missed lineups announced near kickoff because once status transitions to
+  "1H" the fixture got filtered out. Now we also poll live matches AND
+  skip any fixture we already have lineups for (saving credits).
 
-CALL BUDGET:
-  Per matchday window, ~8 fixtures × ~9 polls (every 10 mins over ~90 mins)
-  = ~72 calls per matchday. Daily quota is 7500, no concern.
+WRITES TO:
+  wc/data/wc_lineups.json     ← merged, keyed by matchId then teamId
+  wc/data/version.txt         ← bumped on any successful update
 
-USAGE (typically via GitHub Action cron):
+USAGE:
     export APIFOOTBALL_KEY=your_key
     python fetch_wc_lineups.py
 """
 
 import os, sys, json, time, requests
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 from pathlib import Path
 
 BASE = "https://v3.football.api-sports.io"
-WINDOW_HOURS = 6  # how far ahead to poll for lineups
-DATA_DIR = Path("wc/data")             # where the WC tool reads its JSON
-CACHE_DIR = Path(".cache/wc-lineups")  # outside wc/ so it isn't committed
+WINDOW_HOURS_AHEAD = 6
+WINDOW_HOURS_BEHIND = 4   # also poll matches that kicked off in the last 4h
+DATA_DIR = Path("wc/data")
+CACHE_DIR = Path(".cache/wc-lineups")
 CACHE_DIR.mkdir(parents=True, exist_ok=True)
 DATA_DIR.mkdir(parents=True, exist_ok=True)
+
+# Statuses where lineup data might be available or relevant.
+# Excludes FT/AET/PEN (handled by backfill_lineups.py) and PST/CANC/ABD (done).
+POLL_STATUSES = {"NS", "TBD", "1H", "HT", "2H", "ET", "BT", "P", "LIVE", "SUSP", "INT"}
 
 
 def get_arg(name, default=None):
@@ -48,8 +51,6 @@ def get_key():
 
 
 def find_fixtures_path():
-    """Canonical path is wc/data/worldcup_fixtures_2026.json. Falls back to
-    root for backward compatibility with older deployments."""
     candidates = [
         DATA_DIR / "worldcup_fixtures_2026.json",
         Path("worldcup_fixtures_2026.json"),
@@ -61,8 +62,6 @@ def find_fixtures_path():
 
 
 def parse_lineup_response(data):
-    """Identical to backfill_lineups.py — kept duplicated so this script is
-    self-contained for the matchday cron."""
     teams = data.get("response", []) or []
     if not teams:
         return None
@@ -98,10 +97,21 @@ def parse_lineup_response(data):
     return out if out else None
 
 
+def has_cached_lineup(by_match, mid):
+    """True if we already have a non-empty lineup for this match."""
+    entry = by_match.get(str(mid)) or by_match.get(mid)
+    if not entry or not isinstance(entry, dict):
+        return False
+    # Must have at least one team with a startXI
+    for team_id, team_data in entry.items():
+        if isinstance(team_data, dict) and team_data.get("startXI"):
+            return True
+    return False
+
+
 def main():
     key = get_key()
-    window_hours = int(get_arg("window", str(WINDOW_HOURS)))
-    print(f"Polling lineups for fixtures starting in next {window_hours} hours...")
+    print("Polling lineups for ongoing fixtures...")
 
     fixtures_path = find_fixtures_path()
     print(f"  reading fixtures from: {fixtures_path}")
@@ -111,27 +121,43 @@ def main():
 
     fixtures = fixtures_data.get("fixtures") or []
     now = int(time.time())
-    horizon = now + window_hours * 3600
-    upcoming = [f for f in fixtures
-                if now <= (f.get("timestamp") or 0) <= horizon
-                and f.get("status") in ("NS", "TBD")]
+    behind = now - WINDOW_HOURS_BEHIND * 3600
+    ahead  = now + WINDOW_HOURS_AHEAD * 3600
 
-    print(f"Found {len(upcoming)} fixtures in window")
-    if not upcoming:
-        print("Nothing to poll. Exiting cleanly.")
-        return
+    # Filter to fixtures within our time window AND in a status worth polling
+    candidates = [
+        f for f in fixtures
+        if behind <= (f.get("timestamp") or 0) <= ahead
+        and f.get("status") in POLL_STATUSES
+    ]
+    print(f"Found {len(candidates)} fixtures in window (status in {sorted(POLL_STATUSES)})")
 
-    # Load existing lineups file (we MERGE into it, not overwrite)
+    # Load existing lineups file — we MERGE into it, never overwrite
     out_path = DATA_DIR / "wc_lineups.json"
     if out_path.exists():
         with out_path.open() as f:
             existing = json.load(f)
-        by_match = existing.get("byMatch", {})
+        by_match = existing.get("byMatch", {}) or {}
     else:
         by_match = {}
 
+    # Filter out fixtures we already have lineups for (no need to re-poll)
+    to_poll = []
+    for fx in candidates:
+        mid = fx["matchId"]
+        if has_cached_lineup(by_match, mid):
+            print(f"  · {fx.get('homeTeam')} vs {fx.get('awayTeam')} — already cached, skipping")
+            continue
+        to_poll.append(fx)
+
+    if not to_poll:
+        print("Nothing new to poll. Exiting cleanly.")
+        return
+
+    print(f"Polling {len(to_poll)} fixtures...")
+
     updated = 0
-    for fx in upcoming:
+    for fx in to_poll:
         mid = fx["matchId"]
         hour_stamp = datetime.now().strftime("%Y%m%d_%H")
         cache_path = CACHE_DIR / f"matchday_{mid}_{hour_stamp}.json"
@@ -156,9 +182,11 @@ def main():
         if parsed:
             by_match[str(mid)] = parsed
             updated += 1
-            print(f"  ✓ {fx.get('homeTeam')} vs {fx.get('awayTeam')} — lineups available")
+            status = fx.get("status", "?")
+            print(f"  ✓ {fx.get('homeTeam')} vs {fx.get('awayTeam')} ({status}) — captured")
         else:
-            print(f"  · {fx.get('homeTeam')} vs {fx.get('awayTeam')} — not yet")
+            status = fx.get("status", "?")
+            print(f"  · {fx.get('homeTeam')} vs {fx.get('awayTeam')} ({status}) — API empty")
 
     if updated > 0:
         version_ms = int(time.time() * 1000)
@@ -170,11 +198,7 @@ def main():
         with out_path.open("w") as f:
             json.dump(output, f, separators=(",", ":"))
 
-        # Bump version.txt so the HTML cache-busts the new file
-        version_path = DATA_DIR / "version.txt"
-        with version_path.open("w") as f:
-            f.write(str(version_ms))
-
+        (DATA_DIR / "version.txt").write_text(str(version_ms))
         print(f"\nUpdated {updated} fixtures with lineups. Saved {out_path}.")
     else:
         print("\nNo new lineups available this poll.")
