@@ -199,6 +199,8 @@
   .bd-row:last-child{border-bottom:none;}
   .bd-k{color:var(--text-2);font-family:var(--font-display);font-weight:700;font-size:.78rem;}
   .bd-k .fl{margin-right:5px;}
+  .bd-ic{color:var(--text-3);font-size:13px;margin-right:7px;vertical-align:-1px;}
+  .bd-sub{display:block;color:var(--text-3);font-size:.64rem;font-weight:400;margin-top:2px;letter-spacing:.2px;}
   .bd-v{color:var(--text);text-align:right;font-family:var(--font-mono);font-size:.76rem;}
   .bd-v.q{color:var(--accent);font-weight:700;}
   .bd-why{margin-top:10px;font-size:.72rem;color:var(--text-2);background:var(--surface-2);border-radius:6px;padding:8px 10px;line-height:1.5;}
@@ -304,7 +306,7 @@
 
   <script>
   /* ===== 1. CONFIG ===== */
-  const AUTH_HASH = 'f1996a7cda48bca0dc87f700b183266eed3a770330d924fb1507b3036e37b0ff';
+  const AUTH_HASH = 'REPLACE_WITH_SHA256_OF_YOUR_PASSWORD';
   const AUTH_TTL_DAYS = 30;
   const AUTH_STORAGE_KEY = 'jtt_tennis_auth_v1';
 
@@ -711,7 +713,9 @@
   function fmtYr(d){const s=String(d||'');return s.length>=4?"'"+s.slice(2,4):'';}
   function collapse(icon,title,body,color,open,extra){return '<details class="tp-collapse'+(color?' '+color:'')+'"'+(open?' open':'')+'><summary class="tp-collapse-sum"><i class="ti '+icon+'"></i><span class="tp-collapse-title">'+title+'</span>'+(extra||'')+'<i class="ti ti-chevron-down tp-collapse-chev"></i></summary><div class="tp-collapse-body">'+body+'</div></details>';}
   function sigExp(s){
-    const rows=s.rows.map(r=>'<div class="bd-row"><div class="bd-k">'+(r.flag||'')+esc(r.nm)+'</div><div class="bd-v'+(r.q?' q':'')+'">'+r.val+'</div></div>').join('');
+    const rows=s.rows.map(r=>{const sub=(r.sub||'').replace(/^[\s\u00b7]+/,'').trim();
+      return '<div class="bd-row"><div class="bd-k">'+(r.icon?'<i class="ti '+r.icon+' bd-ic"></i>':'')+(r.flag||'')+esc(r.nm)+'</div>'+
+      '<div class="bd-v'+(r.q?' q':'')+'">'+r.val+(sub?'<small class="bd-sub">'+sub+'</small>':'')+'</div></div>';}).join('');
     const metric=s.lead?'<span class="sig-exp-metric">'+esc(s.lead)+'</span>':'';
     const fired=s.fires?'<span class="sig-fire-b">fired</span>':'';
     return '<details class="sig-exp '+s.color+'"'+(s.fires?' open':'')+'><summary><i class="ti '+s.icon+'"></i>'+
@@ -722,46 +726,56 @@
   function matchupSignals(pr){
     const a=pr.players[0],b=pr.players[1];const axa=getAdv(a),axb=getAdv(b);
     const la=lastName(a.name),lb=lastName(b.name);const Pa=P(a.sackmann_id),Pb=P(b.sackmann_id);
+    const ca=(Pa&&Pa.serve_career)||{},cb=(Pb&&Pb.serve_career)||{};
     const fla=flagFor(Pa?Pa.ioc:null)+'&nbsp;',flb=flagFor(Pb?Pb.ioc:null)+'&nbsp;';
     const sigs=[];
     const leadName=(qa,qb)=>qa&&qb?'both':qa?la:qb?lb:'';
-    // Ice
-    if(axa||axb){const ca=axa&&axa.bp_save_pct!=null&&axa.bp_conv_pct!=null,cb=axb&&axb.bp_save_pct!=null&&axb.bp_conv_pct!=null;
-      const qa=ca&&(axa.bp_save_pct+axa.bp_conv_pct)>=1.05,qb=cb&&(axb.bp_save_pct+axb.bp_conv_pct)>=1.05;
-      if(ca||cb)sigs.push({icon:'ti-snowflake',name:'Ice',color:'c-blue',fires:qa||qb,tag:'Clutch on break points',lead:leadName(qa,qb),
-        rows:[{nm:la,flag:fla,q:qa,val:ca?'saves '+pct(axa.bp_save_pct)+' \u00b7 wins '+pct(axa.bp_conv_pct):'\u2014'},
-              {nm:lb,flag:flb,q:qb,val:cb?'saves '+pct(axb.bp_save_pct)+' \u00b7 wins '+pct(axb.bp_conv_pct):'\u2014'}],
-        why:'Fires when a player\u2019s break-point save% + conversion% clears 105% combined \u2014 they win the points that swing sets.'});}
-    // Shot Makers
+    // Ice — clutch on break points
+    if(axa||axb){const ia=axa&&axa.bp_save_pct!=null&&axa.bp_conv_pct!=null,ib=axb&&axb.bp_save_pct!=null&&axb.bp_conv_pct!=null;
+      const qa=ia&&(axa.bp_save_pct+axa.bp_conv_pct)>=1.05,qb=ib&&(axb.bp_save_pct+axb.bp_conv_pct)>=1.05;
+      if(qa||qb)sigs.push({icon:'ti-snowflake',name:'Ice',color:'c-blue',fires:true,tag:'Clutch on break points',lead:leadName(qa,qb),
+        rows:[{nm:la,flag:fla,icon:'ti-shield-half',q:qa,val:ia?'saves '+pct(axa.bp_save_pct)+' \u00b7 wins '+pct(axa.bp_conv_pct):'\u2014',
+                sub:(ca.spw!=null?'serve pts won '+pct(ca.spw):'')+(ca.rpw!=null?' \u00b7 return '+pct(ca.rpw):'')},
+              {nm:lb,flag:flb,icon:'ti-shield-half',q:qb,val:ib?'saves '+pct(axb.bp_save_pct)+' \u00b7 wins '+pct(axb.bp_conv_pct):'\u2014',
+                sub:(cb.spw!=null?'serve pts won '+pct(cb.spw):'')+(cb.rpw!=null?' \u00b7 return '+pct(cb.rpw):'')}],
+        why:'Triggered when a player\u2019s break-point save% + conversion% clears 105% combined \u2014 they win the points that swing sets.'});}
+    // Shot Makers — winners with control
     if(axa||axb){const wa=axa&&axa.winners_pm!=null,wb=axb&&axb.winners_pm!=null;
       const thrA=Pa&&Pa.tour==='wta'?22:27,thrB=Pb&&Pb.tour==='wta'?22:27;
       const qa=wa&&axa.winners_pm>=thrA&&axa.w_ufe>=1.0,qb=wb&&axb.winners_pm>=thrB&&axb.w_ufe>=1.0;
-      if(wa||wb)sigs.push({icon:'ti-target-arrow',name:'Shot Makers',color:'c-purple',fires:qa||qb,tag:'Winners with control',lead:leadName(qa,qb),
-        rows:[{nm:la,flag:fla,q:qa,val:wa?num(axa.winners_pm,1)+' W/m \u00b7 '+num(axa.w_ufe,2)+' W:UFE':'\u2014'},
-              {nm:lb,flag:flb,q:qb,val:wb?num(axb.winners_pm,1)+' W/m \u00b7 '+num(axb.w_ufe,2)+' W:UFE':'\u2014'}],
-        why:'Fires on heavy winner counts with a winner-to-error ratio above 1.0 \u2014 aggression that doesn\u2019t leak free points.'});}
-    // Net Raiders
+      if(qa||qb)sigs.push({icon:'ti-target-arrow',name:'Shot Makers',color:'c-purple',fires:true,tag:'Winners with control',lead:leadName(qa,qb),
+        rows:[{nm:la,flag:fla,icon:'ti-target-arrow',q:qa,val:wa?num(axa.winners_pm,1)+' W/m \u00b7 '+num(axa.w_ufe,2)+' W:UFE':'\u2014',
+                sub:(axa&&axa.ufe_pm!=null?num(axa.ufe_pm,1)+' UFE/m':'')+(axa&&axa.fh_winner_pct!=null?' \u00b7 FH wnr '+pct(axa.fh_winner_pct):'')},
+              {nm:lb,flag:flb,icon:'ti-target-arrow',q:qb,val:wb?num(axb.winners_pm,1)+' W/m \u00b7 '+num(axb.w_ufe,2)+' W:UFE':'\u2014',
+                sub:(axb&&axb.ufe_pm!=null?num(axb.ufe_pm,1)+' UFE/m':'')+(axb&&axb.fh_winner_pct!=null?' \u00b7 FH wnr '+pct(axb.fh_winner_pct):'')}],
+        why:'Triggered on heavy winner counts with a winner-to-error ratio above 1.0 \u2014 aggression that doesn\u2019t leak free points.'});}
+    // Net Raiders — lives at the net
     if(axa||axb){const na=axa&&axa.net_pts_pm!=null,nb=axb&&axb.net_pts_pm!=null;
       const qa=na&&axa.net_pts_pm>=18,qb=nb&&axb.net_pts_pm>=18;
-      if(na||nb)sigs.push({icon:'ti-run',name:'Net Raiders',color:'c-green',fires:qa||qb,tag:'Lives at the net',lead:leadName(qa,qb),
-        rows:[{nm:la,flag:fla,q:qa,val:na?num(axa.net_pts_pm,1)+' net pts/m'+(axa.net_won_pct!=null?' \u00b7 '+pct(axa.net_won_pct)+' won':''):'\u2014'},
-              {nm:lb,flag:flb,q:qb,val:nb?num(axb.net_pts_pm,1)+' net pts/m'+(axb.net_won_pct!=null?' \u00b7 '+pct(axb.net_won_pct)+' won':''):'\u2014'}],
-        why:'Fires at \u226518 net points/match \u2014 a forward game that shortens points and piles pressure on the passer.'});}
-    // Grinders (both players)
+      if(qa||qb)sigs.push({icon:'ti-run',name:'Net Raiders',color:'c-green',fires:true,tag:'Lives at the net',lead:leadName(qa,qb),
+        rows:[{nm:la,flag:fla,icon:'ti-run',q:qa,val:na?num(axa.net_pts_pm,1)+' net pts/m'+(axa.net_won_pct!=null?' \u00b7 '+pct(axa.net_won_pct)+' won':''):'\u2014',
+                sub:(axa&&axa.snv_pm!=null&&axa.snv_pm>=1?'S&V '+num(axa.snv_pm,1)+'/m'+(axa.snv_won_pct!=null?' \u00b7 '+pct(axa.snv_won_pct)+' won':''):'')},
+              {nm:lb,flag:flb,icon:'ti-run',q:qb,val:nb?num(axb.net_pts_pm,1)+' net pts/m'+(axb.net_won_pct!=null?' \u00b7 '+pct(axb.net_won_pct)+' won':''):'\u2014',
+                sub:(axb&&axb.snv_pm!=null&&axb.snv_pm>=1?'S&V '+num(axb.snv_pm,1)+'/m'+(axb.snv_won_pct!=null?' \u00b7 '+pct(axb.snv_won_pct)+' won':''):'')}],
+        why:'Triggered at \u226518 net points/match \u2014 a forward game that shortens points and piles pressure on the passer.'});}
+    // Grinders — long rallies (both)
     if(axa&&axb&&axa.rally_long_pct!=null&&axb.rally_long_pct!=null){const avg=(axa.rally_long_pct+axb.rally_long_pct)/2;
-      sigs.push({icon:'ti-arrows-maximize',name:'Grinders',color:'c-amber',fires:avg>=0.50,tag:'Long rallies',lead:avg>=0.50?'games over':'',
-        rows:[{nm:la,flag:fla,q:axa.rally_long_pct>=0.50,val:pct(axa.rally_long_pct)+' on 7+ shots'},
-              {nm:lb,flag:flb,q:axb.rally_long_pct>=0.50,val:pct(axb.rally_long_pct)+' on 7+ shots'}],
-        why:'Fires when both players win \u226550% of 7+ shot rallies \u2014 expect long baseline exchanges and a higher games total.'});}
-    // Ace Merchants
+      if(avg>=0.50)sigs.push({icon:'ti-arrows-maximize',name:'Grinders',color:'c-amber',fires:true,tag:'Long rallies',lead:'games over',
+        rows:[{nm:la,flag:fla,icon:'ti-activity',q:axa.rally_long_pct>=0.50,val:pct(axa.rally_long_pct)+' on 7+ shots',
+                sub:'0\u20133 '+pct(axa.rally_short_pct)+' \u00b7 4\u20136 '+pct(axa.rally_mid_pct)},
+              {nm:lb,flag:flb,icon:'ti-activity',q:axb.rally_long_pct>=0.50,val:pct(axb.rally_long_pct)+' on 7+ shots',
+                sub:'0\u20133 '+pct(axb.rally_short_pct)+' \u00b7 4\u20136 '+pct(axb.rally_mid_pct)}],
+        why:'Triggered when both players win \u226550% of 7+ shot rallies \u2014 expect long baseline exchanges and a higher games total.'});}
+    // Ace Merchants — free points on serve
     {const qa=a.proj_aces!=null&&a.proj_aces>=8,qb=b.proj_aces!=null&&b.proj_aces>=8;
-      if(a.proj_aces!=null||b.proj_aces!=null)sigs.push({icon:'ti-flame',name:'Ace Merchants',color:'c-red',fires:qa||qb,tag:'Free points on serve',lead:leadName(qa,qb),
-        rows:[{nm:la,flag:fla,q:qa,val:a.proj_aces!=null?'~'+num(a.proj_aces)+' aces projected':'\u2014'},
-              {nm:lb,flag:flb,q:qb,val:b.proj_aces!=null?'~'+num(b.proj_aces)+' aces projected':'\u2014'}],
-        why:'Fires on \u22658 projected aces \u2014 cheap holds and live value on player-ace over markets.'});}
+      if(qa||qb)sigs.push({icon:'ti-flame',name:'Ace Merchants',color:'c-red',fires:true,tag:'Free points on serve',lead:leadName(qa,qb),
+        rows:[{nm:la,flag:fla,icon:'ti-bolt',q:qa,val:a.proj_aces!=null?'~'+num(a.proj_aces)+' aces projected':'\u2014',
+                sub:(ca.ace_svgm!=null?'avg '+num(ca.ace_svgm,2)+'/gm':'')+(cb.ace_against!=null?' \u00b7 '+lb+' allows '+num(cb.ace_against,2)+'/gm':'')+(axa&&axa.unret_pct!=null?' \u00b7 '+pct(axa.unret_pct)+' unreturned':'')},
+              {nm:lb,flag:flb,icon:'ti-bolt',q:qb,val:b.proj_aces!=null?'~'+num(b.proj_aces)+' aces projected':'\u2014',
+                sub:(cb.ace_svgm!=null?'avg '+num(cb.ace_svgm,2)+'/gm':'')+(ca.ace_against!=null?' \u00b7 '+la+' allows '+num(ca.ace_against,2)+'/gm':'')+(axb&&axb.unret_pct!=null?' \u00b7 '+pct(axb.unret_pct)+' unreturned':'')}],
+        why:'Triggered on \u22658 projected aces \u2014 the model blends the server\u2019s ace rate with how many the opponent allows. Cheap holds and live ace-over markets.'});}
     if(!sigs.length)return '';
-    const fired=sigs.filter(s=>s.fires).length;
-    let out='<div class="signals-head"><i class="ti ti-bolt" style="color:var(--accent)"></i><span class="lbl">Degen Signals</span><span class="fired">'+fired+' of '+sigs.length+' firing</span></div>';
+    let out='<div class="signals-head"><i class="ti ti-bolt" style="color:var(--accent)"></i><span class="lbl">Degen Signals</span><span class="fired">'+sigs.length+' firing</span></div>';
     sigs.forEach(s=>{out+=sigExp(s);});
     return out;
   }
