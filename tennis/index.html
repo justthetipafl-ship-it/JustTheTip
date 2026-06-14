@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;600;700;800;900&family=IBM+Plex+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/[email protected]/dist/tabler-icons.min.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/[email protected]/tabler-icons.min.css">
   <link rel="stylesheet" href="jtt-core.css">
 
   <style>
@@ -213,6 +213,19 @@
   .tt-val{font-family:var(--font-display);font-weight:800;font-size:1.3rem;color:var(--text);line-height:1.05;}
   .tt-lbl{font-family:var(--font-mono);font-size:.58rem;color:var(--text-3);text-transform:uppercase;letter-spacing:.3px;margin-top:4px;}
   @media(max-width:560px){.tt-grid{grid-template-columns:1fr 1fr 1fr;}}
+  /* expandable match rows (H2H meetings + recent games) */
+  .mt-row{background:var(--surface-2);border:1px solid var(--border);border-left:2px solid var(--border);border-radius:6px;margin:5px 0;overflow:hidden;}
+  .mt-row.W{border-left-color:var(--accent);} .mt-row.L{border-left-color:#f87171;}
+  .mt-sum{list-style:none;cursor:pointer;display:flex;align-items:center;gap:8px;padding:7px 10px;}
+  .mt-sum::-webkit-details-marker{display:none;}
+  .mt-res{font-family:var(--font-display);font-weight:800;font-size:11px;width:13px;flex:none;}
+  .mt-res.W{color:var(--accent);} .mt-res.L{color:#f87171;}
+  .mt-title{font-family:var(--font-mono);font-size:.72rem;color:var(--text-2);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .mt-score{margin-left:auto;font-family:var(--font-mono);font-size:.72rem;color:var(--text);white-space:nowrap;}
+  .mt-date{font-family:var(--font-mono);font-size:.6rem;color:var(--text-3);min-width:44px;text-align:right;flex:none;}
+  .mt-chev{color:var(--text-3);font-size:13px;transition:transform .15s;flex:none;}
+  .mt-row[open] .mt-chev{transform:rotate(180deg);}
+  .mt-body{padding:5px 11px 9px;border-top:1px solid var(--border);}
   .search-box{width:100%;background:var(--surface-2);border:1px solid var(--border);border-radius:10px;
     padding:.55rem .8rem;color:var(--text);font:inherit;font-size:.9rem;margin-bottom:.6rem;}
   .cmb-field{margin-bottom:.7rem;}
@@ -306,7 +319,7 @@
 
   <script>
   /* ===== 1. CONFIG ===== */
-  const AUTH_HASH = 'f1996a7cda48bca0dc87f700b183266eed3a770330d924fb1507b3036e37b0ff';
+  const AUTH_HASH = 'REPLACE_WITH_SHA256_OF_YOUR_PASSWORD';
   const AUTH_TTL_DAYS = 30;
   const AUTH_STORAGE_KEY = 'jtt_tennis_auth_v1';
 
@@ -671,6 +684,8 @@
     }
     // H2H
     out+=h2hHistory(a.sackmann_id,b.sackmann_id,a.name,b.name);
+    out+=recentGames(pa,lastName(a.name),5);
+    out+=recentGames(pb,lastName(b.name),5);
     // Odds & edge
     const od=IDX.odds[mid];
     if(od&&od.h2h){
@@ -779,19 +794,39 @@
     sigs.forEach(s=>{out+=sigExp(s);});
     return out;
   }
+  function parseScore(score,flip){if(!score)return [];return String(score).trim().split(/\s+/).map(s=>{const m=s.match(/^(\d+)-(\d+)(\(\d+\))?$/);if(!m)return s;return flip?(m[2]+'-'+m[1]+(m[3]||'')):(m[1]+'-'+m[2]+(m[3]||''));});}
+  function fmtDate(d){const s=String(d||'');if(s.length<8)return '';const mo=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];return parseInt(s.slice(6,8),10)+' '+mo[parseInt(s.slice(4,6),10)-1]+" '"+s.slice(2,4);}
+  function matchExpand(o){const setStr=(o.sets&&o.sets.length)?o.sets.join('&nbsp;&nbsp;'):esc(o.score||'');
+    let b='';(o.stats||[]).forEach(s=>{b+='<div class="bd-row"><div class="bd-k">'+s.k+'</div><div class="bd-v">'+s.v+'</div></div>';});
+    return '<details class="mt-row '+(o.result||'')+'"><summary class="mt-sum">'+
+      (o.result?'<span class="mt-res '+o.result+'">'+o.result+'</span>':'')+
+      '<span class="mt-title">'+o.title+'</span><span class="mt-score">'+setStr+'</span>'+
+      '<span class="mt-date">'+(o.date||'')+'</span><i class="ti ti-chevron-down mt-chev"></i></summary>'+
+      '<div class="mt-body">'+b+'</div></details>';}
   function h2hHistory(id1,id2,n1,n2){
     const k=[id1,id2].sort().join('_');const h=IDX.h2h[k];
-    if(!h)return collapse('ti-swords','Head-to-head','<div class="empty" style="padding:.7rem"><div class="ico"><i class="ti ti-swords"></i></div>No prior meetings on record.</div>','c-blue',false);
+    if(!h)return collapse('ti-swords','H2H','<div class="empty" style="padding:.7rem"><div class="ico"><i class="ti ti-swords"></i></div>No prior meetings on record.</div>','c-blue',false);
     const w1=h.a===id1?h.a_wins:h.b_wins,w2=h.a===id1?h.b_wins:h.a_wins;
     let body='<div class="tn-row" style="font-size:1.15rem;font-weight:700;justify-content:center;gap:.8rem;font-family:var(--font-mono);margin-bottom:.5rem">'+
       '<span'+(w1>w2?' style="color:var(--accent)"':'')+'>'+esc(lastName(n1))+' '+w1+'</span><span style="color:var(--text-3)">-</span>'+
       '<span'+(w2>w1?' style="color:var(--accent)"':'')+'>'+w2+' '+esc(lastName(n2))+'</span></div>';
     (h.meetings||[]).forEach(m=>{const win1=m.winner_id===id1;const wn=P(m.winner_id),ln=P(win1?id2:id1);
       const wl=wn?lastName(wn.name):'?',ll=ln?lastName(ln.name):'?';
-      body+='<div class="rg-game '+(win1?'W':'L')+'"><div class="rg-res '+(win1?'W':'L')+'">'+esc((win1?lastName(n1):lastName(n2)).charAt(0))+'</div>'+
-        '<div class="rg-opp"><b>'+esc(wl)+'</b> d. '+esc(ll)+' '+surfChip(m.surface)+'</div>'+
-        '<div class="rg-score">'+esc(m.score||'')+'</div><div class="rg-date">'+fmtYr(m.date)+'</div></div>';});
-    return collapse('ti-swords','Head-to-head \u2014 '+(h.meetings?h.meetings.length:0)+(h.meetings&&h.meetings.length===1?' meeting':' meetings'),body,'c-blue',(h.meetings&&h.meetings.length<=4));
+      const stats=[{k:'Event',v:esc(m.tourney||'\u2014')+(m.round?' \u00b7 '+esc(m.round):'')},{k:'Surface',v:surfChip(m.surface)}];
+      if(m.w_ace!=null||m.l_ace!=null)stats.push({k:'Aces',v:esc(wl)+' '+(m.w_ace!=null?m.w_ace:'\u2014')+' \u00b7 '+esc(ll)+' '+(m.l_ace!=null?m.l_ace:'\u2014')});
+      body+=matchExpand({result:win1?'W':'L',title:'<b>'+esc(wl)+'</b> d. '+esc(ll),score:m.score,sets:parseScore(m.score,false),date:fmtDate(m.date),stats:stats});});
+    return collapse('ti-swords','H2H \u2014 '+(h.meetings?h.meetings.length:0)+(h.meetings&&h.meetings.length===1?' meeting':' meetings'),body,'c-blue',(h.meetings&&h.meetings.length<=4));
+  }
+  function recentGames(pl,nm,n){
+    const rec=(pl&&pl.recent)||[];if(!rec.length)return '';
+    const games=rec.slice(0,n||5);let body='';
+    games.forEach(m=>{const won=m.won===1;const flip=!won;
+      const stats=[{k:'Event',v:esc(m.tourney||'\u2014')+(m.round?' \u00b7 '+esc(m.round):'')},{k:'Surface',v:surfChip(m.surf)}];
+      if(m.ace!=null||m.opp_ace!=null)stats.push({k:'Aces',v:esc(nm)+' '+(m.ace!=null?m.ace:'\u2014')+' \u00b7 opp '+(m.opp_ace!=null?m.opp_ace:'\u2014')});
+      if(m.sw!=null&&m.sl!=null)stats.push({k:'Sets',v:m.sw+'\u2013'+m.sl});
+      body+=matchExpand({result:won?'W':'L',title:(won?'def. ':'lost to ')+esc(m.opp_name||'?'),score:m.score,sets:parseScore(m.score,flip),date:fmtDate(m.date),stats:stats});});
+    const wins=games.filter(g=>g.won===1).length;
+    return collapse('ti-history','Recent \u2014 '+esc(nm),'<div class="dfilt-note" style="margin-bottom:.4rem">Last '+games.length+': <b style="color:var(--accent)">'+wins+'W</b> \u2013 '+(games.length-wins)+'L</div>'+body,'',false);
   }
   function vsSimilarBlock(pr){
     if(!pr.players.some(p=>p.vs_similar))return '';
