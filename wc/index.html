@@ -456,6 +456,72 @@
     resize: vertical; line-height: 1.4;
   }
 
+  /* === LINEUP SELECTOR MODAL === */
+  .lu-modal { max-width: 720px; }
+  .lu-tabs { display: flex; gap: 8px; margin-bottom: 12px; }
+  .lu-pane-header {
+    display: flex; justify-content: space-between; align-items: center;
+    gap: 12px; margin-bottom: 12px; flex-wrap: wrap;
+  }
+  .lu-formation-input {
+    flex: 0 0 auto; width: 200px;
+    background: var(--surface-2); border: 1px solid var(--border);
+    color: var(--text-1); padding: 6px 10px; border-radius: 4px;
+    font-size: 13px;
+  }
+  .lu-counter { font-family: var(--font-mono); font-size: 12px; color: var(--text-2); }
+  .lu-counter-ok  { color: var(--accent); font-weight: 600; }
+  .lu-counter-bad { color: #ff9800; }
+  .lu-instruction {
+    font-size: 11px; color: var(--text-3); text-transform: uppercase;
+    letter-spacing: 0.5px; margin-bottom: 8px; font-style: italic;
+  }
+  .lu-squad-grid {
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+    gap: 6px;
+  }
+  .lu-player-toggle {
+    display: flex; align-items: center; gap: 8px;
+    padding: 8px 10px; border-radius: 4px; cursor: pointer;
+    background: var(--surface-2); border: 1px solid var(--border);
+    font-size: 12px; user-select: none;
+    transition: background 0.1s, border-color 0.1s;
+  }
+  .lu-player-toggle:hover { border-color: var(--text-3); }
+  .lu-pt-num {
+    font-family: var(--font-mono); color: var(--text-3); font-weight: 600;
+    min-width: 22px; text-align: right;
+  }
+  .lu-pt-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-1); }
+  .lu-pt-pos {
+    font-family: var(--font-mono); font-size: 10px;
+    padding: 2px 5px; border-radius: 3px;
+    background: var(--surface); color: var(--text-3);
+  }
+  .lu-status-starter {
+    background: rgba(0, 200, 100, 0.15);
+    border-color: var(--accent);
+  }
+  .lu-status-starter .lu-pt-name { color: var(--accent); font-weight: 600; }
+  .lu-status-bench {
+    background: rgba(255, 152, 0, 0.12);
+    border-color: #ff9800;
+  }
+  .lu-status-bench .lu-pt-name { color: #ff9800; }
+  .lu-status-bench .lu-pt-pos::after { content: ' SUB'; }
+
+  /* Lineup placeholder button — shown in lineup section when no XI is set */
+  .lu-set-placeholder {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 14px 16px;
+    background: var(--surface-2); border: 1px dashed var(--border);
+    border-radius: 6px; margin: 12px 0;
+  }
+  .lu-set-placeholder-text {
+    font-size: 13px; color: var(--text-2);
+  }
+  .lu-set-placeholder-text strong { color: var(--text-1); }
+
   /* === FIXTURE PICKER (Tab 1) === */
   .fixture-picker { display: flex; flex-direction: column; gap: 8px; }
   /* Visual idiom mirrors the focused-fixture detail HEADER: each team is a
@@ -5817,6 +5883,7 @@ async function tryAutoLoadData() {
   //   1. wc/data/wc_referees_manual.json — shipped to subscribers
   //   2. localStorage selections (jtt_wc_user_refs) — per-subscriber, browser-local
   _mergeManualReferees();
+  _mergeUserLineups();
 
   // Core files needed to boot the app: logs + fixtures. If either missing,
   // surface the file-input fallback so the user can supply them manually.
@@ -10725,7 +10792,20 @@ function lineupStatusPill(status) {
 
 function renderLineupSection(fixture) {
   const lineup = getLineupForFixture(fixture.matchId);
-  if (!lineup) return '';
+
+  // Subscriber-facing placeholder: if no lineup has been posted yet, offer
+  // a "Set Starting XI" button so subscribers who already know the XI from
+  // news/FIFA can plug it in. Stored in their localStorage; flows through
+  // to player signal filtering and the lineup display.
+  if (!lineup) {
+    return '<div class="lu-set-placeholder">' +
+      '<div class="lu-set-placeholder-text">' +
+        '<strong>Starting XI not announced yet.</strong> Know who\'s playing? Set the lineup to tighten the player signals.' +
+      '</div>' +
+      '<button class="admin-add-pick-btn" style="margin:0;padding:8px 14px;" onclick="_openSetLineupModal(' + fixture.matchId + ')">Set Starting XI</button>' +
+    '</div>';
+  }
+
   const homeTeam = lineup[fixture.homeTeamId] || lineup[String(fixture.homeTeamId)];
   const awayTeam = lineup[fixture.awayTeamId] || lineup[String(fixture.awayTeamId)];
   if (!homeTeam && !awayTeam) return '';
@@ -10765,6 +10845,7 @@ function renderLineupSection(fixture) {
       '<i class="ti ti-users" aria-hidden="true"></i> ' +
       '<strong>Confirmed Lineups</strong>' +
       '<span class="lu-meta-pill">posted ~1hr pre-kickoff</span>' +
+      '<button class="admin-add-pick-btn" style="margin-left:auto;margin-right:8px;margin-bottom:0;padding:4px 10px;font-size:11px;" onclick="event.stopPropagation();event.preventDefault();_openSetLineupModal(' + fixture.matchId + ')">Edit</button>' +
     '</summary>' +
     '<div class="lu-body">' +
       renderTeamColumn(homeTeam, fixture.homeTeam, true) +
@@ -11609,6 +11690,278 @@ window._clearReferee = function(matchId) {
   _refExtendedCache = null;
 
   document.querySelector('.admin-modal-overlay')?.remove();
+  const fx = (state.data.fixtures.fixtures || []).find(f => f.matchId == matchId);
+  if (fx) showFixture(fx);
+};
+
+// === LINEUP SELECTOR — subscribers manually set the starting XI ===
+// API-Football doesn't publish WC 2026 lineups pre-match (only mid-game),
+// so subscribers who already know the XI from news/FIFA can plug it in
+// themselves. The selection is saved to their localStorage and merged into
+// state.data.lineups.byMatch, which flows through to the eligibility filter
+// (signals tighten to only players actually in the lineup), the player
+// modal lineup pills, and the displayed lineup section.
+
+function _mergeUserLineups() {
+  if (!state.data.lineups) state.data.lineups = { byMatch: {} };
+  if (!state.data.lineups.byMatch) state.data.lineups.byMatch = {};
+  try {
+    const userLineups = JSON.parse(localStorage.getItem('jtt_wc_user_lineups') || '{}');
+    if (userLineups.byMatch) {
+      Object.keys(userLineups.byMatch).forEach(mid => {
+        const matchEntry = userLineups.byMatch[mid];
+        if (!matchEntry || typeof matchEntry !== 'object') return;
+        if (!state.data.lineups.byMatch[mid]) state.data.lineups.byMatch[mid] = {};
+        Object.keys(matchEntry).forEach(teamId => {
+          if (matchEntry[teamId]) {
+            state.data.lineups.byMatch[mid][teamId] = matchEntry[teamId];
+          }
+        });
+      });
+    }
+  } catch (e) {}
+  // Eligibility cache reads from lineups — bust it so new selections flow through
+  if (typeof _eligiblePlayerCache !== 'undefined') {
+    Object.keys(_eligiblePlayerCache).forEach(k => delete _eligiblePlayerCache[k]);
+  }
+}
+
+window._openSetLineupModal = function(matchId) {
+  const fixture = (state.data.fixtures.fixtures || []).find(f => f.matchId == matchId);
+  if (!fixture) return;
+
+  const homeTeamId = fixture.homeTeamId;
+  const awayTeamId = fixture.awayTeamId;
+  const homeName = fixture.homeTeam;
+  const awayName = fixture.awayTeam;
+
+  const squads = state.data.squads || {};
+  const homeSquad = squads[homeTeamId] || squads[String(homeTeamId)] || [];
+  const awaySquad = squads[awayTeamId] || squads[String(awayTeamId)] || [];
+
+  if (homeSquad.length === 0 && awaySquad.length === 0) {
+    alert('Squad data not loaded yet for these teams. Cannot build the lineup picker.');
+    return;
+  }
+
+  // Pre-populate from any existing lineup (whether from API or previous user save)
+  const existing = (state.data.lineups && state.data.lineups.byMatch &&
+                    (state.data.lineups.byMatch[matchId] || state.data.lineups.byMatch[String(matchId)])) || {};
+  const homeExisting = existing[homeTeamId] || existing[String(homeTeamId)];
+  const awayExisting = existing[awayTeamId] || existing[String(awayTeamId)];
+
+  const modalState = {
+    activeTeam: 'home',
+    home: { players: {}, formation: (homeExisting && homeExisting.formation) || '' },
+    away: { players: {}, formation: (awayExisting && awayExisting.formation) || '' },
+  };
+  if (homeExisting) {
+    (homeExisting.startXI || []).forEach(p => { if (p && p.id != null) modalState.home.players[p.id] = 'starter'; });
+    (homeExisting.substitutes || []).forEach(p => { if (p && p.id != null) modalState.home.players[p.id] = 'bench'; });
+  }
+  if (awayExisting) {
+    (awayExisting.startXI || []).forEach(p => { if (p && p.id != null) modalState.away.players[p.id] = 'starter'; });
+    (awayExisting.substitutes || []).forEach(p => { if (p && p.id != null) modalState.away.players[p.id] = 'bench'; });
+  }
+  window._luModalState = modalState;
+  window._luModalSquads = { home: homeSquad, away: awaySquad };
+  window._luModalMeta = { matchId, homeTeamId, awayTeamId, homeName, awayName };
+
+  const overlay = document.createElement('div');
+  overlay.className = 'admin-modal-overlay';
+  overlay.onclick = (e) => {
+    if (e.target === overlay) {
+      overlay.remove();
+      delete window._luModalState;
+      delete window._luModalSquads;
+      delete window._luModalMeta;
+    }
+  };
+  overlay.innerHTML =
+    '<div class="admin-modal lu-modal">' +
+      '<h3>Set Starting XI</h3>' +
+      '<p style="font-size:13px;color:var(--text-2);margin-bottom:8px;">' +
+        'Saved to your browser only. Setting the XI tightens player signals to only show players in the lineup, and unlocks the lineup section above.' +
+      '</p>' +
+      '<div class="lu-tabs">' +
+        '<button class="filterbar-pill active" id="lu-tab-home" onclick="_lineupSwitchTab(\'home\')">' + escapeHtml(homeName) + '</button>' +
+        '<button class="filterbar-pill" id="lu-tab-away" onclick="_lineupSwitchTab(\'away\')">' + escapeHtml(awayName) + '</button>' +
+      '</div>' +
+      _renderLineupPane('home', homeSquad) +
+      _renderLineupPane('away', awaySquad) +
+      '<div class="admin-modal-actions">' +
+        ((homeExisting || awayExisting) ? '<button onclick="_clearUserLineup(' + matchId + ')" style="color:#ff5252;">Clear</button>' : '') +
+        '<button onclick="this.closest(\'.admin-modal-overlay\').remove();delete window._luModalState;delete window._luModalSquads;delete window._luModalMeta;">Cancel</button>' +
+        '<button class="primary" onclick="_saveUserLineup()">Save Lineup</button>' +
+      '</div>' +
+    '</div>';
+  document.body.appendChild(overlay);
+};
+
+function _renderLineupPane(teamKey, squad) {
+  if (!window._luModalState) return '';
+  const teamState = window._luModalState[teamKey];
+  const starters = Object.values(teamState.players).filter(s => s === 'starter').length;
+  const bench = Object.values(teamState.players).filter(s => s === 'bench').length;
+
+  // Sort: GK first, then D, M, F, then by shirt number
+  const posOrder = { G: 0, D: 1, M: 2, F: 3 };
+  const sortedSquad = [...squad].sort((a, b) => {
+    const pa = posOrder[a.position] != null ? posOrder[a.position] : 4;
+    const pb = posOrder[b.position] != null ? posOrder[b.position] : 4;
+    if (pa !== pb) return pa - pb;
+    return (a.number || 99) - (b.number || 99);
+  });
+
+  let html = '<div id="lu-pane-' + teamKey + '" class="lu-pane"' + (teamKey === 'home' ? '' : ' style="display:none;"') + '>';
+  html += '<div class="lu-pane-header">';
+  html += '<input type="text" placeholder="Formation e.g. 4-4-2" value="' + escapeHtml(teamState.formation || '') +
+          '" oninput="_lineupSetFormation(\'' + teamKey + '\', this.value)" class="lu-formation-input">';
+  html += '<span class="lu-counter" id="lu-counter-' + teamKey + '">' +
+          '<span class="' + (starters === 11 ? 'lu-counter-ok' : 'lu-counter-bad') + '">Starters: ' + starters + '/11</span> ' +
+          '<span>Bench: ' + bench + '</span></span>';
+  html += '</div>';
+  html += '<div class="lu-instruction">Tap each player — 1× = Starter, 2× = Bench, 3× = Off.</div>';
+  html += '<div class="lu-squad-grid">';
+  sortedSquad.forEach(p => {
+    if (p.id == null) return;
+    const status = teamState.players[p.id] || 'off';
+    html += '<div class="lu-player-toggle lu-status-' + status + '" ' +
+      'onclick="_lineupTogglePlayer(\'' + teamKey + '\', ' + p.id + ', this)">' +
+      '<span class="lu-pt-num">' + (p.number != null ? p.number : '?') + '</span>' +
+      '<span class="lu-pt-name">' + escapeHtml(p.name || '?') + '</span>' +
+      '<span class="lu-pt-pos">' + (p.position || '?') + '</span>' +
+      '</div>';
+  });
+  html += '</div></div>';
+  return html;
+}
+
+window._lineupSwitchTab = function(which) {
+  if (!window._luModalState) return;
+  window._luModalState.activeTeam = which;
+  document.getElementById('lu-tab-home').classList.toggle('active', which === 'home');
+  document.getElementById('lu-tab-away').classList.toggle('active', which === 'away');
+  document.getElementById('lu-pane-home').style.display = (which === 'home') ? '' : 'none';
+  document.getElementById('lu-pane-away').style.display = (which === 'away') ? '' : 'none';
+};
+
+window._lineupSetFormation = function(teamKey, value) {
+  if (!window._luModalState) return;
+  window._luModalState[teamKey].formation = value.trim();
+};
+
+window._lineupTogglePlayer = function(teamKey, playerId, el) {
+  if (!window._luModalState) return;
+  const teamState = window._luModalState[teamKey];
+  const current = teamState.players[playerId] || 'off';
+  const next = current === 'off' ? 'starter' : (current === 'starter' ? 'bench' : 'off');
+  if (next === 'off') delete teamState.players[playerId];
+  else teamState.players[playerId] = next;
+  el.className = 'lu-player-toggle lu-status-' + (next === 'off' ? 'off' : next);
+
+  const starters = Object.values(teamState.players).filter(s => s === 'starter').length;
+  const bench = Object.values(teamState.players).filter(s => s === 'bench').length;
+  const counter = document.getElementById('lu-counter-' + teamKey);
+  if (counter) {
+    counter.innerHTML =
+      '<span class="' + (starters === 11 ? 'lu-counter-ok' : 'lu-counter-bad') + '">Starters: ' + starters + '/11</span> ' +
+      '<span>Bench: ' + bench + '</span>';
+  }
+};
+
+window._saveUserLineup = function() {
+  const ms = window._luModalState;
+  const meta = window._luModalMeta;
+  const squads = window._luModalSquads;
+  if (!ms || !meta || !squads) return;
+
+  const homeStarters = Object.entries(ms.home.players).filter(([, s]) => s === 'starter').map(([id]) => parseInt(id, 10));
+  const awayStarters = Object.entries(ms.away.players).filter(([, s]) => s === 'starter').map(([id]) => parseInt(id, 10));
+  const homeBench = Object.entries(ms.home.players).filter(([, s]) => s === 'bench').map(([id]) => parseInt(id, 10));
+  const awayBench = Object.entries(ms.away.players).filter(([, s]) => s === 'bench').map(([id]) => parseInt(id, 10));
+
+  // Soft validation — warn if not exactly 11, but allow save (partial lineups fine for "I only know one team")
+  if (homeStarters.length > 0 && homeStarters.length !== 11) {
+    if (!confirm(meta.homeName + ' has ' + homeStarters.length + ' starters selected (not 11). Save anyway?')) return;
+  }
+  if (awayStarters.length > 0 && awayStarters.length !== 11) {
+    if (!confirm(meta.awayName + ' has ' + awayStarters.length + ' starters selected (not 11). Save anyway?')) return;
+  }
+
+  const buildEntry = (teamId, teamName, starterIds, benchIds, formation, squad) => {
+    const squadMap = {};
+    squad.forEach(p => { if (p.id != null) squadMap[p.id] = p; });
+    const enrich = (ids) => ids.map(id => {
+      const p = squadMap[id];
+      if (!p) return { id, name: '?', number: null, pos: '?' };
+      return { id: p.id, name: p.name, number: p.number, pos: p.position };
+    });
+    return {
+      teamId, teamName,
+      formation: formation || null,
+      coach: null,
+      startXI: enrich(starterIds),
+      substitutes: enrich(benchIds),
+    };
+  };
+
+  let stored = {};
+  try { stored = JSON.parse(localStorage.getItem('jtt_wc_user_lineups') || '{}'); } catch (e) {}
+  if (!stored.byMatch) stored.byMatch = {};
+  const midKey = String(meta.matchId);
+  if (!stored.byMatch[midKey]) stored.byMatch[midKey] = {};
+
+  if (homeStarters.length > 0 || homeBench.length > 0) {
+    const entry = buildEntry(meta.homeTeamId, meta.homeName, homeStarters, homeBench, ms.home.formation, squads.home);
+    stored.byMatch[midKey][meta.homeTeamId] = entry;
+    if (!state.data.lineups.byMatch[midKey]) state.data.lineups.byMatch[midKey] = {};
+    state.data.lineups.byMatch[midKey][meta.homeTeamId] = entry;
+  }
+  if (awayStarters.length > 0 || awayBench.length > 0) {
+    const entry = buildEntry(meta.awayTeamId, meta.awayName, awayStarters, awayBench, ms.away.formation, squads.away);
+    stored.byMatch[midKey][meta.awayTeamId] = entry;
+    if (!state.data.lineups.byMatch[midKey]) state.data.lineups.byMatch[midKey] = {};
+    state.data.lineups.byMatch[midKey][meta.awayTeamId] = entry;
+  }
+
+  try { localStorage.setItem('jtt_wc_user_lineups', JSON.stringify(stored)); } catch (e) {}
+
+  // Bust eligibility cache so signals re-filter with the new lineup data
+  if (typeof _eligiblePlayerCache !== 'undefined') {
+    Object.keys(_eligiblePlayerCache).forEach(k => delete _eligiblePlayerCache[k]);
+  }
+
+  document.querySelector('.admin-modal-overlay')?.remove();
+  delete window._luModalState;
+  delete window._luModalSquads;
+  delete window._luModalMeta;
+
+  const fx = (state.data.fixtures.fixtures || []).find(f => f.matchId == meta.matchId);
+  if (fx) showFixture(fx);
+};
+
+window._clearUserLineup = function(matchId) {
+  if (!confirm('Clear your saved lineup for this match?')) return;
+  let stored = {};
+  try { stored = JSON.parse(localStorage.getItem('jtt_wc_user_lineups') || '{}'); } catch (e) {}
+  if (stored.byMatch) {
+    delete stored.byMatch[String(matchId)];
+    delete stored.byMatch[matchId];
+  }
+  try { localStorage.setItem('jtt_wc_user_lineups', JSON.stringify(stored)); } catch (e) {}
+
+  if (state.data.lineups && state.data.lineups.byMatch) {
+    delete state.data.lineups.byMatch[String(matchId)];
+    delete state.data.lineups.byMatch[matchId];
+  }
+  if (typeof _eligiblePlayerCache !== 'undefined') {
+    Object.keys(_eligiblePlayerCache).forEach(k => delete _eligiblePlayerCache[k]);
+  }
+  document.querySelector('.admin-modal-overlay')?.remove();
+  delete window._luModalState;
+  delete window._luModalSquads;
+  delete window._luModalMeta;
   const fx = (state.data.fixtures.fixtures || []).find(f => f.matchId == matchId);
   if (fx) showFixture(fx);
 };
