@@ -335,6 +335,24 @@ body{background:var(--bg);color:var(--text);font-family:'Montserrat',sans-serif;
 #cmb-drawer-body{flex:1;overflow-y:auto;padding:14px 16px;overscroll-behavior:contain}
 #cmb-drawer-body details > summary::-webkit-details-marker{display:none}
 #cmb-drawer-body details[open] .cmb-leg-chev{transform:rotate(90deg)}
+details.cc-card{display:block}
+details.cc-card > summary::-webkit-details-marker{display:none}
+details.cc-card[open] .cmb-leg-chev{transform:rotate(90deg)}
+/* gfRow — uniform collapsible bar for focused-fixture sections (matches WC look) */
+details.gf-row{display:block;background:#0d0d0d;border:1px solid #1a1a1a;border-left:3px solid #2a2a2a;border-radius:6px;margin-bottom:5px;overflow:hidden}
+details.gf-row > summary::-webkit-details-marker{display:none}
+details.gf-row[open]{background:#0f0f0f}
+.gf-row-sum{cursor:pointer;display:flex;align-items:center;gap:8px;padding:9px 11px;user-select:none;list-style:none}
+.gf-row-sum:hover{background:#141414}
+.gf-row-chev{color:#444;font-size:10px;font-weight:900;flex-shrink:0;transition:transform .15s;width:10px;text-align:center}
+details.gf-row[open] .gf-row-chev{transform:rotate(90deg);color:#888}
+.gf-row-icon{font-size:13px;line-height:1;flex-shrink:0}
+.gf-row-lbl{font-size:11px;font-weight:700;color:#ddd;letter-spacing:.04em;flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.gf-row-badge{font-size:9px;font-weight:800;color:#888;background:#1a1a1a;padding:2px 8px;border-radius:10px;flex-shrink:0;min-width:18px;text-align:center}
+.gf-row-body{padding:6px 10px 10px;border-top:1px solid #161616}
+.gf-degen-divider{font-size:9px;font-weight:800;color:#888;letter-spacing:.08em;text-transform:uppercase;padding:10px 4px 6px;display:flex;align-items:center;gap:8px;margin-top:6px}
+.gf-degen-divider::before{content:'🔥';font-size:10px}
+.gf-degen-divider::after{content:'';flex:1;height:1px;background:#1a1a1a}
 /* Desktop: right-side drawer */
 @media(min-width:769px){
   #cmb-drawer{top:0;right:0;bottom:0;width:min(520px,90vw);border-left:1px solid #1f1f1f;animation:cmbSlideR .22s cubic-bezier(.25,.8,.3,1)}
@@ -3881,8 +3899,9 @@ const posBlock=posPlayers.length?(()=>{
     const dec=top.s.k==='goals'||top.s.k==='dreamteam'?1:1;
     // Show secondary stat names compactly in meta line
     const otherStats=ranked.slice(1,3).map(o=>o.s.l).join(' · ');
-    return `<div class="cc-card" onclick="openPlayerModal('${safeN}')">
-      <div class="cc-stat">🟢 ${top.s.l.toUpperCase()} EDGE</div>
+    // Build a realistic over-line for the analysis dive (one half-step below the player's value).
+    const muLine = Math.max(0.5, Math.floor(top.playerVal) - 0.5);
+    const summary = `<div class="cc-stat">🟢 ${top.s.l.toUpperCase()} EDGE</div>
       <div class="cc-row">
         <div class="cc-left">
           <div class="cc-name p-link" data-pname="${p.name}">${p.name}${flagBadge(p.name)+fgsBadge(p.name)+injuryBadge(p.name)}<span class="cc-tag">${posCode(p.position)}</span></div>
@@ -3892,10 +3911,10 @@ const posBlock=posPlayers.length?(()=>{
           <div><span class="cc-num">${top.playerVal.toFixed(dec)}</span> <span class="cc-num-l">player</span></div>
           <div><span class="cc-num">${top.oppPct>=0?'+':''}${top.oppPct.toFixed(0)}%</span> <span class="cc-num-l">opp</span></div>
         </div>
-      </div>
-    </div>`;
+      </div>`;
+    return degenCard(p, top.s.k, muLine, summary, '');
   }).filter(Boolean).join('');
-  return grid ? `<div class="gf-sec">🟢 Positive Stat Matchups</div>${grid}` : '';
+  return grid ? gfRow('🟢', 'Positive Stat Matchups', posPlayers.length, grid, '#22c55e') : '';
 })() : '';
 const snagBlock=snagPl.length?(()=>{
   const cards=[];
@@ -3923,8 +3942,8 @@ const snagBlock=snagPl.length?(()=>{
     const otherStats=allKs.slice(1,3).map(o=>o.s.l).join(' · ');
     const bestDvp=dvpMUs[0];
     const dvpStr=bestDvp&&getStat(bestDvp.k)?` · DVP ${getStat(bestDvp.k).l} +${bestDvp.pct.toFixed(0)}%`:'';
-    return `<div class="cc-card cc-amber" onclick="openPlayerModal('${safeN}')">
-      <div class="cc-stat">🏉 ${top.s.l.toUpperCase()}</div>
+    const snagLine = Math.max(0.5, Math.floor(top.val) - 0.5);
+    const summary = `<div class="cc-stat">🏉 ${top.s.l.toUpperCase()}</div>
       <div class="cc-row">
         <div class="cc-left">
           <div class="cc-name p-link" data-pname="${p.name}">${p.name}${flagBadge(p.name)+fgsBadge(p.name)+injuryBadge(p.name)}<span class="cc-tag">${posCode(p.position)}</span></div>
@@ -3934,10 +3953,10 @@ const snagBlock=snagPl.length?(()=>{
           <div><span class="cc-num">${top.s.f(top.val)}</span> <span class="cc-num-l">${top.s.l}</span></div>
           <div><span class="cc-num">${oppPct>=0?'+':''}${oppPct.toFixed(0)}%</span> <span class="cc-num-l">opp</span></div>
         </div>
-      </div>
-    </div>`;
+      </div>`;
+    return degenCard(p, top.s.k, snagLine, summary, 'cc-amber');
   }).join('');
-  return `<div class="gf-sec">🏉 Snag Qualifiers</div>${grid}`;
+  return gfRow('🏉', 'Snag Qualifiers', cards.length, grid, '#eab308');
 })() : '';
 const eliteBlock=elitePl.length?(()=>{
   const BETTABLE_ELITE = new Set(['disposals','goals','marks','tackles','clearances','kicks','handballs','dreamteam','supercoach']);
@@ -3975,7 +3994,7 @@ const eliteBlock=elitePl.length?(()=>{
       </div>
     </div>`;
   }).filter(Boolean).join('');
-  return cards ? `<div class="gf-sec">⚡ Elite Qualifiers</div>${cards}` : '';
+  return cards ? gfRow('⚡', 'Elite Qualifiers', (cards.match(/cc-card/g)||[]).length, cards, '#8b5cf6') : '';
 })() : '';
 const _isHome = team === g.home;
 const _tCols = teamColors(team);
@@ -4112,8 +4131,7 @@ ${(()=>{
       ${r.meta?`<div style="font-size:8px;font-weight:600;color:#555;margin:-1px 0 4px 10px;padding-left:4px">${r.meta}</div>`:''}`;
     }).join('');
 
-    return `<div class="gf-sec">🩺 Fitness Watch</div>
-      <div style="margin-bottom:6px">${items}</div>`;
+    return gfRow('🩺', 'Fitness Watch', rows.length, `<div style="margin-bottom:6px">${items}</div>`, '#3b82f6');
   }catch(e){ console.error('[JTT] fitness watch error:', e); return ''; }
 })()}
 ${(()=>{
@@ -4179,8 +4197,7 @@ ${(()=>{
       ${bodyHtml}`;
   }catch(e){ console.error('[JTT] absorbers section error:', e); return ''; }
 })()}
-<div class="gf-sec">Overall Matchup Ratings vs ${opp}</div>
-<div class="mu-grid">${muRows}</div>
+${gfRow('📊', `Overall Matchup Ratings vs ${opp}`, '', `<div class="mu-grid">${muRows}</div>`, '#3b82f6')}
 ${(()=>{
   // ── DVP by Position (own stat filter + avg + pct) ──────────────────────
   if(!DVP.length || typeof DVP_DISPLAY==='undefined' || typeof dvpRating!=='function') return '';
@@ -4311,8 +4328,7 @@ ${(()=>{
 ${(()=>{
   if(!g || !DVPRAW.length) return '';
   const teamKey = team.replace(/\s/g,'_');
-  return `<div class="gf-sec">🔍 Player Spotlight</div>
-  <div style="background:#0a0a0a;border:1px solid #1a1a1a;border-radius:8px;padding:10px;margin-bottom:4px">
+  const spotlightBody = `<div style="background:#0a0a0a;border:1px solid #1a1a1a;border-radius:8px;padding:10px;margin-bottom:4px">
     <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:10px">
       <select id="fx-player-sel-${teamKey}" onchange="buildFxPlayerCard('${g.home}','${g.away}',this.value,'${teamKey}')"
         style="background:#111;border:1px solid #2a2a2a;color:#aaa;padding:5px 10px;border-radius:5px;font-family:'Montserrat',sans-serif;font-size:11px;font-weight:700;outline:none;flex:1;min-width:120px">
@@ -4333,8 +4349,11 @@ ${(()=>{
     </div>
     <div id="fx-player-card-${teamKey}" style="min-height:20px"></div>
   </div>`;
+  return gfRow('🔍', 'Player Spotlight', '', spotlightBody, '#8b5cf6');
 })()}
-${posBlock}${snagBlock}${eliteBlock}
+${posBlock}
+<div class="gf-degen-divider">Degen Signals</div>
+${snagBlock}${eliteBlock}
 ${(()=>{
   // Green Lights
   if(!DVPRAW.length) return '';
@@ -4345,12 +4364,11 @@ ${(()=>{
   }).filter(Boolean).sort((a,b)=>b.score-a.score).slice(0,3);
   if(!glCands.length) return '';
   const posCol=p=>POS_C[p.position]||'#555';
-  return '<div class="gf-sec">🟢 Green Lights</div>'+glCands.map(r=>{
+  return gfRow('🟢', 'Green Lights', glCands.length, glCands.map(r=>{
     const safeN=r.p.name.replace(/'/g,"\\'");
     const hrPct=Math.round((r.hitRate||0)*100);
     const dvpStr=r.dvpPct!==null?` · DVP +${r.dvpPct.toFixed(0)}%`:'';
-    return `<div class="cc-card" onclick="openPlayerModal('${safeN}')">
-      <div class="cc-stat">OVER ${r.line}+ Disposals</div>
+    const summary = `<div class="cc-stat">OVER ${r.line}+ Disposals</div>
       <div class="cc-row">
         <div class="cc-left">
           <div class="cc-name p-link" data-pname="${r.p.name}">${r.p.name}${flagBadge(r.p.name)}<span class="cc-tag">${posCode(r.p.position)}</span></div>
@@ -4360,9 +4378,9 @@ ${(()=>{
           <div><span class="cc-num">${r.avg.toFixed(1)}</span> <span class="cc-num-l">avg</span></div>
           <div><span class="cc-num">${hrPct}%</span> <span class="cc-num-l">hit</span></div>
         </div>
-      </div>
-    </div>`;
-  }).join('');
+      </div>`;
+    return degenCard(r.p, 'disposals', r.line, summary, '');
+  }).join(''), '#22c55e');
 })()}
 ${(()=>{
   // Bunnies
@@ -4389,11 +4407,12 @@ ${(()=>{
   });
   if(!bunnyRows.length) return '';
   const posCol=p=>POS_C[p.position]||'#555';
-  return '<div class="gf-sec">🐰 Bunnies</div>'+bunnyRows.slice(0,4).map(r=>{
+  return gfRow('🐰', 'Bunnies', bunnyRows.length, bunnyRows.slice(0,4).map(r=>{
     const safeN=r.p.name.replace(/'/g,"\\'");
     const upliftPct=r.sAvg>0?Math.round(((r.h2hAvg-r.sAvg)/r.sAvg)*100):0;
-    return `<div class="cc-card cc-amber" onclick="openPlayerModal('${safeN}')">
-      <div class="cc-stat">🐰 BUNNY · ${r.stat.l.toUpperCase()}</div>
+    // Bunny line — use 0.5 below the player's season avg (rounded) for the analysis.
+    const bunnyLine = Math.max(1, Math.floor(r.sAvg) - 0.5);
+    const summary = `<div class="cc-stat">🐰 BUNNY · ${r.stat.l.toUpperCase()}</div>
       <div class="cc-row">
         <div class="cc-left">
           <div class="cc-name p-link" data-pname="${r.p.name}">${r.p.name}${flagBadge(r.p.name)}<span class="cc-tag">${posCode(r.p.position)}</span></div>
@@ -4403,9 +4422,9 @@ ${(()=>{
           <div><span class="cc-num">${r.h2hAvg.toFixed(1)}</span> <span class="cc-num-l">vs ${opp}</span></div>
           <div><span class="cc-num">${r.sAvg.toFixed(1)}</span> <span class="cc-num-l">season</span></div>
         </div>
-      </div>
-    </div>`;
-  }).join('');
+      </div>`;
+    return degenCard(r.p, r.stat.k, bunnyLine, summary, 'cc-amber');
+  }).join(''), '#eab308');
 })()}
 ${(()=>{
   // Death Riders
@@ -4417,13 +4436,12 @@ ${(()=>{
   }).filter(Boolean).sort((a,b)=>a.score-b.score).slice(0,3);
   if(!drCands.length) return '';
   const posCol=p=>POS_C[p.position]||'#555';
-  return '<div class="gf-sec">💀 Death Riders</div>'+drCands.map(r=>{
+  return gfRow('💀', 'Death Riders', drCands.length, drCands.map(r=>{
     const safeN=r.p.name.replace(/'/g,"\\'");
     const hrPct=Math.round((r.hitRate||0)*100);
     const dvpStr=r.dvpPct!==null?` · DVP ${r.dvpPct.toFixed(0)}%`:'';
     const l5Str=(typeof r.l5==='number'&&!isNaN(r.l5))?r.l5.toFixed(1):'—';
-    return `<div class="cc-card cc-down" onclick="openPlayerModal('${safeN}')">
-      <div class="cc-stat">UNDER ${r.line}+ Disposals</div>
+    const summary = `<div class="cc-stat">UNDER ${r.line}+ Disposals</div>
       <div class="cc-row">
         <div class="cc-left">
           <div class="cc-name p-link" data-pname="${r.p.name}">${r.p.name}${flagBadge(r.p.name)}<span class="cc-tag">${posCode(r.p.position)}</span></div>
@@ -4433,9 +4451,9 @@ ${(()=>{
           <div><span class="cc-num">${l5Str}</span> <span class="cc-num-l">L5</span></div>
           <div><span class="cc-num">${hrPct}%</span> <span class="cc-num-l">hit</span></div>
         </div>
-      </div>
-    </div>`;
-  }).join('');
+      </div>`;
+    return degenCard(r.p, 'disposals', r.line, summary, 'cc-down');
+  }).join(''), '#ef4444');
 })()}
 ${(()=>{
   // Bogey
@@ -4462,7 +4480,7 @@ ${(()=>{
   if(!bogeyRows.length) return '';
   bogeyRows.sort((a,b)=>(a.h2hAvg/a.cAvg)-(b.h2hAvg/b.cAvg));
   const posCol=p=>POS_C[p.position]||'#555';
-  return '<div class="gf-sec">😬 Bogey</div>'+bogeyRows.slice(0,4).map(r=>{
+  return gfRow('😬', 'Bogey', bogeyRows.length, bogeyRows.slice(0,4).map(r=>{
     const safeN=r.p.name.replace(/'/g,"\\'");
     const dropPct=r.cAvg>0?Math.round(((r.h2hAvg-r.cAvg)/r.cAvg)*100):0;
     // Show last 3-5 actual scores against this opp
@@ -4480,7 +4498,7 @@ ${(()=>{
         </div>
       </div>
     </div>`;
-  }).join('');
+  }).join(''), '#ef4444');
 })()}
 ${(()=>{
   if(!DVPRAW.length) return '';
@@ -4513,7 +4531,7 @@ ${(()=>{
   });
   if(!streaks.length) return '';
   streaks.sort((a,b)=>b.streak-a.streak);
-  return `<div class="gf-sec">🔥 Streakers</div>${streaks.map(s=>{
+  return gfRow('🔥', 'Streakers', streaks.length, streaks.map(s=>{
     const safeN=s.pd.name.replace(/'/g,"\\'");
     return `<div class="cc-card cc-amber" onclick="openPlayerModal('${safeN}')">
       <div class="cc-stat">🔥 ${s.streak} STRAIGHT · ${s.line}+ ${s.stat.toUpperCase()}</div>
@@ -4528,7 +4546,7 @@ ${(()=>{
         </div>
       </div>
     </div>`;
-  }).join('')}`;
+  }).join(''), '#eab308');
 })()}
 ${(()=>{
   // I50 Targets section dropped from focused fixture (still available on dedicated Top Targets page).
@@ -4550,8 +4568,7 @@ ${(()=>{
   const mPctCol=mPct!==null?(mPct>=30?'#22c55e':mPct>=15?'#eab308':'#888'):'#888';
   const safeNF=topFGS.p.name.replace(/'/g,"\\'");
   const firstShotPct=s&&s.matchFirstShot>0?Math.round(s.matchFirstShot/(s.games||1)*100):null;
-  return `<div class="gf-sec">${jttIcon('⚽', 12)} First Goal Scorer</div>
-    <div class="cc-card cc-amber" onclick="openPlayerModal('${safeNF}')">
+  const fgsBody = `<div class="cc-card cc-amber" onclick="openPlayerModal('${safeNF}')">
       <div class="cc-stat">${jttIcon('⚽', 11)} FIRST GOAL SCORER PICK</div>
       <div class="cc-row">
         <div class="cc-left">
@@ -4564,6 +4581,7 @@ ${(()=>{
         </div>
       </div>
     </div>`;
+  return gfRow('⚽', 'First Goal Scorer', 1, fgsBody, '#22c55e');
 })()}
 ${(()=>{
   if(!PD.length) return '';
@@ -4592,8 +4610,7 @@ ${(()=>{
   const mlLabel=top.mlCount?` · 🐷 ${top.mlCount}× match leader`:'';
   const safeN=top.p.name.replace(/'/g,"\\'");
   const l5Str=(typeof top.l5==='number'&&!isNaN(top.l5))?top.l5.toFixed(1):'—';
-  return `<div class="gf-sec">📊 Most Disposals Pick</div>
-    <div class="cc-card cc-blue" onclick="openPlayerModal('${safeN}')">
+  const mdpBody = `<div class="cc-card cc-blue" onclick="openPlayerModal('${safeN}')">
       <div class="cc-stat">📊 MOST DISPOSALS</div>
       <div class="cc-row">
         <div class="cc-left">
@@ -4606,6 +4623,7 @@ ${(()=>{
         </div>
       </div>
     </div>`;
+  return gfRow('📊', 'Most Disposals Pick', 1, mdpBody, '#3b82f6');
 })()}
 ${(()=>{
   // Form Alerts — spiking OR dipping players this round
@@ -4634,7 +4652,7 @@ ${(()=>{
   if(!alerts.length) return '';
   // Sort by absolute swing magnitude — biggest movers first regardless of direction
   alerts.sort((a,b)=>Math.abs(b.swing)-Math.abs(a.swing));
-  return '<div class="gf-sec">📈 Form Alerts</div>'+alerts.slice(0,4).map(r=>{
+  return gfRow('📈', 'Form Alerts', alerts.length, alerts.slice(0,4).map(r=>{
     const pct=Math.round(r.swing*100);
     const safeN=r.p.name.replace(/'/g,"\\'");
     const isSpike=r.dir==='spike';
@@ -4642,8 +4660,9 @@ ${(()=>{
     const headerLabel=isSpike?'📈 FORM SPIKE · DISPOSALS':'📉 FORM DIP · DISPOSALS';
     const pctStr=pct>=0?`+${pct}%`:`${pct}%`;
     const metaText=isSpike?`L3 avg ${pctStr} over season`:`L3 avg ${pctStr} below season`;
-    return `<div class="cc-card${variant}" onclick="openPlayerModal('${safeN}')">
-      <div class="cc-stat">${headerLabel}</div>
+    // Form Alerts always run against disposals. Use 0.5 below season avg (rounded) as the line.
+    const faLine = Math.max(1, Math.floor(r.seasonAvg) - 0.5);
+    const summary = `<div class="cc-stat">${headerLabel}</div>
       <div class="cc-row">
         <div class="cc-left">
           <div class="cc-name p-link" data-pname="${r.p.name}">${r.p.name}${flagBadge(r.p.name)}<span class="cc-tag">${posCode(r.p.position)}</span></div>
@@ -4653,9 +4672,9 @@ ${(()=>{
           <div><span class="cc-num">${r.l3avg.toFixed(1)}</span> <span class="cc-num-l">L3 avg</span></div>
           <div><span class="cc-num">${r.seasonAvg.toFixed(1)}</span> <span class="cc-num-l">season</span></div>
         </div>
-      </div>
-    </div>`;
-  }).join('');
+      </div>`;
+    return degenCard(r.p, 'disposals', faLine, summary, isSpike?'':'cc-down');
+  }).join(''), '#eab308');
 })()}
 ${(()=>{
   // Lurking Taggers
@@ -4696,7 +4715,7 @@ ${(()=>{
       </div>
     </div>`;
   }).join('');
-  return '<div class="gf-sec">🔒 Lurking Taggers</div>'+rows;
+  return gfRow('🔒', 'Lurking Taggers', threats.length, rows, '#a855f7');
 })()}
 ${(()=>{
   if(!PD.length) return '';
@@ -10091,6 +10110,151 @@ function cmbMultiSummary(){
     ${rows}
     <div style="font-size:9px;color:#555;margin-top:8px;font-style:italic">Small sample — treat as a guide, not a guarantee.</div>
   </div>`;
+}
+
+/* ── Degen Crew expandable cards (focused-fixture view) ────────────────────
+   Each section (Green Lights, Death Riders, Bunnies, Form Alerts, Snags)
+   renders cards via degenCard() — wrapped in <details> for tap-to-expand.
+   Body lazy-loads on first open via degenExpand(). Heavy cmpAnalysis call
+   only runs when the user actually opens a card.
+*/
+window._degenLoaded = window._degenLoaded || {}; // dedup expanded bodies
+
+window.degenExpand = function(detailsEl, playerName, stat, line){
+  if(!detailsEl.open) return;
+  // Find the body container
+  const body = detailsEl.querySelector('[data-degen-body]');
+  if(!body) return;
+  // Already loaded? Skip.
+  if(body.getAttribute('data-loaded') === '1') return;
+  body.setAttribute('data-loaded', '1');
+  // Resolve the player by name
+  const p = (typeof cmpFindPlayer === 'function') ? cmpFindPlayer(playerName) : null;
+  if(!p){
+    body.innerHTML = `<div style="padding:10px;color:#555;font-size:10px">Couldn't resolve player.</div>`;
+    return;
+  }
+  try {
+    const fullHtml = cmpAnalysis(p, stat, line);
+    const tpl = document.createElement('div');
+    tpl.innerHTML = fullHtml;
+    // Lift the 8 stat cells from the stats grid.
+    const statCells = [];
+    let simRate = '', simColor = '#888';
+    const statsSec = tpl.querySelector('[data-cmb-section="stats"]');
+    if(statsSec){
+      statsSec.querySelectorAll(':scope > div').forEach(c => {
+        const kids = c.querySelectorAll(':scope > div');
+        if(kids.length >= 2){
+          statCells.push({
+            lbl: (kids[0].textContent||'').trim(),
+            val: (kids[1].textContent||'').trim(),
+            col: kids[1].style.color || '#fff',
+          });
+        }
+      });
+    }
+    const simSec = tpl.querySelector('[data-cmb-section="similar"]');
+    if(simSec){
+      simSec.querySelectorAll('div > div').forEach(d => {
+        const t = (d.textContent || '').trim();
+        if(/\d+\/\d+ games hit/i.test(t) && !simRate){
+          simRate = t;
+          simColor = d.style.color || '#888';
+        }
+      });
+    }
+    if(simRate){
+      const pctMatch = simRate.match(/\((\d+)%\)/);
+      statCells.push({lbl:'Sim Hit', val: pctMatch ? pctMatch[1]+'%' : simRate, col: simColor});
+    }
+    // Look up Best Over price for the odds cell.
+    let oddsCellHtml = '';
+    if(typeof _pricesLoaded !== 'undefined' && _pricesLoaded){
+      const isIntegerStat = !['dreamteam','supercoach'].includes(stat);
+      const bookieLine = (isIntegerStat && line % 1 === 0) ? line - 0.5 : line;
+      let best = (typeof getBestPrice === 'function') ? getBestPrice(p.name, stat, bookieLine, 'over') : null;
+      if(!best && stat !== 'goals' && typeof getClosestPrice === 'function'){
+        best = getClosestPrice(p.name, stat, bookieLine, 'over');
+      }
+      if(best){
+        const brand = (typeof bookieBrand === 'function') ? bookieBrand(best.bookie) : {bg:'#222',fg:'#fff',short:'?'};
+        const lineNote = Math.abs(best.line - bookieLine) >= 0.5 ? ` <span style="color:#666;font-size:7px;font-weight:700">@${best.line}</span>` : '';
+        oddsCellHtml = `<div style="background:#0d0d0d;padding:5px 2px;text-align:center;border:1px solid #22c55e22;min-width:0;overflow:hidden">
+          <div style="font-size:7px;font-weight:800;color:#444;letter-spacing:.03em;text-transform:uppercase;margin-bottom:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">Odds</div>
+          <div style="font-size:11px;font-weight:900;color:#22c55e;font-family:'JetBrains Mono','SF Mono',monospace;line-height:1.1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">$${best.price.toFixed(2)}${lineNote}</div>
+          <div style="font-size:7px;font-weight:800;color:${brand.fg};background:${brand.bg};border-radius:2px;padding:0 3px;margin-top:1px;display:inline-block">${brand.short}</div>
+        </div>`;
+      } else {
+        oddsCellHtml = `<div style="background:#0d0d0d;padding:5px 2px;text-align:center;min-width:0;overflow:hidden">
+          <div style="font-size:7px;font-weight:800;color:#444;letter-spacing:.03em;text-transform:uppercase;margin-bottom:1px">Odds</div>
+          <div style="font-size:11px;font-weight:800;color:#555;line-height:1.1">N/A</div>
+        </div>`;
+      }
+    }
+    // Build the compact strip with shortened labels.
+    const LBL_SHORT = {
+      'Season avg':'S.AVG', 'L5 avg':'L5', 'Hit rate':'HIT %',
+      'Season high':'HIGH', 'Last vs Opp':'vs OPP', 'Season low':'LOW',
+      'DVP':'DVP', 'Sim Hit':'SIM',
+    };
+    if(statCells.length){
+      const cellHtml = statCells.map(c => {
+        const lbl = LBL_SHORT[c.lbl] || c.lbl;
+        return `<div style="background:#0d0d0d;padding:5px 2px;text-align:center;min-width:0;overflow:hidden">
+          <div style="font-size:7px;font-weight:800;color:#444;letter-spacing:.03em;text-transform:uppercase;margin-bottom:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${lbl}</div>
+          <div style="font-size:11px;font-weight:900;color:${c.col};line-height:1.1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${c.val}</div>
+        </div>`;
+      }).join('');
+      const cols = statCells.length + (oddsCellHtml ? 1 : 0);
+      const modalLink = `<div style="text-align:right;padding:6px 4px 0"><span onclick="event.stopPropagation();openPlayerModal('${p.name.replace(/'/g,"\\'")}')" style="font-size:9px;color:#22c55e;cursor:pointer;font-weight:800;letter-spacing:.04em">VIEW FULL ANALYSIS →</span></div>`;
+      body.innerHTML = `<div style="display:grid;grid-template-columns:repeat(${cols},minmax(0,1fr));gap:1px;background:#1a1a1a;padding:1px;margin-top:8px;border-radius:5px;overflow:hidden">${cellHtml}${oddsCellHtml}</div>${modalLink}`;
+    } else {
+      body.innerHTML = `<div style="padding:10px;color:#555;font-size:10px">No analysis data.</div>`;
+    }
+  } catch(e){
+    body.innerHTML = `<div style="padding:10px;color:#ef4444;font-size:10px">Analysis failed: ${e.message}</div>`;
+  }
+};
+
+// Wraps an existing Degen card's summary content in a <details> with a lazy body.
+// summaryHtml is the inner HTML of the current card minus the outer .cc-card div.
+// cardClass is the modifier class (e.g. 'cc-down', 'cc-amber') — preserved on outer.
+function degenCard(player, stat, line, summaryHtml, cardClass){
+  const safeN = String(player.name||'').replace(/'/g,"\\'").replace(/"/g,'&quot;');
+  const cls = cardClass ? `cc-card ${cardClass}` : 'cc-card';
+  // The chevron sits in a tiny right-side slot. Native <details> handles the toggle.
+  return `<details class="${cls}" style="cursor:pointer" ontoggle="degenExpand(this, '${safeN}', '${stat}', ${line})">
+    <summary style="list-style:none;cursor:pointer;padding:0;margin:0;display:block">
+      <div style="display:flex;align-items:flex-start;gap:6px">
+        <div style="flex:1;min-width:0">${summaryHtml}</div>
+        <span class="cmb-leg-chev" style="color:#555;font-size:10px;font-weight:900;padding:4px 2px;flex-shrink:0;transition:transform .15s">▸</span>
+      </div>
+    </summary>
+    <div data-degen-body><div style="padding:10px 4px;color:#555;font-size:10px;text-align:center">Loading…</div></div>
+  </details>`;
+}
+
+/* ── Focused-fixture uniform collapsible row ────────────────────────────────
+   Wraps each section (Green Lights, Bunnies, etc) in a WC-style bar:
+     [▸] [stripeColor] ICON  Label                                  count
+   All collapsed by default. Tap to expand body inline.
+   stripeColor: optional left-border colour (signal accent), defaults to muted.
+*/
+function gfRow(icon, label, badge, bodyHtml, stripeColor){
+  const stripe = stripeColor || '#2a2a2a';
+  const badgeHtml = (badge !== undefined && badge !== null && badge !== '')
+    ? `<span class="gf-row-badge">${badge}</span>`
+    : '';
+  return `<details class="gf-row" style="border-left-color:${stripe}">
+    <summary class="gf-row-sum">
+      <span class="gf-row-chev">▸</span>
+      <span class="gf-row-icon">${icon}</span>
+      <span class="gf-row-lbl">${label}</span>
+      ${badgeHtml}
+    </summary>
+    <div class="gf-row-body">${bodyHtml}</div>
+  </details>`;
 }
 
 function cmpPlayerCard(p, stat, line){
