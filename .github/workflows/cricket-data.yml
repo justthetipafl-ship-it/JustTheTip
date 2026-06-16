@@ -1,0 +1,55 @@
+name: JTT Cricket data
+
+on:
+  schedule:
+    - cron: '0 */6 * * *'      # every 6h (UTC) — cricket runs all hours
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+concurrency:
+  group: cricket-data
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      # Pull Cricsheet ball-by-ball, build the bundle into cricket/data/.
+      # Preserves hand-maintained cricket_fixtures.json + cricket_ratings.json.
+      - name: Fetch + build data bundle
+        env:
+          CRICKET_MONTHS: '24'
+        run: python cricket/fetch_cricket.py
+
+      # Write the subscriber auth gate file from the repo secret.
+      # The tool fetches ./data/auth.json and gates on passwordHash (SHA-256).
+      # If the secret is unset, the gate stays off (tool still works).
+      - name: Write auth.json
+        env:
+          CRICKET_PASSWORD: ${{ secrets.CRICKET_PASSWORD }}
+        run: |
+          if [ -z "$CRICKET_PASSWORD" ]; then echo "no CRICKET_PASSWORD secret — gate off"; exit 0; fi
+          python - <<'PY'
+          import hashlib, json, os
+          pw = os.environ["CRICKET_PASSWORD"].strip()
+          h = hashlib.sha256(pw.encode()).hexdigest()
+          os.makedirs("cricket/data", exist_ok=True)
+          json.dump({"passwordHash": h}, open("cricket/data/auth.json", "w"))
+          print("auth.json written")
+          PY
+
+      - name: Commit
+        run: |
+          git config user.name  "jtt-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add cricket/data/*.json cricket/data/version.txt 2>/dev/null || true
+          git diff --cached --quiet && echo "no changes" || git commit -m "cricket data refresh"
+          git push
