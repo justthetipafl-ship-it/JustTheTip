@@ -52,16 +52,55 @@ def r2(x): return round(float(x), 2)
 
 
 # ── load ────────────────────────────────────────────────────────────────────
-def load_frames():
+def load_frames(with_injuries=True):
     import nflreadpy as nfl
     ps = nfl.load_player_stats(seasons=SEASONS, summary_level="week").to_pandas()
     sc = nfl.load_snap_counts(seasons=SEASONS).to_pandas()
     sch = nfl.load_schedules(seasons=SEASONS).to_pandas()
-    try:
-        teams_meta = nfl.load_teams().to_pandas()
-    except Exception:
-        teams_meta = None
-    return ps, sc, sch, teams_meta
+    inj = None
+    if with_injuries:
+        try:
+            inj = nfl.load_injuries(seasons=[HEADLINE_SEASON]).to_pandas()
+        except Exception as e:
+            print(f"  (injuries unavailable: {e})")
+    return ps, sc, sch, inj
+
+
+# ── injuries: latest-week report for the headline season ────────────────────
+def build_injuries(inj):
+    if inj is None or getattr(inj, "empty", True):
+        return []
+    se = col(inj, "season"); wk = col(inj, "week")
+    nm = col(inj, "full_name", "player_name", "player_display_name", "gsis_id")
+    tm = col(inj, "team"); pos = col(inj, "position")
+    st = col(inj, "report_status", "game_status", "status")
+    pr = col(inj, "report_primary_injury", "primary_injury", "injury")
+    # latest week present for the headline season
+    sub = inj[inj[se] == HEADLINE_SEASON] if se else inj
+    if sub.empty:
+        return []
+    latest = int(sub[wk].max()) if wk else None
+    if latest is not None:
+        sub = sub[sub[wk] == latest]
+    out, seen = [], set()
+    for _, row in sub.iterrows():
+        name = str(g(row, nm, "")).strip()
+        status = str(g(row, st, "")).strip()
+        if not name or not status:
+            continue
+        key = name.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append({
+            "name": name,
+            "team": str(g(row, tm, "")).strip().upper(),
+            "pos": str(g(row, pos, "")).strip().upper(),
+            "status": status,                         # Out / Doubtful / Questionable
+            "detail": str(g(row, pr, "")).strip(),
+            "week": latest,
+        })
+    return out
 
 
 # ── snap share lookup: (player_id|name, season, week) -> offense_pct ─────────
@@ -299,17 +338,27 @@ def main():
     ap.add_argument("--out", default="bundle.json")
     ap.add_argument("--password", default=None, help="weekly access password (omit = open)")
     ap.add_argument("--week", type=int, default=None, help="display week label")
+    ap.add_argument("--no-injuries", action="store_true", help="skip injury report")
     args = ap.parse_args()
 
     print("Loading nflverse frames (2024+2025)…")
-    ps, sc, sch, _ = load_frames()
+    ps, sc, sch, inj = load_frames(with_injuries=not args.no_injuries)
     print(f"  player_stats rows: {len(ps):,}  snap rows: {len(sc):,}  schedule rows: {len(sch):,}")
 
     snap_by_name, _ = build_snap_idx(sc)
-    players = build_players(ps, snap_by_name)
-    teams   = build_teams(ps)
-    dvp     = build_dvp(ps)
-    fixture = build_fixture(sch)
+    players  = build_players(ps, snap_by_name)
+    teams    = build_teams(ps)
+    dvp      = build_dvp(ps)
+    fixture  = build_fixture(sch)
+    injuries = build_injuries(inj)
+
+    week = args.week
+    if week is None:
+        try:
+            import nflreadpy as nfl
+            week = int(nfl.get_current_week())
+        except Exception:
+            week = None
 
     bundle = {
         "_meta": {
@@ -318,14 +367,15 @@ def main():
             "headline_season": HEADLINE_SEASON,
             "built": dt.datetime.utcnow().isoformat() + "Z",
             "players": len(players), "teams": len(teams),
-            "dvp": len(dvp), "fixture": len(fixture),
+            "dvp": len(dvp), "fixture": len(fixture), "injury": len(injuries),
         },
         "season": HEADLINE_SEASON,
-        "week": args.week,
+        "week": week,
         "players": players,
         "teams": teams,
         "dvp": dvp,
         "fixture": fixture,
+        "injury": injuries,
     }
     if args.password:
         bundle["password"] = args.password
@@ -334,7 +384,8 @@ def main():
         json.dump(bundle, f, separators=(",", ":"))
     mb = round(len(json.dumps(bundle)) / 1e6, 2)
     print(f"Wrote {args.out}  ({mb} MB)")
-    print(f"  players={len(players)} teams={len(teams)} dvp={len(dvp)} fixture={len(fixture)}")
+    print(f"  players={len(players)} teams={len(teams)} dvp={len(dvp)} "
+          f"fixture={len(fixture)} injury={len(injuries)}")
 
 
 if __name__ == "__main__":
