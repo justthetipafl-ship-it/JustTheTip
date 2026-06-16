@@ -1,0 +1,58 @@
+name: JTT NFL — bundle refresh
+
+# NFL plays Thu / Sun / Mon. Two weekly runs:
+#   • Wed 09:00 UTC  → after MNF settles, refreshes full player/team/DVP stats
+#   • Sat 16:00 UTC  → latest injury report before the Sunday slate
+# Plus manual dispatch. In the off-season the data is static; the runs are
+# cheap no-ops that simply re-commit an unchanged bundle (skipped if identical).
+on:
+  schedule:
+    - cron: "0 9 * * 3"    # Wednesday 09:00 UTC
+    - cron: "0 16 * * 6"   # Saturday 16:00 UTC
+  workflow_dispatch:        # run on demand from the Actions tab
+
+permissions:
+  contents: write
+
+concurrency:
+  group: nfl-bundle
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install deps
+        run: pip install nflreadpy pandas
+
+      - name: Build bundle
+        env:
+          NFL_PASSWORD: ${{ secrets.NFL_PASSWORD }}
+        run: |
+          mkdir -p NFL/data
+          if [ -n "$NFL_PASSWORD" ]; then
+            python NFL/build_nfl_bundle.py --password "$NFL_PASSWORD" --out NFL/data/bundle.json
+          else
+            python NFL/build_nfl_bundle.py --out NFL/data/bundle.json
+          fi
+
+      - name: Commit if changed
+        run: |
+          git config user.name  "jtt-nfl-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add NFL/data/bundle.json
+          if git diff --cached --quiet; then
+            echo "No bundle changes — nothing to commit."
+          else
+            git commit -m "chore(nfl): refresh bundle [skip ci]"
+            git push
+          fi
