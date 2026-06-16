@@ -876,9 +876,11 @@ body.fs-l{font-size:14px}
 </div>
 <script>
 /* ════════════════════ JTT NFL — engine ════════════════════ */
-var BUNDLE=null, PD=[], TD=[], DVP=[], FIX=[];
-var dvpIdx={}, teamIdx={}, pdIdx={};
+var BUNDLE=null, PD=[], TD=[], DVP=[], FIX=[], INJ=[];
+var dvpIdx={}, teamIdx={}, pdIdx={}, injIdx={};
 var _jttBundleCache=null;
+function injStatus(p){ return injIdx[(p.name||'').toLowerCase()]||null; }
+function isOut(p){ var s=injStatus(p); return s&&/out|injured reserve|^ir$|doubtful/i.test(s.status); }
 
 /* ── stat definitions (NFL markets) ── */
 var STAT_DEFS=[
@@ -925,11 +927,12 @@ function rkTier(rank,n){ if(!rank||!n) return['rk-neu','—']; var q=rank/n;
 function applyBundle(b){
   BUNDLE=b;
   PD=(b.players||[]).filter(function(p){return p.name&&p.team&&p.position;});
-  TD=(b.teams||[]); DVP=(b.dvp||[]); FIX=(b.fixture||[]);
+  TD=(b.teams||[]); DVP=(b.dvp||[]); FIX=(b.fixture||[]); INJ=(b.injury||[]);
   // indexes
   dvpIdx={}; DVP.forEach(function(d){ (dvpIdx[d.team]=dvpIdx[d.team]||{})[d.pos]=d; });
   teamIdx={}; TD.forEach(function(t){ teamIdx[t.team]=t; });
   pdIdx={}; PD.forEach(function(p){ pdIdx[(p.id||p.name)]=p; });
+  injIdx={}; INJ.forEach(function(i){ injIdx[(i.name||'').toLowerCase()]=i; });
   // populate selects
   var teams=Array.from(new Set(PD.map(function(p){return p.team;}))).sort();
   ['f-team','d-team'].forEach(function(id){var s=document.getElementById(id);if(!s)return;
@@ -937,7 +940,7 @@ function applyBundle(b){
   // header stats
   document.getElementById('h-players').textContent=PD.length;
   document.getElementById('h-week').textContent=b.week||(b.season||'—');
-  var sp=document.getElementById('sp'); if(sp){sp.textContent='✓ '+PD.length+' players · '+TD.length+' teams · '+DVP.length+' DVP rows';sp.className='ust ok';}
+  var sp=document.getElementById('sp'); if(sp){sp.textContent='✓ '+PD.length+' players · '+TD.length+' teams · '+DVP.length+' DVP'+(INJ.length?' · '+INJ.length+' inj':'');sp.className='ust ok';}
   var up=document.getElementById('jtt-upbar'); if(up&&location.protocol!=='file:') up.style.display='none';
   buildMobileNav(); buildDegenPills(); renderFixtureWeeks(); renderFixture();
   renderStats(); renderDegen(); renderInfo();
@@ -1110,7 +1113,7 @@ function renderFocusedGame(away,home){
 function collectGameSignals(teams){
   var hits=[];
   SIGNALS.forEach(function(sig){
-    sig.fn().forEach(function(h){ if(teams.indexOf(h.p.team)>=0) hits.push({sig:sig,h:h}); });
+    sig.fn().forEach(function(h){ if(!sig.keepOut&&isOut(h.p))return; if(teams.indexOf(h.p.team)>=0) hits.push({sig:sig,h:h}); });
   });
   if(!hits.length) return '';
   hits=hits.slice(0,12);
@@ -1197,6 +1200,18 @@ var SIGNALS=[
      out.push({p:p,score:Math.abs(p.snapTrend),note:(up?'role rising':'role fading'),accent:up?'#22c55e':'#ef4444',down:!up,
        met:[{l:'Snap%',v:fmt(p.snapPct)+'%'},{l:'Trend',v:(up?'+':'')+fmt(p.snapTrend)+'%',cls:up?'g':'r'},{l:'L3 vs Avg',v:up?'▲':'▼'}]}); });
      return out.sort(function(a,b){return b.score-a.score;}); }},
+
+  {id:'injury',name:'Inactive Watch',short:'INJ',icon:'🚑',color:'#ef4444',
+   desc:'Players on this week\'s injury report — Out/Doubtful kill props, Questionable opens up teammates.',
+   keepOut:true,
+   fn:function(){ var ord={out:0,doubtful:1,questionable:2}; var out=[];
+     INJ.forEach(function(i){ var p=PD.filter(function(x){return x.name.toLowerCase()===i.name.toLowerCase();})[0];
+       var pos=(p?p.position:i.pos)||''; var prim=p?POS_PRIMARY[p.position]:null; var avg=p&&prim?val(p,prim):0;
+       var sl=(i.status||'').toLowerCase(); var down=/out|doubtful|ir/.test(sl);
+       out.push({p:p||{name:i.name,team:i.team,position:pos,id:i.name},
+         score:(10-(ord[sl]!=null?ord[sl]:5))*100+avg, note:i.detail||i.status, accent:down?'#ef4444':'#eab308', down:down,
+         met:[{l:'Status',v:i.status,cls:down?'r':'y'},{l:'Team',v:i.team},{l:prim?STAT_BY_K[prim].l:'Pos',v:p&&prim?fmt(avg):pos}]}); });
+     return out.sort(function(a,b){return b.score-a.score;}); }},
 ];
 var SIG_BY_ID={}; SIGNALS.forEach(function(s){SIG_BY_ID[s.id]=s;});
 
@@ -1216,17 +1231,20 @@ function setDegen(id){ degenSig=id; buildDegenPills(); renderDegen(); }
 function renderDegen(){
   var sig=SIG_BY_ID[degenSig]; if(!sig||!PD.length){document.getElementById('degen-body').innerHTML='';return;}
   var f=getFilters('d-');
-  var hits=sig.fn().filter(function(h){ if(f.pos&&h.p.position!==f.pos)return false; if(f.team&&h.p.team!==f.team)return false; if(f.search&&h.p.name.toLowerCase().indexOf(f.search)<0)return false; return true; });
+  var hits=sig.fn().filter(function(h){ if(!sig.keepOut&&isOut(h.p))return false; if(f.pos&&h.p.position!==f.pos)return false; if(f.team&&h.p.team!==f.team)return false; if(f.search&&h.p.name.toLowerCase().indexOf(f.search)<0)return false; return true; });
   var head='<div class="hot-hdr" style="margin-bottom:6px"><span class="hot-title" style="color:'+sig.color+'">'+sig.icon+' '+sig.name+'</span></div>'+
     '<div style="font-size:11px;color:var(--muted);font-weight:600;margin-bottom:12px">'+sig.desc+' · '+hits.length+' hits</div>';
   var body='<div class="sig-grid">'+(hits.length?hits.slice(0,60).map(function(h){return sigCard(h,sig);}).join(''):'<div class="sig-empty">No '+sig.name+' hits with current data/filters.</div>')+'</div>';
   document.getElementById('degen-body').innerHTML=head+body;
 }
+function injBadge(p){ var s=injStatus(p); if(!s)return ''; var sl=(s.status||'').toLowerCase();
+  var c=/out|doubtful|ir/.test(sl)?'#ef4444':'#eab308';
+  return ' <span class="sig-tag" style="background:'+c+'22;color:'+c+'" title="'+(s.detail||'')+'">🚑 '+s.status+'</span>'; }
 function sigCard(h,sig){
   var p=h.p;
   return '<div class="sig-card'+(h.down?' down':'')+'" style="--accent:'+(h.accent||sig.color)+'">'+
     '<div class="sig-top"><div><div class="sig-nm" onclick="openPlayer(\''+esc(p.id||p.name)+'\')">'+p.name+'</div>'+
-    '<div class="sig-sub"><span class="posbadge '+p.position+'">'+p.position+'</span><span>'+p.team+'</span><span class="sig-vs">'+(h.note||'')+'</span></div></div>'+
+    '<div class="sig-sub"><span class="posbadge '+p.position+'">'+p.position+'</span><span>'+p.team+'</span><span class="sig-vs">'+(h.note||'')+'</span>'+injBadge(p)+'</div></div>'+
     '<span class="sig-tag" style="background:'+sig.color+'22;color:'+sig.color+'">'+sig.short+'</span></div>'+
     '<div class="sig-met">'+(h.met||[]).map(function(m){return '<div class="sig-met-i"><div class="sig-met-v '+(m.cls||'')+'">'+m.v+'</div><div class="sig-met-l">'+m.l+'</div></div>';}).join('')+'</div></div>';
 }
@@ -1245,8 +1263,11 @@ function openPlayer(id){
   var matchup='';
   if(def){ var t=rkTier(def.rank,def.rankN);
     matchup='<div class="tm-sec">Next matchup'+(nx?' · vs '+nx:'')+'</div><div style="display:flex;align-items:center;gap:8px;font-size:11px;font-weight:700;color:var(--text3)"><span class="rkchip '+t[0]+'">#'+def.rank+' '+t[1]+'</span>allows '+fmt(def[POS_DVPKEY[p.position]])+' '+STAT_BY_K[POS_DVPKEY[p.position]].l+'/g to '+p.position+'s</div>'; }
+  var injS=injStatus(p); var injBan='';
+  if(injS){ var sl=(injS.status||'').toLowerCase(); var c=/out|doubtful|ir/.test(sl)?'#ef4444':'#eab308';
+    injBan='<div style="background:'+c+'14;border:1px solid '+c+'44;border-radius:6px;padding:7px 10px;margin-top:8px;font-size:11px;font-weight:800;color:'+c+'">🚑 '+injS.status+(injS.detail?' · '+injS.detail:'')+(injS.week?' (Wk '+injS.week+')':'')+'</div>'; }
   document.getElementById('pmodal-inner').innerHTML=
-    '<div class="tm-hdr"><div><div class="tm-name">'+p.name+'</div><div class="tm-sub"><span class="posbadge '+p.position+'">'+p.position+'</span> '+p.team+' · '+(p.g||0)+' games'+(p.snapPct!=null?' · '+fmt(p.snapPct)+'% snaps':'')+'</div></div></div>'+
+    '<div class="tm-hdr"><div><div class="tm-name">'+p.name+'</div><div class="tm-sub"><span class="posbadge '+p.position+'">'+p.position+'</span> '+p.team+' · '+(p.g||0)+' games'+(p.snapPct!=null?' · '+fmt(p.snapPct)+'% snaps':'')+'</div></div></div>'+injBan+
     '<div class="tm-sec">Per-game averages</div><div class="tm-grid">'+grid+'</div>'+matchup+
     '<div class="tm-sec">Recent game log</div>'+glHtml;
   document.getElementById('pmodal').classList.add('open');
