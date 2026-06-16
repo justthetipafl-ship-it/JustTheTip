@@ -701,10 +701,78 @@ body.fs-l{font-size:14px}
   .cc-name{font-size:13px}
   .cc-num{font-size:12px}
 }
+
+/* ── Boot overlay — branded splash that covers the empty/dev UI while the
+   bundle is loading. Adapted from the WC tool's boot-overlay pattern, using
+   AFL's --green accent and the existing JTT logo SVG (green circle + white
+   tick) so the splash matches the in-app branding. The .hide class fades it
+   out with opacity transition; JS then removes display: none after 300ms. */
+.boot-overlay{
+  position:fixed;inset:0;background:var(--bg, #050505);
+  z-index:99998;
+  display:flex;flex-direction:column;align-items:center;justify-content:center;
+  gap:14px;
+  transition:opacity .28s ease;
+  font-family:'Montserrat',sans-serif;
+}
+.boot-overlay.hide{opacity:0;pointer-events:none}
+.boot-logo{
+  width:72px;height:72px;border-radius:50%;
+  background:#00dd00;
+  display:flex;align-items:center;justify-content:center;
+  box-shadow:0 0 0 6px rgba(34,197,94,.15), 0 0 30px rgba(34,197,94,.2);
+}
+.boot-logo svg{display:block}
+.boot-title{
+  font-weight:900;font-size:24px;color:#fff;
+  letter-spacing:-.02em;margin-top:8px;line-height:1;
+}
+.boot-sub{
+  font-family:'IBM Plex Mono','Courier New',monospace;
+  font-size:10px;color:#666;
+  letter-spacing:.18em;text-transform:uppercase;
+}
+.boot-dots{display:flex;gap:7px;margin-top:14px}
+.boot-dot{
+  width:7px;height:7px;border-radius:50%;
+  background:var(--green, #22c55e);
+  opacity:.3;
+  animation:bootPulse 1.2s ease-in-out infinite;
+}
+.boot-dot:nth-child(2){animation-delay:.2s}
+.boot-dot:nth-child(3){animation-delay:.4s}
+@keyframes bootPulse{
+  0%,80%,100%{opacity:.3;transform:scale(.85)}
+  40%       {opacity:1; transform:scale(1.15)}
+}
+.boot-status{
+  font-family:'IBM Plex Mono','Courier New',monospace;
+  font-size:10px;color:#555;
+  letter-spacing:.06em;margin-top:8px;min-height:14px;
+}
 </style>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
 </head>
 <body>
+
+<!-- Boot overlay: covers the empty/dev UI while bundle.json loads.
+     Hidden by JS (_jttHideBoot) once data lands, password gate shows,
+     or the manual-upload fallback kicks in. -->
+<div class="boot-overlay" id="boot-overlay">
+  <div class="boot-logo">
+    <svg viewBox="0 0 28 28" width="40" height="40" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+      <polyline points="7 15 12 20 21 9" fill="none" stroke="#000000" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"/>
+    </svg>
+  </div>
+  <div class="boot-title">Just The Tip</div>
+  <div class="boot-sub">AFL Prop Scanner</div>
+  <div class="boot-dots">
+    <span class="boot-dot"></span>
+    <span class="boot-dot"></span>
+    <span class="boot-dot"></span>
+  </div>
+  <div class="boot-status" id="boot-status">Loading bundle…</div>
+</div>
 
 <!-- JTT shared icon gradients -->
 <svg width="0" height="0" style="position:absolute" aria-hidden="true">
@@ -12819,6 +12887,24 @@ setInterval(function(){
 var _jttBundleCache=null;
 window._jttApplyBundle=null;
 
+/* Hide the branded boot overlay. Idempotent — safe to call multiple times.
+   Adds .hide for the CSS fade transition, then drops display:none after the
+   transition completes so the overlay doesn't sit invisibly catching clicks. */
+window._jttHideBoot=function(){
+  var ov=document.getElementById('boot-overlay');
+  if(!ov || ov.dataset.hidden==='1') return;
+  ov.dataset.hidden='1';
+  ov.classList.add('hide');
+  setTimeout(function(){ if(ov && ov.parentNode) ov.style.display='none'; }, 320);
+};
+
+/* Update the boot overlay's status line ("Loading bundle…" etc.) — purely
+   cosmetic, fails silently if the overlay's already gone. */
+window._jttSetBootStatus=function(msg){
+  var el=document.getElementById('boot-status');
+  if(el && msg) el.textContent=String(msg);
+};
+
 window.jttCheckPassword=function(){
   var input=document.getElementById('jtt-pw-input');
   var err=document.getElementById('jtt-pw-err');
@@ -12841,6 +12927,7 @@ window.jttCheckPassword=function(){
 
 (function autoLoadBundle(){
   if(location.protocol==='file:'){
+    if(window._jttHideBoot) window._jttHideBoot();
     var lock=document.getElementById('jtt-lock');
     if(lock) lock.classList.add('hidden');
     var upbar=document.querySelector('.upbar');
@@ -12932,10 +13019,13 @@ window.jttCheckPassword=function(){
           }, 150);
         }
       }catch(e){ console.warn('[JTT] LINEUP_API hook failed:', e.message); }
+      // Render succeeded — drop the boot overlay so the app is visible.
+      if(window._jttHideBoot) window._jttHideBoot();
     }catch(e){
       console.warn('[JTT] apply error:',e.message);
       var lock=document.getElementById('jtt-lock');if(lock) lock.classList.add('hidden');
       var upbar=document.querySelector('.upbar');if(upbar) upbar.style.display='';
+      if(window._jttHideBoot) window._jttHideBoot();
     }
   }
 
@@ -12959,11 +13049,16 @@ window.jttCheckPassword=function(){
           applyBundle(bundle);return;
         }
         document.getElementById('jtt-lock').classList.remove('hidden');
+        // Lock screen is taking over — drop the boot overlay so it doesn't
+        // sit on top blocking the password input.
+        if(window._jttHideBoot) window._jttHideBoot();
       })
       .catch(function(err){
         console.log('[JTT] No bundle.json:',err.message);
         var lock=document.getElementById('jtt-lock');if(lock) lock.classList.add('hidden');
         var upbar=document.querySelector('.upbar');if(upbar) upbar.style.display='';
+        // No bundle available — surface manual-upload UI to the user.
+        if(window._jttHideBoot) window._jttHideBoot();
       });
   });
 })();
