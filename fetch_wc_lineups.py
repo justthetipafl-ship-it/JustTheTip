@@ -23,8 +23,21 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 BASE = "https://v3.football.api-sports.io"
-WINDOW_HOURS_AHEAD = 6
-WINDOW_HOURS_BEHIND = 4   # also poll matches that kicked off in the last 4h
+# Lineup-specific polling window — designed around when lineups are actually
+# available in the API rather than a generic "around kickoff" range.
+#
+#   - Lineups usually drop ~T-75 (sometimes T-90, rarely T-60)
+#   - They remain available for the full duration of the live match
+#   - The has_cached_lineup() skip-check below prevents repeated API calls
+#     for fixtures we've already captured, so the upper bound is mostly a
+#     safety net for the rare case where the pre-match capture missed
+#
+# With cron every 10 min, a fixture gets ~3-4 poll attempts in the pre-match
+# window (T-100 → T-75) before lineups appear, then one successful capture,
+# then the skip-check kicks in for all subsequent ticks. Cost per fixture:
+# ~4 API calls instead of ~29 with the previous 6h pre-match window.
+WINDOW_MINUTES_AHEAD = 100  # T-100 covers all realistic pre-match releases
+WINDOW_MINUTES_BEHIND = 120 # T+120 catches live matches if pre-match was missed
 DATA_DIR = Path("wc/data")
 CACHE_DIR = Path(".cache/wc-lineups")
 CACHE_DIR.mkdir(parents=True, exist_ok=True)
@@ -121,8 +134,8 @@ def main():
 
     fixtures = fixtures_data.get("fixtures") or []
     now = int(time.time())
-    behind = now - WINDOW_HOURS_BEHIND * 3600
-    ahead  = now + WINDOW_HOURS_AHEAD * 3600
+    behind = now - WINDOW_MINUTES_BEHIND * 60
+    ahead  = now + WINDOW_MINUTES_AHEAD * 60
 
     # Filter to fixtures within our time window AND in a status worth polling
     candidates = [
