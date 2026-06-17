@@ -45,9 +45,18 @@ from collections import defaultdict
 from difflib import SequenceMatcher
 from typing import Any
 
+# Each tour lists mirror URLs tried in order. raw.githubusercontent occasionally
+# serves cached 404s during GitHub/Fastly incidents; jsDelivr + media mirrors the
+# same repo files via separate CDNs so a transient raw outage doesn't kill the run.
+def _mirrors(repo: str, fname: str) -> list:
+    return [
+        f"https://raw.githubusercontent.com/JeffSackmann/{repo}/master/{fname}",
+        f"https://cdn.jsdelivr.net/gh/JeffSackmann/{repo}@master/{fname}",
+        f"https://media.githubusercontent.com/media/JeffSackmann/{repo}/master/{fname}",
+    ]
 SACKMANN = {
-    "atp": "https://raw.githubusercontent.com/JeffSackmann/tennis_atp/master/atp_players.csv",
-    "wta": "https://raw.githubusercontent.com/JeffSackmann/tennis_wta/master/wta_players.csv",
+    "atp": _mirrors("tennis_atp", "atp_players.csv"),
+    "wta": _mirrors("tennis_wta", "wta_players.csv"),
 }
 FUZZY_THRESHOLD = 0.90
 
@@ -137,12 +146,31 @@ def load_csv(path: str) -> list[dict[str, str]]:
 
 
 def maybe_download(tour: str, path: str) -> None:
-    if os.path.exists(path):
+    if os.path.exists(path) and os.path.getsize(path) > 0:
         return
     import urllib.request
-    log(f"  downloading {tour} players -> {path}")
     os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
-    urllib.request.urlretrieve(SACKMANN[tour], path)
+    urls = SACKMANN[tour]
+    if isinstance(urls, str):
+        urls = [urls]
+    last_err = None
+    for url in urls:
+        try:
+            log(f"  downloading {tour} players -> {path}  ({url.split('//')[1].split('/')[0]})")
+            req = urllib.request.Request(url, headers={"User-Agent": "jtt-tennis/1.0"})
+            with urllib.request.urlopen(req, timeout=30) as r, open(path, "wb") as f:
+                f.write(r.read())
+            if os.path.getsize(path) > 0:
+                return
+        except Exception as e:  # noqa: BLE001 - try next mirror
+            last_err = e
+            log(f"    mirror failed: {e}")
+            if os.path.exists(path):
+                try:
+                    os.remove(path)
+                except OSError:
+                    pass
+    raise RuntimeError(f"all mirrors failed for {tour} players: {last_err}")
 
 
 # --------------------------------------------------------------------------- #
