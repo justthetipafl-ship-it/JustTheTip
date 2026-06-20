@@ -93,6 +93,20 @@
   .btn-sm { font-family:var(--font-mono); font-size:11px; padding:6px 10px; border-radius:6px;
             border:1px solid var(--border); background:var(--surface-2); color:var(--text-1); cursor:pointer; }
   .btn-sm:hover { border-color:var(--accent); }
+  /* focused-fixture two-column split (matches WC/MLB) */
+  .team-cols{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:14px;}
+  .team-panel{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:12px;min-width:0;}
+  .team-panel-hdr{display:flex;align-items:center;gap:8px;padding-bottom:10px;margin-bottom:10px;border-bottom:1px solid var(--border);}
+  .team-panel-hdr .nm{font-family:var(--font-display);font-weight:800;font-size:15px;letter-spacing:.3px;line-height:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .team-panel-hdr .vs{font-family:var(--font-mono);font-size:9px;color:var(--text-3);letter-spacing:.5px;margin-left:auto;white-space:nowrap;}
+  .tp-sec{display:flex;align-items:baseline;gap:8px;margin:14px 0 8px;}
+  .tp-sec .sec-title{font-family:var(--font-display);font-weight:800;font-size:12px;letter-spacing:1px;text-transform:uppercase;color:var(--text-1);display:flex;align-items:center;gap:6px;}
+  .tp-sec .sec-meta{font-family:var(--font-mono);font-size:10px;color:var(--text-3);margin-left:auto;}
+  .tp-lead{display:flex;justify-content:space-between;gap:8px;padding:5px 0;border-bottom:1px solid var(--border);font-size:12px;cursor:pointer;}
+  .tp-lead:last-child{border-bottom:0;}
+  .tp-lead .nm{color:var(--text-1);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .tp-lead .vv{font-family:var(--font-mono);font-weight:700;color:var(--accent);}
+  @media(max-width:680px){ .team-cols{grid-template-columns:1fr;} }
   </style>
 </head>
 <body class="auth-locked">
@@ -400,11 +414,57 @@
       '<div class="fixture-team"><span class="team-chip lg">'+abbr(g.home)+'</span><div class="fxr-name">'+g.home+'</div>'+pips(g.home)+'</div>'+
       '<div class="fixture-center"><div class="kickoff">'+(g.date||'')+' '+(g.time||'')+'</div><div class="vs-big">v</div><div class="venue">'+(g.venue||'TBC')+'</div></div>'+
       '<div class="fixture-team"><span class="team-chip lg">'+abbr(g.away)+'</span><div class="fxr-name">'+g.away+'</div>'+pips(g.away)+'</div></div>';
-    // Bucket 1: team context (real, lean) — Bucket 2 signals scaffolded for build 2
-    h+=teamContextPanel(g.home,g.away);
-    h+='<div class="degen-divider"><span>🔥 Degen Signals</span></div>';
-    h+=focusedDegen(g.home,g.away);
+    h+='<div class="team-cols">'+teamPanel(g.home,g.away,true)+teamPanel(g.away,g.home,false)+'</div>';
     return h;
+  }
+
+  // ---- per-team column: stat leaders + matchup + scoped Degen signals ----
+  function teamPanel(team, opp, isHome){
+    const t=state.idx.teamMap[team];
+    let h='<div class="team-panel">';
+    h+='<div class="team-panel-hdr"><span class="team-chip">'+abbr(team)+'</span><span class="nm">'+team.toUpperCase()+'</span>'+
+       '<span class="vs">'+(isHome?'vs ':'@ ')+abbr(opp).toUpperCase()+'</span></div>';
+    // form pips
+    h+='<div style="margin-bottom:6px">'+pips(team)+'</div>';
+    // Stat Leaders (top of team by a few markets)
+    const leaders=[['disposals','Disposals'],['goals','Goals'],['tackles','Tackles'],['marks','Marks']].map(([k,l])=>{
+      const top=playersOnTeam(team).filter(p=>(p.matches||0)>=3).sort((a,b)=>(b[k]||0)-(a[k]||0))[0];
+      if(!top) return '';
+      return '<div class="tp-lead" onclick="openPlayer(\''+esc(top.name).replace(/\x27/g,"\\\x27")+'\')"><span class="nm">'+l+' · '+top.name+'</span><span class="vv">'+fmt(top[k],k==='goals'?2:1)+'</span></div>';
+    }).join('');
+    if(leaders){ h+='<div class="tp-sec"><div class="sec-title"><i class="ti ti-user-star"></i> Stat Leaders</div></div>'+leaders; }
+    // Matchup: this team For vs what the OPPONENT allows (the edges this team's players face)
+    if(t){
+      const rows=[['disposals','Disp'],['inside50s','I50'],['clearances','Clr'],['marks','Mrk'],['tackles','Tkl'],['goals','Gls']];
+      let mt='<div class="tp-sec"><div class="sec-title"><i class="ti ti-shield-half"></i> Matchup vs '+abbr(opp)+'</div></div>';
+      mt+='<div class="stbl-wrap"><table class="stbl" style="min-width:0"><thead><tr><th>Stat</th><th>'+abbr(team)+' For</th><th>'+abbr(opp)+' Allows</th></tr></thead><tbody>';
+      const ta=state.idx.teamMap[opp];
+      rows.forEach(([k,l])=>{ mt+='<tr><td class="name">'+l+'</td><td>'+fmt(t[k])+'</td><td>'+fmt(ta?ta[k+'_a']:null)+'</td></tr>'; });
+      mt+='</tbody></table></div>'; h+=mt;
+    }
+    // Degen signals scoped to THIS team
+    h+=teamDegen(team,opp);
+    h+='</div>';
+    return h;
+  }
+
+  function teamDegen(team, opp){
+    const prevScope=_degenScope, prevFocus=_degenFocused;
+    _degenScope=new Set([team]); _degenFocused=true;
+    let html='', total=0;
+    try{
+      const ov=collectOU([team],'over'), un=collectOU([team],'under');
+      const counts={ green:ov.length, death:un.length, snags:_fc(hotMatchups(SNAG_DEFS),6).length,
+        elite:_fc(hotMatchups(ELITE_DEFS),8,40).length, bunnies:_fc(bunnies(),6).length, bogey:_fc(bogey(),6).length,
+        streak:_fc(streakers(),6).length, form:_fc(formAlerts('spike'),6,25).length+_fc(formAlerts('drop'),6,25).length,
+        fgs:_fc(fgsEdges(),6).length, taggers:_fc(taggerAlerts(),8).length };
+      total=Object.values(counts).reduce((a,b)=>a+b,0);
+      html+=ouSection(ov,'over','Green Lights','ti-traffic-lights','c-green');
+      html+=ouSection(un,'under','Death Riders','ti-skull','c-red');
+      ['snags','elite','bunnies','bogey','streak','form','fgs','taggers'].forEach(k=>{ html+=renderTile(k); });
+    } finally { _degenScope=prevScope; _degenFocused=prevFocus; }
+    const hdr='<div class="tp-sec"><div class="sec-title"><i class="ti ti-flame"></i> Degen Signals</div><div class="sec-meta">'+total+' fired</div></div>';
+    return hdr+(html||'<div class="tp-body-meta" style="border:0">No signals fired.</div>');
   }
   function teamContextPanel(home,away){
     const th=state.idx.teamMap[home], ta=state.idx.teamMap[away];
@@ -728,36 +788,46 @@
     return out || '<div class="empty"><div class="ico"><i class="ti ti-flame"></i></div>No Degen signals fired for this matchup.</div>';
   }
 
+  // focused columns: one row per player + small cap; standalone tiles keep their fuller caps
+  function _fc(arr, fcap, full){
+    if(_degenFocused){
+      const seen=new Set();
+      arr=arr.filter(x=>{ const n=(x.p&&x.p.name)||(x.threat&&x.threat.name)||x.name; if(seen.has(n))return false; seen.add(n); return true; });
+      return arr.slice(0, fcap||8);
+    }
+    return full?arr.slice(0,full):arr;
+  }
+
   function renderTile(k){
     const M=v=>fmt(v,1), abv=t=>abbr(t);
     if(k==='snags'){
-      const rows=hotMatchups(SNAG_DEFS).map(h=>degRow(h.p.name,'#f59e0b',h.def.l+' · '+muTag(h.dvpPct),
+      const rows=_fc(hotMatchups(SNAG_DEFS),6).map(h=>degRow(h.p.name,'#f59e0b',h.def.l+' · '+muTag(h.dvpPct),
         h.p.position+' · '+abv(h.p.team)+' v '+abv(h.opp)+' · #'+h.rank+' '+h.def.l.toLowerCase()+' '+M(h.val)+lineTag(h.p.name,'goals')));
       return degWrap('ti-ball-football','Snags',rows,'c-amber');
     }
     if(k==='elite'){
-      const rows=hotMatchups(ELITE_DEFS).slice(0,40).map(h=>degRow(h.p.name,'#22c55e',h.def.l+' · '+muTag(h.dvpPct),
+      const rows=_fc(hotMatchups(ELITE_DEFS),8,40).map(h=>degRow(h.p.name,'#22c55e',h.def.l+' · '+muTag(h.dvpPct),
         h.p.position+' · '+abv(h.p.team)+' v '+abv(h.opp)+' · #'+h.rank+' '+h.def.l.toLowerCase()+' '+M(h.val)+lineTag(h.p.name,h.def.k)));
       return degWrap('ti-trophy','Elite Matchups',rows,'c-green');
     }
     if(k==='bunnies'){
-      const rows=bunnies().map(b=>degRow(b.p.name,'#3b82f6','+'+b.diffPct.toFixed(0)+'% v field',
+      const rows=_fc(bunnies(),6).map(b=>degRow(b.p.name,'#3b82f6','+'+b.diffPct.toFixed(0)+'% v field',
         b.stat.l+' · vs '+abbr(b.opp)+' '+M(b.thisAvg)+' (best other '+M(b.best)+') · '+b.games+' H2H'+lineTag(b.p.name,b.stat.k)));
       return degWrap('ti-rabbit','Bunnies',rows);
     }
     if(k==='bogey'){
-      const rows=bogey().map(b=>degRow(b.p.name,'#ef4444','-'+M(b.gap)+' v season',
+      const rows=_fc(bogey(),6).map(b=>degRow(b.p.name,'#ef4444','-'+M(b.gap)+' v season',
         b.stat.l+' · vs '+abbr(b.opp)+' avg '+M(b.h2hAvg)+' (season '+M(b.seasonAvg)+') · best '+M(b.best)+' in '+b.games,b.p.name));
       return degWrap('ti-mood-sad','Bogey',rows,'c-red');
     }
     if(k==='streak'){
-      const rows=streakers().map(s=>degRow(s.p.name,'#f97316',s.streak+' straight',
+      const rows=_fc(streakers(),6).map(s=>degRow(s.p.name,'#f97316',s.streak+' straight',
         s.stat+' '+s.line+'+ · '+abbr(s.p.team)+(s.opp?' v '+abbr(s.opp):'')+' · hit '+Math.round(s.rate*100)+'%'+(s.dvpPct!=null?' · '+muTag(s.dvpPct):'')+lineTag(s.p.name,s.statKey)));
       return degWrap('ti-flame','Streakers',rows,'c-amber');
     }
     if(k==='form'){
-      const up=formAlerts('spike').slice(0,25).map(a=>degRow(a.p.name,'#22c55e','▲ +'+Math.round(a.swing*100)+'%',a.stat+' · L3 '+M(a.l3)+' vs season '+M(a.seasonAvg)));
-      const dn=formAlerts('drop').slice(0,25).map(a=>degRow(a.p.name,'#ef4444','▼ '+Math.round(a.swing*100)+'%',a.stat+' · L3 '+M(a.l3)+' vs season '+M(a.seasonAvg)));
+      const up=_fc(formAlerts('spike'),6,25).map(a=>degRow(a.p.name,'#22c55e','▲ +'+Math.round(a.swing*100)+'%',a.stat+' · L3 '+M(a.l3)+' vs season '+M(a.seasonAvg)));
+      const dn=_fc(formAlerts('drop'),6,25).map(a=>degRow(a.p.name,'#ef4444','▼ '+Math.round(a.swing*100)+'%',a.stat+' · L3 '+M(a.l3)+' vs season '+M(a.seasonAvg)));
       return degWrap('ti-trending-up','Spiking',up,'c-green')+degWrap('ti-trending-down','Cooling',dn,'c-red');
     }
     if(k==='disp'){
@@ -766,12 +836,12 @@
       return degWrap('ti-medal','Most Disposals',rows);
     }
     if(k==='fgs'){
-      const rows=fgsEdges().map(f=>degRow(f.name,'#06b6d4',f.goals+'× 1st goal',
+      const rows=_fc(fgsEdges(),6).map(f=>degRow(f.name,'#06b6d4',f.goals+'× 1st goal',
         abbr(f.team)+' · '+f.shots+' first shots · '+f.goals+' first goals'+lineTag(f.name,'goals'),f.name));
       return degWrap('ti-flag-3','First Goal',rows,'c-blue');
     }
     if(k==='taggers'){
-      const rows=taggerAlerts().map(t=>degRow(t.threat.name,'#a855f7',t.type==='hard'?'HARD TAG risk':'Def tag risk',
+      const rows=_fc(taggerAlerts(),8).map(t=>degRow(t.threat.name,'#a855f7',t.type==='hard'?'HARD TAG risk':'Def tag risk',
         t.threat.position+' · '+abbr(t.threat.team)+' — likely '+t.tagger.name+' ('+abbr(t.oppTeam)+')',t.threat.name));
       return degWrap('ti-user-search','Lurking Taggers',rows);
     }
