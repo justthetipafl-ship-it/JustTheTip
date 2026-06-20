@@ -50,6 +50,10 @@ STAT_MAP = {
     "contested":         "ContestedPossessions",
     "groundBallGets":    "GroundBallGets",
     "intercepts":        "Intercepts",
+    "xScore":            "xScore",
+    "postClearGBG":      "PostClearanceGroundBallGets",
+    "postClearCont":     "PostClearanceContestedPossessions",
+    "handballReceives":  "HandballReceives",
     "metresGained":      "MetresGained",
     "cba":               "CentreBounceAttendancePercentage",
     "tog":               "TimeOnGround",
@@ -99,10 +103,7 @@ def prune_gamelogs(dvp, seasons):
     return out
 
 
-def derive_players(logs, legacy_player, current_season):
-    """Season averages per player, derived from the current-season game logs.
-    Position/Age are joined from the legacy player blob (demographic columns
-    that still need an external source — flagged in meta.derivedNote)."""
+def build_demo(legacy_player):
     demo = {}
     for p in legacy_player:
         nm = p.get("Player")
@@ -112,6 +113,13 @@ def derive_players(logs, legacy_player, current_season):
                 "position": p.get("Position"),
                 "age": to_num(p.get("Age_Decimal")) or to_num(p.get("Age")),
             }
+    return demo
+
+
+def derive_players(logs, demo, current_season):
+    """Season averages per player, derived from the current-season game logs.
+    Position/Age are joined from the legacy player blob (demographic columns
+    that still need an external source — flagged in meta.derivedNote)."""
     agg = defaultdict(lambda: defaultdict(float))
     cnt = defaultdict(int)
     teamOf = {}
@@ -186,6 +194,106 @@ def derive_teams(logs, current_season):
     return teams
 
 
+def _match_index(logs, current_season):
+    """(match_team sums, match->teams). Shared by team/form/dvp derivations."""
+    match_team = defaultdict(lambda: defaultdict(float))
+    match_teams = defaultdict(set)
+    order = []
+    for r in logs:
+        if str(r.get("Year")) != current_season:
+            continue
+        mid, tm = r.get("MatchId"), r.get("Team")
+        if not mid or not tm:
+            continue
+        if mid not in match_teams:
+            order.append(mid)
+        match_teams[mid].add(tm)
+        for k in STAT_MAP:
+            v = r.get(k)
+            if v is not None:
+                match_team[(mid, tm)][k] += v
+    return match_team, match_teams, sorted(set(order))
+
+
+def derive_teams_form(logs, current_season, last_n=4):
+    """Same shape as derive_teams but only the most recent `last_n` matches
+    per team — feeds tfPctFor (the matrix prefers form over season)."""
+    match_team, match_teams, order = _match_index(logs, current_season)
+    recent = {}  # team -> ordered list of mids
+    for mid in order:
+        for tm in match_teams[mid]:
+            recent.setdefault(tm, []).append(mid)
+    for_sum = defaultdict(lambda: defaultdict(float))
+    all_sum = defaultdict(lambda: defaultdict(float))
+    n_team = defaultdict(int)
+    for tm, mids in recent.items():
+        for mid in mids[-last_n:]:
+            teams = list(match_teams[mid])
+            if len(teams) != 2:
+                continue
+            opp = teams[0] if teams[1] == tm else teams[1]
+            n_team[tm] += 1
+            for k in STAT_MAP:
+                for_sum[tm][k] += match_team[(mid, tm)][k]
+                all_sum[tm][k] += match_team[(mid, opp)][k]
+    out = []
+    for tm, n in n_team.items():
+        if not n:
+            continue
+        row = {"team": tm, "matches": n}
+        for k in STAT_MAP:
+            row[k] = round(for_sum[tm][k] / n, 2)
+            row[k + "_a"] = round(all_sum[tm][k] / n, 2)
+        out.append(row)
+    return out
+
+
+def derive_dvp(logs, demo, current_season):
+    """Team x position x stat 'allowed' table: for each team, the per-game
+    average that OPPONENT players of each position produce against them.
+    Derived from game logs + player positions — replaces the external DVP blob.
+    getDVPPct() compares a cell to the league average for that position."""
+    # opponent lookup per match
+    match_teams = defaultdict(set)
+    for r in logs:
+        if str(r.get("Year")) == current_season and r.get("MatchId") and r.get("Team"):
+            match_teams[r["MatchId"]].add(r["Team"])
+    agg = defaultdict(lambda: defaultdict(float))   # (team,pos) -> stat sums
+    games = defaultdict(set)                         # (team,pos) -> matches seen
+    for r in logs:
+        if str(r.get("Year")) != current_season:
+            continue
+        mid, tm = r.get("MatchId"), r.get("Team")
+        if not mid or not tm:
+            continue
+        teams = match_teams.get(mid)
+        if not teams or len(teams) != 2:
+            continue
+        opp = next(t for t in teams if t != tm)        # team that ALLOWED this
+        pos = (demo.get(r.get("Player"), {}) or {}).get("position")
+        if not pos:
+            continue
+        key = (opp, pos)
+        games[key].add((mid, r.get("Player")))         # player-games counted
+        for k in STAT_MAP:
+            v = r.get(k)
+            if v is not None:
+                agg[key][k] += v
+    # convert sums to per-MATCH allowance (sum over players / matches the team played)
+    team_matches = defaultdict(set)
+    for mid, teams in match_teams.items():
+        for tm in teams:
+            team_matches[tm].add(mid)
+    out = []
+    for (team, pos), sums in agg.items():
+        nm = len(team_matches.get(team, set())) or 1
+        row = {"team": team, "pos": pos}
+        for k in STAT_MAP:
+            row[k] = round(sums[k] / nm, 3)
+        out.append(row)
+    return out
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--src", default="bundle.json")
@@ -200,9 +308,12 @@ def main():
     dvp, legacy_player, fixture, fgs, injury, legacy_meta = load_source(args.src)
     seasons = set(s.strip() for s in args.seasons.split(",") if s.strip())
 
+    demo = build_demo(legacy_player)
     logs = prune_gamelogs(dvp, seasons)
-    players = derive_players(logs, legacy_player, args.current)
+    players = derive_players(logs, demo, args.current)
     teams = derive_teams(logs, args.current)
+    teams_form = derive_teams_form(logs, args.current)
+    dvp_table = derive_dvp(logs, demo, args.current)
 
     os.makedirs(args.out, exist_ok=True)
     version = str(int(time.time()))
@@ -218,6 +329,7 @@ def main():
         "currentSeason": args.current,
         "summary": {
             "players": len(players), "teams": len(teams),
+            "teamsForm": len(teams_form), "dvp": len(dvp_table),
             "gamelogs": len(logs), "fixtures": len(fixture),
         },
         "derivedNote": "players/teams derived from Champion Data game logs; "
@@ -233,6 +345,8 @@ def main():
         "meta.json":     w("meta.json", meta),
         "players.json":  w("players.json", players),
         "teams.json":    w("teams.json", teams),
+        "teams_form.json": w("teams_form.json", teams_form),
+        "dvp.json":      w("dvp.json", dvp_table),
         "gamelogs.json": w("gamelogs.json", logs),
         "fixture.json":  w("fixture.json", fixture),
         "fgs.json":      w("fgs.json", fgs),
