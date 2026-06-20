@@ -107,6 +107,22 @@
   .tp-lead .nm{color:var(--text-1);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
   .tp-lead .vv{font-family:var(--font-mono);font-weight:700;color:var(--accent);}
   @media(max-width:680px){ .team-cols{grid-template-columns:1fr;} }
+  .sub-tabs{display:flex;gap:6px;margin:0 0 14px;flex-wrap:wrap;}
+  .sub-tab{display:inline-flex;align-items:center;gap:6px;padding:7px 14px;border-radius:8px;cursor:pointer;
+    background:var(--surface);border:1px solid var(--border);color:var(--text-2);font-family:var(--font-display);
+    font-weight:700;font-size:13px;letter-spacing:.3px;}
+  .sub-tab.active{background:var(--accent);border-color:var(--accent);color:#0b0b0b;}
+  .sub-tab i{font-size:15px;}
+  .teams-toggle,.dvp-controls{display:flex;align-items:center;gap:8px;margin:0 0 12px;flex-wrap:wrap;}
+  .tt-lbl{font-family:var(--font-display);font-weight:700;font-size:12px;color:var(--text-2);text-transform:uppercase;letter-spacing:.5px;}
+  .tt-hint{font-size:11px;color:var(--text-3);}
+  .seg{padding:5px 14px;border:1px solid var(--border);background:var(--surface);color:var(--text-2);
+    font-family:var(--font-display);font-weight:700;font-size:12px;cursor:pointer;}
+  .seg:first-of-type{border-radius:7px 0 0 7px;} .seg:last-of-type{border-radius:0 7px 7px 0;border-left:none;}
+  .seg.on{background:var(--accent);border-color:var(--accent);color:#0b0b0b;}
+  .dvp-sel{padding:6px 10px;border-radius:7px;background:var(--surface);border:1px solid var(--border);
+    color:var(--text);font-family:var(--font-display);font-weight:700;font-size:13px;}
+  .dvp-grid td{font-variant-numeric:tabular-nums;} .dvp-grid .dvp-na{color:var(--text-3);text-align:center;}
   .team-jersey{display:inline-block;vertical-align:middle;flex-shrink:0;
     filter:drop-shadow(0 1px 1px rgba(0,0,0,.3));}
   .team-logo-img{border-radius:8px;object-fit:contain;flex-shrink:0;background:var(--surface-2);}
@@ -232,7 +248,7 @@
   ];
 
   /* ===================== STATE ===================== */
-  const state = { data:{}, idx:{}, dataVersion:'', view:{ activeTab:TABS[0].name, fixtureId:null, sortKey:'disposals', sortDir:-1, posFilter:'', search:'' } };
+  const state = { data:{}, idx:{}, dataVersion:'', view:{ activeTab:TABS[0].name, fixtureId:null, sortKey:'disposals', sortDir:-1, posFilter:'', search:'', statsSub:'scanner', statsStat:'disposals', teamsAllowed:true, teamsSort:'disposals' } };
 
   /* ===================== AUTH ===================== */
   async function _sha256(t){const b=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(t));return Array.from(new Uint8Array(b)).map(x=>x.toString(16).padStart(2,'0')).join('');}
@@ -482,13 +498,33 @@
   }
 
   /* ---------- STATS ---------- */
+  const STATS_SUBS=[['scanner','Scanner','ti-table'],['teams','Teams','ti-shield'],['dvp','DVP','ti-shield-half']];
+  // stats offered in the DVP grid + Teams sort (key -> label)
+  const DVP_STATS=[['disposals','Disposals'],['kicks','Kicks'],['handballs','Handballs'],['marks','Marks'],
+    ['tackles','Tackles'],['goals','Goals'],['shotsAtGoal','Shots'],['clearances','Clearances'],
+    ['inside50s','Inside 50s'],['contested','Cont. Poss'],['intercepts','Intercepts'],['hitouts','Hitouts'],
+    ['marks','Marks'],['groundBallGets','Ground Balls'],['metresGained','Metres'],['scoreInvolvements','Score Inv.']];
+  const POS_ORDER=['Midfielder','Mid-Forward','Gen. Forward','Key Forward','Gen. Defender','Key Defender','Ruck'];
+
   function renderStats(){
     const ps=state.idx.players||[];
     if(!ps.length) return emptyState('ti-table-off','No player data','Run the data build to populate season averages.');
     const v=state.view;
+    let h='<div class="page-header"><div class="page-title">Stats</div><div class="page-sub">'+ps.length+' players · 18 teams · derived from game logs</div></div>';
+    h+='<div class="sub-tabs">'+STATS_SUBS.map(([k,l,i])=>'<button class="sub-tab'+(v.statsSub===k?' active':'')+'" onclick="setStatsSub(\''+k+'\')"><i class="ti '+i+'"></i> '+l+'</button>').join('')+'</div>';
+    h+='<div id="stats-body">'+statsBody()+'</div>';
+    return h;
+  }
+  function statsBody(){
+    const v=state.view;
+    if(v.statsSub==='teams') return teamsView();
+    if(v.statsSub==='dvp')   return dvpView();
+    return scannerView();
+  }
+  function scannerView(){
+    const v=state.view;
     const positions=['','Midfielder','Mid-Forward','Key Forward','Gen. Forward','Key Defender','Gen. Defender','Ruck'];
-    let h='<div class="page-header"><div class="page-title">Stats</div><div class="page-sub">'+ps.length+' players · season averages · derived from game logs</div></div>';
-    h+='<div class="filterbar"><input class="stat-search" id="stat-search" placeholder="Search player…" value="'+esc(v.search)+'" oninput="state.view.search=this.value;rerenderStats()">';
+    let h='<div class="filterbar"><input class="stat-search" id="stat-search" placeholder="Search player…" value="'+esc(v.search)+'" oninput="state.view.search=this.value;rerenderStats()">';
     h+='<div class="pos-pills">'+positions.map(p=>'<button class="dfilt-chip'+(v.posFilter===p?' active':'')+'" onclick="state.view.posFilter=\''+p+'\';rerenderStats()">'+(p||'All')+'</button>').join('')+'</div></div>';
     h+='<div id="stbl-mount">'+statsTable()+'</div>';
     return h;
@@ -514,6 +550,69 @@
     return h;
   }
   window.rerenderStats=function(){const m=document.getElementById('stbl-mount');if(m)m.innerHTML=statsTable();};
+  window.setStatsSub=function(s){state.view.statsSub=s;const b=document.getElementById('stats-body');if(b)b.innerHTML=statsBody();document.querySelectorAll('.sub-tab').forEach(el=>el.classList.remove('active'));const ix=STATS_SUBS.findIndex(x=>x[0]===s);const btns=document.querySelectorAll('.sub-tabs .sub-tab');if(btns[ix])btns[ix].classList.add('active');};
+
+  /* ---------- TEAMS (for / allowed) ---------- */
+  const TEAM_COLS=[['disposals','Disp'],['kicks','Kick'],['handballs','HB'],['marks','Mark'],['tackles','Tkl'],
+    ['goals','Goal'],['shotsAtGoal','Shot'],['clearances','Clr'],['inside50s','I50'],['contestedMarks','CM'],
+    ['interceptMarks','IM'],['goalAssists','GA'],['scoreInvolvements','SI']];
+  function teamsView(){
+    const v=state.view, teams=(state.data.teams||[]).slice(); if(!teams.length) return emptyState('ti-shield-off','No team data','Run the data build.');
+    const A=v.teamsAllowed, suf=A?'_a':'', sk=v.teamsSort;
+    teams.sort((a,b)=>(b[sk+suf]||0)-(a[sk+suf]||0));
+    // league averages for colour scale
+    const avg={}; TEAM_COLS.forEach(([k])=>{avg[k]=teams.reduce((s,t)=>s+(t[k+suf]||0),0)/teams.length;});
+    let h='<div class="teams-toggle"><span class="tt-lbl">Showing</span>'+
+      '<button class="seg'+(!A?' on':'')+'" onclick="setTeamsMode(false)">For</button>'+
+      '<button class="seg'+(A?' on':'')+'" onclick="setTeamsMode(true)">Allowed</button>'+
+      '<span class="tt-hint">'+(A?'avg conceded to opponents — higher = softer defence':'team\'s own per-game output')+'</span></div>';
+    const th=(k,l)=>'<th class="'+(sk===k?'sorted':'')+'" onclick="setTeamsSort(\''+k+'\')">'+l+(sk===k?' ▾':'')+'</th>';
+    h+='<div class="stbl-wrap"><table class="stbl"><thead><tr><th>Team</th><th>GP</th>'+TEAM_COLS.map(([k,l])=>th(k,l)).join('')+'</tr></thead><tbody>';
+    teams.forEach(t=>{
+      h+='<tr><td class="name">'+teamLogo(t.team,22)+'<span style="margin-left:7px">'+t.team+'</span></td><td>'+(t.matches||0)+'</td>';
+      TEAM_COLS.forEach(([k])=>{
+        const val=t[k+suf]||0, d=avg[k]?((val-avg[k])/avg[k]*100):0;
+        // For "allowed": above avg = soft (green, over-friendly). For "For": above avg = strong (green).
+        const col=Math.abs(d)<4?'':(d>0?'#22c55e':'#ef4444');
+        h+='<td'+(col?' style="color:'+col+';font-weight:700"':'')+'>'+fmt(val, k==='goals'?1:0)+'</td>';
+      });
+      h+='</tr>';
+    });
+    h+='</tbody></table></div>';
+    return h;
+  }
+  window.setTeamsMode=function(a){state.view.teamsAllowed=a;const b=document.getElementById('stats-body');if(b)b.innerHTML=teamsView();};
+  window.setTeamsSort=function(k){state.view.teamsSort=k;const b=document.getElementById('stats-body');if(b)b.innerHTML=teamsView();};
+
+  /* ---------- DVP grid (team × position, allowed per stat) ---------- */
+  function dvpView(){
+    const v=state.view, rows=state.data.dvp||[]; if(!rows.length) return emptyState('ti-shield-off','No DVP data','Run the data build to derive DVP.');
+    const stat=v.statsStat;
+    // index team -> pos -> value
+    const grid={}; rows.forEach(r=>{(grid[r.team]=grid[r.team]||{})[r.pos]=r[stat];});
+    const teams=Object.keys(grid).sort();
+    // per-position league average (for colour scale)
+    const posAvg={}; POS_ORDER.forEach(pos=>{const vals=teams.map(t=>grid[t][pos]).filter(x=>x!=null);posAvg[pos]=vals.length?vals.reduce((a,b)=>a+b,0)/vals.length:0;});
+    let h='<div class="dvp-controls"><span class="tt-lbl">Stat</span><select class="dvp-sel" onchange="setStatsStat(this.value)">'+
+      DVP_STATS.filter((x,i,a)=>a.findIndex(y=>y[0]===x[0])===i).map(([k,l])=>'<option value="'+k+'"'+(stat===k?' selected':'')+'>'+l+'</option>').join('')+
+      '</select><span class="tt-hint">avg <strong>'+(DVP_STATS.find(x=>x[0]===stat)||[,stat])[1]+'</strong> conceded to each position · <span style="color:#22c55e">green = soft</span> / <span style="color:#ef4444">red = tough</span> vs league</span></div>';
+    h+='<div class="stbl-wrap"><table class="stbl dvp-grid"><thead><tr><th>Team</th>'+POS_ORDER.map(p=>'<th title="'+p+'">'+posShort(p)+'</th>').join('')+'</tr></thead><tbody>';
+    teams.forEach(t=>{
+      h+='<tr><td class="name">'+teamLogo(t,22)+'<span style="margin-left:7px">'+t+'</span></td>';
+      POS_ORDER.forEach(pos=>{
+        const val=grid[t][pos];
+        if(val==null){h+='<td class="dvp-na">—</td>';return;}
+        const a=posAvg[pos], d=a?((val-a)/a*100):0;
+        const mag=Math.min(Math.abs(d)/30,1); // 30%+ swing = full intensity
+        const bg=d>2?'rgba(34,197,94,'+(0.10+mag*0.5).toFixed(2)+')':d<-2?'rgba(239,68,68,'+(0.10+mag*0.5).toFixed(2)+')':'';
+        h+='<td style="'+(bg?'background:'+bg+';':'')+'text-align:center">'+fmt(val, val<3?2:val<20?1:0)+'</td>';
+      });
+      h+='</tr>';
+    });
+    h+='</tbody></table></div>';
+    return h;
+  }
+  window.setStatsStat=function(k){state.view.statsStat=k;const b=document.getElementById('stats-body');if(b)b.innerHTML=dvpView();};
   window.sortStats=function(k){const v=state.view;if(v.sortKey===k)v.sortDir*=-1;else{v.sortKey=k;v.sortDir=k==='name'?1:-1;}rerenderStats();};
 
   /* ---------- PLAYER MODAL ---------- */
