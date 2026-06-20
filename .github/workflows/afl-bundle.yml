@@ -1,0 +1,70 @@
+name: AFL data refresh (split + derive)
+
+# Keeps the lean /data/*.json files fresh. Two-stage pipeline:
+#   1. (optional) fetch latest Champion Data game logs via fitzRoy  -> bundle.json dvp
+#   2. split + DERIVE players/teams from those game logs            -> data/*.json
+# Stage 2 is fully wired and runnable today. Stage 1 is the fitzRoy
+# fetch documented in the context dump (scripts/fetch_afl.R); drop that
+# script in and flip RUN_FETCH to "true" to make it end-to-end.
+
+on:
+  schedule:
+    # During the AFL season: Wed 23:00 UTC (Thu AM AEST) + Sun 09:00 UTC
+    - cron: "0 23 * * 3"
+    - cron: "0 9 * * 0"
+  workflow_dispatch:
+    inputs:
+      password:
+        description: "Weekly subscriber password (stored hashed, never in repo)"
+        required: false
+
+env:
+  RUN_FETCH: "false"   # set "true" once scripts/fetch_afl.R is in place
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      # ---- Stage 1 (optional): fitzRoy game-log fetch -> bundle.json ----
+      - name: Set up R
+        if: env.RUN_FETCH == 'true'
+        uses: r-lib/actions/setup-r@v2
+        with:
+          use-public-rspm: true   # precompiled binaries: ~1-2 min vs 20-30 source
+      - name: Fetch latest game logs (fitzRoy)
+        if: env.RUN_FETCH == 'true'
+        run: Rscript scripts/fetch_afl.R   # writes/updates dvp in bundle.json
+
+      # ---- Stage 2: split + derive (runs every time) ----
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Build split data files
+        run: |
+          PW="${{ github.event.inputs.password || secrets.AFL_WEEKLY_PASSWORD }}"
+          if [ -n "$PW" ]; then
+            python AFL/build_afl_data.py --src AFL/bundle.json --out AFL/data \
+              --seasons 2025,2026 --current 2026 --password "$PW"
+          else
+            # keep the existing hashed password in meta.json; just refresh data
+            python AFL/build_afl_data.py --src AFL/bundle.json --out AFL/data \
+              --seasons 2025,2026 --current 2026
+          fi
+
+      - name: Commit refreshed data
+        run: |
+          git config user.name  "jtt-bot"
+          git config user.email "actions@github.com"
+          git add AFL/data
+          if git diff --cached --quiet; then
+            echo "No data changes."
+          else
+            git commit -m "chore(afl): refresh split data $(date -u +%Y-%m-%dT%H:%MZ)"
+            git push
+          fi
