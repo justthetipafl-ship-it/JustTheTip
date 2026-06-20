@@ -403,10 +403,7 @@
     // Bucket 1: team context (real, lean) — Bucket 2 signals scaffolded for build 2
     h+=teamContextPanel(g.home,g.away);
     h+='<div class="degen-divider"><span>🔥 Degen Signals</span></div>';
-    const gl=collectOU([g.home,g.away],'over'), dr=collectOU([g.home,g.away],'under');
-    h+=ouSection(gl,'over','Green Lights','ti-traffic-lights','c-green');
-    h+=ouSection(dr,'under','Death Riders','ti-skull','c-red');
-    h+='<div class="empty" style="margin-top:8px"><div class="ico"><i class="ti ti-flame"></i></div>Snags · Bunnies · Elite Matchups · Streakers and the rest of the Crew share this engine and slot in next — Green Lights & Death Riders are live now.</div>';
+    h+=focusedDegen(g.home,g.away);
     return h;
   }
   function teamContextPanel(home,away){
@@ -528,8 +525,8 @@
       '<div class="fxr-venue">'+(kind==='over'?'O':'U')+' '+r.line+priceTxt+' · L5 '+fmt(r.l5)+' · hit '+Math.round(r.hitRate*100)+'%'+(r.dvpPct!=null?' · dvp '+(r.dvpPct>0?'+':'')+r.dvpPct.toFixed(0)+'%':'')+'</div></div></div>';
   }
   function ouSection(list,kind,title,icon,colorClass){
-    if(!hasAnyOdds()) return emptyState(icon,'No lines loaded','Signals fire only against real posted lines. Connect an odds feed (or paste lines in Info) to light these up.');
-    if(!list.length) return emptyState(icon,'No '+title.toLowerCase()+' on the board','Lines are loaded, but none cleared the gate this slate — selective by design.');
+    if(!hasAnyOdds()) return _degenFocused?'':emptyState(icon,'No lines loaded','Signals fire only against real posted lines. Connect an odds feed (or paste lines in Info) to light these up.');
+    if(!list.length) return _degenFocused?'':emptyState(icon,'No '+title.toLowerCase()+' on the board','Lines are loaded, but none cleared the gate this slate — selective by design.');
     return '<details class="tp-collapse '+colorClass+'" open><summary class="tp-collapse-sum"><i class="ti '+icon+'"></i><span class="tp-collapse-title">'+title+'</span><span class="tp-count">'+list.length+'</span><i class="ti ti-chevron-down tp-collapse-chev"></i></summary><div class="tp-collapse-body">'+
       '<div class="tp-body-meta">Disposals · posted line · '+(kind==='over'?'score \u2265 5.5':'score \u2264 -3.5')+(SIGNAL_MIN_ODDS[kind==='over'?'over':'under']!=null?' · min $'+SIGNAL_MIN_ODDS[kind==='over'?'over':'under'].toFixed(2):'')+'</div>'+
       list.map(r=>signalCard(r,kind)).join('')+'</div></details>';
@@ -538,7 +535,8 @@
   /* ===================== DEGEN BUILD 3 ===================== */
   const CUR_SEASON = ()=> (state.data.meta&&state.data.meta.currentSeason)||'2026';
   const _avg = a => a.length ? a.reduce((x,y)=>x+y,0)/a.length : 0;
-  const _fixtureSet = ()=> new Set((state.data.fixture||[]).flatMap(g=>[g.home,g.away]).filter(Boolean));
+  let _degenScope=null, _degenFocused=false;
+  const _fixtureSet = ()=> _degenScope || new Set((state.data.fixture||[]).flatMap(g=>[g.home,g.away]).filter(Boolean));
   const allLogs = n => state.idx.logsByName[n]||[];
   const curLogs = n => allLogs(n).filter(r=>String(r.Year)===CUR_SEASON());
   function _roundNum(rd){ if(!rd) return 0; const m=(''+rd).match(/\d+/); return m?+m[0]:0; }
@@ -680,11 +678,13 @@
       .sort((a,b)=>(b.goals*2+b.shots)-(a.goals*2+a.shots)).slice(0,20);
   }
   function taggerAlerts(){
+    const scope=_degenScope;
     const taggers=[...TAGGER_NAMES.hard.map(n=>({n,t:'hard'})),...TAGGER_NAMES.defensive.map(n=>({n,t:'defensive'}))]
       .map(x=>({...x,p:state.idx.byName[x.n]})).filter(x=>x.p);
     const threats=TAGGING_THREATS.map(n=>state.idx.byName[n]).filter(Boolean);
     const out=[];
     (state.data.fixture||[]).forEach(g=>{
+      if(scope && !scope.has(g.home) && !scope.has(g.away)) return;
       [[g.home,g.away],[g.away,g.home]].forEach(([myTeam,oppTeam])=>{
         const ths=threats.filter(p=>p.team===myTeam);
         const tgs=taggers.filter(x=>x.p.team===oppTeam);
@@ -710,9 +710,22 @@
   function muTag(pct){ const mi=JTTScoring.muInfo(pct); return mi?'<span style="color:'+mi.c+'">'+(pct>0?'+':'')+pct.toFixed(0)+'% '+mi.t+'</span>':''; }
   function lineTag(name,market){ const o=postedLine(name,market); return o?' · O '+o.line+(o.over!=null?' $'+o.over.toFixed(2):''):''; }
   function degWrap(icon,title,items,colorClass){
-    if(!items) return emptyState(icon,title+' — no data','Needs game logs + this round\u2019s fixture.');
-    if(!items.length) return emptyState(icon,'No '+title.toLowerCase()+' this round','Nothing cleared the gate on the current slate.');
+    if(!items) return _degenFocused?'':emptyState(icon,title+' — no data','Needs game logs + this round\u2019s fixture.');
+    if(!items.length) return _degenFocused?'':emptyState(icon,'No '+title.toLowerCase()+' this round','Nothing cleared the gate on the current slate.');
     return '<details class="tp-collapse '+(colorClass||'')+'" open><summary class="tp-collapse-sum"><i class="ti '+icon+'"></i><span class="tp-collapse-title">'+title+'</span><span class="tp-count">'+items.length+'</span><i class="ti ti-chevron-down tp-collapse-chev"></i></summary><div class="tp-collapse-body">'+items.join('')+'</div></details>';
+  }
+
+  // all Degen tiles scoped to one match's two teams (focused fixture)
+  function focusedDegen(home,away){
+    const prevScope=_degenScope, prevFocus=_degenFocused;
+    _degenScope=new Set([home,away]); _degenFocused=true;
+    let out='';
+    try{
+      out+=ouSection(collectOU([home,away],'over'),'over','Green Lights','ti-traffic-lights','c-green');
+      out+=ouSection(collectOU([home,away],'under'),'under','Death Riders','ti-skull','c-red');
+      ['snags','elite','bunnies','bogey','streak','form','fgs','taggers'].forEach(k=>{ out+=renderTile(k); });
+    } finally { _degenScope=prevScope; _degenFocused=prevFocus; }
+    return out || '<div class="empty"><div class="ico"><i class="ti ti-flame"></i></div>No Degen signals fired for this matchup.</div>';
   }
 
   function renderTile(k){
