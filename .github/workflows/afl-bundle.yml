@@ -1,25 +1,29 @@
-name: AFL data refresh (split + derive)
+name: AFL data refresh (fetch + split + derive)
 
-# Keeps the lean /data/*.json files fresh. Two-stage pipeline:
-#   1. (optional) fetch latest Champion Data game logs via fitzRoy  -> bundle.json dvp
-#   2. split + DERIVE players/teams from those game logs            -> data/*.json
-# Stage 2 is fully wired and runnable today. Stage 1 is the fitzRoy
-# fetch documented in the context dump (scripts/fetch_afl.R); drop that
-# script in and flip RUN_FETCH to "true" to make it end-to-end.
+# End-to-end, hands-off pipeline:
+#   1. fetch current-season game logs + fixtures via fitzRoy -> bundle.json
+#   2. split + DERIVE players / teams / DVP / form from those logs -> data/*.json
+# Stage 1 is non-destructive: a failed fetch leaves the live bundle untouched,
+# so a bad API day never ships empty data.
 
 on:
   schedule:
-    # During the AFL season: Wed 23:00 UTC (Thu AM AEST) + Sun 09:00 UTC
+    # AFL season cadence: Wed 23:00 UTC (Thu AM AEST) + Sun 09:00 UTC (post-round)
     - cron: "0 23 * * 3"
     - cron: "0 9 * * 0"
   workflow_dispatch:
     inputs:
+      run_fetch:
+        description: "Run the fitzRoy fetch (false = re-split existing bundle only)"
+        required: false
+        default: "true"
       password:
         description: "Weekly subscriber password (stored hashed, never in repo)"
         required: false
 
 env:
-  RUN_FETCH: "false"   # set "true" once scripts/fetch_afl.R is in place
+  # dispatch input wins; scheduled runs always fetch
+  RUN_FETCH: ${{ github.event.inputs.run_fetch || 'true' }}
 
 jobs:
   refresh:
@@ -29,17 +33,29 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # ---- Stage 1 (optional): fitzRoy game-log fetch -> bundle.json ----
+      # ---------- Stage 1: fitzRoy fetch -> bundle.json ----------
       - name: Set up R
         if: env.RUN_FETCH == 'true'
         uses: r-lib/actions/setup-r@v2
         with:
-          use-public-rspm: true   # precompiled binaries: ~1-2 min vs 20-30 source
-      - name: Fetch latest game logs (fitzRoy)
-        if: env.RUN_FETCH == 'true'
-        run: Rscript scripts/fetch_afl.R   # writes/updates dvp in bundle.json
+          use-public-rspm: true        # precompiled binaries (~2 min vs 20+ from source)
 
-      # ---- Stage 2: split + derive (runs every time) ----
+      - name: Install R packages (cached)
+        if: env.RUN_FETCH == 'true'
+        uses: r-lib/actions/setup-r-dependencies@v2
+        with:
+          packages: |
+            cran::fitzRoy
+            cran::jsonlite
+            cran::dplyr
+
+      - name: Fetch latest game logs + fixtures (fitzRoy)
+        if: env.RUN_FETCH == 'true'
+        env:
+          AFL_BUNDLE: AFL/bundle.json
+        run: Rscript scripts/fetch_afl.R
+
+      # ---------- Stage 2: split + derive (always) ----------
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
@@ -52,7 +68,6 @@ jobs:
             python AFL/build_afl_data.py --src AFL/bundle.json --out AFL/data \
               --seasons 2025,2026 --current 2026 --password "$PW"
           else
-            # keep the existing hashed password in meta.json; just refresh data
             python AFL/build_afl_data.py --src AFL/bundle.json --out AFL/data \
               --seasons 2025,2026 --current 2026
           fi
@@ -61,10 +76,10 @@ jobs:
         run: |
           git config user.name  "jtt-bot"
           git config user.email "actions@github.com"
-          git add AFL/data
+          git add AFL/data AFL/bundle.json scripts/_afl_columns.txt 2>/dev/null || git add AFL/data
           if git diff --cached --quiet; then
-            echo "No data changes."
+            echo "No changes."
           else
-            git commit -m "chore(afl): refresh split data $(date -u +%Y-%m-%dT%H:%MZ)"
+            git commit -m "chore(afl): refresh data $(date -u +%Y-%m-%dT%H:%MZ)"
             git push
           fi
