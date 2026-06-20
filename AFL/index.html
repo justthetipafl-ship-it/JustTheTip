@@ -87,6 +87,12 @@
   .statcell{background:var(--surface-2);border:1px solid var(--border);border-radius:6px;padding:9px 8px;text-align:center;}
   .statcell .v{font-family:var(--font-display);font-weight:800;font-size:18px;color:var(--text);}
   .statcell .k{font-family:var(--font-mono);font-size:8px;color:var(--text-3);text-transform:uppercase;letter-spacing:.5px;margin-top:2px;}
+  .crew-live { border-color: color-mix(in srgb, var(--accent) 55%, var(--border)); }
+  .live-dot { display:inline-block; width:7px; height:7px; border-radius:50%; background:#22c55e;
+              box-shadow:0 0 0 3px color-mix(in srgb,#22c55e 22%,transparent); vertical-align:middle; }
+  .btn-sm { font-family:var(--font-mono); font-size:11px; padding:6px 10px; border-radius:6px;
+            border:1px solid var(--border); background:var(--surface-2); color:var(--text-1); cursor:pointer; }
+  .btn-sm:hover { border-color:var(--accent); }
   </style>
 </head>
 <body class="auth-locked">
@@ -153,6 +159,7 @@
     <div class="ft-copy">© <span id="ft-year"></span> Just The Tip. All rights reserved.</div>
   </div></footer>
 
+  <script src="scoring.js"></script>
   <script>
   "use strict";
   /* ===================== CONSTANTS ===================== */
@@ -160,7 +167,22 @@
   let AUTH_HASH = AUTH_HASH_DEFAULT;
   const AUTH_STORAGE_KEY = "jtt_afl_auth";
   const DATA_FILES = { meta:'data/meta.json', players:'data/players.json', teams:'data/teams.json',
-                       gamelogs:'data/gamelogs.json', fixture:'data/fixture.json', fgs:'data/fgs.json', injury:'data/injury.json' };
+                       teams_form:'data/teams_form.json', dvp:'data/dvp.json',
+                       gamelogs:'data/gamelogs.json', fixture:'data/fixture.json', fgs:'data/fgs.json',
+                       injury:'data/injury.json', odds:'data/odds.json' };
+
+  // Per-signal minimum decimal odds. null = no minimum (fires on any priced line).
+  // TODO: set the real floors later — e.g. SIGNAL_MIN_ODDS.green = 1.70
+  const SIGNAL_MIN_ODDS = { over: null /*Green Lights*/, under: null /*Death Riders*/ };
+
+  // book market name -> internal stat key
+  const ODDS_MARKET_ALIAS = {
+    disposals:'disposals','player disposals':'disposals',
+    goals:'goals','player goals':'goals','goalscorer':'goals',
+    marks:'marks','player marks':'marks', tackles:'tackles','player tackles':'tackles',
+    kicks:'kicks', handballs:'handballs', clearances:'clearances',
+    fantasy:'dreamteam', aflfantasy:'dreamteam', supercoach:'supercoach'
+  };
 
   const POS_C = {'Midfielder':'#3b82f6','Mid-Forward':'#8b5cf6','Gen. Forward':'#f59e0b','Key Forward':'#f97316',
                  'Gen. Defender':'#64748b','Key Defender':'#06b6d4','Ruck':'#ec4899'};
@@ -284,7 +306,66 @@
       (state.idx.teamForm[bb]=state.idx.teamForm[bb]||[]).push({mid,r:res(sb,sa)});
     });
     Object.values(state.idx.teamForm).forEach(arr=>arr.sort((x,y)=>(''+x.mid).localeCompare(''+y.mid)));
+    // tag each log with its opponent (for last-vs-opp in scoreCMP)
+    (d.gamelogs||[]).forEach(r=>{
+      const ts=state.idx.matchTeams[r.MatchId]; if(!ts)return;
+      const others=Object.keys(ts).filter(t=>t!==r.Team);
+      if(others.length===1) r.opponent=others[0];
+    });
+    // next-opponent per team from the fixture
+    state.idx.nextOpp={};
+    (d.fixture||[]).forEach(g=>{ state.idx.nextOpp[g.home]=g.away; state.idx.nextOpp[g.away]=g.home; });
+    // hand the derived model to the scoring engine
+    if(window.JTTScoring){
+      JTTScoring.configure({
+        players:state.idx.players, teams:d.teams||[], teamsForm:d.teams_form||d.teams||[],
+        dvp:d.dvp||[], logsByName:state.idx.logsByName, currentSeason:(d.meta&&d.meta.currentSeason)||'2026'
+      });
+    }
+    buildOddsIdx();
   }
+  function nextOpp(team){ return state.idx.nextOpp[team]||null; }
+
+  // ---- odds layer: posted line + price per player/market ----
+  function buildOddsIdx(){
+    let src=null, fromPaste=false;
+    try{ const ls=localStorage.getItem('jtt_afl_odds'); if(ls){ src=JSON.parse(ls); fromPaste=true; } }catch(e){}
+    if(!src) src=state.data.odds||null;
+    const idx={}; let count=0;
+    const lines=src&&(Array.isArray(src)?src:src.lines)||[];
+    lines.forEach(o=>{
+      const name=o.player||o.name; if(!name) return;
+      const mk=ODDS_MARKET_ALIAS[(o.market||'').toLowerCase()]||(o.market||'').toLowerCase();
+      if(!mk) return;
+      const toNum=v=>{const n=parseFloat(v);return isNaN(n)?null:n;};
+      (idx[name]=idx[name]||{})[mk]={
+        line:toNum(o.line!=null?o.line:o.point),
+        over:toNum(o.over!=null?o.over:o.overOdds),
+        under:toNum(o.under!=null?o.under:o.underOdds),
+        book:o.book||o.bookmaker||null
+      };
+      count++;
+    });
+    state.idx.oddsIdx=idx;
+    state.idx.oddsMeta={ count, fromPaste,
+      updated:(src&&src.updated)||null,
+      sample:!!(src&&src._sample) };
+  }
+  function oddsFor(player, market){ return (state.idx.oddsIdx[player]||{})[market]||null; }
+  window._oddsPasteOpen=function(){ const w=document.getElementById('odds-paste-wrap'); if(w)w.style.display=w.style.display==='none'?'block':'none'; };
+  window._oddsPasteSave=function(){
+    const ta=document.getElementById('odds-paste'), msg=document.getElementById('odds-paste-msg');
+    try{
+      const parsed=JSON.parse(ta.value);
+      const lines=Array.isArray(parsed)?parsed:parsed.lines;
+      if(!Array.isArray(lines)) throw new Error('expected an array of lines or {lines:[…]}');
+      localStorage.setItem('jtt_afl_odds', ta.value);
+      buildOddsIdx(); 
+      if(msg){ msg.style.color='var(--ok)'; msg.textContent='Loaded '+state.idx.oddsMeta.count+' lines'; }
+      _renderApp();
+    }catch(e){ if(msg){ msg.style.color='var(--bad)'; msg.textContent='Invalid JSON: '+e.message; } }
+  };
+  window._oddsClear=function(){ localStorage.removeItem('jtt_afl_odds'); buildOddsIdx(); _renderApp(); };
   function teamForm(team,n){const a=(state.idx.teamForm[team]||[]).slice(-n);return a.map(x=>x.r);}
   function lastN(name,key,n){const a=(state.idx.logsByName[name]||[]).slice(-n).map(r=>r[key]).filter(v=>v!=null);return a.length?a.reduce((s,v)=>s+v,0)/a.length:null;}
   function fmt(v,dp){return v==null?'—':(+v).toFixed(dp==null?1:dp);}
@@ -322,7 +403,10 @@
     // Bucket 1: team context (real, lean) — Bucket 2 signals scaffolded for build 2
     h+=teamContextPanel(g.home,g.away);
     h+='<div class="degen-divider"><span>🔥 Degen Signals</span></div>';
-    h+='<div class="empty"><div class="ico"><i class="ti ti-flame"></i></div>Snags · Green Lights · Bunnies · Death Riders · Elite Matchups and the rest of the Degen Crew port into this slot in <b>build 2</b> (scoring engine + context-signals matrix).</div>';
+    const gl=collectOU([g.home,g.away],'over'), dr=collectOU([g.home,g.away],'under');
+    h+=ouSection(gl,'over','Green Lights','ti-traffic-lights','c-green');
+    h+=ouSection(dr,'under','Death Riders','ti-skull','c-red');
+    h+='<div class="empty" style="margin-top:8px"><div class="ico"><i class="ti ti-flame"></i></div>Snags · Bunnies · Elite Matchups · Streakers and the rest of the Crew share this engine and slot in next — Green Lights & Death Riders are live now.</div>';
     return h;
   }
   function teamContextPanel(home,away){
@@ -377,22 +461,96 @@
     const p=state.idx.byName[name]; if(!p)return;
     const cells=DISPLAY.map(([k,l])=>'<div class="statcell"><div class="v">'+fmt(p[k],k==='goals'||k==='behinds'?2:1)+'</div><div class="k">'+l+'</div></div>').join('');
     const l5=DISPLAY.slice(0,6).map(([k,l])=>{const a=lastN(name,k,5);return '<div class="statcell"><div class="v">'+fmt(a,1)+'</div><div class="k">'+l+' L5</div></div>';}).join('');
+    let edge='';
+    if(window.JTTScoring){
+      const opp=nextOpp(p.team);
+      const isFwd=p.position==='Key Forward'||p.position==='Gen. Forward'||p.position==='Mid-Forward';
+      const primary=isFwd?'goals':'disposals';
+      const pLine=primary==='goals'?((p.goals||0)>=2?2.5:1.5):(JTTScoring.drLine(p.disposals||0)||Math.round(p.disposals||0)-0.5);
+      const v=JTTScoring.verdict(p,primary,pLine,opp||undefined);
+      const mk=[['disposals','Disp'],['marks','Marks'],['tackles','Tack'],['goals','Goals']];
+      const strip=opp?mk.map(([k,l])=>{
+        const pct=JTTScoring.getDVPPct(opp,JTTScoring.POS_TO_DVP[p.position]||p.position,k);
+        const mi=JTTScoring.muInfo(pct);
+        return '<div class="statcell"><div class="v" style="color:'+(mi?mi.c:'#888')+';font-size:15px">'+(pct==null?'—':(pct>0?'+':'')+pct.toFixed(0)+'%')+'</div><div class="k">'+l+(mi?' '+mi.t:'')+'</div></div>';
+      }).join(''):'';
+      edge='<div class="section-title">Verdict'+(opp?' vs '+abbr(opp):'')+'</div>'+
+        '<div style="padding:10px 12px;border-radius:6px;border:1px solid var(--border);border-left:3px solid '+v.col+';background:var(--surface-2)">'+
+        '<div style="font-family:var(--font-display);font-weight:800;color:'+v.col+';font-size:16px">'+v.label+'</div>'+
+        '<div class="pm-meta">'+primary+' '+pLine+' · engine score '+v.score.toFixed(1)+(opp?'':' · no opponent in fixture')+'</div></div>'+
+        (strip?'<div class="section-title">DVP Matchup ('+(p.position||'')+')</div><div class="statgrid">'+strip+'</div>':'');
+    }
     document.getElementById('pm-modal').innerHTML=
       '<div class="pm-hdr"><div><div class="pm-name">'+p.name+'</div><div class="pm-meta"><span class="pos-dot" style="background:'+(POS_C[p.position]||'#888')+'"></span>'+(p.position||'—')+' · '+(p.team||'')+' · '+(p.matches||0)+' games'+(p.age?' · '+p.age.toFixed(0)+'yo':'')+'</div></div><button class="pm-close" onclick="_pmClose()">&times;</button></div>'+
+      edge+
       '<div class="section-title">Season Averages</div><div class="statgrid">'+cells+'</div>'+
-      '<div class="section-title">Last 5 Games</div><div class="statgrid">'+l5+'</div>'+
-      '<div class="empty" style="margin-top:14px"><div class="ico"><i class="ti ti-chart-dots"></i></div>DVP matchup, hit-rate bars, H2H splits and the prop scorer arrive with the scoring engine in build 2.</div>';
+      '<div class="section-title">Last 5 Games</div><div class="statgrid">'+l5+'</div>';
     document.getElementById('pm-overlay').classList.add('open');
   };
   function _pmClose(){document.getElementById('pm-overlay').classList.remove('open');}
 
   /* ---------- DEGEN CREW ---------- */
   function renderDegen(){
-    let h='<div class="page-header"><div class="page-title">Degen Crew</div><div class="page-sub">Signal engine ports in build 2</div></div>';
-    h+='<div class="crew-grid">'+CREW.map(c=>'<div class="crew-tile" onclick="degenTile(\''+c.k+'\')"><div class="crew-tile-icon"><i class="ti '+c.i+'"></i></div><div class="crew-tile-name">'+c.n+'</div><div class="crew-tile-sub">'+c.d+'</div></div>').join('')+'</div>';
+    const live=new Set(['green','death']);
+    let h='<div class="page-header"><div class="page-title">Degen Crew</div><div class="page-sub">Green Lights & Death Riders live · more signals porting onto the engine</div></div>';
+    h+='<div class="crew-grid">'+CREW.map(c=>'<div class="crew-tile'+(live.has(c.k)?' crew-live':'')+'" onclick="degenTile(\''+c.k+'\')"><div class="crew-tile-icon"><i class="ti '+c.i+'"></i></div><div class="crew-tile-name">'+c.n+(live.has(c.k)?' <span class="live-dot"></span>':'')+'</div><div class="crew-tile-sub">'+c.d+'</div></div>').join('')+'</div>';
     return h;
   }
-  window.degenTile=function(k){const c=CREW.find(x=>x.k===k);document.getElementById('page-content').innerHTML='<button class="back-btn" onclick="_switchTab(\'degen\')"><i class="ti ti-arrow-left"></i> Degen Crew</button><div class="page-header"><div class="page-title">'+c.n+'</div></div>'+emptyState(c.i,c.n+' — coming in build 2','This signal\'s gate + scoring port from the context-dump tuning. The chrome\'s ready; the engine is next.');window.scrollTo({top:0});};
+  // --- scoring-backed signal compute (Green Lights / Death Riders) ---
+  // Fires ONLY when a real posted line + price exists for the player/market.
+  function playersOnTeam(team){ return (state.idx.players||[]).filter(p=>p.team===team); }
+  function hasAnyOdds(){ return state.idx.oddsMeta && state.idx.oddsMeta.count>0; }
+  function collectOU(teamList, kind){
+    if(!window.JTTScoring || !hasAnyOdds()) return [];
+    const side=kind==='over'?'over':'under';
+    const minOdds=SIGNAL_MIN_ODDS[side];
+    const out=[];
+    teamList.forEach(team=>{
+      const opp=nextOpp(team); if(!opp) return;
+      playersOnTeam(team).forEach(p=>{
+        const od=oddsFor(p.name,'disposals');                 // line must exist…
+        if(!od || od.line==null) return;
+        const price=od[side];
+        if(price==null) return;                                // …and have a price this side
+        if(minOdds!=null && price<minOdds) return;             // …above the signal's floor
+        const r=kind==='over'?JTTScoring.scoreOverLine(p,opp,od.line):JTTScoring.scoreUnderLine(p,opp,od.line);
+        if(r){ r.team=team; r.oppName=opp; r.odds=price; r.book=od.book; out.push(r); }
+      });
+    });
+    return out.sort((a,b)=>kind==='over'?b.score-a.score:a.score-b.score);
+  }
+  function signalCard(r,kind){
+    const col=r.verdictCol;
+    const priceTxt=r.odds!=null?' @ $'+r.odds.toFixed(2)+(r.book?' ('+r.book+')':''):'';
+    return '<div class="fixture-row" style="grid-template-columns:1fr auto;cursor:pointer;border-left:3px solid '+col+'" onclick="openPlayer(\''+esc(r.p.name).replace(/\x27/g,"\\\x27")+'\')">'+
+      '<div style="text-align:left"><div class="fxr-name" style="font-size:15px">'+r.p.name+'</div>'+
+      '<div class="fxr-venue">'+(r.p.position||'')+' · '+abbr(r.team)+' v '+abbr(r.oppName)+' · '+r.games2026+' gm</div></div>'+
+      '<div style="text-align:right"><div style="font-family:var(--font-display);font-weight:800;color:'+col+';font-size:14px">'+r.verdictLabel+'</div>'+
+      '<div class="fxr-venue">'+(kind==='over'?'O':'U')+' '+r.line+priceTxt+' · L5 '+fmt(r.l5)+' · hit '+Math.round(r.hitRate*100)+'%'+(r.dvpPct!=null?' · dvp '+(r.dvpPct>0?'+':'')+r.dvpPct.toFixed(0)+'%':'')+'</div></div></div>';
+  }
+  function ouSection(list,kind,title,icon,colorClass){
+    if(!hasAnyOdds()) return emptyState(icon,'No lines loaded','Signals fire only against real posted lines. Connect an odds feed (or paste lines in Info) to light these up.');
+    if(!list.length) return emptyState(icon,'No '+title.toLowerCase()+' on the board','Lines are loaded, but none cleared the gate this slate — selective by design.');
+    return '<details class="tp-collapse '+colorClass+'" open><summary class="tp-collapse-sum"><i class="ti '+icon+'"></i><span class="tp-collapse-title">'+title+'</span><span class="tp-count">'+list.length+'</span><i class="ti ti-chevron-down tp-collapse-chev"></i></summary><div class="tp-collapse-body">'+
+      '<div class="tp-body-meta">Disposals · posted line · '+(kind==='over'?'score \u2265 5.5':'score \u2264 -3.5')+(SIGNAL_MIN_ODDS[kind==='over'?'over':'under']!=null?' · min $'+SIGNAL_MIN_ODDS[kind==='over'?'over':'under'].toFixed(2):'')+'</div>'+
+      list.map(r=>signalCard(r,kind)).join('')+'</div></details>';
+  }
+
+  window.degenTile=function(k){
+    const c=CREW.find(x=>x.k===k);
+    let body;
+    if(k==='green'){
+      const teams=(state.data.fixture||[]).flatMap(g=>[g.home,g.away]);
+      body=ouSection(collectOU(teams,'over'),'over','Green Lights','ti-traffic-lights','c-green');
+    } else if(k==='death'){
+      const teams=(state.data.fixture||[]).flatMap(g=>[g.home,g.away]);
+      body=ouSection(collectOU(teams,'under'),'under','Death Riders','ti-skull','c-red');
+    } else {
+      body=emptyState(c.i,c.n+' — coming next',c.n+'\u2019s gate ports from the same engine. Green Lights & Death Riders are live now as the reference pattern.');
+    }
+    document.getElementById('page-content').innerHTML='<button class="back-btn" onclick="_switchTab(\'degen\')"><i class="ti ti-arrow-left"></i> Degen Crew</button><div class="page-header"><div class="page-title">'+c.n+'</div><div class="page-sub">'+c.d+'</div></div>'+body;
+    window.scrollTo({top:0});
+  };
 
   /* ---------- INFO ---------- */
   function renderInfo(){
@@ -407,7 +565,18 @@
       row('Fixtures', (state.data.fixture||[]).length)+
       row('Injuries', (state.data.injury||[]).length)+
       row('FGS records', (state.data.fgs||[]).length)+
+      (function(){const o=state.idx.oddsMeta||{count:0};const cls=o.count?'ok':'warn';const lbl=o.count?(o.count+' lines'+(o.sample?' (sample)':'')+(o.fromPaste?' · pasted':'')):'none loaded';return row('Odds / lines', lbl, cls);})()+
       row('Data version', state.dataVersion||'—')+'</div>';
+    h+='<div class="section-title">Odds feed</div><div class="data-status" style="font-size:11px;line-height:1.7">'+
+      'Degen signals fire <b>only against real posted lines</b>. The feed is a separate <code>data/odds.json</code> '+
+      '(or paste lines below to test now). Per-signal minimum odds are configurable — currently <b>no floor set</b>.'+
+      '<div style="margin-top:8px"><button class="btn-sm" onclick="_oddsPasteOpen()"><i class="ti ti-clipboard-plus"></i> Load / paste lines</button>'+
+      (state.idx.oddsMeta&&state.idx.oddsMeta.fromPaste?' <button class="btn-sm" onclick="_oddsClear()"><i class="ti ti-trash"></i> Clear pasted</button>':'')+'</div>'+
+      '<div id="odds-paste-wrap" style="display:none;margin-top:10px">'+
+      '<div style="font-family:var(--font-mono);font-size:10px;color:var(--text-3);margin-bottom:4px">Paste JSON: <code>{"_sample":false,"updated":"…","lines":[{"player":"Nick Daicos","market":"disposals","line":30.5,"over":1.90,"under":1.85,"book":"sportsbet"}]}</code></div>'+
+      '<textarea id="odds-paste" style="width:100%;height:120px;background:var(--surface-2);color:var(--text-1);border:1px solid var(--border);border-radius:6px;font-family:var(--font-mono);font-size:11px;padding:8px"></textarea>'+
+      '<button class="btn-sm" style="margin-top:6px" onclick="_oddsPasteSave()"><i class="ti ti-check"></i> Save & apply</button>'+
+      '<span id="odds-paste-msg" style="margin-left:8px;font-size:11px"></span></div></div>';
     h+='<div class="section-title">Pipeline</div><div class="data-status" style="font-size:11px;line-height:1.7">'+
       'Players & team for/allowed averages are <b>derived from Champion Data game logs</b> in the weekly build — no manual 311-column blob. '+
       'Position & age still join from the legacy player source (flagged for automation). '+
@@ -435,11 +604,20 @@
     const avg=p[k], l5=lastN(nm,k,5), l10=lastN(nm,k,10);
     const logs=(state.idx.logsByName[nm]||[]).map(r=>r[k]).filter(v=>v!=null);
     const hit=(!isNaN(line)&&logs.length)?Math.round(logs.filter(v=>v>=line).length/logs.length*100):null;
+    let verdictHtml='';
+    if(!isNaN(line)&&window.JTTScoring){
+      const opp=nextOpp(p.team);
+      const v=JTTScoring.verdict(p,k,line,opp||undefined);
+      verdictHtml='<div style="margin-top:10px;padding:10px 12px;border-radius:6px;border:1px solid var(--border);border-left:3px solid '+v.col+';background:var(--surface-2)">'+
+        '<div style="font-family:var(--font-display);font-weight:800;color:'+v.col+';font-size:15px">'+v.label+'</div>'+
+        '<div class="fxr-venue">score '+v.score.toFixed(1)+(opp?' · vs '+abbr(opp):' · no opponent set')+' · '+k+' '+line+'</div></div>';
+    }
     out.innerHTML='<div class="statgrid"><div class="statcell"><div class="v">'+fmt(avg)+'</div><div class="k">Season</div></div>'+
       '<div class="statcell"><div class="v">'+fmt(l5)+'</div><div class="k">L5</div></div>'+
       '<div class="statcell"><div class="v">'+fmt(l10)+'</div><div class="k">L10</div></div>'+
       (hit!=null?'<div class="statcell"><div class="v">'+hit+'%</div><div class="k">Hit '+line+'+</div></div>':'')+'</div>'+
-      '<div class="tp-body-meta" style="margin-top:10px;border:0">Devig / DVP / score verdict arrives with the scoring engine (build 2).</div>';
+      verdictHtml+
+      '<div class="tp-body-meta" style="margin-top:10px;border:0">Verdict from the JTT scoring engine (hit-rate, form, DVP, matchup, signals). Devig/EV layer is the odds wire-up.</div>';
   };
 
   /* ---------- helpers ---------- */
