@@ -123,6 +123,15 @@
   .dvp-sel{padding:6px 10px;border-radius:7px;background:var(--surface);border:1px solid var(--border);
     color:var(--text);font-family:var(--font-display);font-weight:700;font-size:13px;}
   .dvp-grid td{font-variant-numeric:tabular-nums;} .dvp-grid .dvp-na{color:var(--text-3);text-align:center;}
+  .cmp-search{display:flex;gap:8px;align-items:stretch;}
+  .cmp-search input{flex:1;padding:11px 14px;border-radius:8px;background:var(--surface-2);border:1px solid var(--border);
+    color:var(--text);font-size:15px;font-family:var(--font-body);}
+  .cmp-search input:focus{outline:none;border-color:var(--accent);}
+  .cmp-search .auth-btn{width:auto;margin:0;white-space:nowrap;padding:0 16px;}
+  .cmp-sug{display:none;flex-wrap:wrap;gap:6px;margin-top:8px;}
+  .cmp-chip{cursor:pointer;font-size:12px;padding:5px 11px;border-radius:6px;background:var(--surface);
+    border:1px solid var(--border);color:var(--text);font-weight:600;}
+  .cmp-chip:hover{border-color:var(--accent);} .cmp-chip em{color:var(--text-3);font-style:normal;font-size:10px;margin-left:3px;}
   .team-jersey{display:inline-block;vertical-align:middle;flex-shrink:0;
     filter:drop-shadow(0 1px 1px rgba(0,0,0,.3));}
   .team-logo-img{border-radius:8px;object-fit:contain;flex-shrink:0;background:var(--surface-2);}
@@ -1003,38 +1012,142 @@
   }
 
   /* ---------- CHECK MY BET (scaffold) ---------- */
+  /* ===================== CHECK MY PROP ===================== */
+  const CMP_STAT_ALIASES={
+    'disposals':'disposals','disposal':'disposals','disp':'disposals','touches':'disposals',
+    'kicks':'kicks','kick':'kicks','handballs':'handballs','handball':'handballs','hb':'handballs',
+    'marks':'marks','mark':'marks','tackles':'tackles','tackle':'tackles','tack':'tackles',
+    'clearances':'clearances','clearance':'clearances','clear':'clearances',
+    'goals':'goals','goal':'goals','behinds':'behinds','behind':'behinds',
+    'hitouts':'hitouts','hitout':'hitouts','ho':'hitouts',
+    'fantasy points':'dreamteam','fantasy':'dreamteam','dt':'dreamteam','dreamteam':'dreamteam',
+    'supercoach pts':'supercoach','supercoach':'supercoach','sc':'supercoach',
+    'inside 50s':'inside50s','inside50s':'inside50s','i50s':'inside50s','i50':'inside50s',
+    'contested possessions':'contested','cont poss':'contested','contested':'contested',
+    'score involvements':'scoreInvolvements','score inv':'scoreInvolvements',
+    'shots':'shotsAtGoal','shots at goal':'shotsAtGoal',
+    'intercepts':'intercepts','intercept':'intercepts'
+  };
+  const CMP_STAT_LABELS={disposals:'Disposals',kicks:'Kicks',handballs:'Handballs',marks:'Marks',tackles:'Tackles',
+    clearances:'Clearances',goals:'Goals',behinds:'Behinds',hitouts:'Hitouts',dreamteam:'Fantasy Pts',
+    supercoach:'SC Pts',inside50s:'Inside 50s',contested:'Cont Poss',scoreInvolvements:'Score Inv',
+    shotsAtGoal:'Shots',intercepts:'Intercepts'};
+  function cmpParse(query){
+    const q=(query||'').trim(); let line=null,statKey=null,playerRaw='';
+    const aliases=Object.keys(CMP_STAT_ALIASES).sort((a,b)=>b.length-a.length);
+    let foundAlias=null;
+    for(const a of aliases){ if(q.toLowerCase().indexOf(a)>=0){foundAlias=a;break;} }
+    statKey=foundAlias?CMP_STAT_ALIASES[foundAlias]:null;
+    const nm=q.match(/(\d+(?:\.\d+)?)\s*\+?/); if(nm)line=parseFloat(nm[1]);
+    if(foundAlias) playerRaw=q.replace(new RegExp(foundAlias,'gi'),'').replace(/\d+(?:\.\d+)?\s*\+?/g,'').replace(/\s+over|\s+under/gi,'').replace(/\s{2,}/g,' ').trim();
+    else if(line!=null) playerRaw=q.replace(/\d+(?:\.\d+)?\s*\+?/g,'').replace(/\s+over|\s+under/gi,'').trim();
+    else playerRaw=q;
+    return {playerRaw:playerRaw||q, stat:statKey, line};
+  }
+  function cmpFindPlayer(name){
+    const q=(name||'').toLowerCase().trim(); const PS=state.idx.players||[];
+    let p=PS.find(x=>x.name.toLowerCase()===q); if(p)return p;
+    p=PS.find(x=>x.name.toLowerCase().split(' ').pop()===q); if(p)return p;
+    const w=q.split(' ').filter(s=>s.length>1);
+    if(w.length)p=PS.find(x=>w.every(s=>x.name.toLowerCase().includes(s)));
+    return p||null;
+  }
+  function cmpDvpInfo(p,stat){
+    const opp=nextOpp(p.team); if(!opp)return null;
+    const rows=(state.data.dvp||[]).filter(r=>r.pos===p.position);
+    if(!rows.length||rows[0][stat]==null)return null;
+    const oppRow=rows.find(r=>r.team===opp); if(!oppRow)return null;
+    const avg=rows.reduce((s,r)=>s+(r[stat]||0),0)/rows.length;
+    const pct=avg?((oppRow[stat]-avg)/avg*100):0;
+    const sorted=rows.map(r=>r[stat]||0).sort((a,b)=>b-a);
+    return {opp,pct,info:JTTScoring.muInfo(pct),rank:sorted.indexOf(oppRow[stat]||0)+1,total:rows.length,allowed:oppRow[stat]};
+  }
+  function cmpAnalysis(p,stat,line){
+    const label=CMP_STAT_LABELS[stat]||stat, opp=nextOpp(p.team);
+    const cs=(state.data.meta&&state.data.meta.currentSeason)||'2026';
+    const logs=state.idx.logsByName[p.name]||[], cur=logs.filter(r=>(''+(r.Year||''))===(''+cs));
+    const seasonAvg=(p[stat]!=null)?p[stat]:(cur.length?cur.reduce((s,r)=>s+(r[stat]||0),0)/cur.length:null);
+    const l3=JTTScoring.getRecentAvg(p.name,stat,3), l5=JTTScoring.getL5Avg(p.name,stat), l10=JTTScoring.getRecentAvg(p.name,stat,10);
+    const seasonHigh=cur.length?cur.reduce((m,r)=>Math.max(m,r[stat]||0),0):null;
+    const hr=JTTScoring.getHitRate(p.name,stat,line);
+    const v=(opp&&!isNaN(line))?JTTScoring.verdict(p,stat,line,opp):null;
+    const dvp=cmpDvpInfo(p,stat), posted=oddsFor(p.name,stat);
+    let h2h=null;
+    if(opp){const vs=logs.filter(r=>r.opponent===opp);
+      if(vs.length){vs.sort((a,b)=>(''+(b.Year||'')).localeCompare(''+(a.Year||'')));const vals=vs.map(r=>r[stat]||0);
+        h2h={n:vs.length,last:vals[0],when:((vs[0].Year||'')+' '+(vs[0].RoundName||'')).trim(),avg:vals.reduce((s,x)=>s+x,0)/vals.length,hits:vals.filter(x=>x>=line).length};}}
+    const sigs=((opp?JTTScoring.getContextSignals(p,stat,opp):[])||[]).filter(s=>Math.abs(s.pct||0)>=4).sort((a,b)=>Math.abs(b.pct)-Math.abs(a.pct)).slice(0,8);
+    const META='font-size:11px;color:var(--text-3);text-transform:uppercase;letter-spacing:.5px;font-weight:700;margin-bottom:4px';
+    const BOX='margin-top:10px;padding:10px 12px;border-radius:6px;background:var(--surface-2);border:1px solid var(--border)';
+    let h='<div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">'+teamLogo(p.team,40)+
+      '<div><div style="font-family:var(--font-display);font-weight:800;font-size:18px">'+esc(p.name)+'</div>'+
+      '<div class="fxr-venue">'+posShort(p.position)+' · '+esc(p.team)+(opp?' · vs '+esc(opp):'')+'</div></div></div>';
+    h+='<div style="font-family:var(--font-display);font-weight:800;font-size:15px;margin-bottom:10px">'+label+' '+line+'+</div>';
+    if(v){h+='<div style="padding:12px 14px;border-radius:8px;border:1px solid var(--border);border-left:4px solid '+v.col+';background:var(--surface-2);margin-bottom:8px">'+
+      '<div style="font-family:var(--font-display);font-weight:800;color:'+v.col+';font-size:17px">'+v.label+'</div>'+
+      '<div class="fxr-venue">engine score '+v.score.toFixed(1)+' · vs '+esc(opp)+'</div></div>';}
+    else if(!opp){h+='<div class="tp-body-meta" style="border:0;margin-bottom:8px">No fixture for '+esc(p.team)+' this round — showing form only.</div>';}
+    if(posted){h+='<div style="margin-bottom:10px;font-size:12px;color:var(--text-2)"><i class="ti ti-coin"></i> Posted <strong>'+label+' '+posted.line+'</strong> '+
+      (posted.over?'O '+(+posted.over).toFixed(2):'')+(posted.under?' / U '+(+posted.under).toFixed(2):'')+(posted.book?' · '+esc(posted.book):'')+'</div>';}
+    const cell=(val,k,dp)=>'<div class="statcell"><div class="v">'+(val==null?'—':fmt(val,dp==null?1:dp))+'</div><div class="k">'+k+'</div></div>';
+    h+='<div class="statgrid">'+cell(seasonAvg,'Season')+cell(l3,'L3')+cell(l5,'L5')+cell(l10,'L10')+cell(seasonHigh,'High',0)+
+      (hr?'<div class="statcell"><div class="v">'+Math.round(hr.rate*100)+'%</div><div class="k">Hit '+line+'+ ('+hr.n+')</div></div>':'')+'</div>';
+    if(dvp){h+='<div style="'+BOX+'"><div style="'+META+'">Matchup — '+esc(dvp.opp)+' vs '+posShort(p.position)+'</div>'+
+      '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap"><span style="font-family:var(--font-display);font-weight:800;color:'+dvp.info.c+'">'+dvp.info.t+'</span>'+
+      '<span class="fxr-venue">'+(dvp.pct>0?'+':'')+dvp.pct.toFixed(0)+'% vs league · allows '+fmt(dvp.allowed,1)+' · #'+dvp.rank+'/'+dvp.total+' softest</span></div></div>';}
+    if(h2h){h+='<div style="'+BOX+'"><div style="'+META+'">H2H vs '+esc(opp)+' ('+h2h.n+')</div>'+
+      '<span class="fxr-venue">last '+fmt(h2h.last,1)+(h2h.when?' ('+esc(h2h.when)+')':'')+' · avg '+fmt(h2h.avg,1)+' · '+h2h.hits+'/'+h2h.n+' hit '+line+'+</span></div>';}
+    if(sigs.length){h+='<div style="margin-top:12px"><div style="'+META+'">Signals</div><div style="display:flex;flex-wrap:wrap;gap:6px">'+
+      sigs.map(s=>{const pos=s.pct>=0,c=pos?'#22c55e':'#ef4444';return '<span style="font-size:11px;padding:3px 9px;border-radius:5px;background:'+c+'1a;color:'+c+';font-weight:700">'+esc(s.label)+' '+(pos?'+':'')+Math.round(s.pct)+'%</span>';}).join('')+'</div></div>';}
+    h+='<div style="text-align:center;margin-top:14px"><button class="seg on" onclick="cmpReset()"><i class="ti ti-search"></i> New search</button></div>';
+    return h;
+  }
+  function cmpPlayerCard(p){
+    const opp=nextOpp(p.team);
+    let h='<div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">'+teamLogo(p.team,40)+
+      '<div><div style="font-family:var(--font-display);font-weight:800;font-size:18px">'+esc(p.name)+'</div>'+
+      '<div class="fxr-venue">'+posShort(p.position)+' · '+esc(p.team)+(opp?' · vs '+esc(opp):'')+' · '+(p.matches||0)+' games</div></div></div>';
+    h+='<div class="tp-body-meta" style="border:0;margin-bottom:10px">Add a line for a verdict — e.g. "'+esc(p.name.split(' ').pop())+' 24.5 disposals".</div>';
+    h+='<div class="statgrid">'+DISPLAY.slice(0,8).map(([k,l])=>'<div class="statcell"><div class="v">'+fmt(p[k])+'</div><div class="k">'+l+'</div></div>').join('')+'</div>';
+    return h;
+  }
+
   function _cmbOpen(){
     document.getElementById('cmb-body').innerHTML=
-      '<div class="jtt-field"><label>Player</label><input id="cmb-player" list="cmb-players" placeholder="Start typing…"></input></div>'+
-      '<datalist id="cmb-players">'+(state.idx.players||[]).slice(0,400).map(p=>'<option value="'+esc(p.name)+'">').join('')+'</datalist>'+
-      '<div class="jtt-field"><label>Market</label><select id="cmb-market">'+DISPLAY.map(([k,l])=>'<option value="'+k+'">'+l+'</option>').join('')+'</select></div>'+
-      '<div class="jtt-field"><label>Line</label><input id="cmb-line" type="number" step="0.5" placeholder="e.g. 24.5"></div>'+
-      '<button class="auth-btn" style="margin-top:6px" onclick="cmbRun()"><i class="ti ti-checks"></i> Check</button>'+
-      '<div id="cmb-result" style="margin-top:12px"></div>';
+      '<div class="cmp-search"><input id="cmp-input" placeholder="e.g. Cripps 28+ disposals" autocomplete="off" oninput="cmpSuggest()" onkeydown="if(event.key===\'Enter\')cmbRun()">'+
+      '<button class="auth-btn" onclick="cmbRun()"><i class="ti ti-checks"></i> Check</button></div>'+
+      '<div id="cmp-sug" class="cmp-sug"></div>'+
+      '<div id="cmb-result"></div>'+
+      '<div class="tp-body-meta" style="border:0;margin-top:10px">Type a player, line and market — e.g. <strong>Bont 30+ disposals</strong>, <strong>Curnow 2.5 goals</strong>, <strong>English 35 hitouts</strong>.</div>';
     document.getElementById('cmb-overlay').classList.add('open');
+    setTimeout(()=>{const i=document.getElementById('cmp-input');if(i)i.focus();},150);
   }
   function _cmbClose(){document.getElementById('cmb-overlay').classList.remove('open');}
   window.cmbRun=function(){
-    const nm=document.getElementById('cmb-player').value, k=document.getElementById('cmb-market').value, line=parseFloat(document.getElementById('cmb-line').value);
-    const p=state.idx.byName[nm]; const out=document.getElementById('cmb-result');
-    if(!p){out.innerHTML='<div class="empty">Pick a player from the list.</div>';return;}
-    const avg=p[k], l5=lastN(nm,k,5), l10=lastN(nm,k,10);
-    const logs=(state.idx.logsByName[nm]||[]).map(r=>r[k]).filter(v=>v!=null);
-    const hit=(!isNaN(line)&&logs.length)?Math.round(logs.filter(v=>v>=line).length/logs.length*100):null;
-    let verdictHtml='';
-    if(!isNaN(line)&&window.JTTScoring){
-      const opp=nextOpp(p.team);
-      const v=JTTScoring.verdict(p,k,line,opp||undefined);
-      verdictHtml='<div style="margin-top:10px;padding:10px 12px;border-radius:6px;border:1px solid var(--border);border-left:3px solid '+v.col+';background:var(--surface-2)">'+
-        '<div style="font-family:var(--font-display);font-weight:800;color:'+v.col+';font-size:15px">'+v.label+'</div>'+
-        '<div class="fxr-venue">score '+v.score.toFixed(1)+(opp?' · vs '+abbr(opp):' · no opponent set')+' · '+k+' '+line+'</div></div>';
-    }
-    out.innerHTML='<div class="statgrid"><div class="statcell"><div class="v">'+fmt(avg)+'</div><div class="k">Season</div></div>'+
-      '<div class="statcell"><div class="v">'+fmt(l5)+'</div><div class="k">L5</div></div>'+
-      '<div class="statcell"><div class="v">'+fmt(l10)+'</div><div class="k">L10</div></div>'+
-      (hit!=null?'<div class="statcell"><div class="v">'+hit+'%</div><div class="k">Hit '+line+'+</div></div>':'')+'</div>'+
-      verdictHtml+
-      '<div class="tp-body-meta" style="margin-top:10px;border:0">Verdict from the JTT scoring engine (hit-rate, form, DVP, matchup, signals). Devig/EV layer is the odds wire-up.</div>';
+    const inp=document.getElementById('cmp-input'), out=document.getElementById('cmb-result'); if(!inp||!out)return;
+    const sug=document.getElementById('cmp-sug'); if(sug)sug.style.display='none';
+    const q=inp.value.trim(); if(!q){out.innerHTML='';return;}
+    if(!(state.idx.players||[]).length){out.innerHTML='<div class="empty">No player data loaded.</div>';return;}
+    const {playerRaw,stat,line}=cmpParse(q), p=cmpFindPlayer(playerRaw);
+    if(!p){out.innerHTML='<div class="empty"><div class="ico"><i class="ti ti-user-question"></i></div>Player not found: "'+esc(playerRaw)+'"<div style="font-size:11px;margin-top:4px">Try a surname or full name.</div></div>';return;}
+    if(!stat||line==null){out.innerHTML=cmpPlayerCard(p);return;}
+    out.innerHTML=cmpAnalysis(p,stat,line);
+  };
+  window.cmpReset=function(){const i=document.getElementById('cmp-input');if(i){i.value='';i.focus();}const o=document.getElementById('cmb-result');if(o)o.innerHTML='';const s=document.getElementById('cmp-sug');if(s)s.style.display='none';};
+  window.cmpSuggest=function(){
+    const inp=document.getElementById('cmp-input'), sug=document.getElementById('cmp-sug'); if(!inp||!sug)return;
+    const q=(cmpParse(inp.value).playerRaw||'').toLowerCase().trim();
+    if(q.length<2){sug.style.display='none';return;}
+    const m=(state.idx.players||[]).filter(p=>p.name.toLowerCase().includes(q)||p.name.toLowerCase().split(' ').pop().startsWith(q)).slice(0,6);
+    if(!m.length){sug.style.display='none';return;}
+    sug.style.display='flex';
+    sug.innerHTML=m.map(p=>'<span class="cmp-chip" onclick="cmpPick(\''+esc(p.name).replace(/'/g,"\\'")+'\')">'+esc(p.name)+' <em>'+abbr(p.team)+'</em></span>').join('');
+  };
+  window.cmpPick=function(name){
+    const inp=document.getElementById('cmp-input'); if(!inp)return;
+    const {stat,line}=cmpParse(inp.value);
+    inp.value=name+((stat&&line!=null)?(' '+line+' '+(CMP_STAT_LABELS[stat]||stat).toLowerCase()):' ');
+    const s=document.getElementById('cmp-sug'); if(s)s.style.display='none'; inp.focus();
   };
 
   /* ---------- helpers ---------- */
