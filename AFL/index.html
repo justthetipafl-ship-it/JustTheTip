@@ -170,6 +170,13 @@
   .lm-chip{display:inline-flex;align-items:center;gap:4px;background:var(--panel2,#161616);border:1px solid var(--border);border-radius:12px;padding:2px 8px;font-size:11px;cursor:pointer;}
   .lm-chip b{color:var(--accent);}
   .lm-chip:hover{border-color:var(--accent);}
+  .lm-chip.none{color:var(--muted);cursor:default;}
+  .lm-grid{display:grid;grid-template-columns:1fr auto 1fr;gap:5px 10px;margin-top:12px;align-items:center;}
+  .lm-gh{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);}
+  .lm-gh.r{text-align:right;}
+  .lm-gk{font-size:10px;color:var(--muted);text-align:center;white-space:nowrap;font-weight:600;}
+  .lm-gk.hd{text-transform:uppercase;letter-spacing:.04em;font-weight:700;}
+  .lm-gc{min-width:0;} .lm-gc.r{text-align:right;}
   /* match odds */
   .mo-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px;}
   .mo-block{background:var(--panel2,#161616);border:1px solid var(--border);border-radius:6px;padding:8px 10px;}
@@ -296,6 +303,9 @@
 
   const POS_C = {'Midfielder':'#3b82f6','Mid-Forward':'#8b5cf6','Gen. Forward':'#f59e0b','Key Forward':'#f97316',
                  'Gen. Defender':'#64748b','Key Defender':'#06b6d4','Ruck':'#ec4899'};
+  // bettable player-prop markets, full labels (shared by Clash / Last Meeting / Matchup)
+  const BET_STATS = [['disposals','Disposals'],['goals','Goals'],['marks','Marks'],['tackles','Tackles'],
+                     ['kicks','Kicks'],['handballs','Handballs'],['clearances','Clearances']];
   // display columns for Stats table + player modal: [key, label]
   const DISPLAY = [
     ['disposals','Disp'],['kicks','Kick'],['handballs','HB'],['marks','Mark'],['tackles','Tkl'],
@@ -563,61 +573,57 @@
       '<div class="h2h-head"><span>'+abbr(home)+'</span><span>'+abbr(away)+'</span></div>'+rows+'</div>';
   }
 
-  // ---- game-level: The Clash (each team's attack vs the other's defence) ----
+  // ---- game-level: The Clash (how soft each defence is vs the LEAGUE AVERAGE) ----
   function gameClash(home,away){
     const th=state.idx.teamMap[home], ta=state.idx.teamMap[away];
     if(!th||!ta) return '';
-    const KEYS=[['disposals','Disposals'],['inside50s','Inside 50s'],['clearances','Clearances'],
-      ['contested','Contested'],['marks','Marks'],['tackles','Tackles'],['goals','Goals']];
-    const edges=(att,def)=>KEYS.map(([k,l])=>{
-      const f=+att[k]||0, a=+def[k+'_a']||0; if(!f||!a) return null;
-      return {l,f,a,diff:f-a,pct:a?Math.round((f-a)/a*100):0};
+    const teams=Object.values(state.idx.teamMap||{});
+    const lg={}; BET_STATS.forEach(([k])=>{const v=teams.map(t=>+t[k+'_a']).filter(x=>!isNaN(x)&&x>0);lg[k]=v.length?v.reduce((a,b)=>a+b,0)/v.length:0;});
+    // for the team attacking opponent O: how much MORE than the league average does O concede?
+    const soften=oppT=>BET_STATS.map(([k,l])=>{
+      const a=+oppT[k+'_a']||0, L=lg[k]; if(!a||!L) return null;
+      return {l,a,pct:Math.round((a-L)/L*100)};
     }).filter(Boolean).sort((x,y)=>y.pct-x.pct);
-    const he=edges(th,ta), ae=edges(ta,th);
-    const col=(team,e)=>{
-      const won=e.filter(x=>x.diff>0);
-      const body=won.slice(0,4).map(x=>'<div class="clash-row"><span class="ck">'+x.l+'</span><span class="cv">'+fmt(x.f,0)+' v '+fmt(x.a,0)+'</span><span class="cp pos">+'+x.pct+'%</span></div>').join('')
-        ||'<div class="clash-none">No clear edges vs this defence</div>';
-      return '<div class="clash-col"><div class="clash-hd">'+teamLogo(team,22)+'<span>'+abbr(team)+'</span><span class="clash-n">'+won.length+' edge'+(won.length===1?'':'s')+'</span></div>'+body+'</div>';
+    const col=(team,opp,e)=>{
+      const soft=e.filter(x=>x.pct>0);
+      const body=soft.slice(0,5).map(x=>'<div class="clash-row"><span class="ck">'+x.l+'</span><span class="cv">'+abbr(opp)+' allows '+fmt(x.a,1)+'</span><span class="cp pos">+'+x.pct+'%</span></div>').join('')
+        ||'<div class="clash-none">No soft matchups vs league avg</div>';
+      return '<div class="clash-col"><div class="clash-hd">'+teamLogo(team,22)+'<span>'+abbr(team)+' attack</span><span class="clash-n">'+soft.length+' soft</span></div>'+body+'</div>';
     };
-    return '<div class="game-sec"><div class="gs-title"><i class="ti ti-swords"></i> The Clash · attack vs defence</div>'+
-      '<div class="clash-grid">'+col(home,he)+col(away,ae)+'</div></div>';
+    return '<div class="game-sec"><div class="gs-title"><i class="ti ti-swords"></i> The Clash · how much more each defence concedes vs league average</div>'+
+      '<div class="clash-grid">'+col(home,away,soften(ta))+col(away,home,soften(th))+'</div></div>';
   }
 
-  // ---- game-level: Last Time They Met (official result + top performers) ----
+  // ---- game-level: Last Time They Met (official score only + top performer per team per stat) ----
   function gameLastMeeting(home,away){
-    // most recent game-log meeting (mids sort lexically by YYYY-Rnn-...)
-    let mid=null;
-    Object.keys(state.idx.matchTeams).forEach(m=>{
-      const ts=Object.keys(state.idx.matchTeams[m]);
-      if(ts.includes(home)&&ts.includes(away)&&(!mid||(''+m)>(''+mid))) mid=m;
-    });
-    // official result (preferred for an accurate scoreline)
+    const roundNum=rn=>{ if(!rn)return null; if(/opening/i.test(rn))return 0; const m=(''+rn).match(/\d+/); return m?+m[0]:null; };
     const rs=(state.data.results||[]).filter(r=>(r.home===home&&r.away===away)||(r.home===away&&r.away===home))
       .sort((a,b)=>((b.year||0)-(a.year||0))||((b.round||0)-(a.round||0)));
     const off=rs[0];
-    let score='', meta='';
+    const cand=Object.keys(state.idx.matchTeams||{}).filter(m=>{const ts=Object.keys(state.idx.matchTeams[m]);return ts.includes(home)&&ts.includes(away);});
+    let mid=null;
+    if(off){ mid=cand.find(m=>{const lg=(state.data.gamelogs||[]).find(r=>r.MatchId===m);return lg&&(''+lg.Year)===(''+off.year)&&roundNum(lg.RoundName)===off.round;})||null; }
+    if(!mid){ cand.sort(); mid=cand[cand.length-1]||null; }
+    if(!off && !mid) return '';
+    let head;
     if(off){
-      score=abbr(off.home)+' <b>'+off.homeScore+'</b> &nbsp;—&nbsp; <b>'+off.awayScore+'</b> '+abbr(off.away);
-      meta='Round '+off.round+' '+off.year+(off.venue?' · '+off.venue:'')+' · '+(off.margin===0?'Draw':abbr(off.winner)+' by '+Math.abs(off.margin));
-    } else if(mid){
-      const mt=state.idx.matchTeams[mid];
-      const hs=(mt[home]?(mt[home].g*6+mt[home].b):0), as=(mt[away]?(mt[away].g*6+mt[away].b):0);
-      score=abbr(home)+' <b>'+hs+'</b> &nbsp;—&nbsp; <b>'+as+'</b> '+abbr(away);
-      meta='approx. from player scoring · '+(hs===as?'Draw':(hs>as?abbr(home):abbr(away))+' by '+Math.abs(hs-as));
-    } else { return ''; }
-    // top performers from that meeting's game logs
+      head='<div class="lm-score">'+abbr(off.home)+' <b>'+off.homeScore+'</b> &nbsp;—&nbsp; <b>'+off.awayScore+'</b> '+abbr(off.away)+'</div>'+
+        '<div class="lm-meta">Round '+off.round+' '+off.year+(off.venue?' · '+off.venue:'')+' · '+(off.margin===0?'Draw':abbr(off.winner)+' by '+Math.abs(off.margin))+'</div>';
+    } else {
+      const lg=(state.data.gamelogs||[]).find(r=>r.MatchId===mid)||{};
+      head='<div class="lm-meta" style="margin-bottom:6px">Most recent meeting · '+esc(((lg.RoundName||'')+' '+(lg.Year||'')).trim())+' · official score pending</div>';
+    }
     let perf='';
     if(mid){
       const logs=(state.data.gamelogs||[]).filter(r=>r.MatchId===mid);
-      const chip=(r,val)=>'<span class="lm-chip" onclick="openPlayer(\''+esc(r.Player).replace(/\x27/g,"\\\x27")+'\')">'+teamLogo(r.Team,16)+esc(r.Player)+' <b>'+val+'</b></span>';
-      const disp=[...logs].sort((a,b)=>(b.disposals||0)-(a.disposals||0)).slice(0,3).filter(r=>r.disposals);
-      const goals=[...logs].filter(r=>(r.goals||0)>0).sort((a,b)=>(b.goals||0)-(a.goals||0)).slice(0,3);
-      if(disp.length) perf+='<div class="lm-perf"><span class="lm-lab">Disposals</span>'+disp.map(r=>chip(r,r.disposals)).join('')+'</div>';
-      if(goals.length) perf+='<div class="lm-perf"><span class="lm-lab">Goals</span>'+goals.map(r=>chip(r,r.goals)).join('')+'</div>';
+      const hl=logs.filter(r=>r.Team===home), al=logs.filter(r=>r.Team===away);
+      const topOf=(arr,k)=>arr.length?arr.reduce((m,r)=>((r[k]||0)>(m[k]||0)?r:m)):null;
+      const chip=(r,k)=>r?'<span class="lm-chip" onclick="openPlayer(\''+esc(r.Player).replace(/\x27/g,"\\\x27")+'\')">'+esc(r.Player)+' <b>'+(k==='goals'?(r[k]||0):Math.round(r[k]||0))+'</b></span>':'<span class="lm-chip none">—</span>';
+      perf='<div class="lm-grid"><div class="lm-gh">'+abbr(home)+'</div><div class="lm-gk hd">Top by</div><div class="lm-gh r">'+abbr(away)+'</div>';
+      BET_STATS.forEach(([k,l])=>{ perf+='<div class="lm-gc">'+chip(topOf(hl,k),k)+'</div><div class="lm-gk">'+l+'</div><div class="lm-gc r">'+chip(topOf(al,k),k)+'</div>'; });
+      perf+='</div>';
     }
-    return '<div class="game-sec"><div class="gs-title"><i class="ti ti-history"></i> Last Time They Met</div>'+
-      '<div class="lm-score">'+score+'</div><div class="lm-meta">'+meta+'</div>'+perf+'</div>';
+    return '<div class="game-sec"><div class="gs-title"><i class="ti ti-history"></i> Last Time They Met</div>'+head+perf+'</div>';
   }
 
   function renderFocusedFixture(g){
@@ -649,11 +655,10 @@
     if(leaders){ h+='<div class="tp-sec"><div class="sec-title"><i class="ti ti-user-star"></i> Stat Leaders</div></div>'+leaders; }
     // Matchup: this team For vs what the OPPONENT allows (the edges this team's players face)
     if(t){
-      const rows=[['disposals','Disp'],['inside50s','I50'],['clearances','Clr'],['marks','Mrk'],['tackles','Tkl'],['goals','Gls']];
       let mt='<div class="tp-sec"><div class="sec-title"><i class="ti ti-shield-half"></i> Matchup vs '+abbr(opp)+'</div></div>';
-      mt+='<div class="stbl-wrap"><table class="stbl" style="min-width:0"><thead><tr><th>Stat</th><th>'+abbr(team)+' For</th><th>'+abbr(opp)+' Allows</th></tr></thead><tbody>';
+      mt+='<div class="stbl-wrap"><table class="stbl bx"><thead><tr><th>Stat</th><th>'+abbr(team)+' For</th><th>'+abbr(opp)+' Allows</th></tr></thead><tbody>';
       const ta=state.idx.teamMap[opp];
-      rows.forEach(([k,l])=>{ mt+='<tr><td class="name">'+l+'</td><td>'+fmt(t[k])+'</td><td>'+fmt(ta?ta[k+'_a']:null)+'</td></tr>'; });
+      BET_STATS.forEach(([k,l])=>{ mt+='<tr><td class="name">'+l+'</td><td>'+fmt(t[k])+'</td><td>'+fmt(ta?ta[k+'_a']:null)+'</td></tr>'; });
       mt+='</tbody></table></div>'; h+=mt;
     }
     // Degen signals scoped to THIS team
