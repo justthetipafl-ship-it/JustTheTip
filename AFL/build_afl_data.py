@@ -213,7 +213,8 @@ def load_source(src):
         d.get("fgs", []),
         d.get("injury", []),
         {k: d.get(k) for k in ("version", "created", "round", "summary", "formats")},
-        {"teamform": d.get("teamform", []), "teamdef": d.get("teamdef", [])},
+        {"teamform": d.get("teamform", []), "teamdef": d.get("teamdef", []),
+         "results": d.get("results", []), "lineups": d.get("lineups", [])},
     )
 
 
@@ -490,6 +491,8 @@ def main():
         "fixture.json":  w("fixture.json", fixture),
         "fgs.json":      w("fgs.json", fgs),
         "injury.json":   w("injury.json", injury),
+        "results.json":  w("results.json", extra.get("results") or []),
+        "lineups.json":  w("lineups.json", extra.get("lineups") or []),
     }
     open(os.path.join(args.out, "version.txt"), "w").write(version)
 
