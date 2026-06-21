@@ -61,6 +61,9 @@
   .stat-search:focus{border-color:var(--accent);}
   .stbl-wrap{overflow-x:auto;border:1px solid var(--border);border-radius:6px;background:var(--surface);}
   table.stbl{border-collapse:collapse;width:100%;min-width:560px;font-family:var(--font-mono);font-size:12px;}
+  table.stbl.bx{min-width:0;}
+  table.stbl.bx th,table.stbl.bx td{padding:5px 6px;text-align:center;}
+  table.stbl.bx td.name{text-align:left;}
   table.stbl th{position:sticky;top:0;background:var(--surface-2);color:var(--text-3);font-weight:600;
     text-transform:uppercase;letter-spacing:.5px;font-size:9px;padding:9px 8px;text-align:right;cursor:pointer;
     white-space:nowrap;border-bottom:1px solid var(--border);}
@@ -177,6 +180,28 @@
   .mo-row .mo-o{font-variant-numeric:tabular-nums;font-weight:600;font-size:13px;min-width:40px;text-align:right;}
   .mo-row .mo-o.fav{color:var(--accent);}
   .mo-book{font-size:10px;color:var(--muted);margin-top:8px;text-align:right;}
+  /* recent-games bar chart */
+  .rc-chart{position:relative;display:flex;align-items:flex-end;gap:4px;height:70px;}
+  .rc-bar{flex:1;display:flex;align-items:flex-end;justify-content:center;height:100%;}
+  .rc-fill{width:72%;border-radius:3px 3px 0 0;background:#5a6270;}
+  .rc-fill.hit{background:#22c55e;} .rc-fill.miss{background:#ef4444;} .rc-fill.neu{background:#5a6270;}
+  .rc-line{position:absolute;left:0;right:0;border-top:1px dashed var(--accent);pointer-events:none;}
+  .rc-line span{position:absolute;right:0;top:-7px;font-size:9px;font-weight:700;color:var(--accent);background:var(--surface);padding:0 3px;}
+  .rc-labs{display:flex;gap:4px;margin-top:3px;}
+  .rc-lab{flex:1;display:flex;flex-direction:column;align-items:center;line-height:1.2;}
+  .rc-lab .rc-v{font-size:11px;font-weight:700;font-variant-numeric:tabular-nums;}
+  .rc-lab .rc-x{font-size:9px;color:var(--muted);}
+  /* similar players */
+  .sp-row{display:flex;align-items:center;gap:8px;padding:6px 8px;border:1px solid var(--border);border-radius:6px;background:var(--surface-2);margin-bottom:5px;cursor:pointer;font-size:12px;}
+  .sp-row:hover{border-color:var(--accent);}
+  .sp-row .sp-nm{font-weight:600;}
+  .sp-row .sp-av{margin-left:auto;font-variant-numeric:tabular-nums;font-weight:700;}
+  .sp-row .sp-vs{font-size:10px;color:var(--accent);background:var(--surface);border-radius:10px;padding:1px 7px;}
+  .sp-row .sp-vs.none{color:var(--muted);}
+  /* CMB recent chips */
+  .cmp-recent{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-top:12px;}
+  .cmp-recent-lab{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);}
+  .cmp-recent .cmp-chip{cursor:pointer;}
   </style>
 </head>
 <body class="auth-locked">
@@ -786,34 +811,67 @@
   window.sortStats=function(k){const v=state.view;if(v.sortKey===k)v.sortDir*=-1;else{v.sortKey=k;v.sortDir=k==='name'?1:-1;}rerenderStats();};
 
   /* ---------- PLAYER MODAL ---------- */
-  window.openPlayer=function(name){
-    const p=state.idx.byName[name]; if(!p)return;
-    const cells=DISPLAY.map(([k,l])=>'<div class="statcell"><div class="v">'+fmt(p[k],k==='goals'||k==='behinds'?2:1)+'</div><div class="k">'+l+'</div></div>').join('');
-    const l5=DISPLAY.slice(0,6).map(([k,l])=>{const a=lastN(name,k,5);return '<div class="statcell"><div class="v">'+fmt(a,1)+'</div><div class="k">'+l+' L5</div></div>';}).join('');
+  // ---- player modal: avg by mode + game-by-game box scores ----
+  let _pmName=null, _pmMode='season';
+  function pmAvg(name,key,mode){
+    if(mode==='season'){const p=state.idx.byName[name];return p&&p[key]!=null?p[key]:lastN(name,key,99);}
+    if(mode==='l5')return lastN(name,key,5);
+    if(mode==='l10')return lastN(name,key,10);
+    if(mode==='h2h'){const opp=nextOpp((state.idx.byName[name]||{}).team);if(!opp)return null;
+      const vs=(state.idx.logsByName[name]||[]).filter(r=>r.opponent===opp).map(r=>r[key]).filter(v=>v!=null);
+      return vs.length?vs.reduce((s,v)=>s+v,0)/vs.length:null;}
+    return null;
+  }
+  function pmBoxScores(name,n){
+    const logs=(state.idx.logsByName[name]||[]).slice(-(n||6)).reverse();
+    if(!logs.length) return '';
+    const COLS=[['disposals','D'],['kicks','K'],['handballs','HB'],['marks','M'],['tackles','T'],['clearances','CL'],['inside50s','I50'],['goals','G']];
+    const opp=nextOpp((state.idx.byName[name]||{}).team);
+    let h='<div class="section-title">Recent Box Scores</div><div class="stbl-wrap"><table class="stbl bx"><thead><tr><th>Game</th>'+COLS.map(c=>'<th>'+c[1]+'</th>').join('')+'</tr></thead><tbody>';
+    logs.forEach(r=>{
+      const ro=r.opponent||'', isFix=opp&&ro===opp;
+      const lbl=(r.RoundName||'').replace(/^Round /,'R')+(ro?' v '+abbr(ro):'');
+      h+='<tr'+(isFix?' style="background:var(--accent-soft,rgba(34,197,94,.08))"':'')+'><td class="name" style="white-space:nowrap">'+esc(lbl)+(isFix?' <i class="ti ti-pin" title="next opponent"></i>':'')+'</td>'+
+        COLS.map(c=>'<td>'+(r[c[0]]==null?'—':(c[0]==='goals'?r[c[0]]:Math.round(r[c[0]])))+'</td>').join('')+'</tr>';
+    });
+    return h+'</tbody></table></div>';
+  }
+  function _pmRender(){
+    const name=_pmName, p=state.idx.byName[name]; if(!p)return;
+    const opp=nextOpp(p.team);
+    const MODES=[['season','Season'],['l5','L5'],['l10','L10']].concat(opp?[['h2h','H2H']]:[]);
+    const seg=MODES.map(([m,l])=>'<button class="seg'+(m===_pmMode?' on':'')+'" onclick="_pmSetMode(\''+m+'\')">'+l+(m==='h2h'?' '+abbr(opp):'')+'</button>').join('');
+    const cells=DISPLAY.map(([k,l])=>'<div class="statcell"><div class="v">'+fmt(pmAvg(name,k,_pmMode),k==='goals'||k==='behinds'?2:1)+'</div><div class="k">'+l+'</div></div>').join('');
     let edge='';
     if(window.JTTScoring){
-      const opp=nextOpp(p.team);
       const isFwd=p.position==='Key Forward'||p.position==='Gen. Forward'||p.position==='Mid-Forward';
       const primary=isFwd?'goals':'disposals';
       const pLine=primary==='goals'?((p.goals||0)>=2?2.5:1.5):(JTTScoring.drLine(p.disposals||0)||Math.round(p.disposals||0)-0.5);
       const v=JTTScoring.verdict(p,primary,pLine,opp||undefined);
       const mk=[['disposals','Disp'],['marks','Marks'],['tackles','Tack'],['goals','Goals']];
-      const strip=opp?mk.map(([k,l])=>{
-        const pct=JTTScoring.getDVPPct(opp,JTTScoring.POS_TO_DVP[p.position]||p.position,k);
-        const mi=JTTScoring.muInfo(pct);
-        return '<div class="statcell"><div class="v" style="color:'+(mi?mi.c:'#888')+';font-size:15px">'+(pct==null?'—':(pct>0?'+':'')+pct.toFixed(0)+'%')+'</div><div class="k">'+l+(mi?' '+mi.t:'')+'</div></div>';
-      }).join(''):'';
-      edge='<div class="section-title">Verdict'+(opp?' vs '+abbr(opp):'')+'</div>'+
+      const strip=opp?mk.map(([k,l])=>{const pct=JTTScoring.getDVPPct(opp,JTTScoring.POS_TO_DVP[p.position]||p.position,k);const mi=JTTScoring.muInfo(pct);
+        return '<div class="statcell"><div class="v" style="color:'+(mi?mi.c:'#888')+';font-size:15px">'+(pct==null?'—':(pct>0?'+':'')+pct.toFixed(0)+'%')+'</div><div class="k">'+l+(mi?' '+mi.t:'')+'</div></div>';}).join(''):'';
+      const qstr=esc(p.name).replace(/\x27/g,"\\\x27");
+      edge='<div class="section-title">Verdict'+(opp?' vs '+abbr(opp):'')+'<button class="seg" style="float:right;padding:2px 8px" onclick="_pmToCMB(\''+qstr+'\',\''+primary+'\','+pLine+')"><i class="ti ti-checks"></i> Full CMB</button></div>'+
         '<div style="padding:10px 12px;border-radius:6px;border:1px solid var(--border);border-left:3px solid '+v.col+';background:var(--surface-2)">'+
         '<div style="font-family:var(--font-display);font-weight:800;color:'+v.col+';font-size:16px">'+v.label+'</div>'+
         '<div class="pm-meta">'+primary+' '+pLine+' · engine score '+v.score.toFixed(1)+(opp?'':' · no opponent in fixture')+'</div></div>'+
         (strip?'<div class="section-title">DVP Matchup ('+(p.position||'')+')</div><div class="statgrid">'+strip+'</div>':'');
     }
     document.getElementById('pm-modal').innerHTML=
-      '<div class="pm-hdr"><div><div class="pm-name">'+p.name+'</div><div class="pm-meta"><span class="pos-dot" style="background:'+(POS_C[p.position]||'#888')+'"></span>'+(p.position||'—')+' · '+(p.team||'')+' · '+(p.matches||0)+' games'+(p.age?' · '+p.age.toFixed(0)+'yo':'')+'</div></div><button class="pm-close" onclick="_pmClose()">&times;</button></div>'+
+      '<div class="pm-hdr"><div><div class="pm-name">'+p.name+'</div><div class="pm-meta"><span class="pos-dot" style="background:'+(POS_C[p.position]||'#888')+'"></span>'+(p.position||'—')+' · '+(p.team||'')+' · '+(p.matches||0)+' games'+(p.age?' · '+(+p.age).toFixed(0)+'yo':'')+'</div></div><button class="pm-close" onclick="_pmClose()">&times;</button></div>'+
       edge+
-      '<div class="section-title">Season Averages</div><div class="statgrid">'+cells+'</div>'+
-      '<div class="section-title">Last 5 Games</div><div class="statgrid">'+l5+'</div>';
+      '<div class="section-title">Averages <span class="sub-tabs" style="float:right;display:inline-flex">'+seg+'</span></div><div class="statgrid">'+cells+'</div>'+
+      recentBars(name,(p.position==='Key Forward'||p.position==='Gen. Forward'||p.position==='Mid-Forward')?'goals':'disposals',null,8)+
+      pmBoxScores(name,6)+
+      (opp?similarPlayers(p,(p.position==='Key Forward'||p.position==='Gen. Forward'||p.position==='Mid-Forward')?'goals':'disposals',opp,4):'');
+  }
+  window._pmSetMode=function(m){_pmMode=m;_pmRender();};
+  window._pmToCMB=function(name,stat,line){_pmClose();_cmbOpen();setTimeout(()=>{const i=document.getElementById('cmp-input');if(i){i.value=name+' '+line+' '+(CMP_STAT_LABELS[stat]||stat).toLowerCase();window.cmbRun&&window.cmbRun();}},120);};
+  window.openPlayer=function(name){
+    if(!state.idx.byName[name])return;
+    _pmName=name; _pmMode='season';
+    _pmRender();
     document.getElementById('pm-overlay').classList.add('open');
   };
   function _pmClose(){document.getElementById('pm-overlay').classList.remove('open');}
@@ -1223,6 +1281,53 @@
     const sorted=rows.map(r=>r[stat]||0).sort((a,b)=>b-a);
     return {opp,pct,info:JTTScoring.muInfo(pct),rank:sorted.indexOf(oppRow[stat]||0)+1,total:rows.length,allowed:oppRow[stat]};
   }
+  // ---- shared: recent-games bar chart (last n games vs a line) ----
+  function recentBars(name,statKey,line,n){
+    n=n||8;
+    const logs=(state.idx.logsByName[name]||[]).slice(-n);
+    if(!logs.length) return '';
+    const vals=logs.map(r=>r[statKey]||0);
+    const mx=Math.max(line||0,...vals,1);
+    const isG=statKey==='goals'||statKey==='behinds';
+    const bars=logs.map(r=>{
+      const v=r[statKey]||0, hit=(line!=null&&!isNaN(line))?v>=line:null;
+      const cls=hit==null?'neu':(hit?'hit':'miss');
+      return '<div class="rc-bar"><div class="rc-fill '+cls+'" style="height:'+Math.max(4,Math.round(v/mx*100))+'%"></div></div>';
+    }).join('');
+    const labs=logs.map(r=>{
+      const v=r[statKey]||0, opp=r.opponent?abbr(r.opponent):'·';
+      return '<div class="rc-lab"><span class="rc-v">'+(isG?v:Math.round(v))+'</span><span class="rc-x">'+opp+'</span></div>';
+    }).join('');
+    const mark=(line!=null&&!isNaN(line))?'<div class="rc-line" style="bottom:'+Math.round(line/mx*100)+'%"><span>'+line+'</span></div>':'';
+    return '<div style="margin-top:12px"><div style="font-size:11px;color:var(--text-3);text-transform:uppercase;letter-spacing:.5px;font-weight:700;margin-bottom:6px">Last '+logs.length+' games'+(line!=null&&!isNaN(line)?' vs '+line:'')+'</div>'+
+      '<div class="rc-chart">'+mark+bars+'</div><div class="rc-labs">'+labs+'</div></div>';
+  }
+
+  // ---- shared: stylistically-similar players (same position, nearest avg) vs same opp ----
+  function similarPlayers(p,statKey,opp,n){
+    n=n||4;
+    const myAvg=p[statKey]||0;
+    const pool=(state.idx.players||[]).filter(q=>q.name!==p.name&&q.position===p.position&&(q.matches||0)>=3);
+    const near=pool.map(q=>({q,d:Math.abs((q[statKey]||0)-myAvg)})).sort((a,b)=>a.d-b.d).slice(0,14);
+    const rows=near.map(({q})=>{
+      const vs=opp?(state.idx.logsByName[q.name]||[]).filter(r=>r.opponent===opp):[];
+      const vsAvg=vs.length?vs.reduce((s,r)=>s+(r[statKey]||0),0)/vs.length:null;
+      return {q,seasonAvg:q[statKey]||0,vsAvg,vsN:vs.length};
+    }).sort((a,b)=>(b.vsN>0)-(a.vsN>0)).slice(0,n);
+    if(!rows.length) return '';
+    const body=rows.map(r=>'<div class="sp-row" onclick="openPlayer(\''+esc(r.q.name).replace(/\x27/g,"\\\x27")+'\')">'+
+      teamLogo(r.q.team,18)+'<span class="sp-nm">'+esc(r.q.name)+'</span>'+
+      '<span class="sp-av">'+fmt(r.seasonAvg,1)+'</span>'+
+      (r.vsN?'<span class="sp-vs">vs '+abbr(opp)+' '+fmt(r.vsAvg,1)+' ('+r.vsN+')</span>':'<span class="sp-vs none">no H2H</span>')+'</div>').join('');
+    return '<div style="margin-top:12px"><div style="font-size:11px;color:var(--text-3);text-transform:uppercase;letter-spacing:.5px;font-weight:700;margin-bottom:6px">Similar '+posShort(p.position)+'s'+(opp?' vs '+abbr(opp):'')+'</div>'+body+'</div>';
+  }
+
+  // ---- CMB recent searches (localStorage) ----
+  function cmpSaveSearch(q){ try{ let a=JSON.parse(localStorage.getItem('jtt_afl_cmp_recent')||'[]'); a=a.filter(x=>x!==q); a.unshift(q); localStorage.setItem('jtt_afl_cmp_recent',JSON.stringify(a.slice(0,6))); }catch(e){} }
+  function cmpRecentChips(){ try{ const a=JSON.parse(localStorage.getItem('jtt_afl_cmp_recent')||'[]'); if(!a.length)return '';
+    return '<div class="cmp-recent"><span class="cmp-recent-lab">Recent</span>'+a.map(q=>'<button class="cmp-chip" onclick="cmpUseRecent(this.dataset.q)" data-q="'+esc(q)+'">'+esc(q)+'</button>').join('')+'</div>'; }catch(e){return '';} }
+  window.cmpUseRecent=function(q){ const inp=document.getElementById('cmp-input'); if(inp){inp.value=q; window.cmbRun&&window.cmbRun();} };
+
   function cmpAnalysis(p,stat,line){
     const label=CMP_STAT_LABELS[stat]||stat, opp=nextOpp(p.team);
     const cs=(state.data.meta&&state.data.meta.currentSeason)||'2026';
@@ -1260,6 +1365,8 @@
       '<span class="fxr-venue">last '+fmt(h2h.last,1)+(h2h.when?' ('+esc(h2h.when)+')':'')+' · avg '+fmt(h2h.avg,1)+' · '+h2h.hits+'/'+h2h.n+' hit '+line+'+</span></div>';}
     if(sigs.length){h+='<div style="margin-top:12px"><div style="'+META+'">Signals</div><div style="display:flex;flex-wrap:wrap;gap:6px">'+
       sigs.map(s=>{const pos=s.pct>=0,c=pos?'#22c55e':'#ef4444';return '<span style="font-size:11px;padding:3px 9px;border-radius:5px;background:'+c+'1a;color:'+c+';font-weight:700">'+esc(s.label)+' '+(pos?'+':'')+Math.round(s.pct)+'%</span>';}).join('')+'</div></div>';}
+    h+=recentBars(p.name,stat,line,8);
+    if(opp) h+=similarPlayers(p,stat,opp,4);
     h+='<div style="text-align:center;margin-top:14px"><button class="seg on" onclick="cmpReset()"><i class="ti ti-search"></i> New search</button></div>';
     return h;
   }
@@ -1279,6 +1386,7 @@
       '<button class="auth-btn" onclick="cmbRun()"><i class="ti ti-checks"></i> Check</button></div>'+
       '<div id="cmp-sug" class="cmp-sug"></div>'+
       '<div id="cmb-result"></div>'+
+      cmpRecentChips()+
       '<div class="tp-body-meta" style="border:0;margin-top:10px">Type a player, line and market — e.g. <strong>Bont 30+ disposals</strong>, <strong>Curnow 2.5 goals</strong>, <strong>English 35 hitouts</strong>.</div>';
     document.getElementById('cmb-overlay').classList.add('open');
     setTimeout(()=>{const i=document.getElementById('cmp-input');if(i)i.focus();},150);
@@ -1291,8 +1399,8 @@
     if(!(state.idx.players||[]).length){out.innerHTML='<div class="empty">No player data loaded.</div>';return;}
     const {playerRaw,stat,line}=cmpParse(q), p=cmpFindPlayer(playerRaw);
     if(!p){out.innerHTML='<div class="empty"><div class="ico"><i class="ti ti-user-question"></i></div>Player not found: "'+esc(playerRaw)+'"<div style="font-size:11px;margin-top:4px">Try a surname or full name.</div></div>';return;}
-    if(!stat||line==null){out.innerHTML=cmpPlayerCard(p);return;}
-    out.innerHTML=cmpAnalysis(p,stat,line);
+    if(!stat||line==null){out.innerHTML=cmpPlayerCard(p);cmpSaveSearch(q);return;}
+    out.innerHTML=cmpAnalysis(p,stat,line);cmpSaveSearch(q);
   };
   window.cmpReset=function(){const i=document.getElementById('cmp-input');if(i){i.value='';i.focus();}const o=document.getElementById('cmb-result');if(o)o.innerHTML='';const s=document.getElementById('cmp-sug');if(s)s.style.display='none';};
   window.cmpSuggest=function(){
