@@ -955,7 +955,7 @@
   const ELITE_DEFS = [{k:'disposals',l:'Disposals'},{k:'marks',l:'Marks'},{k:'tackles',l:'Tackles'},
     {k:'kicks',l:'Kicks'},{k:'handballs',l:'Handballs'},{k:'clearances',l:'Clearances'}];
   const BUNNY_STATS = [{k:'disposals',l:'Disposals',min:15},{k:'dreamteam',l:'Fantasy',min:60}];
-  const BOGEY_STATS = [{k:'disposals',l:'Disposals',minAvg:10},{k:'goals',l:'Goals',minAvg:0.5}];
+  const BOGEY_STATS = [{k:'disposals',l:'Disposals',min:15},{k:'dreamteam',l:'Fantasy',min:60}];
   const STREAK_STATS = [['disposals','Disposals'],['kicks','Kicks'],['handballs','Handballs'],['marks','Marks'],
     ['tackles','Tackles'],['clearances','Clearances'],['goals','Goals'],['dreamteam','Fantasy']];
   const TAGGER_NAMES = { hard:['Oisín Mullin','Toby Bedford','James Jordon','Koltyn Tholstrup',"Finn O'Sullivan"],
@@ -1126,20 +1126,29 @@
     return out.sort((a,b)=>(b.lineBunny-a.lineBunny)||((b.diffPct||0)-(a.diffPct||0)));
   }
   function bogey(){
-    const teams=_fixtureSet(); const out=[];
-    (state.idx.players||[]).filter(p=>teams.has(p.team)&&(p.matches||0)>=3).forEach(p=>{
+    const out=[];
+    (state.idx.players||[]).filter(p=>(p.matches||0)>=3).forEach(p=>{
       const opp=nextOpp(p.team); if(!opp) return;
+      const byOpp={}; allLogs(p.name).forEach(r=>{ if(r.opponent)(byOpp[r.opponent]=byOpp[r.opponent]||[]).push(r); });
+      const vt=byOpp[opp]; if(!vt||vt.length<2) return;
       BOGEY_STATS.forEach(s=>{
-        const seasonAvg=_avg(allLogs(p.name).map(r=>r[s.k]||0))||(p[s.k]||0);
-        if(seasonAvg<s.minAvg) return;
-        const h2h=allLogs(p.name).filter(r=>r.opponent===opp); if(h2h.length<3) return;
-        const vals=h2h.map(r=>r[s.k]||0), best=Math.max(...vals), h2hAvg=_avg(vals);
-        if(s.k==='goals'){ const a=seasonAvg>1&&best===0, b=seasonAvg>2&&best<2; if(!a&&!b) return; }
-        else { if(vals.some(v=>v>=seasonAvg)) return; }
-        out.push({p,opp,stat:s,seasonAvg,h2hAvg,best,gap:seasonAvg-h2hAvg,games:vals.length});
+        if((p[s.k]||0)<s.min) return;
+        const thisAvg=_avg(vt.map(r=>r[s.k]||0));
+        // (1) AVG flavour: averages LESS vs the current opp than vs any other team
+        let worst=null,worstOpp=null;
+        Object.entries(byOpp).forEach(([o,rs])=>{ if(o===opp||rs.length<2)return; const a=_avg(rs.map(r=>r[s.k]||0)); if(worst==null||a<worst){worst=a;worstOpp=o;} });
+        const avgBogey = (worst==null) || (thisAvg<worst);
+        const diffPct  = (worst!=null&&worst>0)?((worst-thisAvg)/worst)*100:null;
+        // (2) LINE flavour: NEVER cleared the posted line in any H2H meeting
+        const mkt = s.k==='disposals'?'disposals':null;
+        const posted = mkt?oddsFor(p.name,mkt):null;
+        const line = (posted&&posted.line!=null)?posted.line:null;
+        const lineBogey = line!=null && vt.every(r=>(r[s.k]||0)<line);
+        if(!avgBogey && !lineBogey) return;
+        out.push({p,opp,stat:s,thisAvg,worst,worstOpp,diffPct,games:vt.length,avgBogey,lineBogey,line});
       });
     });
-    return out.sort((a,b)=>b.gap-a.gap);
+    return out.sort((a,b)=>(b.lineBogey-a.lineBogey)||((b.diffPct||0)-(a.diffPct||0)));
   }
   function streakers(){
     const teams=_fixtureSet(); const out=[];
@@ -1302,8 +1311,12 @@
       return degWrap('ti-rabbit','Bunnies',rows,'c-blue');
     }
     if(k==='bogey'){
-      const rows=_fc(bogey(),6).map(b=>degRow(b.p.name,'#ef4444','-'+M(b.gap)+' v season',
-        b.stat.l+' · vs '+abbr(b.opp)+' avg '+M(b.h2hAvg)+' (season '+M(b.seasonAvg)+') · best '+M(b.best)+' in '+b.games,b.p.name));
+      const rows=_fc(bogey(),6).map(b=>{
+        const head=b.lineBogey?('0/'+b.games+' cleared '+b.line)
+          :(b.diffPct!=null?'-'+b.diffPct.toFixed(0)+'% v field':'worst matchup');
+        const sub=b.stat.l+' · vs '+abv(b.opp)+' '+M(b.thisAvg)+(b.worst!=null?' (next worst '+M(b.worst)+')':'')+' · '+b.games+' H2H'+lineTag(b.p.name,b.stat.k);
+        return degRow(b.p.name,'#ef4444',head,sub);
+      });
       return degWrap('ti-mood-sad','Bogey',rows,'c-red');
     }
     if(k==='streak'){
