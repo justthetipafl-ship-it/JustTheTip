@@ -30,6 +30,11 @@ CSV_FILE = os.environ.get("CSV_FILE", "").strip()
 # optional separate player export (wheelo player page) carrying Position/Age
 PLAYER_DIR = os.environ.get("PLAYER_DIR", "AFL/csv_players")
 PLAYER_CSV = os.environ.get("PLAYER_CSV", "").strip()
+# optional wheelo team CSVs: Team averages -> teamform, Opposition averages -> teamdef
+TEAMFORM_DIR = os.environ.get("TEAMFORM_DIR", "AFL/csv_team_for")
+TEAMFORM_CSV = os.environ.get("TEAMFORM_CSV", "").strip()
+TEAMDEF_DIR  = os.environ.get("TEAMDEF_DIR", "AFL/csv_team_against")
+TEAMDEF_CSV  = os.environ.get("TEAMDEF_CSV", "").strip()
 
 # Canonical Champion Data column names the bundle/build expect (PascalCase).
 # Any CSV header that normalises to one of these is renamed to it; unknown
@@ -131,23 +136,52 @@ def read_csv(path, need_match=True):
                 v = (val or "").strip()
                 if v != "":
                     row[col] = v
-            ok = row.get("Player") and ((not need_match) or row.get("Year") or row.get("RoundName"))
+            ok = (row.get("Player") or row.get("Team")) and \
+                 ((not need_match) or row.get("Year") or row.get("RoundName"))
             if ok:
                 rows.append(row)
     return rows, matched, preserved
 
 
 def player_csv_files():
+    return _collect(PLAYER_CSV, PLAYER_DIR)
+
+
+def _collect(single, folder):
     files = []
-    if PLAYER_CSV and os.path.exists(PLAYER_CSV):
-        files.append(PLAYER_CSV)
-    if os.path.isdir(PLAYER_DIR):
-        files += sorted(glob.glob(os.path.join(PLAYER_DIR, "*.csv")))
+    if single and os.path.exists(single):
+        files.append(single)
+    if os.path.isdir(folder):
+        files += sorted(glob.glob(os.path.join(folder, "*.csv")))
     seen, out = set(), []
     for f in files:
         if f not in seen:
             seen.add(f); out.append(f)
     return out
+
+
+def ingest_team_table(bundle, key, files):
+    """Upsert wheelo team CSV rows (keyed by Team) into bundle[key]. Headers are
+    preserved verbatim; the build maps them to internal stats via WHEELO_MAP."""
+    if not files:
+        return 0
+    existing = bundle.get(key, []) or []
+    idx = {t.get("Team"): t for t in existing if t.get("Team")}
+    n = 0
+    for path in files:
+        rows, mt, prv = read_csv(path, need_match=False)
+        for r in rows:
+            tm = r.get("Team")
+            if not tm:
+                continue
+            if tm in idx:
+                idx[tm].update(r)
+            else:
+                idx[tm] = r; existing.append(r)
+            n += 1
+        print(f"[ingest] {key} CSV {os.path.basename(path)}: {len(rows)} rows")
+    bundle[key] = existing
+    return n
 
 
 def upsert_players(bundle, logs, player_rows):
@@ -231,6 +265,10 @@ def main():
     p_add, p_upd = upsert_players(bundle, merged, prows)
     pos_known = sum(1 for p in (bundle.get("player") or []) if p.get("Position"))
 
+    # ---- optional wheelo team CSVs: for (Team avgs) + against (Opp avgs) ----
+    tf_n = ingest_team_table(bundle, "teamform", _collect(TEAMFORM_CSV, TEAMFORM_DIR))
+    td_n = ingest_team_table(bundle, "teamdef",  _collect(TEAMDEF_CSV, TEAMDEF_DIR))
+
     # stamp ingest metadata without disturbing existing meta
     meta = bundle.get("meta", {}) or {}
     meta["gamelogIngest"] = {
@@ -251,6 +289,8 @@ def main():
         print(f"[ingest] preserved (unmapped)   : {sorted(all_preserved)}")
     print(f"[ingest] game logs {before} -> {len(merged)}  (+{new_ct} new, {upd_ct} updated)")
     print(f"[ingest] player blob: +{p_add} new, {p_upd} updated · {pos_known} with a position")
+    if tf_n or td_n:
+        print(f"[ingest] team tables: teamform {tf_n} rows, teamdef {td_n} rows")
     if pos_known == 0:
         print("[ingest] NOTE: no Position found in game logs or player CSVs — DVP and "
               "position features need positions. Add a Position column, or drop a "
