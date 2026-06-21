@@ -33,8 +33,10 @@ BASE    = "https://api.the-odds-api.com/v4"
 MARKETS = {
     "player_disposals":          "disposals",
     "player_goal_scorer_anytime":"goals",
+    "player_goals_scored_over":  "goalsx",   # milestone X+ lines (2+, 3+ …) for short-priced scorers
 }
 ANYTIME_MARKETS = {"player_goal_scorer_anytime"}   # yes/no -> over @ line 0.5
+MILESTONE_MARKETS = {"player_goals_scored_over"}    # over-only, multiple points/player -> pick the 2+ line
 
 # Match-level (featured) markets — one call covers every event.
 #   h2h = head-to-head win odds, spreads = line/handicap, totals = total points
@@ -200,6 +202,24 @@ def main():
                     seen_markets.add(raw)
                     internal = MARKETS.get(raw)
                     if not internal:
+                        continue
+                    if raw in MILESTONE_MARKETS:
+                        # over-only milestone market: each player can have several points.
+                        # Pick the smallest point >= 1.5 (the "2+" line), else the smallest.
+                        permp = {}
+                        for o in m.get("outcomes", []):
+                            player = (o.get("description") or "").strip()
+                            pt, pr = _num(o.get("point")), _num(o.get("price"))
+                            if not player or pt is None or pr is None:
+                                continue
+                            permp.setdefault(player, []).append((pt, pr))
+                        for player, lst in permp.items():
+                            ge = [x for x in lst if x[0] >= 1.5]
+                            pt, pr = min(ge, key=lambda x: x[0]) if ge else min(lst, key=lambda x: x[0])
+                            key = (player, internal)
+                            prev = best.get(key)
+                            if prev is None or rank < prev["_rank"]:
+                                best[key] = {"line": pt, "over": pr, "under": None, "book": bkey, "_rank": rank}
                         continue
                     is_anytime = raw in ANYTIME_MARKETS
                     grp = {}  # player -> {line, over, under}
