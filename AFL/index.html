@@ -1226,11 +1226,60 @@
     });
     return out;
   }
+  // ---- Multi Builder: suggested best legs per game (mirrors old-tool SGM engine), priced with bookmaker odds ----
+  const LEG_DVP={disposals:'disposals',goals:'goals',marks:'marks',tackles:'tackles',clearances:'clearances',kicks:'kicks',handballs:'handballs'};
+  const LEG_COL={DISPOSALS:'#3b82f6',KICKS:'#60a5fa',HANDBALLS:'#93c5fd',GOALS:'#f59e0b',MARKS:'#06b6d4',TACKLES:'#f97316',CLEARANCES:'#1d9e75',FANTASY:'#8b5cf6'};
+  function estimateHitProb(avg,line){ if(avg<=0) return 0; const sd=Math.max(1,avg*0.32); const z=(avg-line)/sd; return Math.min(0.97,Math.max(0.03,0.5+0.5*Math.tanh(z*0.9))); }
+  function legCandidates(p,opp){
+    const c=[]; const pos=JTTScoring.POS_TO_DVP[p.position]||p.position;
+    const add=(statKey,line,avg,type,label)=>{
+      if(line<1||avg<=line) return;
+      const hr=JTTScoring.getHitRate(p.name,statKey,line);
+      const prob=hr?hr.rate:estimateHitProb(avg,line);
+      const sigs=opp?JTTScoring.getContextSignals(p,statKey,opp):[];
+      const score=sigs.reduce((s,sig)=>s+sig.pct*sig.weight,0);
+      c.push({id:p.name+'-'+statKey,p,statKey,line,avg,prob,probReal:!!hr,probN:hr?hr.n:0,score,opp,type,betLabel:label});
+    };
+    const d=p.disposals||0; if(d>=12) add('disposals',Math.max(10,Math.round(d)-1),d,'DISPOSALS',null);
+    const g=p.goals||0; if(g>=0.6){ const fl=Math.max(1,Math.floor(g)); add('goals',(g-fl>=0.3&&fl>=1)?fl:Math.round(g),g,'GOALS',null); }
+    const dt=p.dreamteam||0; if(dt>=75) add('dreamteam',fantasyLine(dt),dt,'FANTASY',null);
+    const mk=p.marks||0; if(mk>=5){ const e=Math.floor(mk/2)*2; add('marks',(mk-e<0.5&&e>=4)?e-2:Math.max(2,e),mk,'MARKS',null); }
+    const tk=p.tackles||0; if(tk>=4.5){ const e=Math.floor(tk/2)*2; add('tackles',(tk-e<0.5&&e>=4)?e-2:Math.max(2,e),tk,'TACKLES',null); }
+    const cl=p.clearances||0; if(cl>=4.5&&['Midfielder','Mid-Forward','Ruck'].includes(pos)){ const e=Math.floor(cl/2)*2; add('clearances',(cl-e<0.5&&e>=4)?e-2:Math.max(2,e),cl,'CLEARANCES',null); }
+    const kc=p.kicks||0; if(kc>=10) add('kicks',Math.max(8,Math.round(kc)-2),kc,'KICKS',null);
+    const hb=p.handballs||0; if(hb>=10) add('handballs',Math.max(8,Math.round(hb)-2),hb,'HANDBALLS',null);
+    const NM={disposals:'Disposals',goals:'Goals',dreamteam:'Fantasy',marks:'Marks',tackles:'Tackles',clearances:'Clearances',kicks:'Kicks',handballs:'Handballs'};
+    c.forEach(x=>x.betLabel=x.line+'+ '+NM[x.statKey]);
+    return c;
+  }
+  function buildLegs(players,opp){
+    const cands=[]; players.forEach(p=>legCandidates(p,opp).forEach(c=>cands.push(c)));
+    cands.sort((a,b)=>b.score-a.score);
+    const MIN_SCORE=3,MIN_PROB=0.55,MIN_GAP=0.3,MAX=6, pc={}, sel=[];
+    for(const c of cands){
+      if(sel.length>=MAX) break;
+      if(c.score<MIN_SCORE) break;          // sorted desc
+      if(c.prob<MIN_PROB) continue;
+      if((c.avg-c.line)<MIN_GAP) continue;
+      const dvpSk=LEG_DVP[c.statKey];
+      if(dvpSk&&c.opp){ const dp=JTTScoring.getDVPPct(c.opp,JTTScoring.POS_TO_DVP[c.p.position]||c.p.position,dvpSk); if(dp!==null&&dp<-10) continue; }
+      if(pc[c.p.name]) continue; pc[c.p.name]=1; sel.push(c);
+    }
+    return sel;
+  }
   function multiBuilder(){
-    const teams=[...( _fixtureSet())];
-    const legs=collectOU(teams,'over').slice(0,4);
-    const odds=legs.reduce((a,r)=>a*(r.odds||1),1);
-    return {legs,odds};
+    const games=[];
+    (state.data.fixture||[]).forEach(g=>{
+      if(!g.home||!g.away) return;
+      const ph=(state.idx.players||[]).filter(p=>p.team===g.home&&(p.matches||0)>=3);
+      const pa=(state.idx.players||[]).filter(p=>p.team===g.away&&(p.matches||0)>=3);
+      let legs=[...buildLegs(ph,g.away),...buildLegs(pa,g.home)].sort((a,b)=>b.score-a.score).slice(0,6);
+      if(!legs.length) return;
+      let comb=1, priced=0;
+      legs.forEach(l=>{ const o=priceForLine(l.p.name,l.statKey,l.line); l._odds=o; const px=o?o.price:(l.prob>0?1/l.prob:null); if(px) comb*=px; if(o) priced++; });
+      games.push({home:g.home,away:g.away,legs,comb,priced});
+    });
+    return games;
   }
 
   // ---- render helpers ----
@@ -1241,22 +1290,24 @@
   }
   function muTag(pct){ const mi=JTTScoring.muInfo(pct); return mi?'<span style="color:'+mi.c+'">'+(pct>0?'+':'')+pct.toFixed(0)+'% '+mi.t+'</span>':''; }
   function lineTag(name,market){ const o=postedLine(name,market); return o?' · O '+o.line+(o.over!=null?' $'+o.over.toFixed(2):''):''; }
-  // price for the exact streak line (e.g. 25+ disposals from the alt ladder; anytime/2+ for goals)
-  function streakOdds(s){
-    const name=s.p.name, k=s.statKey, line=s.line;
-    if(k==='goals'){
-      if(line>=2){ const g=oddsFor(name,'goalsx'); if(g&&g.over!=null&&Math.round((g.line||1.5)+0.5)>=line) return ' · '+line+'+ $'+g.over.toFixed(2); }
-      const a=oddsFor(name,'goals'); if(a&&a.over!=null) return ' · 1+ $'+a.over.toFixed(2);
-      return '';
+  // bookmaker price for an exact "X+" line: alt ladder, goals anytime/2+, or posted O/U fallback. -> {price,label} | null
+  function priceForLine(name, statKey, line){
+    if(statKey==='goals'||statKey==='goalsx'){
+      if(line>=2){ const g=oddsFor(name,'goalsx'); if(g&&g.over!=null&&Math.round((g.line||1.5)+0.5)>=line) return {price:g.over,label:line+'+'}; }
+      const a=oddsFor(name,'goals'); if(a&&a.over!=null) return {price:a.over,label:'1+'};
+      return null;
     }
-    const alts=altLines(name,k);
+    if(statKey==='dreamteam'||statKey==='dt') return null;   // no fantasy market today
+    const alts=altLines(name,statKey);
     let hit=alts.find(a=>Math.round(a.line+0.5)===line);
     if(!hit){ const ge=alts.filter(a=>Math.round(a.line+0.5)>=line).sort((x,y)=>x.line-y.line); hit=ge[0]; }
-    if(hit&&hit.over!=null) return ' · '+Math.round(hit.line+0.5)+'+ $'+hit.over.toFixed(2);
-    const od=oddsFor(name,k);
-    if(od&&od.over!=null&&od.line!=null) return ' · '+od.line+' O $'+od.over.toFixed(2);
-    return '';
+    if(hit&&hit.over!=null) return {price:hit.over,label:Math.round(hit.line+0.5)+'+'};
+    const od=oddsFor(name,statKey);
+    if(od&&od.over!=null&&od.line!=null) return {price:od.over,label:od.line+' O'};
+    return null;
   }
+  // price for the exact streak line (e.g. 25+ disposals from the alt ladder; anytime/2+ for goals)
+  function streakOdds(s){ const r=priceForLine(s.p.name,s.statKey,s.line); return r?' · '+r.label+' $'+r.price.toFixed(2):''; }
   function degWrap(icon,title,items,colorClass){
     if(!items) return _degenFocused?'':emptyState(icon,title+' — no data','Needs game logs + this round\u2019s fixture.');
     if(!items.length) return _degenFocused?'':emptyState(icon,'No '+title.toLowerCase()+' this round','Nothing cleared the gate on the current slate.');
@@ -1345,12 +1396,20 @@
       return degWrap('ti-user-search','Lurking Taggers',rows);
     }
     if(k==='multi'){
-      const m=multiBuilder();
-      if(!m.legs.length) return emptyState('ti-stack-2','No multi legs yet','Multi Builder stacks the round\u2019s Green Lights — needs posted disposal lines loaded.');
-      const legs=m.legs.map(r=>degRow(r.p.name,r.verdictCol,'O '+r.line+(r.odds?' $'+r.odds.toFixed(2):''),
-        abbr(r.team)+' v '+abbr(r.oppName)+' · '+r.verdictLabel+' ('+r.score.toFixed(1)+')'));
-      const head='<div class="tp-body-meta">'+m.legs.length+'-leg multi from this round\u2019s Green Lights · combined <b>$'+m.odds.toFixed(2)+'</b></div>';
-      return '<details class="tp-collapse c-green" open><summary class="tp-collapse-sum"><i class="ti ti-stack-2"></i><span class="tp-collapse-title">Multi Builder</span><span class="tp-count">'+m.legs.length+'</span><i class="ti ti-chevron-down tp-collapse-chev"></i></summary><div class="tp-collapse-body">'+head+legs.join('')+'</div></details>';
+      const games=multiBuilder();
+      if(!games.length) return emptyState('ti-stack-2','No multi legs yet','Multi Builder suggests the best props per game — needs player data loaded.');
+      const blocks=games.map(gm=>{
+        const legs=gm.legs.map(l=>{
+          const col=LEG_COL[l.type]||'#3b82f6';
+          const price=l._odds?'$'+l._odds.price.toFixed(2):'~$'+(l.prob>0?(1/l.prob).toFixed(2):'—');
+          const probStr=(l.probReal?Math.round(l.prob*100)+'% hit':'~'+Math.round(l.prob*100)+'%')+(l.probReal&&l.probN?' ('+l.probN+'g)':'');
+          return degRow(l.p.name,col,price,l.betLabel+' · vs '+abbr(l.opp)+' · avg '+l.avg.toFixed(1)+' · '+probStr+(l._odds?'':' · est'));
+        }).join('');
+        const combLabel='$'+gm.comb.toFixed(2)+(gm.priced<gm.legs.length?' ('+gm.priced+'/'+gm.legs.length+' priced)':'');
+        return '<div class="tp-body-meta" style="margin-top:8px"><b>'+abbr(gm.home)+' v '+abbr(gm.away)+'</b> · '+gm.legs.length+'-leg same-game multi · combined <b>'+combLabel+'</b></div>'+legs;
+      }).join('');
+      const totalLegs=games.reduce((a,g)=>a+g.legs.length,0);
+      return '<details class="tp-collapse c-green" open><summary class="tp-collapse-sum"><i class="ti ti-stack-2"></i><span class="tp-collapse-title">Multi Builder</span><span class="tp-count">'+games.length+'</span><i class="ti ti-chevron-down tp-collapse-chev"></i></summary><div class="tp-collapse-body"><div class="tp-body-meta">Suggested same-game multis · '+games.length+' games · '+totalLegs+' legs</div>'+blocks+'</div></details>';
     }
     return emptyState('ti-flame','Coming next','This tile ports next.');
   }
