@@ -103,6 +103,20 @@
   .team-panel-hdr .nm{font-family:var(--font-display);font-weight:800;font-size:15px;letter-spacing:.3px;line-height:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
   .team-panel-hdr .vs{font-family:var(--font-mono);font-size:9px;color:var(--text-3);letter-spacing:.5px;margin-left:auto;white-space:nowrap;}
   .tp-sec{display:flex;align-items:baseline;gap:8px;margin:14px 0 8px;}
+  .dvps-sel{background:var(--surface-2);border:1px solid var(--border);color:var(--text);padding:2px 7px;border-radius:4px;font-family:var(--font-mono);font-size:10px;font-weight:700;outline:none;cursor:pointer;}
+  .dvps-grid{display:flex;flex-wrap:wrap;gap:5px;margin-bottom:6px;}
+  .dvps-cell{flex:1;min-width:120px;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:6px 8px;}
+  .dvps-nm{font-size:10px;font-weight:800;color:var(--text);line-height:1.2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .dvps-sub{font-size:8.5px;font-weight:700;color:var(--text-3);margin-top:1px;}
+  .dvps-row{display:flex;align-items:baseline;gap:4px;margin-top:3px;}
+  .dvps-v{font-size:14px;font-weight:900;}.dvps-l{font-size:8px;font-weight:700;color:var(--text-3);}.dvps-p{font-size:10px;font-weight:800;margin-left:auto;}
+  .fxsp-ctrls{display:flex;gap:6px;margin-bottom:8px;}
+  .fxsp-ctrls .dvps-sel{flex:1;min-width:0;padding:5px 8px;font-size:11px;}
+  .fxsp-card:empty{display:none;}
+  .fxsp-card{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:10px;}
+  .fxsp-head{font-size:13px;cursor:pointer;}.fxsp-head b{color:var(--accent);}
+  .fxsp-stats{display:flex;flex-wrap:wrap;gap:10px;font-size:11px;color:var(--text-2);margin:6px 0 10px;}
+  .fxsp-lh{font-size:10px;font-weight:800;color:var(--text-3);letter-spacing:.04em;text-transform:uppercase;margin-bottom:6px;display:flex;align-items:center;gap:5px;}
   .tp-sec .sec-title{font-family:var(--font-display);font-weight:800;font-size:12px;letter-spacing:1px;text-transform:uppercase;color:var(--text-1);display:flex;align-items:center;gap:6px;}
   .tp-sec .sec-meta{font-family:var(--font-mono);font-size:10px;color:var(--text-3);margin-left:auto;}
   .tp-lead{display:flex;justify-content:space-between;gap:8px;padding:5px 0;border-bottom:1px solid var(--border);font-size:12px;cursor:pointer;}
@@ -632,6 +646,105 @@
     return '<div class="game-sec"><div class="gs-title"><i class="ti ti-history"></i> Last Time They Met</div>'+head+perf+'</div>';
   }
 
+  // ===== Defence vs Play Style + Player Spotlight (focused fixture) =====
+  const DVP_PLAY_STYLE_POS={'Accumulator Mid':'Midfielder','Contested Mid':'Midfielder','Running Mid':'Midfielder','Handball Mid':'Midfielder','Scoring MF':'Mid-Forward','Bear in the Square':'Key Forward','Key Target':'Key Forward','Pressure Fwd':'Gen. Forward','Small Forwards':'Gen. Forward','Clearance Beast':'Midfielder','Intercept Def':'Key Defender','Uncontested Marker':'Gen. Defender','Defensive Ball User':'Gen. Defender','Ruck Mid':'Ruck','Dominant Ruck':'Ruck','Winger':'Midfielder','Shankers':'All Positions','Cuddle Monsters':'All Positions','Fantasy Stars':'All Positions','Entry Man':'All Positions'};
+  function allPlayStyles(p,pg){
+    const cp=p.contested||0,clr=p.clearances||0,disp=p.disposals||0,kicks=p.kicks||0,hb=p.handballs||0,
+      mtrs=p.metresGained||0,tack=p.tackles||0,press=p.pressureActs||0,ho=p.hitouts||0,goals=p.goals||0,
+      i50=p.inside50s||0,scoreInv=p.scoreInvolvements||0,intMk=p.interceptMarks||0,contMk=p.contestedMarks||0,
+      cbaPct=p.cba||0,behinds=p.behinds||0,marks=p.marks||0; const s=[];
+    if(pg==='Midfielder'){
+      if(disp>=27) s.push('Accumulator Mid');
+      if(clr>=6&&cbaPct>=50) s.push('Clearance Beast');
+      if(cp>=10) s.push('Contested Mid');
+      if(kicks>=14&&mtrs>=200&&cp<10) s.push('Running Mid');
+      if(hb>kicks&&hb>=10) s.push('Handball Mid');
+      if(cbaPct===0) s.push('Winger');
+    }
+    if(pg==='Mid-Forward'){ if((p.shotsAtGoal||0)>=1.5) s.push('Scoring MF'); }
+    if(pg==='Key Forward'){ if(disp<10&&goals>=1.5) s.push('Bear in the Square'); }
+    if(pg==='Gen. Forward'){ if(press>=10) s.push('Pressure Fwd'); if((p.goalAssists||0)>=0.5&&scoreInv>=5) s.push('Small Forwards'); }
+    if(pg==='Key Defender'||pg==='Gen. Defender'){
+      if(intMk>=2||contMk>=1.1) s.push('Intercept Def');
+      if(marks>=6&&contMk<1) s.push('Uncontested Marker');
+      if(pg==='Gen. Defender'&&disp>=22) s.push('Defensive Ball User');
+    }
+    if(pg==='Ruck'){ if(disp>=15) s.push('Ruck Mid'); if(ho>=30) s.push('Dominant Ruck'); }
+    if(goals>0&&behinds>goals) s.push('Shankers');
+    if(tack>=5.5) s.push('Cuddle Monsters');
+    if((p.dreamteam||0)>=100) s.push('Fantasy Stars');
+    if(i50>=5.5) s.push('Entry Man');
+    return s.length?s:[pg];
+  }
+  const DVPS_OPTS=[['disposals','Disposals'],['kicks','Kicks'],['handballs','Handballs'],['marks','Marks'],['tackles','Tackles'],['clearances','Clearances'],['goals','Goals'],['dreamteam','Fantasy']];
+  function fxDvPS(team,opp){
+    const statKey=window._fxDvpStat||'disposals';
+    const statLbl=(DVPS_OPTS.find(o=>o[0]===statKey)||[,statKey])[1];
+    const ours=playersOnTeam(team).filter(p=>(p.matches||0)>=2);
+    const styleMap={};
+    ours.forEach(p=>{ const pg=JTTScoring.POS_TO_DVP[p.position]||p.position; allPlayStyles(p,pg).forEach(st=>{ (styleMap[st]=styleMap[st]||[]).push(p.name); }); });
+    const names=Object.keys(styleMap); if(!names.length) return '';
+    const cross=new Set(['Shankers','Cuddle Monsters','Fantasy Stars','Entry Man']);
+    const allP=state.idx.players||[];
+    let rows=names.map(sn=>{
+      const set=new Set(allP.filter(pp=>{ const pg=JTTScoring.POS_TO_DVP[pp.position]||pp.position; if(!cross.has(sn)){ const ep=DVP_PLAY_STYLE_POS[sn]; if(ep&&ep!=='All Positions'&&ep!==pg) return false; } return allPlayStyles(pp,pg).includes(sn); }).map(pp=>pp.name));
+      if(!set.size) return null;
+      let oS=0,oN=0,lS=0,lN=0;
+      set.forEach(nm=>{ (state.idx.logsByName[nm]||[]).forEach(r=>{ const ro=r.opponent; if(!ro) return; const v=+(r[statKey]||0); lS+=v; lN++; if(ro===opp){ oS+=v; oN++; } }); });
+      if(oN<2||lN<3) return null;
+      const oppAvg=oS/oN, leagueAvg=lS/lN, pct=leagueAvg>0?((oppAvg-leagueAvg)/leagueAvg)*100:0;
+      return {sn,oppAvg,pct,games:oN,ourCount:styleMap[sn].length,ourPlayers:styleMap[sn]};
+    }).filter(Boolean).sort((a,b)=>b.pct-a.pct);
+    if(!rows.length) return '';
+    const dec=statKey==='goals'?1:statKey==='dreamteam'?0:1;
+    const sel='<select onchange="setFxDvpStat(this.value)" class="dvps-sel">'+DVPS_OPTS.map(o=>'<option value="'+o[0]+'"'+(o[0]===statKey?' selected':'')+'>'+o[1]+'</option>').join('')+'</select>';
+    const cells=rows.map(r=>{
+      const col=r.pct>=8?'#22c55e':r.pct>=3?'#86efac':r.pct<=-8?'#ef4444':r.pct<=-3?'#f97316':'var(--text-2)';
+      return '<div class="dvps-cell" title="'+esc(r.ourPlayers.join(', '))+'"><div class="dvps-nm">'+r.sn+'</div>'+
+        '<div class="dvps-sub">'+r.ourCount+' on '+abbr(team)+' · '+r.games+'g v '+abbr(opp)+'</div>'+
+        '<div class="dvps-row"><span class="dvps-v" style="color:'+col+'">'+r.oppAvg.toFixed(dec)+'</span><span class="dvps-l">'+statLbl+'</span><span class="dvps-p" style="color:'+col+'">'+(r.pct>=0?'+':'')+r.pct.toFixed(0)+'%</span></div></div>';
+    }).join('');
+    return '<div class="tp-sec"><div class="sec-title"><i class="ti ti-masks-theater"></i> Defence vs Play Style — '+abbr(opp)+' allows '+sel+'</div></div><div class="dvps-grid">'+cells+'</div>';
+  }
+  function fxSpotCard(name,statKey,opp){
+    const p=state.idx.byName[name]; if(!p) return '<div class="fxsp-empty">No data.</div>';
+    const logs=state.idx.logsByName[name]||[];
+    const avg=p[statKey]||0, l5=JTTScoring.getL5Avg(name,statKey);
+    const vsOpp=logs.filter(r=>r.opponent===opp);
+    const vsOppAvg=vsOpp.length?vsOpp.reduce((s,r)=>s+(r[statKey]||0),0)/vsOpp.length:null;
+    const dr=dvpRank(opp,p.position,statKey);
+    const dec=statKey==='goals'?1:statKey==='dreamteam'?0:1;
+    const stepBy={goals:1,disposals:1,handballs:1,kicks:1,tackles:2,marks:2,clearances:2,dreamteam:5}[statKey]||1;
+    const base=Math.max(1,Math.round(avg)); const rungs=[];
+    for(let i=0;i<=5;i++){ const l=base+i*stepBy; const hits=logs.filter(r=>(r[statKey]||0)>=l).length; const hr=logs.length?hits/logs.length:0; if(i>0&&hr<0.01) break; const h2h=vsOpp.length?vsOpp.filter(r=>(r[statKey]||0)>=l).length/vsOpp.length:null; const od=priceForLine(name,statKey,l); rungs.push({l,hr,h2h,od}); }
+    const ladder=rungs.map(s=>{ const c=s.hr>=0.7?'#22c55e':s.hr>=0.5?'#86efac':s.hr>=0.3?'#f97316':'#ef4444';
+      return '<tr><td class="name">'+s.l+'+</td><td style="color:'+c+'">'+Math.round(s.hr*100)+'%</td><td>'+(s.h2h!=null?Math.round(s.h2h*100)+'%':'—')+'</td><td>'+(s.od?'$'+s.od.price.toFixed(2):'—')+'</td></tr>'; }).join('');
+    const drStr=dr?('#'+dr.rank+'/'+dr.total+' '+(dr.pct>=0?'+':'')+dr.pct.toFixed(0)+'%'):'—';
+    return '<div class="fxsp-head" onclick="openPlayer(\''+esc(name).replace(/\x27/g,"\\\\\\x27")+'\')"><b>'+esc(name)+'</b> · '+esc(p.position||'')+'</div>'+
+      '<div class="fxsp-stats"><span>avg <b>'+avg.toFixed(dec)+'</b></span>'+(l5!=null?'<span>L5 <b>'+l5.toFixed(dec)+'</b></span>':'')+(vsOppAvg!=null?'<span>v '+abbr(opp)+' <b>'+vsOppAvg.toFixed(dec)+'</b> ('+vsOpp.length+'g)</span>':'')+'<span>DVP '+drStr+'</span></div>'+
+      '<div class="fxsp-lh"><i class="ti ti-stairs-up"></i> Ladder Potential'+(vsOpp.length?' · H2H from '+vsOpp.length+'g v '+abbr(opp):'')+'</div>'+
+      '<div class="stbl-wrap"><table class="stbl bx"><thead><tr><th>Line</th><th>Hit%</th><th>H2H%</th><th>Odds</th></tr></thead><tbody>'+ladder+'</tbody></table></div>';
+  }
+  function fxSpotlight(team,opp){
+    const tk=team.replace(/[^a-z0-9]/gi,'');
+    const opts=playersOnTeam(team).filter(p=>(p.matches||0)>=1).sort((a,b)=>(a.name||'').localeCompare(b.name||'')).map(p=>'<option value="'+esc(p.name)+'">'+esc(p.name)+'</option>').join('');
+    const stats=[['disposals','Disposals'],['kicks','Kicks'],['handballs','Handballs'],['marks','Marks'],['tackles','Tackles'],['goals','Goals'],['clearances','Clearances'],['dreamteam','Fantasy']].map(s=>'<option value="'+s[0]+'">'+s[1]+'</option>').join('');
+    return '<div class="tp-sec"><div class="sec-title"><i class="ti ti-zoom-scan"></i> Player Spotlight</div></div>'+
+      '<div class="fxsp" data-team="'+esc(team)+'" data-opp="'+esc(opp)+'">'+
+      '<div class="fxsp-ctrls"><select id="fxsp-p-'+tk+'" class="dvps-sel" onchange="buildFxSpot(\''+tk+'\')"><option value="">Select '+abbr(team)+' player…</option>'+opts+'</select>'+
+      '<select id="fxsp-s-'+tk+'" class="dvps-sel" onchange="buildFxSpot(\''+tk+'\')">'+stats+'</select></div>'+
+      '<div id="fxsp-card-'+tk+'" class="fxsp-card"></div></div>';
+  }
+  window.setFxDvpStat=function(v){ window._fxDvpStat=v; _renderApp(); };
+  window.buildFxSpot=function(tk){
+    const card=document.getElementById('fxsp-card-'+tk); if(!card) return;
+    const wrap=card.closest('.fxsp'); if(!wrap) return;
+    const team=wrap.getAttribute('data-team'), opp=wrap.getAttribute('data-opp');
+    const name=(document.getElementById('fxsp-p-'+tk)||{}).value||'';
+    const statKey=(document.getElementById('fxsp-s-'+tk)||{}).value||'disposals';
+    card.innerHTML=name?fxSpotCard(name,statKey,opp):'';
+  };
+
   function renderFocusedFixture(g){
     if(!g) return emptyState('ti-alert-triangle','Match not found','');
     let h='<button class="back-btn" onclick="state.view.fixtureId=null;_renderApp()"><i class="ti ti-arrow-left"></i> Back to fixtures</button>';
@@ -667,6 +780,9 @@
       BET_STATS.forEach(([k,l])=>{ mt+='<tr><td class="name">'+l+'</td><td>'+fmt(t[k])+'</td><td>'+fmt(ta?ta[k+'_a']:null)+'</td></tr>'; });
       mt+='</tbody></table></div>'; h+=mt;
     }
+    // Defence vs Play Style (how the opponent concedes vs this team's playstyles) + Player Spotlight
+    h+=fxDvPS(team,opp);
+    h+=fxSpotlight(team,opp);
     // Degen signals scoped to THIS team
     h+=teamDegen(team,opp);
     h+='</div>';
