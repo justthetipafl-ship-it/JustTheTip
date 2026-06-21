@@ -1232,6 +1232,22 @@
   }
   function muTag(pct){ const mi=JTTScoring.muInfo(pct); return mi?'<span style="color:'+mi.c+'">'+(pct>0?'+':'')+pct.toFixed(0)+'% '+mi.t+'</span>':''; }
   function lineTag(name,market){ const o=postedLine(name,market); return o?' · O '+o.line+(o.over!=null?' $'+o.over.toFixed(2):''):''; }
+  // price for the exact streak line (e.g. 25+ disposals from the alt ladder; anytime/2+ for goals)
+  function streakOdds(s){
+    const name=s.p.name, k=s.statKey, line=s.line;
+    if(k==='goals'){
+      if(line>=2){ const g=oddsFor(name,'goalsx'); if(g&&g.over!=null&&Math.round((g.line||1.5)+0.5)>=line) return ' · '+line+'+ $'+g.over.toFixed(2); }
+      const a=oddsFor(name,'goals'); if(a&&a.over!=null) return ' · 1+ $'+a.over.toFixed(2);
+      return '';
+    }
+    const alts=altLines(name,k);
+    let hit=alts.find(a=>Math.round(a.line+0.5)===line);
+    if(!hit){ const ge=alts.filter(a=>Math.round(a.line+0.5)>=line).sort((x,y)=>x.line-y.line); hit=ge[0]; }
+    if(hit&&hit.over!=null) return ' · '+Math.round(hit.line+0.5)+'+ $'+hit.over.toFixed(2);
+    const od=oddsFor(name,k);
+    if(od&&od.over!=null&&od.line!=null) return ' · '+od.line+' O $'+od.over.toFixed(2);
+    return '';
+  }
   function degWrap(icon,title,items,colorClass){
     if(!items) return _degenFocused?'':emptyState(icon,title+' — no data','Needs game logs + this round\u2019s fixture.');
     if(!items.length) return _degenFocused?'':emptyState(icon,'No '+title.toLowerCase()+' this round','Nothing cleared the gate on the current slate.');
@@ -1292,7 +1308,7 @@
     }
     if(k==='streak'){
       const rows=_fc(streakers(),6).map(s=>degRow(s.p.name,'#f97316',s.streak+' straight',
-        s.stat+' '+s.line+'+ · '+abbr(s.p.team)+(s.opp?' v '+abbr(s.opp):'')+' · hit '+Math.round(s.rate*100)+'%'+(s.dvpPct!=null?' · '+muTag(s.dvpPct):'')+lineTag(s.p.name,s.statKey)));
+        s.stat+' '+s.line+'+ · '+abbr(s.p.team)+(s.opp?' v '+abbr(s.opp):'')+' · hit '+Math.round(s.rate*100)+'%'+(s.dvpPct!=null?' · '+muTag(s.dvpPct):'')+streakOdds(s)));
       return degWrap('ti-flame','Streakers',rows,'c-amber');
     }
     if(k==='form'){
