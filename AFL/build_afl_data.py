@@ -24,7 +24,7 @@ OUTPUT (data/):
 Usage:  python build_afl_data.py [--src bundle.json] [--out data] \
                                  [--seasons 2025,2026] [--password BEACH]
 """
-import argparse, hashlib, json, os, sys, time
+import argparse, hashlib, json, os, re, sys, time
 from collections import defaultdict
 
 # --- stat contract: internal camelCase key  <-  Champion Data dvp field -----
@@ -65,6 +65,131 @@ STAT_MAP = {
 # identity columns kept verbatim on each pruned game-log row
 ID_COLS = ["Year", "RoundName", "MatchId", "Player", "Team"]
 
+# ----------------------------------------------------------------------------
+# wheelo stat-table overlay
+# ----------------------------------------------------------------------------
+# wheelo's player / team CSVs carry their own (advanced) season averages under
+# abbreviated display headers. When present they OVERLAY the derived-from-logs
+# values (authoritative). Mapping is normalised (case/punctuation-insensitive)
+# and self-diagnosing: the build logs which internal stats matched and which
+# wheelo headers went unmapped, so the table below can be tightened in one edit
+# after the first real download. Absent CSVs => derived values stand (no change).
+WHEELO_MAP = {
+    "disposals":         {"disposals", "dis", "disp"},
+    "kicks":             {"kicks", "kick"},
+    "handballs":         {"handballs", "hb", "handball"},
+    "marks":             {"marks", "totmarks", "totmks", "mks"},
+    "contestedMarks":    {"cm", "contestedmarks", "contmarks"},
+    "interceptMarks":    {"intmks", "interceptmarks", "intmarks"},
+    "tackles":           {"tackles", "tack", "tkl"},
+    "pressureActs":      {"pressacts", "pressureacts", "pressacts"},
+    "goals":             {"goals"},
+    "behinds":           {"behinds", "beh"},
+    "shotsAtGoal":       {"shots", "shotsatgoal"},
+    "goalAssists":       {"goalass", "goalassists"},
+    "scoreInvolvements": {"si", "scoreinvolvements"},
+    "clearances":        {"totclr", "totclearances", "clearances", "totalclearances"},
+    "hitouts":           {"hitouts", "hitout"},
+    "inside50s":         {"in50s", "inside50s", "in50"},
+    "contested":         {"cp", "contested", "contestedpossessions", "contestedposs"},
+    "groundBallGets":    {"gbgets", "groundballgets", "gbg"},
+    "intercepts":        {"intposs", "intercepts", "interceptposs"},
+    "metresGained":      {"mtrsgnd", "metresgained", "mtrsgained"},
+    "cba":               {"cba", "cbapct"},
+    "tog":               {"tog"},
+    "ratingPoints":      {"playerrating", "ratingpoints"},
+    "supercoach":        {"supercoach"},
+    "dreamteam":         {"fantasy", "dreamteam"},
+    "disposalEff":       {"effpct", "disposalefficiency", "diseff"},
+}
+
+
+def _wnorm(h):
+    return re.sub(r"[^a-z0-9]", "", (h or "").lower())
+
+
+# normalised header -> internal key (first declared wins on collision)
+_WHEELO_BY_NORM = {}
+for _ik, _cands in WHEELO_MAP.items():
+    for _c in _cands:
+        _WHEELO_BY_NORM.setdefault(_c, _ik)
+
+
+def map_wheelo_row(row):
+    """Map one wheelo CSV row's stat columns to internal keys.
+    Returns (mapped_values, matched_headers, unmatched_headers)."""
+    mapped, matched, unmatched = {}, set(), set()
+    for hdr, val in row.items():
+        if hdr in ("Player", "Team", "Position", "Age", "Age_Decimal"):
+            continue
+        ik = _WHEELO_BY_NORM.get(_wnorm(hdr))
+        if ik is None:
+            unmatched.add(hdr); continue
+        num = to_num(val)
+        if num is not None:
+            mapped[ik] = num; matched.add(hdr)
+    return mapped, matched, unmatched
+
+
+def overlay_players(players, legacy_player):
+    """Overlay wheelo player-CSV season averages onto derived player rows."""
+    if not legacy_player:
+        return 0, set(), set()
+    by_name = {p["name"]: p for p in players}
+    n, matched, unmatched = 0, set(), set()
+    for row in legacy_player:
+        nm = row.get("Player")
+        if not nm:
+            continue
+        vals, mt, un = map_wheelo_row(row)
+        matched |= mt; unmatched |= un
+        if not vals:
+            continue
+        tgt = by_name.get(nm)
+        if tgt is None:                       # wheelo player with no current logs yet
+            tgt = {"name": nm, "matches": 0,
+                   "team": row.get("Team"), "position": row.get("Position") or "",
+                   "age": to_num(row.get("Age_Decimal")) or to_num(row.get("Age"))}
+            players.append(tgt); by_name[nm] = tgt
+        tgt.update(vals)
+        n += 1
+    return n, matched, unmatched
+
+
+def overlay_teams(teams, teamform, teamdef):
+    """Overlay wheelo team 'for' (teamform) and 'allowed' (teamdef) averages."""
+    if not teamform and not teamdef:
+        return 0, set(), set()
+    by_team = {t["team"]: t for t in teams}
+    n, matched, unmatched = 0, set(), set()
+
+    def _row_team(r):
+        return r.get("Team") or r.get("team")
+
+    for row in teamform or []:
+        tm = _row_team(row)
+        if not tm:
+            continue
+        vals, mt, un = map_wheelo_row(row)
+        matched |= mt; unmatched |= un
+        tgt = by_team.get(tm)
+        if tgt is None:
+            tgt = {"team": tm, "matches": 0}; teams.append(tgt); by_team[tm] = tgt
+        tgt.update(vals); n += 1
+    for row in teamdef or []:
+        tm = _row_team(row)
+        if not tm:
+            continue
+        vals, mt, un = map_wheelo_row(row)
+        matched |= mt; unmatched |= un
+        tgt = by_team.get(tm)
+        if tgt is None:
+            tgt = {"team": tm, "matches": 0}; teams.append(tgt); by_team[tm] = tgt
+        for k, v in vals.items():             # opposition averages -> allowed (_a)
+            tgt[k + "_a"] = v
+        n += 1
+    return n, matched, unmatched
+
 
 def to_num(v):
     if v is None or v == "":
@@ -76,10 +201,10 @@ def to_num(v):
 
 
 def load_source(src):
-    """Return (gamelogs, legacy_player, fixture, fgs, injury, legacy_meta)."""
+    """Return (gamelogs, legacy_player, fixture, fgs, injury, legacy_meta, extra)."""
     if os.path.isdir(src) and os.path.exists(os.path.join(src, "dvp.raw.json")):
         dvp = json.load(open(os.path.join(src, "dvp.raw.json")))
-        return dvp, [], [], [], [], {}
+        return dvp, [], [], [], [], {}, {}
     d = json.load(open(src))
     return (
         d.get("dvp", []),
@@ -88,6 +213,7 @@ def load_source(src):
         d.get("fgs", []),
         d.get("injury", []),
         {k: d.get(k) for k in ("version", "created", "round", "summary", "formats")},
+        {"teamform": d.get("teamform", []), "teamdef": d.get("teamdef", [])},
     )
 
 
@@ -305,7 +431,7 @@ def main():
                     help="weekly password -> stored as SHA-256 (never plaintext)")
     args = ap.parse_args()
 
-    dvp, legacy_player, fixture, fgs, injury, legacy_meta = load_source(args.src)
+    dvp, legacy_player, fixture, fgs, injury, legacy_meta, extra = load_source(args.src)
     seasons = set(s.strip() for s in args.seasons.split(",") if s.strip())
 
     demo = build_demo(legacy_player)
@@ -314,6 +440,19 @@ def main():
     teams = derive_teams(logs, args.current)
     teams_form = derive_teams_form(logs, args.current)
     dvp_table = derive_dvp(logs, demo, args.current)
+
+    # ---- overlay wheelo CSV averages (authoritative) when present ----
+    pov_n, pov_m, pov_u = overlay_players(players, legacy_player)
+    tov_n, tov_m, tov_u = overlay_teams(teams, extra.get("teamform"), extra.get("teamdef"))
+    if pov_n or tov_n:
+        print(f"[build] wheelo overlay: {pov_n} players, {tov_n} team rows")
+        print(f"[build]   matched stats : {sorted(pov_m | tov_m)}")
+        unmapped = sorted(pov_u | tov_u)
+        if unmapped:
+            print(f"[build]   UNMAPPED cols : {unmapped}")
+            print("[build]   (add these to WHEELO_MAP if the tool should use them)")
+    players.sort(key=lambda p: -(p.get("disposals") or 0))
+    teams.sort(key=lambda t: t["team"])
 
     os.makedirs(args.out, exist_ok=True)
     version = str(int(time.time()))
