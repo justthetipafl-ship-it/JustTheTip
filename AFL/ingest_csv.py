@@ -50,6 +50,7 @@ CANONICAL = [
     "CentreBounceAttendancePercentage","TotalClearances","Marks","ContestedMarks",
     "InterceptMarks","ShotsAtGoal","Goals","Behinds","xScore","xScoreRating",
     "GoalAssists","ScoreInvolvements","ScoreLaunches","Tackles","PressureActs","Hitouts",
+    "MarksOnLead","MarksInside50","TacklesInside50","Forward50Possessions","Rebound50s",
 ]
 # common header aliases -> canonical (checked after generic normalisation)
 ALIASES = {
@@ -65,6 +66,11 @@ ALIASES = {
     "dt":"DreamTeamPoints","dreamteam":"DreamTeamPoints","dreamteampoints":"DreamTeamPoints",
     "i50":"Inside50s","inside50s":"Inside50s","inside50":"Inside50s",
     "pos":"Position","position":"Position","age":"Age","agedecimal":"Age_Decimal",
+    "marksonlead":"MarksOnLead","mol":"MarksOnLead",
+    "marksinside50":"MarksInside50","mi50":"MarksInside50","marksin50":"MarksInside50",
+    "tacklesinside50":"TacklesInside50","ti50":"TacklesInside50","t5":"TacklesInside50",
+    "forward50possessions":"Forward50Possessions","f50poss":"Forward50Possessions","forward50poss":"Forward50Possessions",
+    "rebound50s":"Rebound50s","r50":"Rebound50s","rebound50":"Rebound50s",
 }
 
 def _norm(h):
