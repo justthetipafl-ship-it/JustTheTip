@@ -322,7 +322,7 @@
   const CREW = [
     {k:'multi',    n:'Multi Builder', i:'ti-stack-2',      d:'Stacked legs'},
     {k:'green',    n:'Green Lights',  i:'ti-traffic-lights',d:'Strong OVER'},
-    {k:'snags',    n:'Snags',         i:'ti-ball-football', d:'Goalscoring'},
+    {k:'snags',    n:'Snags',         i:'ti-ball-australian-football', d:'Goalscoring'},
     {k:'elite',    n:'Elite Matchups',i:'ti-trophy',       d:'Top v soft'},
     {k:'bunnies',  n:'Bunnies',       i:'ti-rabbit',       d:'Loves this opp'},
     {k:'death',    n:'Death Riders',  i:'ti-skull',        d:'Strong UNDER'},
@@ -673,7 +673,7 @@
     let html='', total=0;
     try{
       const ov=collectOU([team],'over'), un=collectOU([team],'under');
-      const counts={ green:ov.length, death:un.length, snags:_fc(hotMatchups(SNAG_DEFS),6).length,
+      const counts={ green:ov.length, death:un.length, snags:_fc(snags(),6).length,
         elite:_fc(hotMatchups(ELITE_DEFS),8,40).length, bunnies:_fc(bunnies(),6).length, bogey:_fc(bogey(),6).length,
         streak:_fc(streakers(),6).length, form:_fc(formAlerts('spike'),6,25).length+_fc(formAlerts('drop'),6,25).length,
         fgs:_fc(fgsEdges(),6).length, taggers:_fc(taggerAlerts(),8).length };
@@ -980,6 +980,71 @@
     });
     return out.sort((a,b)=>b.dvpPct-a.dvpPct);
   }
+
+  // ---- SNAGS (goals): top-10 scorers gated to bottom-5 (softest) defences for their position ----
+  function dvpRank(opp, position, stat){
+    const rows=(state.data.dvp||[]).filter(r=>r.pos===position);
+    if(!rows.length||rows[0][stat]==null) return null;
+    const oppRow=rows.find(r=>r.team===opp); if(!oppRow) return null;
+    const vals=rows.map(r=>r[stat]||0);
+    const avg=vals.reduce((a,b)=>a+b,0)/vals.length;
+    const sorted=[...vals].sort((a,b)=>b-a);   // desc: rank 1 = allows the most = softest
+    return {rank:sorted.indexOf(oppRow[stat]||0)+1, total:rows.length,
+            pct:avg?((oppRow[stat]-avg)/avg*100):0, allowed:oppRow[stat]};
+  }
+  function snags(){
+    const teams=_fixtureSet();
+    const pool=(state.idx.players||[]).filter(p=>teams.has(p.team)&&(p.matches||0)>=4);
+    const top10=[...pool].sort((a,b)=>(b.goals||0)-(a.goals||0)).slice(0,10);
+    const out=[];
+    top10.forEach((p,i)=>{
+      const opp=nextOpp(p.team); if(!opp) return;
+      const dr=dvpRank(opp,p.position,'goals'); if(!dr) return;
+      if(dr.rank>5) return;                      // gate: opponent is a bottom-5 (softest) goals defence for this position
+      out.push({p,opp,rank:i+1,val:p.goals||0,dvpRank:dr.rank,dvpPct:dr.pct,dvpTotal:dr.total});
+    });
+    return out.sort((a,b)=>a.dvpRank-b.dvpRank);
+  }
+  // anytime goal odds, but if it's too short (<$1.20) show the 2+/3+ milestone instead
+  function goalOddsTag(name){
+    const any=oddsFor(name,'goals'), mul=oddsFor(name,'goalsx');
+    if(any&&any.over!=null&&any.over>=1.20) return ' · 1+ $'+any.over.toFixed(2);
+    if(mul&&mul.over!=null){ const m=Math.round((mul.line||1.5)+0.5); return ' · '+m+'+ $'+mul.over.toFixed(2); }
+    if(any&&any.over!=null) return ' · 1+ $'+any.over.toFixed(2);
+    return '';
+  }
+  // full SNAGS page: hot snags + top-10 scorers + 5 easiest / 5 toughest team matchups
+  function snagsPage(){
+    const sig=snags();
+    const teamsArr=Object.values(state.idx.teamMap||{}).filter(t=>t.goals_a!=null);
+    const lgGA=teamsArr.length?teamsArr.reduce((s,t)=>s+(+t.goals_a),0)/teamsArr.length:0;
+    const easiest=[...teamsArr].sort((a,b)=>(+b.goals_a)-(+a.goals_a)).slice(0,5);
+    const toughest=[...teamsArr].sort((a,b)=>(+a.goals_a)-(+b.goals_a)).slice(0,5);
+    const teams=_fixtureSet();
+    const pool=(state.idx.players||[]).filter(p=>teams.has(p.team)&&(p.matches||0)>=4);
+    const top10=[...pool].sort((a,b)=>(b.goals||0)-(a.goals||0)).slice(0,10);
+    let h='';
+    if(sig.length){
+      h+='<div class="section-title">Hot Snags · top-10 scorer v bottom-5 defence</div>'+
+        sig.map(s=>degRow(s.p.name,'#f59e0b','#'+s.dvpRank+' softest v '+posShort(s.p.position),
+          posShort(s.p.position)+' · '+abbr(s.p.team)+' v '+abbr(s.opp)+' · '+fmt(s.val,2)+' gpg'+goalOddsTag(s.p.name))).join('');
+    } else {
+      h+='<div class="tp-body-meta" style="border:0;margin:8px 0">No top-10 scorer faces a bottom-5 goals defence this round.</div>';
+    }
+    h+='<div class="section-title">Top 10 Goal Scorers</div><div class="stbl-wrap"><table class="stbl bx"><thead><tr><th>#</th><th>Player</th><th>Tm</th><th>Avg</th><th>Matchup</th><th>Goal</th></tr></thead><tbody>';
+    top10.forEach((p,i)=>{
+      const opp=nextOpp(p.team), dr=opp?dvpRank(opp,p.position,'goals'):null;
+      const mi=dr?JTTScoring.muInfo(dr.pct):null;
+      const mu=dr?'<span style="color:'+(mi?mi.c:'#888')+'">'+abbr(opp)+' #'+dr.rank+'/'+dr.total+'</span>':'—';
+      h+='<tr onclick="openPlayer(\''+esc(p.name).replace(/\x27/g,"\\\x27")+'\')" style="cursor:pointer"><td>'+(i+1)+'</td><td class="name">'+esc(p.name)+'</td><td>'+abbr(p.team)+'</td><td>'+fmt(p.goals,2)+'</td><td>'+mu+'</td><td>'+(goalOddsTag(p.name).replace(/^ · /,'')||'—')+'</td></tr>';
+    });
+    h+='</tbody></table></div>';
+    const trows=(arr,col)=>arr.map((t,i)=>{const pct=lgGA?((+t.goals_a-lgGA)/lgGA*100):0;return '<tr><td>'+(i+1)+'</td><td class="name">'+abbr(t.team)+'</td><td>'+fmt(t.goals_a,1)+'</td><td style="color:'+col+'">'+(pct>0?'+':'')+pct.toFixed(0)+'%</td></tr>';}).join('');
+    h+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:8px">'+
+      '<div><div class="section-title" style="color:#22c55e">5 Easiest Matchups</div><div class="stbl-wrap"><table class="stbl bx"><thead><tr><th>#</th><th>Team</th><th>GA</th><th>vs Lg</th></tr></thead><tbody>'+trows(easiest,'#22c55e')+'</tbody></table></div></div>'+
+      '<div><div class="section-title" style="color:#ef4444">5 Toughest Matchups</div><div class="stbl-wrap"><table class="stbl bx"><thead><tr><th>#</th><th>Team</th><th>GA</th><th>vs Lg</th></tr></thead><tbody>'+trows(toughest,'#ef4444')+'</tbody></table></div></div></div>';
+    return h;
+  }
   function bunnies(){
     const teams=_fixtureSet(); const out=[];
     (state.idx.players||[]).filter(p=>teams.has(p.team)&&(p.matches||0)>=3).forEach(p=>{
@@ -1136,9 +1201,9 @@
   function renderTile(k){
     const M=v=>fmt(v,1), abv=t=>abbr(t);
     if(k==='snags'){
-      const rows=_fc(hotMatchups(SNAG_DEFS),6).map(h=>degRow(h.p.name,'#f59e0b',h.def.l+' · '+muTag(h.dvpPct),
-        h.p.position+' · '+abv(h.p.team)+' v '+abv(h.opp)+' · #'+h.rank+' '+h.def.l.toLowerCase()+' '+M(h.val)+lineTag(h.p.name,'goals')));
-      return degWrap('ti-ball-football','Snags',rows,'c-amber');
+      const rows=_fc(snags(),6).map(s=>degRow(s.p.name,'#f59e0b','#'+s.dvpRank+' softest v '+posShort(s.p.position),
+        posShort(s.p.position)+' · '+abv(s.p.team)+' v '+abv(s.opp)+' · '+fmt(s.val,2)+' gpg'+goalOddsTag(s.p.name)));
+      return degWrap('ti-ball-australian-football','Snags',rows,'c-amber');
     }
     if(k==='elite'){
       const rows=_fc(hotMatchups(ELITE_DEFS),8,40).map(h=>degRow(h.p.name,'#22c55e',h.def.l+' · '+muTag(h.dvpPct),
@@ -1197,6 +1262,7 @@
     const teams=(state.data.fixture||[]).flatMap(g=>[g.home,g.away]);
     if(k==='green') body=ouSection(collectOU(teams,'over'),'over','Green Lights','ti-traffic-lights','c-green');
     else if(k==='death') body=ouSection(collectOU(teams,'under'),'under','Death Riders','ti-skull','c-red');
+    else if(k==='snags') body=snagsPage();
     else body=renderTile(k);
     document.getElementById('page-content').innerHTML='<button class="back-btn" onclick="_switchTab(\'degen\')"><i class="ti ti-arrow-left"></i> Degen Crew</button><div class="page-header"><div class="page-title">'+c.n+'</div><div class="page-sub">'+c.d+'</div></div>'+body;
     window.scrollTo({top:0});
