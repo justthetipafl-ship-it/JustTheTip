@@ -954,7 +954,7 @@
   // Elite Matchups = same engine as Snags, for the other bettable stats (goals lives in Snags)
   const ELITE_DEFS = [{k:'disposals',l:'Disposals'},{k:'marks',l:'Marks'},{k:'tackles',l:'Tackles'},
     {k:'kicks',l:'Kicks'},{k:'handballs',l:'Handballs'},{k:'clearances',l:'Clearances'}];
-  const BUNNY_STATS = [{k:'disposals',l:'Disposals',min:15},{k:'dreamteam',l:'Fantasy',min:60},{k:'goals',l:'Goals',min:1.5}];
+  const BUNNY_STATS = [{k:'disposals',l:'Disposals',min:15},{k:'dreamteam',l:'Fantasy',min:60}];
   const BOGEY_STATS = [{k:'disposals',l:'Disposals',minAvg:10},{k:'goals',l:'Goals',minAvg:0.5}];
   const STREAK_STATS = [['disposals','Disposals'],['kicks','Kicks'],['handballs','Handballs'],['marks','Marks'],
     ['tackles','Tackles'],['clearances','Clearances'],['goals','Goals'],['dreamteam','Fantasy']];
@@ -1100,21 +1100,30 @@
     return h;
   }
   function bunnies(){
-    const teams=_fixtureSet(); const out=[];
-    (state.idx.players||[]).filter(p=>teams.has(p.team)&&(p.matches||0)>=3).forEach(p=>{
+    const out=[];
+    (state.idx.players||[]).filter(p=>(p.matches||0)>=3).forEach(p=>{
       const opp=nextOpp(p.team); if(!opp) return;
       const byOpp={}; allLogs(p.name).forEach(r=>{ if(r.opponent)(byOpp[r.opponent]=byOpp[r.opponent]||[]).push(r); });
+      const vt=byOpp[opp]; if(!vt||vt.length<2) return;            // need a H2H sample vs the current opp
       BUNNY_STATS.forEach(s=>{
         if((p[s.k]||0)<s.min) return;
-        const vt=byOpp[opp]; if(!vt||vt.length<3) return;
         const thisAvg=_avg(vt.map(r=>r[s.k]||0));
-        let best=null; Object.entries(byOpp).forEach(([o,rs])=>{ if(o===opp||rs.length<3)return; const a=_avg(rs.map(r=>r[s.k]||0)); if(best==null||a>best)best=a; });
-        if(best==null||thisAvg<=best) return;
-        const diffPct=best>0?((thisAvg-best)/best)*100:0; if(diffPct<10) return;
-        out.push({p,opp,stat:s,thisAvg,best,diffPct,games:vt.length});
+        // (1) AVG flavour: averages MORE vs the current opp than vs any other team they've faced
+        let best=null,bestOpp=null;
+        Object.entries(byOpp).forEach(([o,rs])=>{ if(o===opp||rs.length<2)return; const a=_avg(rs.map(r=>r[s.k]||0)); if(best==null||a>best){best=a;bestOpp=o;} });
+        const avgBunny = (best==null) || (thisAvg>best);
+        const diffPct  = (best!=null&&best>0)?((thisAvg-best)/best)*100:null;
+        // (2) LINE flavour: cleared the posted line in EVERY H2H meeting (needs a posted line for the stat)
+        const mkt = s.k==='disposals'?'disposals':null;    // only disposals has a posted O/U line today
+        const posted = mkt?oddsFor(p.name,mkt):null;
+        const line = (posted&&posted.line!=null)?posted.line:null;
+        const lineBunny = line!=null && vt.every(r=>(r[s.k]||0)>=line);
+        if(!avgBunny && !lineBunny) return;
+        out.push({p,opp,stat:s,thisAvg,best,bestOpp,diffPct,games:vt.length,avgBunny,lineBunny,line});
       });
     });
-    return out.sort((a,b)=>b.diffPct-a.diffPct);
+    // line-coverage bunnies first, then biggest edge over the field
+    return out.sort((a,b)=>(b.lineBunny-a.lineBunny)||((b.diffPct||0)-(a.diffPct||0)));
   }
   function bogey(){
     const teams=_fixtureSet(); const out=[];
@@ -1244,6 +1253,9 @@
 
   // focused columns: one row per player + small cap; standalone tiles keep their fuller caps
   function _fc(arr, fcap, full){
+    if(_degenScope){   // focused fixture: keep only players on the scoped team(s)
+      arr=arr.filter(x=>{ const t=(x.p&&x.p.team)||(x.threat&&x.threat.team)||x.team; return t&&_degenScope.has(t); });
+    }
     if(_degenFocused){
       const seen=new Set();
       arr=arr.filter(x=>{ const n=(x.p&&x.p.name)||(x.threat&&x.threat.name)||x.name; if(seen.has(n))return false; seen.add(n); return true; });
@@ -1265,9 +1277,13 @@
       return degWrap('ti-trophy','Elite Matchups',rows,'c-green');
     }
     if(k==='bunnies'){
-      const rows=_fc(bunnies(),6).map(b=>degRow(b.p.name,'#3b82f6','+'+b.diffPct.toFixed(0)+'% v field',
-        b.stat.l+' · vs '+abbr(b.opp)+' '+M(b.thisAvg)+' (best other '+M(b.best)+') · '+b.games+' H2H'+lineTag(b.p.name,b.stat.k)));
-      return degWrap('ti-rabbit','Bunnies',rows);
+      const rows=_fc(bunnies(),6).map(b=>{
+        const head=b.lineBunny?(b.games+'/'+b.games+' cleared '+b.line)
+          :(b.diffPct!=null?'+'+b.diffPct.toFixed(0)+'% v field':'best matchup');
+        const sub=b.stat.l+' · vs '+abv(b.opp)+' '+M(b.thisAvg)+(b.best!=null?' (next best '+M(b.best)+')':'')+' · '+b.games+' H2H'+lineTag(b.p.name,b.stat.k);
+        return degRow(b.p.name,'#3b82f6',head,sub);
+      });
+      return degWrap('ti-rabbit','Bunnies',rows,'c-blue');
     }
     if(k==='bogey'){
       const rows=_fc(bogey(),6).map(b=>degRow(b.p.name,'#ef4444','-'+M(b.gap)+' v season',
