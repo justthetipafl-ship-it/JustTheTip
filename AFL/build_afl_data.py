@@ -61,6 +61,11 @@ STAT_MAP = {
     "supercoach":        "Supercoach",
     "ratingPoints":      "RatingPoints",
     "disposalEff":       "DisposalEfficiency",
+    "marksOnLead":       "MarksOnLead",
+    "marksInside50":     "MarksInside50",
+    "tacklesInside50":   "TacklesInside50",
+    "forward50Poss":     "Forward50Possessions",
+    "rebound50s":        "Rebound50s",
 }
 # identity columns kept verbatim on each pruned game-log row
 ID_COLS = ["Year", "RoundName", "MatchId", "Player", "Team"]
@@ -101,6 +106,11 @@ WHEELO_MAP = {
     "supercoach":        {"supercoach"},
     "dreamteam":         {"fantasy", "dreamteam"},
     "disposalEff":       {"effpct", "disposalefficiency", "diseff"},
+    "marksOnLead":       {"marksonlead", "mol", "mksonlead"},
+    "marksInside50":     {"marksinside50", "mi50", "marksin50", "mksi50"},
+    "tacklesInside50":   {"tacklesinside50", "ti50", "t5", "tacki50"},
+    "forward50Poss":     {"forward50possessions", "f50poss", "forward50poss", "f50p"},
+    "rebound50s":        {"rebound50s", "r50", "rebound50", "reb50"},
 }
 
 
