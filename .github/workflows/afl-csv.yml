@@ -1,0 +1,64 @@
+name: AFL data (CSV ingest + build)
+
+# Primary game-log path: drop a wheeloratings CSV into AFL/csv/ (or a player
+# export into AFL/csv_players/) via the GitHub web UI and this runs itself —
+# ingest upserts the new games into bundle.json, then the build re-derives
+# players / team for-against / DVP (advanced stats included) into data/*.json.
+#
+# Supersedes the fitzRoy fetch for game logs. Odds stay on their own step/flow.
+
+on:
+  push:
+    paths:
+      - "AFL/csv/**"
+      - "AFL/csv_players/**"
+  workflow_dispatch:
+    inputs:
+      password:
+        description: "Weekly subscriber password (stored hashed, never in repo)"
+        required: false
+
+jobs:
+  ingest:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # ---- ingest CSV game logs -> bundle.json (upsert by Year+MatchId+Player) ----
+      - name: Ingest game-log CSVs
+        env:
+          AFL_BUNDLE: AFL/bundle.json
+          CSV_DIR: AFL/csv
+          PLAYER_DIR: AFL/csv_players
+        run: python AFL/ingest_csv.py
+
+      # ---- split + derive players / teams / DVP / form from the logs ----
+      - name: Build split data files
+        run: |
+          PW="${{ github.event.inputs.password || secrets.AFL_WEEKLY_PASSWORD }}"
+          if [ -n "$PW" ]; then
+            python AFL/build_afl_data.py --src AFL/bundle.json --out AFL/data \
+              --seasons 2025,2026 --current 2026 --password "$PW"
+          else
+            python AFL/build_afl_data.py --src AFL/bundle.json --out AFL/data \
+              --seasons 2025,2026 --current 2026
+          fi
+
+      - name: Commit refreshed data
+        run: |
+          git config user.name  "jtt-bot"
+          git config user.email "actions@github.com"
+          git add AFL/data AFL/bundle.json 2>/dev/null || git add AFL/data
+          if git diff --cached --quiet; then
+            echo "No changes."
+          else
+            git commit -m "chore(afl): ingest + rebuild $(date -u +%Y-%m-%dT%H:%MZ)"
+            git push
+          fi
