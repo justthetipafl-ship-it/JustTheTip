@@ -61,6 +61,12 @@
   .tp-collapse.c-blue{border-left:3px solid #60a5fa;} .tp-collapse.c-blue .tp-collapse-sum>i:first-child{color:#60a5fa;}
   .tp-collapse.c-red{border-left:3px solid #f87171;} .tp-collapse.c-red .tp-collapse-sum>i:first-child{color:#f87171;}
   .tp-collapse.c-purple{border-left:3px solid #a78bfa;} .tp-collapse.c-purple .tp-collapse-sum>i:first-child{color:#a78bfa;}
+  .tp-collapse.c-cyan{border-left:3px solid #22d3ee;} .tp-collapse.c-cyan .tp-collapse-sum>i:first-child{color:#22d3ee;}
+  .fx-mode{display:flex;gap:6px;margin:14px 0 4px;}
+  .fxm-btn{flex:1;display:flex;align-items:center;justify-content:center;gap:6px;background:var(--surface);border:1px solid var(--border);color:var(--text-2);
+    padding:9px 12px;border-radius:8px;font-family:var(--font-display);font-weight:800;font-size:13px;letter-spacing:.3px;cursor:pointer;transition:all .12s;}
+  .fxm-btn:hover{border-color:var(--text-3);color:var(--text);}
+  .fxm-btn.on{background:var(--accent);border-color:var(--accent);color:#0b0b0b;}
   /* stats table */
   .stat-search{flex:1;min-width:160px;background:var(--surface-2);border:1px solid var(--border);color:var(--text);
     border-radius:6px;padding:9px 12px;font-family:var(--font-mono);font-size:13px;outline:none;}
@@ -506,6 +512,10 @@
     altArr.forEach(a=>{ const n=a.player; if(!n)return; (altIdx[n]=altIdx[n]||{}); (altIdx[n][a.market]=altIdx[n][a.market]||[]).push({line:+a.line,over:a.over!=null?+a.over:null,book:a.book}); });
     Object.values(altIdx).forEach(byM=>Object.values(byM).forEach(arr=>arr.sort((x,y)=>x.line-y.line)));
     state.idx.altIdx=altIdx;
+    // per-book prices for arbs/middles/EV: bookIdx[name][market] = [{line,book,over,under}]
+    const bookArr=(src&&src.books)||[]; const bookIdx={};
+    bookArr.forEach(b=>{ const n=b.player; if(!n)return; (bookIdx[n]=bookIdx[n]||{}); (bookIdx[n][b.market]=bookIdx[n][b.market]||[]).push({line:+b.line,book:b.book,over:b.over!=null?+b.over:null,under:b.under!=null?+b.under:null}); });
+    state.idx.bookIdx=bookIdx;
     state.idx.oddsMeta={ count, fromPaste,
       updated:(src&&src.updated)||null,
       sample:!!(src&&src._sample) };
@@ -782,6 +792,7 @@
     return '<div class="tp-sec"><div class="sec-title"><i class="ti ti-circle-check"></i> Top CMB Picks by Market</div></div><div class="cmbp-grid">'+cards+'</div>';
   }
   window.setFxDvpStat=function(v){ window._fxDvpStat=v; _renderApp(); };
+  window.setFxMode=function(v){ state.view.fxMode=v; _renderApp(); };
   window.buildFxSpot=function(tk){
     const card=document.getElementById('fxsp-card-'+tk); if(!card) return;
     const wrap=card.closest('.fxsp'); if(!wrap) return;
@@ -791,6 +802,91 @@
     card.innerHTML=name?fxSpotCard(name,statKey,opp):'';
   };
 
+  // ===== Nerd Mode: Arbs / Middles / +EV / Implied EV / Market EV =====
+  const NERD_MARKETS=[['disposals','Disposals'],['marks','Marks'],['tackles','Tackles'],['kicks','Kicks'],['handballs','Handballs'],['clearances','Clearances']];
+  const NM_LBL=Object.fromEntries(NERD_MARKETS);
+  function bookLines(name,market){ return ((state.idx.bookIdx||{})[name]||{})[market]||[]; }
+  function _noVigOver(over,under){ const io=1/over, iu=1/under; return io/(io+iu); }   // fair P(over)
+  function _margin(over,under){ return 1/over+1/under-1; }
+  function _byLine(rows){ const m={}; rows.forEach(r=>{ (m[r.line]=m[r.line]||[]).push(r); }); return m; }
+  function _bestOver(rs){ return rs.filter(r=>r.over!=null).sort((a,b)=>b.over-a.over)[0]||null; }
+  function _bestUnder(rs){ return rs.filter(r=>r.under!=null).sort((a,b)=>b.under-a.under)[0]||null; }
+
+  function nerdArbs(players){
+    const out=[];
+    players.forEach(p=>NERD_MARKETS.forEach(([k])=>{
+      const byL=_byLine(bookLines(p.name,k));
+      Object.entries(byL).forEach(([line,rs])=>{
+        const bo=_bestOver(rs), bu=_bestUnder(rs);
+        if(!bo||!bu) return; const inv=1/bo.over+1/bu.under;
+        if(inv<1) out.push({p,k,line:+line,bo,bu,profit:(1-inv)*100});
+      });
+    }));
+    return out.sort((a,b)=>b.profit-a.profit);
+  }
+  function nerdMiddles(players){
+    const out=[];
+    players.forEach(p=>NERD_MARKETS.forEach(([k])=>{
+      const rows=bookLines(p.name,k);
+      const overs=rows.filter(r=>r.over!=null), unders=rows.filter(r=>r.under!=null);
+      let best=null;
+      overs.forEach(ov=>unders.forEach(un=>{
+        if(un.line>ov.line){ const cost=(1/ov.over+1/un.under-1), gap=un.line-ov.line;
+          if(gap>=1&&cost<=0.12){ const cand={p,k,ov,un,gap,cost:cost*100};
+            if(!best||cand.cost<best.cost||(cand.cost===best.cost&&cand.gap>best.gap)) best=cand; } }
+      }));
+      if(best) out.push(best);
+    }));
+    return out.sort((a,b)=>(a.cost-b.cost)||(b.gap-a.gap));
+  }
+  function nerdEV(players,mode){
+    // mode: 'model' (our hit-rate), 'market' (consensus no-vig), 'implied' (sharpest book no-vig)
+    const out=[];
+    players.forEach(p=>NERD_MARKETS.forEach(([k])=>{
+      const byL=_byLine(bookLines(p.name,k));
+      Object.entries(byL).forEach(([line,rs])=>{
+        const L=+line, bo=_bestOver(rs); if(!bo) return;
+        let prob=null, ref=null, real=false, n=0;
+        if(mode==='model'){
+          const hr=JTTScoring.getHitRate(p.name,k,L);
+          prob=hr?hr.rate:estimateHitProb(p[k]||0,L); real=!!hr; n=hr?hr.n:0;
+        } else {
+          const tw=rs.filter(r=>r.over!=null&&r.under!=null); if(!tw.length) return;
+          if(mode==='market'){ prob=tw.map(r=>_noVigOver(r.over,r.under)).reduce((a,b)=>a+b,0)/tw.length; }
+          else { const sharp=tw.slice().sort((a,b)=>_margin(a.over,a.under)-_margin(b.over,b.under))[0]; prob=_noVigOver(sharp.over,sharp.under); ref=sharp.book; }
+        }
+        if(prob==null||prob<=0) return;
+        const ev=prob*bo.over-1;
+        if(ev>0.02) out.push({p,k,line:L,bo,prob,ev:ev*100,real,n,ref});
+      });
+    }));
+    return out.sort((a,b)=>b.ev-a.ev);
+  }
+
+  function _bk(b){ return (typeof BOOK_LABEL!=='undefined'&&BOOK_LABEL[b])||b; }
+  function teamNerd(team,opp){
+    const players=playersOnTeam(team).filter(p=>(p.matches||0)>=2);
+    if(!(state.idx.bookIdx&&Object.keys(state.idx.bookIdx).length))
+      return emptyState('ti-math-function','Nerd Mode needs multi-book odds','Arbs, middles & EV compare prices across bookmakers — they populate once the odds feed is live.');
+    const prev=_degenScope, prevF=_degenFocused; _degenScope=null; _degenFocused=true;
+    const arbs=nerdArbs(players), mids=nerdMiddles(players), evM=nerdEV(players,'model'), evK=nerdEV(players,'market'), evI=nerdEV(players,'implied');
+    _degenScope=prev; _degenFocused=prevF;
+    let h='';
+    const arbRows=arbs.slice(0,6).map(a=>degRow(a.p.name,'#a855f7','+'+a.profit.toFixed(1)+'% arb',
+      NM_LBL[a.k]+' '+a.line+' · Over '+_bk(a.bo.book)+' $'+a.bo.over.toFixed(2)+' / Under '+_bk(a.bu.book)+' $'+a.bu.under.toFixed(2)));
+    h+=arbRows.length?degWrap('ti-arrows-shuffle','Arbs',arbRows,'c-purple'):'';
+    const midRows=mids.slice(0,6).map(m=>degRow(m.p.name,'#06b6d4','middle '+m.gap.toFixed(1),
+      NM_LBL[m.k]+' · Over '+m.ov.line+' '+_bk(m.ov.book)+' $'+m.ov.over.toFixed(2)+' / Under '+m.un.line+' '+_bk(m.un.book)+' $'+m.un.under.toFixed(2)+' · cost '+m.cost.toFixed(1)+'%'));
+    h+=midRows.length?degWrap('ti-arrow-bar-both','Middles',midRows,'c-cyan'):'';
+    const evRow=(e,col)=>degRow(e.p.name,col,'+'+e.ev.toFixed(1)+'% EV',
+      NM_LBL[e.k]+' '+e.line+'+ · '+_bk(e.bo.book)+' $'+e.bo.over.toFixed(2)+' · '+(e.real?'hit ':'~')+Math.round(e.prob*100)+'%'+(e.real&&e.n?' ('+e.n+'g)':'')+(e.ref?' v '+_bk(e.ref):''));
+    h+=evM.length?degWrap('ti-brain','+EV (model)',evM.slice(0,6).map(e=>evRow(e,'#22c55e')),'c-green'):'';
+    h+=evI.length?degWrap('ti-target-arrow','Implied EV',evI.slice(0,6).map(e=>evRow(e,'#84cc16')),'c-green'):'';
+    h+=evK.length?degWrap('ti-chart-dots','Market EV',evK.slice(0,6).map(e=>evRow(e,'#10b981')),'c-green'):'';
+    if(!h) return emptyState('ti-math-function','No edges found','No arbs, middles or +EV bets for this team right now.');
+    return h;
+  }
+
   function renderFocusedFixture(g){
     if(!g) return emptyState('ti-alert-triangle','Match not found','');
     let h='<button class="back-btn" onclick="state.view.fixtureId=null;_renderApp()"><i class="ti ti-arrow-left"></i> Back to fixtures</button>';
@@ -799,6 +895,10 @@
       '<div class="fixture-center"><div class="kickoff">'+(g.date||'')+' '+(g.time||'')+'</div><div class="vs-big">v</div><div class="venue">'+(g.venue||'TBC')+'</div></div>'+
       '<div class="fixture-team">'+teamLogo(g.away,52)+'<div class="fxr-name">'+g.away+'</div>'+pips(g.away)+'</div></div>';
     h+=gameMatchOdds(g.home,g.away)+gameHeadToHead(g.home,g.away)+gameClash(g.home,g.away)+gameLastMeeting(g.home,g.away);
+    const fxMode=(state.view.fxMode||'degen');
+    h+='<div class="fx-mode">'+
+      '<button class="fxm-btn'+(fxMode==='degen'?' on':'')+'" onclick="setFxMode(\'degen\')"><i class="ti ti-flame"></i> Degen Mode</button>'+
+      '<button class="fxm-btn'+(fxMode==='nerd'?' on':'')+'" onclick="setFxMode(\'nerd\')"><i class="ti ti-math-function"></i> Nerd Mode</button></div>';
     h+='<div class="team-cols">'+teamPanel(g.home,g.away,true)+teamPanel(g.away,g.home,false)+'</div>';
     return h;
   }
@@ -830,8 +930,8 @@
     h+=fxDvPS(team,opp);
     h+=fxCmbPicks(team,opp);
     h+=fxSpotlight(team,opp);
-    // Degen signals scoped to THIS team
-    h+=teamDegen(team,opp);
+    // Signals: Degen Crew, or Nerd-mode quant edges
+    h+=((state.view.fxMode||'degen')==='nerd')?teamNerd(team,opp):teamDegen(team,opp);
     h+='</div>';
     return h;
   }
