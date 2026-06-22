@@ -30,6 +30,12 @@
   .fxr-kickoff{font-family:var(--font-mono);font-size:11px;color:var(--text-2);letter-spacing:1px;}
   .fxr-vs{font-family:var(--font-display);font-weight:700;font-size:20px;color:var(--text-3);margin:3px 0;}
   .fxr-venue{font-family:var(--font-mono);font-size:10px;color:var(--text-3);}
+  .deg-row{display:grid;grid-template-columns:1fr auto;align-items:center;gap:10px;}
+  .deg-main{min-width:0;text-align:left;}
+  .deg-nm{font-size:15px;line-height:1.2;}
+  .deg-sub{font-family:var(--font-mono);font-size:11px;color:var(--text-2);line-height:1.5;margin-top:3px;white-space:normal;word-break:break-word;}
+  .deg-val{font-family:var(--font-display);font-weight:800;font-size:13.5px;line-height:1.25;padding:5px 10px;border-radius:8px;text-align:center;max-width:48%;justify-self:end;white-space:normal;}
+  .deg-odds{color:var(--accent)!important;font-weight:800;white-space:nowrap;}
   /* focused fixture header */
   .fixture-header{background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:16px;
     margin-bottom:14px;display:grid;grid-template-columns:1fr auto 1fr;gap:16px;align-items:center;}
@@ -117,6 +123,16 @@
   .fxsp-head{font-size:13px;cursor:pointer;}.fxsp-head b{color:var(--accent);}
   .fxsp-stats{display:flex;flex-wrap:wrap;gap:10px;font-size:11px;color:var(--text-2);margin:6px 0 10px;}
   .fxsp-lh{font-size:10px;font-weight:800;color:var(--text-3);letter-spacing:.04em;text-transform:uppercase;margin-bottom:6px;display:flex;align-items:center;gap:5px;}
+  .cmbp-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:5px;margin-bottom:6px;}
+  .cmbp-card{background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:7px 9px;}
+  .cmbp-h{font-size:8.5px;font-weight:900;color:var(--text-3);letter-spacing:.08em;text-transform:uppercase;margin-bottom:5px;}
+  .cmbp-row{display:flex;align-items:center;gap:6px;padding:3px 0;cursor:pointer;}
+  .cmbp-i{font-size:9px;font-weight:800;color:var(--text-3);width:11px;flex-shrink:0;}
+  .cmbp-n{font-size:10px;font-weight:700;color:var(--text);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .cmbp-l{font-size:9px;font-weight:700;color:var(--text-2);flex-shrink:0;}
+  .cmbp-o{font-size:9px;font-weight:800;color:var(--accent);flex-shrink:0;min-width:34px;text-align:right;}
+  .cmbp-bar{display:inline-block;width:38px;height:5px;background:var(--surface-2);border-radius:3px;overflow:hidden;flex-shrink:0;}
+  .cmbp-bar>span{display:block;height:100%;border-radius:3px;}
   .tp-sec .sec-title{font-family:var(--font-display);font-weight:800;font-size:12px;letter-spacing:1px;text-transform:uppercase;color:var(--text-1);display:flex;align-items:center;gap:6px;}
   .tp-sec .sec-meta{font-family:var(--font-mono);font-size:10px;color:var(--text-3);margin-left:auto;}
   .tp-lead{display:flex;justify-content:space-between;gap:8px;padding:5px 0;border-bottom:1px solid var(--border);font-size:12px;cursor:pointer;}
@@ -735,6 +751,36 @@
       '<select id="fxsp-s-'+tk+'" class="dvps-sel" onchange="buildFxSpot(\''+tk+'\')">'+stats+'</select></div>'+
       '<div id="fxsp-card-'+tk+'" class="fxsp-card"></div></div>';
   }
+  const CMB_PICK_MARKETS=[['disposals','Disposals',15],['kicks','Kicks',8],['handballs','Handballs',8],['marks','Marks',3],['tackles','Tackles',3],['clearances','Clearances',3],['goals','Goals',0.6],['dreamteam','Fantasy',75]];
+  function fxCmbPicks(team,opp){
+    const players=playersOnTeam(team).filter(p=>(p.matches||0)>=3);
+    const cards=CMB_PICK_MARKETS.map(([k,l,minAvg])=>{
+      const cands=[];
+      players.forEach(p=>{
+        const avg=p[k]||0; if(avg<minAvg) return;
+        const line=k==='dreamteam'?fantasyLine(avg):Math.round(avg); if(!line) return;
+        const sc=JTTScoring.scoreCMP(p,k,line,opp);
+        if(sc===null||sc<3.5) return;
+        cands.push({p,line,sc});
+      });
+      if(!cands.length) return '';
+      cands.sort((a,b)=>b.sc-a.sc);
+      const rows=cands.slice(0,3).map((c,i)=>{
+        const fill=Math.min(100,Math.max(20,((c.sc-2.5)/4.5)*100));
+        const bar=c.sc>=5.5?'#22c55e':'#86efac';
+        const od=pickOdds(c.p.name,k,c.line);
+        return '<div class="cmbp-row" onclick="openPlayer(\''+esc(c.p.name).replace(/\x27/g,"\\\\\\x27")+'\')">'+
+          '<span class="cmbp-i">'+(i+1)+'</span>'+
+          '<span class="cmbp-n">'+esc(c.p.name)+'</span>'+
+          '<span class="cmbp-l">'+c.line+'+</span>'+
+          (od?'<span class="cmbp-o">$'+od.price.toFixed(2)+'</span>':'')+
+          '<span class="cmbp-bar"><span style="width:'+fill+'%;background:'+bar+'"></span></span></div>';
+      }).join('');
+      return '<div class="cmbp-card"><div class="cmbp-h">'+l+'</div>'+rows+'</div>';
+    }).filter(Boolean).join('');
+    if(!cards) return '';
+    return '<div class="tp-sec"><div class="sec-title"><i class="ti ti-circle-check"></i> Top CMB Picks by Market</div></div><div class="cmbp-grid">'+cards+'</div>';
+  }
   window.setFxDvpStat=function(v){ window._fxDvpStat=v; _renderApp(); };
   window.buildFxSpot=function(tk){
     const card=document.getElementById('fxsp-card-'+tk); if(!card) return;
@@ -782,6 +828,7 @@
     }
     // Defence vs Play Style (how the opponent concedes vs this team's playstyles) + Player Spotlight
     h+=fxDvPS(team,opp);
+    h+=fxCmbPicks(team,opp);
     h+=fxSpotlight(team,opp);
     // Degen signals scoped to THIS team
     h+=teamDegen(team,opp);
@@ -1400,9 +1447,10 @@
 
   // ---- render helpers ----
   function degRow(name,col,headline,sub,onclickName){
-    return '<div class="fixture-row" style="grid-template-columns:1fr auto;cursor:pointer;border-left:3px solid '+col+'" onclick="openPlayer(\''+esc(onclickName||name).replace(/\x27/g,"\\\x27")+'\')">'+
-      '<div style="text-align:left"><div class="fxr-name" style="font-size:15px">'+name+'</div><div class="fxr-venue">'+sub+'</div></div>'+
-      '<div style="text-align:right"><div style="font-family:var(--font-display);font-weight:800;color:'+col+';font-size:14px">'+headline+'</div></div></div>';
+    const hl=s=>(''+s).replace(/(\$\d+(?:\.\d+)?)/g,'<b class="deg-odds">$1</b>');
+    return '<div class="fixture-row deg-row" style="cursor:pointer;border-left:3px solid '+col+'" onclick="openPlayer(\''+esc(onclickName||name).replace(/\x27/g,"\\\x27")+'\')">'+
+      '<div class="deg-main"><div class="fxr-name deg-nm">'+name+'</div><div class="deg-sub">'+hl(sub)+'</div></div>'+
+      '<div class="deg-val" style="color:'+col+';background:color-mix(in srgb,'+col+' 13%,transparent);border:1px solid color-mix(in srgb,'+col+' 32%,transparent)">'+hl(headline)+'</div></div>';
   }
   function muTag(pct){ const mi=JTTScoring.muInfo(pct); return mi?'<span style="color:'+mi.c+'">'+(pct>0?'+':'')+pct.toFixed(0)+'% '+mi.t+'</span>':''; }
   function lineTag(name,market){ const o=postedLine(name,market); return o?' · O '+o.line+(o.over!=null?' $'+o.over.toFixed(2):''):''; }
@@ -1421,6 +1469,11 @@
     const od=oddsFor(name,statKey);
     if(od&&od.over!=null&&od.line!=null) return {price:od.over,label:od.line+' O'};
     return null;
+  }
+  // price for a CMB pick at line≈avg: prefer the posted O/U if its line is near, else ladder/milestone
+  function pickOdds(name, k, line){
+    if(k!=='goals'&&k!=='dreamteam'){ const od=oddsFor(name,k); if(od&&od.line!=null&&od.over!=null&&Math.abs(od.line-line)<=1.5) return {price:od.over,label:''+od.line}; }
+    return priceForLine(name,k,line);
   }
   // price for the exact streak line (e.g. 25+ disposals from the alt ladder; anytime/2+ for goals)
   function streakOdds(s){ const r=priceForLine(s.p.name,s.statKey,s.line); return r?' · '+r.label+' $'+r.price.toFixed(2):''; }
