@@ -156,7 +156,7 @@ def fetch_match_odds():
 
 def fetch_props(events):
     """Per-market, per-event so an invalid AFL key 422s once and is skipped."""
-    best, altbest = {}, {}
+    best, altbest, bk_acc = {}, {}, {}
     seen, unavailable, books = set(), set(), set()
     for ev in events:
         eid = ev.get("id")
@@ -191,6 +191,7 @@ def fetch_props(events):
                                 continue
                             _upd(best, (player, internal), rank,
                                  {"line": 0.5, "over": _num(o.get("price")), "under": None, "book": bkey})
+                            bk_acc[(player, internal, 0.5, bkey)] = {"over": _num(o.get("price")), "under": None}
                     elif kind in ("milestone", "altline"):
                         permp = {}
                         for o in outs:
@@ -205,9 +206,11 @@ def fetch_props(events):
                                 pt, pr = min(ge, key=lambda x: x[0]) if ge else min(lst, key=lambda x: x[0])
                                 _upd(best, (player, internal), rank,
                                      {"line": pt, "over": pr, "under": None, "book": bkey})
+                                bk_acc[(player, internal, pt, bkey)] = {"over": pr, "under": None}
                             else:  # altline -> keep the whole ladder
                                 for pt, pr in lst:
                                     _upd(altbest, (player, internal, pt), rank, {"over": pr, "book": bkey})
+                                    bk_acc[(player, internal, pt, bkey)] = {"over": pr, "under": None}
                     else:  # ou
                         grp = {}
                         for o in outs:
@@ -228,6 +231,7 @@ def fetch_props(events):
                             if g["line"] is None:
                                 continue
                             _upd(best, (player, internal), rank, {**g, "book": bkey})
+                            bk_acc[(player, internal, g["line"], bkey)] = {"over": g["over"], "under": g["under"]}
             time.sleep(0.05)
     if unavailable:
         print(f"[odds] markets unavailable for AFL (skipped): {sorted(unavailable)}")
@@ -237,7 +241,11 @@ def fetch_props(events):
               "under": v["under"], "book": v["book"]} for (p, m), v in best.items()]
     alt = [{"player": p, "market": m, "line": pt, "over": v["over"], "book": v["book"]}
            for (p, m, pt), v in altbest.items()]
-    return lines, alt
+    bookrows = [{"player": p, "market": m, "line": ln, "book": bk,
+                 "over": v["over"], "under": v["under"]}
+                for (p, m, ln, bk), v in bk_acc.items()]
+    print(f"[odds] per-book rows: {len(bookrows)}")
+    return lines, alt, bookrows
 
 
 def main():
@@ -254,7 +262,7 @@ def main():
 
     match_odds = fetch_match_odds()
 
-    lines, alt = [], []
+    lines, alt, bookrows = [], [], []
     ev_url = f"{BASE}/sports/{SPORT}/events?apiKey={API_KEY}&regions={REGION}"
     try:
         events, hdr = _get(ev_url)
@@ -263,7 +271,7 @@ def main():
         print(f"[odds] events fetch failed: {e}")
         events = []
     if events:
-        lines, alt = fetch_props(events)
+        lines, alt, bookrows = fetch_props(events)
 
     if not lines:
         lines = existing.get("lines", [])
@@ -271,6 +279,9 @@ def main():
     if not alt:
         alt = existing.get("alt", [])
         if alt: print("[odds] no fresh alt lines — preserving existing alt ladder")
+    if not bookrows:
+        bookrows = existing.get("books", [])
+        if bookrows: print("[odds] no fresh per-book rows — preserving existing books")
     if not match_odds:
         match_odds = existing.get("matchOdds", [])
         if match_odds: print("[odds] no fresh match odds — preserving existing match odds")
@@ -284,6 +295,7 @@ def main():
         "source": "the-odds-api",
         "lines": sorted(lines, key=lambda x: (x["market"], -(x["line"] or 0))),
         "alt": sorted(alt, key=lambda x: (x["market"], x["player"], x["line"] or 0)),
+        "books": sorted(bookrows, key=lambda x: (x["market"], x["player"], x["line"] or 0, x["book"])),
         "matchOdds": match_odds,
     }
     os.makedirs(os.path.dirname(OUT) or ".", exist_ok=True)
