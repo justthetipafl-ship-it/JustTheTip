@@ -53,9 +53,16 @@ if (!is.null(fx) && nrow(fx)) {
   fv <- as.character(pick(fx, c("venue.name","venue")))
   fdt<- as.character(pick(fx, c("utcStartTime","compSeason.startDate","date")))
   frn<- suppressWarnings(as.integer(pick(fx, c("round.roundNumber","roundNumber"))))
-  d  <- suppressWarnings(as.Date(substr(fdt, 1, 10)))
-  upcoming <- frn[!is.na(d) & d >= (Sys.Date() - 1)]
-  next_round <- if (length(upcoming)) min(upcoming, na.rm = TRUE) else suppressWarnings(max(frn, na.rm = TRUE))
+  # A game is "finished" only if it has a known start time more than 3h in the past.
+  # A round is the upcoming one if it is the lowest round NOT fully finished — this
+  # rolls past a completed round even when future rounds have no scheduled time yet
+  # (their NA times count as not-finished, so they stay eligible).
+  ts <- suppressWarnings(as.POSIXct(substr(fdt, 1, 19), format = "%Y-%m-%dT%H:%M:%S", tz = "UTC"))
+  finished <- !is.na(ts) & ts < (Sys.time() - 3 * 3600)
+  rounds <- sort(unique(frn[!is.na(frn)]))
+  done <- vapply(rounds, function(r) { ix <- which(frn == r); length(ix) > 0 && all(finished[ix]) }, logical(1))
+  not_done <- rounds[!done]
+  next_round <- if (length(not_done)) min(not_done) else suppressWarnings(max(rounds))
   keep <- which(frn == next_round)
   fixture <- lapply(keep, function(i) list(
     home = fh[i], away = fa[i],
