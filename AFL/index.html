@@ -30,11 +30,11 @@
   .fxr-kickoff{font-family:var(--font-mono);font-size:11px;color:var(--text-2);letter-spacing:1px;}
   .fxr-vs{font-family:var(--font-display);font-weight:700;font-size:20px;color:var(--text-3);margin:3px 0;}
   .fxr-venue{font-family:var(--font-mono);font-size:10px;color:var(--text-3);}
-  .deg-row{display:grid;grid-template-columns:1fr auto;align-items:center;gap:10px;}
+  .deg-row{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,44%);align-items:center;gap:10px;}
   .deg-main{min-width:0;text-align:left;}
   .deg-nm{font-size:15px;line-height:1.2;}
   .deg-sub{font-family:var(--font-mono);font-size:11px;color:var(--text-2);line-height:1.5;margin-top:3px;white-space:normal;word-break:break-word;}
-  .deg-val{font-family:var(--font-display);font-weight:800;font-size:13.5px;line-height:1.3;text-align:right;max-width:48%;justify-self:end;white-space:normal;}
+  .deg-val{font-family:var(--font-display);font-weight:800;font-size:13.5px;line-height:1.3;text-align:right;max-width:100%;justify-self:end;white-space:normal;overflow-wrap:anywhere;word-break:break-word;}
   .deg-odds{color:var(--accent)!important;font-weight:800;white-space:nowrap;}
   /* focused fixture header */
   .fixture-header{background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:16px;
@@ -391,6 +391,8 @@
   /* ===================== SETTINGS (localStorage) ===================== */
   const SETTINGS_KEY='jtt_afl_settings';
   const ALL_BOOKS=[['sportsbet','Sportsbet'],['ladbrokes_au','Ladbrokes'],['tab','TAB'],['pointsbetau','Pointsbet'],['betr_au','Betr'],['unibet','Unibet'],['betfair_ex_au','Betfair']];
+  const _BOOK_NAMES=Object.fromEntries(ALL_BOOKS);
+  function bookName(k){ return k?(_BOOK_NAMES[k]||(k.charAt(0).toUpperCase()+k.slice(1))):''; }
   const MULTI_MKTS=[['disposals','Disposals'],['goals','Goals'],['dreamteam','Fantasy'],['marks','Marks'],['tackles','Tackles'],['clearances','Clearances'],['kicks','Kicks'],['handballs','Handballs']];
   const DEFAULT_SETTINGS={
     books:[],   // [] = use all books; otherwise restrict arbs/EV/best-price to these
@@ -1383,9 +1385,9 @@
   // anytime goal odds, but if it's too short (<$1.20) show the 2+/3+ milestone instead
   function goalOddsTag(name){
     const any=oddsFor(name,'goals'), mul=oddsFor(name,'goalsx');
-    if(any&&any.over!=null&&any.over>=1.20) return ' · 1+ $'+any.over.toFixed(2);
-    if(mul&&mul.over!=null){ const m=Math.round((mul.line||1.5)+0.5); return ' · '+m+'+ $'+mul.over.toFixed(2); }
-    if(any&&any.over!=null) return ' · 1+ $'+any.over.toFixed(2);
+    if(any&&any.over!=null&&any.over>=1.20&&any.book) return ' · 1+ $'+any.over.toFixed(2)+' ('+bookName(any.book)+')';
+    if(mul&&mul.over!=null&&mul.book){ const m=Math.round((mul.line||1.5)+0.5); return ' · '+m+'+ $'+mul.over.toFixed(2)+' ('+bookName(mul.book)+')'; }
+    if(any&&any.over!=null&&any.book) return ' · 1+ $'+any.over.toFixed(2)+' ('+bookName(any.book)+')';
     return '';
   }
   // full SNAGS page: hot snags + top-10 scorers + 5 easiest / 5 toughest team matchups
@@ -1520,6 +1522,34 @@
     });
     return out.sort((a,b)=>(b.lineBogey-a.lineBogey)||((b.diffPct||0)-(a.diffPct||0)));
   }
+  // avg opponent DVP% across a window of game-log rows (how soft/tough the matchups were)
+  function windowDvp(p, statKey, rows){
+    const pos=JTTScoring.POS_TO_DVP[p.position]||p.position;
+    const ds=(rows||[]).map(r=>r.opponent?JTTScoring.getDVPPct(r.opponent,pos,statKey):null).filter(v=>v!=null);
+    return ds.length?ds.reduce((a,b)=>a+b,0)/ds.length:null;
+  }
+  // narrative note: was the run/spike/drop matchup-driven, and does this week's matchup support continuation?
+  function formNote(kind, runDvp, thisDvp){
+    if(runDvp==null && thisDvp==null) return '';
+    const R=runDvp==null?null:(runDvp>8?'soft':runDvp<-8?'tough':'mixed');
+    const A=thisDvp==null?null:(thisDvp>8?'soft':thisDvp<-8?'tough':'neutral');
+    let txt='', col='#9ca3af';
+    if(kind==='drop'){
+      const run=R==='tough'?'Slump came vs tough matchups':R==='soft'?'Cooling despite soft matchups':'Cooling form';
+      if(A==='soft'){ txt=run+' — softer draw this week, bounce-back chance'; col=R==='soft'?'#f59e0b':'#22c55e'; }
+      else if(A==='tough'){ txt=run+' — tough matchup ahead, likely keeps sliding'; col='#ef4444'; }
+      else if(A==='neutral'){ txt=run+' — neutral matchup ahead'; }
+      else txt=run;
+    } else {
+      const run=R==='soft'?'Run built on soft matchups':R==='tough'?'Run earned vs tough D':R==='mixed'?'Run across mixed matchups':'';
+      const pre=run?run+' — ':'';
+      if(A==='soft'){ txt=pre+'soft matchup ahead, room to continue'; col=R==='soft'?'#f59e0b':'#22c55e'; }
+      else if(A==='tough'){ txt=pre+'tough matchup ahead, regression risk'; col='#ef4444'; }
+      else if(A==='neutral'){ txt=pre+'neutral matchup ahead'; }
+      else txt=run;
+    }
+    return txt?'<br><span style="color:'+col+';font-style:italic">'+txt+'</span>':'';
+  }
   function streakers(){
     const teams=_fixtureSet(); const out=[];
     (state.idx.players||[]).filter(p=>teams.has(p.team)).forEach(p=>{
@@ -1532,7 +1562,8 @@
         const opp=nextOpp(p.team);
         const pos=JTTScoring.POS_TO_DVP[p.position]||p.position;
         const dvpPct=opp?JTTScoring.getDVPPct(opp,pos,k):null;
-        out.push({p,stat:l,statKey:k,line,streak,opp,dvpPct,rate:vals.filter(v=>v>=line).length/vals.length});
+        const runDvp=windowDvp(p,k,sorted.slice(-streak));
+        out.push({p,stat:l,statKey:k,line,streak,opp,dvpPct,runDvp,rate:vals.filter(v=>v>=line).length/vals.length});
       });
     });
     return out.sort((a,b)=>b.streak-a.streak);
@@ -1554,7 +1585,11 @@
         if(dir==='spike'&&!spiking) return; if(dir==='drop'&&spiking) return;
         if(spiking && l3<min) return;            // spike must reach a real number
         if(!spiking && seasonAvg<min) return;    // drop only matters off a real baseline
-        out.push({p,stat:l,statKey:k,seasonAvg,l3,swing,spiking});
+        const opp=nextOpp(p.team);
+        const pos=JTTScoring.POS_TO_DVP[p.position]||p.position;
+        const thisDvp=opp?JTTScoring.getDVPPct(opp,pos,k):null;
+        const runDvp=windowDvp(p,k,cur.slice(0,3));
+        out.push({p,stat:l,statKey:k,seasonAvg,l3,swing,spiking,opp,thisDvp,runDvp});
       });
     });
     return out.sort((a,b)=>Math.abs(b.swing)-Math.abs(a.swing));
@@ -1660,21 +1695,21 @@
       '<div class="deg-val" style="color:'+col+'">'+hl(headline)+'</div></div>';
   }
   function muTag(pct){ const mi=JTTScoring.muInfo(pct); return mi?'<span style="color:'+mi.c+'">'+(pct>0?'+':'')+pct.toFixed(0)+'% '+mi.t+'</span>':''; }
-  function lineTag(name,market){ const o=postedLine(name,market); return o?' · O '+o.line+(o.over!=null?' $'+o.over.toFixed(2):''):''; }
+  function lineTag(name,market){ const o=postedLine(name,market); if(!o||o.over==null||!o.book) return o&&o.line!=null?' · O '+o.line:''; return ' · O '+o.line+' $'+o.over.toFixed(2)+' ('+bookName(o.book)+')'; }
   // bookmaker price for an exact "X+" line: alt ladder, goals anytime/2+, or posted O/U fallback. -> {price,label} | null
   function priceForLine(name, statKey, line){
     if(statKey==='goals'||statKey==='goalsx'){
-      if(line>=2){ const g=oddsFor(name,'goalsx'); if(g&&g.over!=null&&Math.round((g.line||1.5)+0.5)>=line) return {price:g.over,label:line+'+'}; }
-      const a=oddsFor(name,'goals'); if(a&&a.over!=null) return {price:a.over,label:'1+'};
+      if(line>=2){ const g=oddsFor(name,'goalsx'); if(g&&g.over!=null&&Math.round((g.line||1.5)+0.5)>=line) return {price:g.over,label:line+'+',book:g.book}; }
+      const a=oddsFor(name,'goals'); if(a&&a.over!=null) return {price:a.over,label:'1+',book:a.book};
       return null;
     }
     if(statKey==='dt') statKey='dreamteam';   // fantasy now has markets (player_afl_fantasy_points + _over ladder)
     const alts=altLines(name,statKey);
     let hit=alts.find(a=>Math.round(a.line+0.5)===line);
     if(!hit){ const ge=alts.filter(a=>Math.round(a.line+0.5)>=line).sort((x,y)=>x.line-y.line); hit=ge[0]; }
-    if(hit&&hit.over!=null) return {price:hit.over,label:Math.round(hit.line+0.5)+'+'};
+    if(hit&&hit.over!=null) return {price:hit.over,label:Math.round(hit.line+0.5)+'+',book:hit.book};
     const od=oddsFor(name,statKey);
-    if(od&&od.over!=null&&od.line!=null) return {price:od.over,label:od.line+' O'};
+    if(od&&od.over!=null&&od.line!=null) return {price:od.over,label:od.line+' O',book:od.book};
     return null;
   }
   // price for a CMB pick at line≈avg: prefer the posted O/U if its line is near, else ladder/milestone
@@ -1683,7 +1718,7 @@
     return priceForLine(name,k,line);
   }
   // price for the exact streak line (e.g. 25+ disposals from the alt ladder; anytime/2+ for goals)
-  function streakOdds(s){ const r=priceForLine(s.p.name,s.statKey,s.line); return r?' · '+r.label+' $'+r.price.toFixed(2):''; }
+  function streakOdds(s){ const r=priceForLine(s.p.name,s.statKey,s.line); return (r&&r.book)?' · '+r.label+' $'+r.price.toFixed(2)+' ('+bookName(r.book)+')':''; }
   function degWrap(icon,title,items,colorClass){
     if(!items) return _degenFocused?'':emptyState(icon,title+' — no data','Needs game logs + this round\u2019s fixture.');
     if(!items.length) return _degenFocused?'':emptyState(icon,'No '+title.toLowerCase()+' this round','Nothing cleared the gate on the current slate.');
@@ -1748,12 +1783,12 @@
     }
     if(k==='streak'){
       const rows=_fc(streakers(),6).map(s=>degRow(s.p.name,'#f97316',s.streak+' straight',
-        s.stat+' '+s.line+'+ · '+abbr(s.p.team)+(s.opp?' v '+abbr(s.opp):'')+' · hit '+Math.round(s.rate*100)+'%'+(s.dvpPct!=null?' · '+muTag(s.dvpPct):'')+streakOdds(s)));
+        s.stat+' '+s.line+'+ · '+abbr(s.p.team)+(s.opp?' v '+abbr(s.opp):'')+' · hit '+Math.round(s.rate*100)+'%'+(s.dvpPct!=null?' · '+muTag(s.dvpPct):'')+streakOdds(s)+formNote('spike',s.runDvp,s.dvpPct)));
       return degWrap('ti-flame','Streakers',rows,'c-amber');
     }
     if(k==='form'){
-      const up=_fc(formAlerts('spike'),6,25).map(a=>degRow(a.p.name,'#22c55e','▲ +'+Math.round(a.swing*100)+'%',a.stat+' · L3 '+M(a.l3)+' vs season '+M(a.seasonAvg)));
-      const dn=_fc(formAlerts('drop'),6,25).map(a=>degRow(a.p.name,'#ef4444','▼ '+Math.round(a.swing*100)+'%',a.stat+' · L3 '+M(a.l3)+' vs season '+M(a.seasonAvg)));
+      const up=_fc(formAlerts('spike'),6,25).map(a=>degRow(a.p.name,'#22c55e','▲ +'+Math.round(a.swing*100)+'%',a.stat+' · L3 '+M(a.l3)+' vs season '+M(a.seasonAvg)+formNote('spike',a.runDvp,a.thisDvp)));
+      const dn=_fc(formAlerts('drop'),6,25).map(a=>degRow(a.p.name,'#ef4444','▼ '+Math.round(a.swing*100)+'%',a.stat+' · L3 '+M(a.l3)+' vs season '+M(a.seasonAvg)+formNote('drop',a.runDvp,a.thisDvp)));
       return degWrap('ti-trending-up','Spiking',up,'c-green')+degWrap('ti-trending-down','Cooling',dn,'c-red');
     }
     if(k==='disp'){
