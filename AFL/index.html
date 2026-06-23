@@ -397,7 +397,7 @@
   const DEFAULT_SETTINGS={
     books:[],   // [] = use all books; otherwise restrict arbs/EV/best-price to these
     nerd:{ arbs:true, middles:true, model:true, implied:true, market:true, minEv:2, maxEv:0, maxOdds:0, minArb:0.5, minGap:1, maxCost:12, minSamp:6 },
-    multi:{ legs:6, scope:'game', minProb:55, minScore:3, markets:MULTI_MKTS.map(m=>m[0]) }
+    multi:{ legs:6, scope:'game', today:false, minProb:55, minScore:3, markets:MULTI_MKTS.map(m=>m[0]) }
   };
   let SETTINGS=(function(){
     try{ const s=JSON.parse(localStorage.getItem(SETTINGS_KEY)||'null'); if(!s) return JSON.parse(JSON.stringify(DEFAULT_SETTINGS));
@@ -406,6 +406,7 @@
         multi:Object.assign({},DEFAULT_SETTINGS.multi,s.multi||{}) };
     }catch(e){ return JSON.parse(JSON.stringify(DEFAULT_SETTINGS)); }
   })();
+  if(SETTINGS.multi.scope==='day') SETTINGS.multi.scope='game';   // per-day retired in favour of the Today filter
   function saveSettings(){ try{localStorage.setItem(SETTINGS_KEY,JSON.stringify(SETTINGS));}catch(e){} }
 
   /* ===================== AUTH ===================== */
@@ -1674,16 +1675,16 @@
     }
     return sel;
   }
+  function _todayStr(){ const d=new Date(); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
   function multiBuilder(){
     const M=SETTINGS.multi, scope=M.scope||'game', N=M.legs||6;
-    const fixtures=(state.data.fixture||[]).filter(g=>g.home&&g.away);
+    let fixtures=(state.data.fixture||[]).filter(g=>g.home&&g.away);
+    if(M.today){ const t=_todayStr(); fixtures=fixtures.filter(g=>(g.date||'')===t); }
     const pl=t=>(state.idx.players||[]).filter(p=>p.team===t&&(p.matches||0)>=3);
     const legsFor=g=>[...buildLegs(pl(g.home),g.away),...buildLegs(pl(g.away),g.home)];
     const price=legs=>{ let comb=1,priced=0; legs.forEach(l=>{ const o=priceForLine(l.p.name,l.statKey,l.line); l._odds=o; const px=o?o.price:(l.prob>0?1/l.prob:null); if(px)comb*=px; if(o)priced++; }); return {comb,priced}; };
     const mk=(label,raw)=>{ const legs=raw.sort((a,b)=>b.score-a.score).slice(0,N); if(!legs.length)return null; const pr=price(legs); return {label,legs,comb:pr.comb,priced:pr.priced}; };
-    if(scope==='round'){ let all=[]; fixtures.forEach(g=>all.push(...legsFor(g))); const grp=mk('Full Round',all); return grp?[grp]:[]; }
-    if(scope==='day'){ const byD={}; fixtures.forEach(g=>{ (byD[g.date||'TBC']=byD[g.date||'TBC']||[]).push(...legsFor(g)); });
-      return Object.entries(byD).map(([d,ls])=>mk(d,ls)).filter(Boolean); }
+    if(scope==='round'){ let all=[]; fixtures.forEach(g=>all.push(...legsFor(g))); const grp=mk(M.today?'Today':'Full Round',all); return grp?[grp]:[]; }
     return fixtures.map(g=>mk(abbr(g.home)+' v '+abbr(g.away),legsFor(g))).filter(Boolean);
   }
 
@@ -1783,7 +1784,7 @@
     }
     if(k==='streak'){
       const rows=_fc(streakers(),6).map(s=>degRow(s.p.name,'#f97316',s.streak+' straight',
-        s.stat+' '+s.line+'+ · '+abbr(s.p.team)+(s.opp?' v '+abbr(s.opp):'')+' · hit '+Math.round(s.rate*100)+'%'+(s.dvpPct!=null?' · '+muTag(s.dvpPct):'')+streakOdds(s)+formNote('spike',s.runDvp,s.dvpPct)));
+        s.stat+' '+s.line+'+ · '+abbr(s.p.team)+(s.opp?' v '+abbr(s.opp):'')+' · hit '+Math.round(s.rate*100)+'%'+(s.dvpPct!=null?' · '+muTag(s.dvpPct):'')+streakOdds(s)));
       return degWrap('ti-flame','Streakers',rows,'c-amber');
     }
     if(k==='form'){
@@ -1807,14 +1808,14 @@
       return degWrap('ti-user-search','Lurking Taggers',rows);
     }
     if(k==='multi'){
-      return multiFilterBar()+'<div id="multi-results">'+multiResults()+'</div>';
+      return '<div id="multi-wrap">'+multiFilterBar()+'<div id="multi-results">'+multiResults()+'</div></div>';
     }
     return emptyState('ti-flame','Coming next','This tile ports next.');
   }
   function multiResults(){
     const games=multiBuilder();
     if(!games.length) return emptyState('ti-stack-2','No multi legs yet','Adjust the filters above, or load player data.');
-    const scopeWord=SETTINGS.multi.scope==='round'?'round multi':SETTINGS.multi.scope==='day'?'day multi':'same-game multi';
+    const scopeWord=SETTINGS.multi.scope==='round'?(SETTINGS.multi.today?'today multi':'round multi'):'same-game multi';
     const blocks=games.map(gm=>{
       const legs=gm.legs.map(l=>{
         const col=LEG_COL[l.type]||'#3b82f6';
@@ -1863,16 +1864,19 @@
   function multiFilterBar(){
     const M=SETTINGS.multi;
     let h='<div style="'+_fbar+'"><div style="font-size:10px;color:var(--text-3);margin-bottom:4px;text-transform:uppercase;letter-spacing:.04em">Multi filters</div>';
-    h+='<div style="margin-bottom:4px">'+[['game','Per game'],['day','Per day'],['round','Full round']].map(([k,l])=>_fchip(M.scope===k,l,"_mScope('"+k+"')")).join('')+'</div>';
+    h+='<div style="margin-bottom:4px">'+[['game','Per game'],['round','Full round']].map(([k,l])=>_fchip(M.scope===k,l,"_mScope('"+k+"')")).join('')+
+      '<span style="display:inline-block;width:1px;height:16px;background:var(--border);margin:0 6px;vertical-align:middle"></span>'+
+      _fchip(!!M.today,'Today only',"_mToday()")+'</div>';
     h+='<div style="display:flex;flex-wrap:wrap;align-items:center;margin-bottom:4px">'+
       _fnum('Legs',M.legs,"_mNum('legs',this.value)")+_fnum('Min prob%',M.minProb,"_mNum('minProb',this.value)")+_fnum('Min score',M.minScore,"_mNum('minScore',this.value)")+'</div>';
     h+='<div>'+MULTI_MKTS.map(([k,l])=>_fchip(M.markets.indexOf(k)>=0,l,"_mMkt('"+k+"')")).join('')+'</div></div>';
     return h;
   }
   window._mScope=function(s){ SETTINGS.multi.scope=s; saveSettings(); _reRenderMulti(); };
+  window._mToday=function(){ SETTINGS.multi.today=!SETTINGS.multi.today; saveSettings(); _reRenderMulti(); };
   window._mNum=function(k,v){ let n=parseFloat(v); if(!isNaN(n)&&n>=0){ if(k==='legs')n=Math.max(2,Math.min(12,Math.round(n))); SETTINGS.multi[k]=n; } saveSettings(); _reRenderMulti(); };
   window._mMkt=function(k){ const a=SETTINGS.multi.markets,i=a.indexOf(k); if(i>=0)a.splice(i,1); else a.push(k); saveSettings(); _reRenderMulti(); };
-  function _reRenderMulti(){ const el=document.getElementById('multi-results'); if(el) el.innerHTML=multiResults(); }
+  function _reRenderMulti(){ const el=document.getElementById('multi-wrap'); if(el) el.innerHTML=multiFilterBar()+'<div id="multi-results">'+multiResults()+'</div>'; }
 
   /* ---------- SETTINGS UI ---------- */
   function renderSettings(){
@@ -1899,7 +1903,8 @@
     // Multi Builder
     h+=card('Multi Builder','ti-stack-2',
       sub('Scope')+
-      [['game','Per game'],['day','Per day'],['round','Full round']].map(([k,l])=>chip(MU.scope===k,l,"_sMultiScope('"+k+"')")).join('')+
+      [['game','Per game'],['round','Full round']].map(([k,l])=>chip(MU.scope===k,l,"_sMultiScope('"+k+"')")).join('')+
+      chip(!!MU.today,'Today only',"_sMultiToday()")+
       grid(fld('Legs',num(MU.legs,"_sMultiNum('legs',this.value)"))+fld('Min prob %',num(MU.minProb,"_sMultiNum('minProb',this.value)"))+
         fld('Min signal score',num(MU.minScore,"_sMultiNum('minScore',this.value)")))+
       sub('Markets')+
@@ -1911,6 +1916,7 @@
   window._sNerdTile=function(k){ SETTINGS.nerd[k]=!SETTINGS.nerd[k]; saveSettings(); _renderApp(); };
   window._sNerdNum=function(k,v){ const n=parseFloat(v); if(!isNaN(n)&&n>=0) SETTINGS.nerd[k]=n; saveSettings(); _renderApp(); };
   window._sMultiScope=function(s){ SETTINGS.multi.scope=s; saveSettings(); _renderApp(); };
+  window._sMultiToday=function(){ SETTINGS.multi.today=!SETTINGS.multi.today; saveSettings(); _renderApp(); };
   window._sMultiNum=function(k,v){ let n=parseFloat(v); if(!isNaN(n)&&n>=0){ if(k==='legs')n=Math.max(2,Math.min(12,Math.round(n))); SETTINGS.multi[k]=n; } saveSettings(); _renderApp(); };
   window._sMultiMkt=function(k){ const a=SETTINGS.multi.markets, i=a.indexOf(k); if(i>=0)a.splice(i,1); else a.push(k); saveSettings(); _renderApp(); };
   window._sReset=function(){ SETTINGS=JSON.parse(JSON.stringify(DEFAULT_SETTINGS)); saveSettings(); _renderApp(); };
