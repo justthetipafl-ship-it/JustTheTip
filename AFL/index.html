@@ -384,7 +384,7 @@
   const MULTI_MKTS=[['disposals','Disposals'],['goals','Goals'],['dreamteam','Fantasy'],['marks','Marks'],['tackles','Tackles'],['clearances','Clearances'],['kicks','Kicks'],['handballs','Handballs']];
   const DEFAULT_SETTINGS={
     books:[],   // [] = use all books; otherwise restrict arbs/EV/best-price to these
-    nerd:{ arbs:true, middles:true, model:true, implied:true, market:true, minEv:2, minArb:0.5, minGap:1, maxCost:12, minSamp:6 },
+    nerd:{ arbs:true, middles:true, model:true, implied:true, market:true, minEv:2, maxEv:0, maxOdds:0, minArb:0.5, minGap:1, maxCost:12, minSamp:6 },
     multi:{ legs:6, scope:'game', minProb:55, minScore:3, markets:MULTI_MKTS.map(m=>m[0]) }
   };
   let SETTINGS=(function(){
@@ -933,7 +933,11 @@
           ev=bo.over/avg-1; prob=1/avg;
         }
         if(ev==null) return;
-        if(ev*100>=(SETTINGS.nerd.minEv||0)) out.push({p,k,line:L,bo,prob,ev:ev*100,real,n,ref,proj,mode,avg,nb});
+        const evp=ev*100;
+        if(evp<(SETTINGS.nerd.minEv||0)) return;
+        if(SETTINGS.nerd.maxEv>0&&evp>SETTINGS.nerd.maxEv) return;
+        if(SETTINGS.nerd.maxOdds>0&&bo.over>SETTINGS.nerd.maxOdds) return;
+        out.push({p,k,line:L,bo,prob,ev:evp,real,n,ref,proj,mode,avg,nb});
       });
     }));
     return out.sort((a,b)=>b.ev-a.ev);
@@ -982,6 +986,7 @@
     h+='<div class="fx-mode">'+
       '<button class="fxm-btn'+(fxMode==='degen'?' on':'')+'" onclick="setFxMode(\'degen\')"><i class="ti ti-flame"></i> Degen Mode</button>'+
       '<button class="fxm-btn'+(fxMode==='nerd'?' on':'')+'" onclick="setFxMode(\'nerd\')"><i class="ti ti-math-function"></i> Nerd Mode</button></div>';
+    if(fxMode==='nerd') h+=nerdFilterBar();
     h+='<div class="team-cols">'+teamPanel(g.home,g.away,true)+teamPanel(g.away,g.home,false)+'</div>';
     return h;
   }
@@ -1757,23 +1762,26 @@
       return degWrap('ti-user-search','Lurking Taggers',rows);
     }
     if(k==='multi'){
-      const games=multiBuilder();
-      if(!games.length) return emptyState('ti-stack-2','No multi legs yet','Multi Builder suggests the best props — adjust filters in Settings or load player data.');
-      const scopeWord=SETTINGS.multi.scope==='round'?'round multi':SETTINGS.multi.scope==='day'?'day multi':'same-game multi';
-      const blocks=games.map(gm=>{
-        const legs=gm.legs.map(l=>{
-          const col=LEG_COL[l.type]||'#3b82f6';
-          const price=l._odds?'$'+l._odds.price.toFixed(2):'~$'+(l.prob>0?(1/l.prob).toFixed(2):'—');
-          const probStr=(l.probReal?Math.round(l.prob*100)+'% hit':'~'+Math.round(l.prob*100)+'%')+(l.probReal&&l.probN?' ('+l.probN+'g)':'');
-          return degRow(l.p.name,col,price,l.betLabel+' · vs '+abbr(l.opp)+' · avg '+l.avg.toFixed(1)+' · '+probStr+(l._odds?'':' · est'));
-        }).join('');
-        const combLabel='$'+gm.comb.toFixed(2)+(gm.priced<gm.legs.length?' ('+gm.priced+'/'+gm.legs.length+' priced)':'');
-        return '<div class="tp-body-meta" style="margin-top:8px"><b>'+gm.label+'</b> · '+gm.legs.length+'-leg '+scopeWord+' · combined <b>'+combLabel+'</b></div>'+legs;
-      }).join('');
-      const totalLegs=games.reduce((a,g)=>a+g.legs.length,0);
-      return '<details class="tp-collapse c-green" open><summary class="tp-collapse-sum"><i class="ti ti-stack-2"></i><span class="tp-collapse-title">Multi Builder</span><span class="tp-count">'+games.length+'</span><i class="ti ti-chevron-down tp-collapse-chev"></i></summary><div class="tp-collapse-body"><div class="tp-body-meta">'+scopeWord.replace(/^\w/,c=>c.toUpperCase())+(games.length>1?'s':'')+' · '+games.length+' · '+totalLegs+' legs · <a onclick="_switchTab(\'info\')" style="cursor:pointer;color:var(--accent)">filters</a></div>'+blocks+'</div></details>';
+      return multiFilterBar()+'<div id="multi-results">'+multiResults()+'</div>';
     }
     return emptyState('ti-flame','Coming next','This tile ports next.');
+  }
+  function multiResults(){
+    const games=multiBuilder();
+    if(!games.length) return emptyState('ti-stack-2','No multi legs yet','Adjust the filters above, or load player data.');
+    const scopeWord=SETTINGS.multi.scope==='round'?'round multi':SETTINGS.multi.scope==='day'?'day multi':'same-game multi';
+    const blocks=games.map(gm=>{
+      const legs=gm.legs.map(l=>{
+        const col=LEG_COL[l.type]||'#3b82f6';
+        const price=l._odds?'$'+l._odds.price.toFixed(2):'~$'+(l.prob>0?(1/l.prob).toFixed(2):'—');
+        const probStr=(l.probReal?Math.round(l.prob*100)+'% hit':'~'+Math.round(l.prob*100)+'%')+(l.probReal&&l.probN?' ('+l.probN+'g)':'');
+        return degRow(l.p.name,col,price,l.betLabel+' · vs '+abbr(l.opp)+' · avg '+l.avg.toFixed(1)+' · '+probStr+(l._odds?'':' · est'));
+      }).join('');
+      const combLabel='$'+gm.comb.toFixed(2)+(gm.priced<gm.legs.length?' ('+gm.priced+'/'+gm.legs.length+' priced)':'');
+      return '<div class="tp-body-meta" style="margin-top:8px"><b>'+gm.label+'</b> · '+gm.legs.length+'-leg '+scopeWord+' · combined <b>'+combLabel+'</b></div>'+legs;
+    }).join('');
+    const totalLegs=games.reduce((a,g)=>a+g.legs.length,0);
+    return '<details class="tp-collapse c-green" open><summary class="tp-collapse-sum"><i class="ti ti-stack-2"></i><span class="tp-collapse-title">Multi Builder</span><span class="tp-count">'+games.length+'</span><i class="ti ti-chevron-down tp-collapse-chev"></i></summary><div class="tp-collapse-body"><div class="tp-body-meta">'+scopeWord.replace(/^\w/,c=>c.toUpperCase())+(games.length>1?'s':'')+' · '+games.length+' · '+totalLegs+' legs</div>'+blocks+'</div></details>';
   }
 
   window.degenTile=function(k){
@@ -1790,6 +1798,37 @@
   };
 
   /* ---------- INFO ---------- */
+  /* ---------- INLINE FILTER BARS ---------- */
+  function _fchip(on,label,onclick){ return '<button onclick="'+onclick+'" style="display:inline-flex;align-items:center;gap:3px;padding:4px 9px;margin:2px;border-radius:13px;font-size:11px;cursor:pointer;border:1px solid '+(on?'var(--accent)':'var(--border)')+';background:'+(on?'rgba(34,197,94,.13)':'transparent')+';color:'+(on?'var(--text)':'var(--text-3)')+'">'+(on?'<i class="ti ti-check" style="font-size:10px"></i>':'')+label+'</button>'; }
+  function _fnum(label,val,onch){ return '<label style="display:inline-flex;align-items:center;gap:4px;margin:2px 8px 2px 0;font-size:10px;color:var(--text-3)">'+label+'<input type="number" value="'+val+'" onchange="'+onch+'" style="width:50px;background:var(--surface-2);color:var(--text);border:1px solid var(--border);border-radius:5px;padding:3px 5px;font-size:11px;font-family:var(--font-mono)"></label>'; }
+  const _fbar='border:1px solid var(--border);border-radius:8px;padding:8px 10px;margin:0 0 12px;background:var(--surface-2)';
+
+  function nerdFilterBar(){
+    const N=SETTINGS.nerd;
+    let h='<div style="'+_fbar+'"><div style="font-size:10px;color:var(--text-3);margin-bottom:4px;text-transform:uppercase;letter-spacing:.04em">Nerd filters</div>';
+    h+='<div style="margin-bottom:4px">'+[['arbs','Arbs'],['middles','Middles'],['model','+EV Model'],['implied','Implied EV'],['market','Market EV']].map(([k,l])=>_fchip(!!N[k],l,"_sNerdTile('"+k+"')")).join('')+'</div>';
+    h+='<div style="display:flex;flex-wrap:wrap;align-items:center">'+
+      _fnum('Min EV%',N.minEv,"_sNerdNum('minEv',this.value)")+_fnum('Max EV%',N.maxEv,"_sNerdNum('maxEv',this.value)")+
+      _fnum('Max odds',N.maxOdds,"_sNerdNum('maxOdds',this.value)")+_fnum('Min arb%',N.minArb,"_sNerdNum('minArb',this.value)")+
+      _fnum('Min gap',N.minGap,"_sNerdNum('minGap',this.value)")+_fnum('Max cost%',N.maxCost,"_sNerdNum('maxCost',this.value)")+
+      _fnum('Min samp',N.minSamp,"_sNerdNum('minSamp',this.value)")+'</div>';
+    h+='<div style="font-size:9px;color:var(--text-3);margin-top:3px">Max EV% / Max odds = 0 means no cap.</div></div>';
+    return h;
+  }
+  function multiFilterBar(){
+    const M=SETTINGS.multi;
+    let h='<div style="'+_fbar+'"><div style="font-size:10px;color:var(--text-3);margin-bottom:4px;text-transform:uppercase;letter-spacing:.04em">Multi filters</div>';
+    h+='<div style="margin-bottom:4px">'+[['game','Per game'],['day','Per day'],['round','Full round']].map(([k,l])=>_fchip(M.scope===k,l,"_mScope('"+k+"')")).join('')+'</div>';
+    h+='<div style="display:flex;flex-wrap:wrap;align-items:center;margin-bottom:4px">'+
+      _fnum('Legs',M.legs,"_mNum('legs',this.value)")+_fnum('Min prob%',M.minProb,"_mNum('minProb',this.value)")+_fnum('Min score',M.minScore,"_mNum('minScore',this.value)")+'</div>';
+    h+='<div>'+MULTI_MKTS.map(([k,l])=>_fchip(M.markets.indexOf(k)>=0,l,"_mMkt('"+k+"')")).join('')+'</div></div>';
+    return h;
+  }
+  window._mScope=function(s){ SETTINGS.multi.scope=s; saveSettings(); _reRenderMulti(); };
+  window._mNum=function(k,v){ let n=parseFloat(v); if(!isNaN(n)&&n>=0){ if(k==='legs')n=Math.max(2,Math.min(12,Math.round(n))); SETTINGS.multi[k]=n; } saveSettings(); _reRenderMulti(); };
+  window._mMkt=function(k){ const a=SETTINGS.multi.markets,i=a.indexOf(k); if(i>=0)a.splice(i,1); else a.push(k); saveSettings(); _reRenderMulti(); };
+  function _reRenderMulti(){ const el=document.getElementById('multi-results'); if(el) el.innerHTML=multiResults(); }
+
   /* ---------- SETTINGS UI ---------- */
   function renderSettings(){
     const chip=(on,label,onclick)=>'<button onclick="'+onclick+'" style="display:inline-flex;align-items:center;gap:4px;padding:5px 10px;margin:3px;border-radius:14px;font-size:11px;cursor:pointer;border:1px solid '+(on?'var(--accent)':'var(--border)')+';background:'+(on?'rgba(34,197,94,.13)':'transparent')+';color:'+(on?'var(--text)':'var(--text-3)')+'">'+(on?'<i class="ti ti-check" style="font-size:11px"></i>':'')+label+'</button>';
@@ -1808,7 +1847,8 @@
     h+=card('Nerd Mode','ti-math-function',
       sub('Show tiles')+
       [['arbs','Arbs'],['middles','Middles'],['model','+EV Model'],['implied','Implied EV'],['market','Market EV']].map(([k,l])=>chip(!!N[k],l,"_sNerdTile('"+k+"')")).join('')+
-      grid(fld('Min EV %',num(N.minEv,"_sNerdNum('minEv',this.value)"))+fld('Min arb %',num(N.minArb,"_sNerdNum('minArb',this.value)"))+
+      grid(fld('Min EV %',num(N.minEv,"_sNerdNum('minEv',this.value)"))+fld('Max EV %',num(N.maxEv,"_sNerdNum('maxEv',this.value)"))+
+        fld('Max odds',num(N.maxOdds,"_sNerdNum('maxOdds',this.value)"))+fld('Min arb %',num(N.minArb,"_sNerdNum('minArb',this.value)"))+
         fld('Min middle gap',num(N.minGap,"_sNerdNum('minGap',this.value)"))+fld('Max middle cost %',num(N.maxCost,"_sNerdNum('maxCost',this.value)"))+
         fld('Min model sample (g)',num(N.minSamp,"_sNerdNum('minSamp',this.value)"))));
     // Multi Builder
