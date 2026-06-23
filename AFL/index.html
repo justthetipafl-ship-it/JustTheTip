@@ -2056,28 +2056,43 @@
   window.cmpUseRecent=function(q){ const inp=document.getElementById('cmp-input'); if(inp){inp.value=q; window.cmbRun&&window.cmbRun();} };
 
   let _cmbCtx=null;
+  const SHARE_RATIO=4/5;   // portrait floor — short cards pad to this; tall cards stay natural (no side bars)
   window.cmpSetLine=function(L){ if(!_cmbCtx)return; const o=document.getElementById('cmb-result'); if(o){ o.innerHTML=cmpAnalysis(_cmbCtx.p,_cmbCtx.stat,+L); } };
+  function _cmbRasterize(){
+    return new Promise((resolve,reject)=>{
+      const card=document.getElementById('cmb-card'); if(!card){reject(new Error('no card'));return;}
+      const go=()=>{
+        window.html2canvas(card,{backgroundColor:'#0a0a0a',scale:2,useCORS:true,logging:false}).then(cc=>{
+          const m=Math.round(cc.width*0.045);                // uniform breathing-room margin
+          let ow=cc.width+m*2, oh=cc.height+m*2;
+          if(ow/oh>SHARE_RATIO) oh=Math.round(ow/SHARE_RATIO);  // only pad height if too wide; tall cards stay natural portrait
+          const out=document.createElement('canvas'); out.width=ow; out.height=oh;
+          const x=out.getContext('2d'); x.fillStyle='#0a0a0a'; x.fillRect(0,0,ow,oh);
+          x.drawImage(cc,Math.round((ow-cc.width)/2),Math.round((oh-cc.height)/2));
+          resolve(out);
+        }).catch(reject);
+      };
+      if(window.html2canvas) go();
+      else { const s=document.createElement('script'); s.src='https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js'; s.onload=go; s.onerror=()=>reject(new Error('Could not load the image library — check your connection.')); document.head.appendChild(s); }
+    });
+  }
+  function _dl(blob,fname){ const url=URL.createObjectURL(blob); const a=document.createElement('a'); a.href=url; a.download=fname; a.click(); setTimeout(()=>URL.revokeObjectURL(url),1000); }
+  function _btnBusy(id){ const b=document.getElementById(id); if(b){ b._o=b.innerHTML; b.disabled=true; b.innerHTML='<i class="ti ti-loader-2"></i> …'; } return b; }
+  function _btnReset(b,txt){ if(b){ b.disabled=false; b.innerHTML=txt||b._o||''; } }
   window.cmpShareImage=function(){
-    const card=document.getElementById('cmb-card'); if(!card) return;
-    const btn=document.getElementById('cmb-share-btn'); const orig=btn?btn.innerHTML:'';
-    if(btn){ btn.disabled=true; btn.innerHTML='<i class="ti ti-loader-2"></i> Rendering…'; }
-    const done=()=>{ if(btn){ btn.disabled=false; btn.innerHTML=orig||'<i class="ti ti-share"></i> Share image'; } };
-    const run=()=>{
-      window.html2canvas(card,{backgroundColor:'#0a0a0a',scale:2,useCORS:true,logging:false}).then(canvas=>{
-        canvas.toBlob(blob=>{
-          if(!blob){ done(); return; }
-          const fname='jtt-cmb-'+Date.now()+'.png';
-          const file=(typeof File!=='undefined')?new File([blob],fname,{type:'image/png'}):null;
-          if(navigator.share&&file&&navigator.canShare&&navigator.canShare({files:[file]})){
-            navigator.share({files:[file],title:'Just The Tip'}).catch(()=>{}).finally(done);
-          } else {
-            const url=URL.createObjectURL(blob); const a=document.createElement('a'); a.href=url; a.download=fname; a.click(); setTimeout(()=>URL.revokeObjectURL(url),1000); done();
-          }
-        },'image/png');
-      }).catch(e=>{ alert('Image render failed: '+(e&&e.message||e)); done(); });
-    };
-    if(window.html2canvas) run();
-    else { const s=document.createElement('script'); s.src='https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js'; s.onload=run; s.onerror=()=>{ alert('Could not load the image library — check your connection.'); done(); }; document.head.appendChild(s); }
+    const b=_btnBusy('cmb-share-btn');
+    _cmbRasterize().then(c=>c.toBlob(blob=>{ _dl(blob,'jtt-cmb-'+Date.now()+'.png'); _btnReset(b,'<i class="ti ti-download"></i> Save PNG'); },'image/png'))
+      .catch(e=>{ alert('Image failed: '+(e&&e.message||e)); _btnReset(b,'<i class="ti ti-download"></i> Save PNG'); });
+  };
+  window.cmpCopyImage=function(){
+    const b=_btnBusy('cmb-copy-btn');
+    _cmbRasterize().then(c=>c.toBlob(blob=>{
+      if(navigator.clipboard&&window.ClipboardItem){
+        navigator.clipboard.write([new window.ClipboardItem({'image/png':blob})])
+          .then(()=>{ if(b){b.innerHTML='<i class="ti ti-check"></i> Copied';} setTimeout(()=>_btnReset(b,'<i class="ti ti-copy"></i> Copy'),1500); })
+          .catch(()=>{ _dl(blob,'jtt-cmb-'+Date.now()+'.png'); _btnReset(b,'<i class="ti ti-copy"></i> Copy'); });
+      } else { _dl(blob,'jtt-cmb-'+Date.now()+'.png'); _btnReset(b,'<i class="ti ti-copy"></i> Copy'); }
+    },'image/png')).catch(e=>{ alert('Copy failed: '+(e&&e.message||e)); _btnReset(b,'<i class="ti ti-copy"></i> Copy'); });
   };
 
   function cmpAnalysis(p,stat,line){
@@ -2127,8 +2142,9 @@
     if(opp) h+=similarPlayers(p,stat,opp,line,10);
     h+='<div style="display:flex;align-items:center;gap:8px;margin-top:14px;padding-top:11px;border-top:1px solid var(--border)"><span style="font-weight:900;color:#22c55e;font-size:13px;letter-spacing:.5px">JUST THE TIP</span><span style="margin-left:auto;font-size:10px;color:var(--text-3);font-family:var(--font-mono);letter-spacing:.5px">JUSTTHETIPAUS.COM</span></div>';
     h+='</div>';   // close #cmb-card
-    h+='<div style="display:flex;gap:8px;justify-content:center;margin-top:14px">'+
-      '<button class="seg on" id="cmb-share-btn" onclick="cmpShareImage()"><i class="ti ti-share"></i> Share image</button>'+
+    h+='<div style="display:flex;gap:8px;justify-content:center;margin-top:14px;flex-wrap:wrap">'+
+      '<button class="seg on" id="cmb-share-btn" onclick="cmpShareImage()"><i class="ti ti-download"></i> Save PNG</button>'+
+      '<button class="seg on" id="cmb-copy-btn" onclick="cmpCopyImage()"><i class="ti ti-copy"></i> Copy</button>'+
       '<button class="seg on" onclick="cmpReset()"><i class="ti ti-search"></i> New search</button></div>';
     return h;
   }
