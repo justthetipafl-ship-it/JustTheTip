@@ -719,10 +719,118 @@ window.JTTScoring = (function () {
     return {score,label,col};
   }
 
+  // ---- verbose Check My Bet factor list (ported from the old tool) ----
+  function cmpFactors(p, statKey, line, opp, lbl){
+    lbl=lbl||statKey;
+    const logKey=pdToLogKey(statKey);
+    const allGames=dvpByName(p.name);
+    const games2026=allGames.filter(r=>isCurSeason(r));
+    const logGames=allGames;
+    const pdAvg=statKey==='dreamteam'?p.dreamteam:(p[statKey]||0);
+    const a26=games2026.map(r=>r[logKey]||0);
+    const avg=a26.length?a26.reduce((x,y)=>x+y,0)/a26.length:pdAvg;
+    const l5=getL5Avg(p.name,statKey);
+    const _l3g=allGames.slice(-3);
+    const l3=_l3g.length>=3?_l3g.reduce((s,r)=>s+(r[logKey]||0),0)/_l3g.length:null;
+    const seasonHigh=games2026.reduce((mx,r)=>Math.max(mx,r[logKey]||0),0);
+    const hits=logGames.filter(r=>(r[logKey]||0)>=line).length;
+    const hitRateRaw=logGames.length?hits/logGames.length:null;
+    const hr26Raw=games2026.length?games2026.filter(r=>(r[logKey]||0)>=line).length/games2026.length:null;
+    const _bN=games2026.length, _bW=_bN/(_bN+8);
+    const hitRate=hr26Raw!==null&&hitRateRaw!==null?_bW*hr26Raw+(1-_bW)*hitRateRaw:hitRateRaw;
+    const hitRate2026=hr26Raw;
+    let cv=null;
+    if(logGames.length>=5){const v=logGames.map(r=>r[logKey]||0);const mn=v.reduce((x,y)=>x+y,0)/v.length;if(mn>0)cv=Math.sqrt(v.reduce((s,x)=>s+Math.pow(x-mn,2),0)/v.length)/mn;}
+    const avgGap=avg-line, l5Gap=l5!==null?l5-line:null;
+    const trend=l5!==null&&avg>0?((l5-avg)/avg)*100:null;
+    const dvpPos=POS_TO_DVP[getPlayerPos(p)]||getPlayerPos(p);
+    const dvpSk=DVP_STAT_MAP[statKey];
+    const dvpPct=opp&&dvpSk?getDVPPct(teamAbbrev(opp),dvpPos,dvpSk):null;
+    const muStatKey=(getStat(statKey)||{}).a;
+    const muPctVal=opp&&muStatKey?muPct(opp,muStatKey):null;
+    const muI=muInfo(muPctVal);
+    const vsOpp=opp?allGames.filter(r=>(r.opponent||'')===opp):[];
+    const lastVs=vsOpp.slice().sort((a,b)=>{const ya=parseInt(a.Year||0),yb=parseInt(b.Year||0);if(ya!==yb)return yb-ya;const rn=rd=>{const m=(''+(rd||'')).match(/\d+/);return m?parseInt(m[0]):0;};return rn(b.RoundName)-rn(a.RoundName);})[0]||null;
+    const lastVsVal=lastVs?(lastVs[logKey]||0):null;
+    const vsOppHits=vsOpp.filter(r=>(r[logKey]||0)>=line).length;
+    let dvpRank=null,dvpTotal=null;
+    try{ const teams=[...new Set((DVP||[]).map(d=>d.team))];
+      const ranked=teams.map(t=>({t,v:getDVPPct(teamAbbrev(t),dvpPos,dvpSk)})).filter(x=>x.v!=null).sort((a,b)=>b.v-a.v);
+      dvpTotal=ranked.length; const i=ranked.findIndex(x=>teamAbbrev(x.t)===teamAbbrev(opp)); if(i>=0)dvpRank=i+1;
+    }catch(e){}
+    const F=[], push=(tone,text)=>F.push({tone,text});
+    if(hitRate!==null){
+      const pct=Math.round(hitRate*100);
+      if(hitRate>=0.65) push('good',`Hit rate ${hits}/${logGames.length} (${pct}%) — highly reliable`);
+      else if(hitRate>=0.5) push('lean',`Hit rate ${hits}/${logGames.length} (${pct}%) — hits more than not`);
+      else if(hitRate>=0.35) push('neutral',`Hit rate ${hits}/${logGames.length} (${pct}%) — coin flip territory`);
+      else push('bad',`Hit rate ${hits}/${logGames.length} (${pct}%) — rarely hits this line`);
+    }
+    const gp=avg>0?(avgGap/avg)*100:0;
+    if(gp>15) push('good',`Season avg ${avg.toFixed(1)} — well above the line (+${gp.toFixed(0)}%)`);
+    else if(gp>5) push('lean',`Season avg ${avg.toFixed(1)} — ${gp.toFixed(0)}% above the line`);
+    else if(gp>-5) push('neutral',`Season avg ${avg.toFixed(1)} — right on the line (${gp>=0?'+':''}${gp.toFixed(0)}%)`);
+    else if(gp>-15) push('warn',`Season avg ${avg.toFixed(1)} is ${Math.abs(gp).toFixed(0)}% below the line — against`);
+    else push('bad',`Season avg ${avg.toFixed(1)} is ${Math.abs(gp).toFixed(0)}% BELOW the line — significantly against`);
+    if(l3!==null&&avg>0){
+      const l3p=((l3-avg)/avg)*100;
+      if(l3p>15) push('hot',`L3 avg ${l3.toFixed(1)} — ${l3p.toFixed(0)}% above season avg, hot right now`);
+      else if(l3p>5) push('good',`L3 avg ${l3.toFixed(1)} — trending up ${l3p.toFixed(0)}% on season avg`);
+      else if(l3p<-15) push('cold',`L3 avg ${l3.toFixed(1)} — ${Math.abs(l3p).toFixed(0)}% below season avg, cold form`);
+      else if(l3p<-5) push('bad',`L3 avg ${l3.toFixed(1)} — trending down ${Math.abs(l3p).toFixed(0)}% on season avg`);
+    }
+    if(l5!==null&&logGames.length>=5){
+      if(l5Gap>0&&trend>5) push('good',`L5 avg ${l5.toFixed(1)} — trending up ${trend.toFixed(0)}% above season avg`);
+      else if(l5Gap<0&&trend<-10) push('bad',`L5 avg ${l5.toFixed(1)} — trending down ${Math.abs(trend).toFixed(0)}% below season avg`);
+    }
+    if(hitRate2026!==null&&games2026.length>=5&&Math.abs(hitRate2026-(hitRate||0))>0.1){
+      const h26=games2026.filter(r=>(r[logKey]||0)>=line).length, p26=Math.round(hitRate2026*100);
+      if(hitRate2026>(hitRate||0)) push('good',`This season ${h26}/${games2026.length} (${p26}%) — improving on historical`);
+      else push('warn',`This season ${h26}/${games2026.length} (${p26}%) — below historical rate`);
+    }
+    if(cv!==null){
+      if(cv<0.22) push('good',`Exceptionally consistent — very low variance (CV ${cv.toFixed(2)})`);
+      else if(cv<0.35) push('lean',`Consistent scorer — normal variance (CV ${cv.toFixed(2)})`);
+      else if(cv>=0.45) push('neutral',`Boom-bust player — high variance (CV ${cv.toFixed(2)}), can go big or blank`);
+    }
+    if(dvpPct!==null){
+      const rk=dvpRank?` (#${dvpRank}/${dvpTotal} ${dvpRank<=Math.ceil((dvpTotal||18)/2)?'softest':'toughest'})`:'';
+      if(dvpPct>15) push('good',`DVP: ${opp} concede ${dvpPct.toFixed(0)}% above avg to ${dvpPos}s for ${lbl}${rk} — elite soft matchup`);
+      else if(dvpPct>5) push('lean',`DVP: ${opp} concede ${dvpPct.toFixed(0)}% above avg to ${dvpPos}s for ${lbl}${rk} — favourable`);
+      else if(dvpPct>-5) push('neutral',`DVP: ${opp} average vs ${dvpPos}s for ${lbl}${rk} — neutral matchup`);
+      else if(dvpPct>-15) push('warn',`DVP: ${opp} are tough on ${dvpPos}s for ${lbl}${rk} — negative matchup`);
+      else push('bad',`DVP: ${opp} one of the toughest for ${dvpPos}s for ${lbl}${rk} — avoid`);
+    }
+    if(muI&&opp&&muPctVal!=null){
+      if(muI.t==='Soft'||muI.t==='Fav') push('good',`Team matchup vs ${opp}: ${muI.t} (${muPctVal>=0?'+':''}${muPctVal.toFixed(0)}%)`);
+      else if(muI.t==='Tough'||muI.t==='V.Tough') push('warn',`Team matchup vs ${opp}: ${muI.t} (${muPctVal>=0?'+':''}${muPctVal.toFixed(0)}%)`);
+    }
+    if(lastVs&&opp){
+      const hit=lastVsVal>=line;
+      const rl=lastVs.RoundName?` (${lastVs.RoundName} ${lastVs.Year||''})`.replace(' )',')'):'';
+      const hist=vsOpp.length>1?` · ${vsOppHits}/${vsOpp.length} historical vs ${opp}`:'';
+      if(hit) push('good',`Last vs ${opp}${rl}: ${lastVsVal.toFixed(1)} ${lbl} — hit the line${hist}`);
+      else { const close=lastVsVal>=line*0.8; push(close?'neutral':'warn',`Last vs ${opp}${rl}: ${lastVsVal.toFixed(1)} ${lbl} — ${close?'just missed':'below the line'}${hist}`); }
+    } else if(opp) push('neutral',`No previous games vs ${opp} in log`);
+    const sig=opp?getContextSignals(p,statKey,opp):[];
+    if(sig&&sig.length){
+      sig.filter(s=>Math.abs(s.pct)>=5).sort((a,b)=>Math.abs(b.pct*b.weight)-Math.abs(a.pct*a.weight)).slice(0,5).forEach(s=>{
+        const c=s.pct*s.weight, pos=c>0, isSup=s.weight<0;
+        const tone=c>15?'good':c>5?'lean':c>-5?'neutral':c>-15?'warn':'bad';
+        const suf=isSup?(pos?' — less than avg (good)':' — more than avg (bad)'):'';
+        push(tone,`${opp} — ${s.label}: ${s.pct>=0?'+':''}${s.pct.toFixed(0)}% vs league avg${suf}`);
+      });
+    }
+    if(seasonHigh>0&&seasonHigh<line){
+      if(games2026.length>=5) push('bad',`2026 season high only ${seasonHigh.toFixed(1)} — never hit this line this season`);
+      else push('lean',`2026 season high only ${seasonHigh.toFixed(1)} — but just ${games2026.length} games this season`);
+    } else if(seasonHigh>0) push('neutral',`2026 season high: ${seasonHigh.toFixed(1)}`);
+    return F;
+  }
+
   // ---- configure ----
   function configure(ctx){
     PD=(ctx.players||[]).map(aliasPlayer);
-    TD=ctx.teams||[];
     TF=ctx.teamsForm||ctx.teams||[];
     DVP=ctx.dvp||[];
     _dvpIdx=ctx.logsByName||{};
@@ -735,7 +843,7 @@ window.JTTScoring = (function () {
   }
 
   return {
-    configure, scoreCMP, getContextSignals, scoreOverLine, scoreUnderLine,
+    configure, scoreCMP, cmpFactors, getContextSignals, scoreOverLine, scoreUnderLine,
     verdict, drLine, getDVPPct, muPct, muInfo, getL5Avg, getRecentAvg, getHitRate,
     POS_TO_DVP
   };
