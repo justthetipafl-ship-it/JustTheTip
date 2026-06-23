@@ -2014,22 +2014,39 @@
   }
 
   // ---- shared: stylistically-similar players (same position, nearest avg) vs same opp ----
-  function similarPlayers(p,statKey,opp,n){
-    n=n||4;
+  function similarPlayers(p,statKey,opp,line,n){
+    n=n||10;
+    if(!opp) return '';
     const myAvg=p[statKey]||0;
     const pool=(state.idx.players||[]).filter(q=>q.name!==p.name&&q.position===p.position&&(q.matches||0)>=3);
-    const near=pool.map(q=>({q,d:Math.abs((q[statKey]||0)-myAvg)})).sort((a,b)=>a.d-b.d).slice(0,14);
-    const rows=near.map(({q})=>{
-      const vs=opp?(state.idx.logsByName[q.name]||[]).filter(r=>r.opponent===opp):[];
-      const vsAvg=vs.length?vs.reduce((s,r)=>s+(r[statKey]||0),0)/vs.length:null;
-      return {q,seasonAvg:q[statKey]||0,vsAvg,vsN:vs.length};
-    }).sort((a,b)=>(b.vsN>0)-(a.vsN>0)).slice(0,n);
+    const near=pool.map(q=>({q,d:Math.abs((q[statKey]||0)-myAvg)})).sort((a,b)=>a.d-b.d);
+    const isG=statKey==='goals'||statKey==='behinds', hasLine=!isNaN(line);
+    const rows=[];
+    for(const {q} of near){
+      const vs=(state.idx.logsByName[q.name]||[]).filter(r=>r.opponent===opp);
+      if(!vs.length) continue;
+      vs.sort((a,b)=>{const y=(+a.Year||0)-(+b.Year||0);return y||(_roundNum(a.RoundName)-_roundNum(b.RoundName));});
+      const vals=vs.map(r=>r[statKey]||0);
+      const hits=hasLine?vals.filter(v=>v>=line).length:0;
+      rows.push({q,vals,hits,n:vals.length});
+      if(rows.length>=n) break;
+    }
     if(!rows.length) return '';
-    const body=rows.map(r=>'<div class="sp-row" onclick="openPlayer(\''+esc(r.q.name).replace(/\x27/g,"\\\x27")+'\')">'+
-      teamLogo(r.q.team,18)+'<span class="sp-nm">'+esc(r.q.name)+'</span>'+
-      '<span class="sp-av">'+fmt(r.seasonAvg,1)+'</span>'+
-      (r.vsN?'<span class="sp-vs">vs '+abbr(opp)+' '+fmt(r.vsAvg,1)+' ('+r.vsN+')</span>':'<span class="sp-vs none">no H2H</span>')+'</div>').join('');
-    return '<div style="margin-top:12px"><div style="font-size:11px;color:var(--text-3);text-transform:uppercase;letter-spacing:.5px;font-weight:700;margin-bottom:6px">Similar '+posShort(p.position)+'s'+(opp?' vs '+abbr(opp):'')+'</div>'+body+'</div>';
+    const totHits=rows.reduce((s,r)=>s+r.hits,0), totG=rows.reduce((s,r)=>s+r.n,0), pct=totG?Math.round(totHits/totG*100):0;
+    const META='font-size:11px;color:var(--text-3);text-transform:uppercase;letter-spacing:.5px;font-weight:700';
+    const body=rows.map(r=>{
+      const ok=r.hits>=1;
+      const mk='<i class="ti '+(ok?'ti-check':'ti-x')+'" style="color:'+(ok?'#22c55e':'#ef4444')+';flex-shrink:0;font-size:14px"></i>';
+      const valStr=r.vals.map(v=>{const hit=hasLine&&v>=line;return '<span style="color:'+(hit?'#22c55e':'#ef4444')+';font-weight:800">'+(isG?v:Math.round(v))+'</span>';}).join('<span style="color:var(--text-3)">, </span>');
+      return '<div class="sp-row" onclick="openPlayer(\''+esc(r.q.name).replace(/\x27/g,"\\\x27")+'\')">'+
+        mk+'<span class="sp-nm" style="margin-left:8px">'+esc(r.q.name)+'</span>'+
+        '<span style="font-size:9px;color:#60a5fa;background:rgba(96,165,250,.13);border-radius:4px;padding:1px 6px;margin-left:6px;white-space:nowrap">'+posShort(r.q.position)+'</span>'+
+        '<span style="margin-left:auto;font-size:12px">'+valStr+'</span>'+
+        '<span style="font-size:10px;color:var(--text-3);margin-left:7px">'+r.n+'g</span></div>';
+    }).join('');
+    return '<div style="margin-top:14px"><div style="display:flex;align-items:center;margin-bottom:6px"><span style="'+META+'">Similar '+posShort(p.position)+'s vs '+abbr(opp)+'</span>'+
+      (hasLine?'<span style="margin-left:auto;'+META+'">'+totHits+'/'+totG+' hit ('+pct+'%)</span>':'')+'</div>'+body+
+      '<div style="font-size:9px;color:var(--text-3);margin-top:6px">Based on '+rows.length+' similar '+posShort(p.position)+'s · values are actual returns vs '+abbr(opp)+'</div></div>';
   }
 
   // ---- CMB recent searches (localStorage) ----
@@ -2038,7 +2055,33 @@
     return '<div class="cmp-recent"><span class="cmp-recent-lab">Recent</span>'+a.map(q=>'<button class="cmp-chip" onclick="cmpUseRecent(this.dataset.q)" data-q="'+esc(q)+'">'+esc(q)+'</button>').join('')+'</div>'; }catch(e){return '';} }
   window.cmpUseRecent=function(q){ const inp=document.getElementById('cmp-input'); if(inp){inp.value=q; window.cmbRun&&window.cmbRun();} };
 
+  let _cmbCtx=null;
+  window.cmpSetLine=function(L){ if(!_cmbCtx)return; const o=document.getElementById('cmb-result'); if(o){ o.innerHTML=cmpAnalysis(_cmbCtx.p,_cmbCtx.stat,+L); } };
+  window.cmpShareImage=function(){
+    const card=document.getElementById('cmb-card'); if(!card) return;
+    const btn=document.getElementById('cmb-share-btn'); const orig=btn?btn.innerHTML:'';
+    if(btn){ btn.disabled=true; btn.innerHTML='<i class="ti ti-loader-2"></i> Rendering…'; }
+    const done=()=>{ if(btn){ btn.disabled=false; btn.innerHTML=orig||'<i class="ti ti-share"></i> Share image'; } };
+    const run=()=>{
+      window.html2canvas(card,{backgroundColor:'#0a0a0a',scale:2,useCORS:true,logging:false}).then(canvas=>{
+        canvas.toBlob(blob=>{
+          if(!blob){ done(); return; }
+          const fname='jtt-cmb-'+Date.now()+'.png';
+          const file=(typeof File!=='undefined')?new File([blob],fname,{type:'image/png'}):null;
+          if(navigator.share&&file&&navigator.canShare&&navigator.canShare({files:[file]})){
+            navigator.share({files:[file],title:'Just The Tip'}).catch(()=>{}).finally(done);
+          } else {
+            const url=URL.createObjectURL(blob); const a=document.createElement('a'); a.href=url; a.download=fname; a.click(); setTimeout(()=>URL.revokeObjectURL(url),1000); done();
+          }
+        },'image/png');
+      }).catch(e=>{ alert('Image render failed: '+(e&&e.message||e)); done(); });
+    };
+    if(window.html2canvas) run();
+    else { const s=document.createElement('script'); s.src='https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js'; s.onload=run; s.onerror=()=>{ alert('Could not load the image library — check your connection.'); done(); }; document.head.appendChild(s); }
+  };
+
   function cmpAnalysis(p,stat,line){
+    _cmbCtx={p,stat,line};
     const label=CMP_STAT_LABELS[stat]||stat, opp=nextOpp(p.team);
     const cs=(state.data.meta&&state.data.meta.currentSeason)||'2026';
     const logs=state.idx.logsByName[p.name]||[], cur=logs.filter(r=>(''+(r.Year||''))===(''+cs));
@@ -2054,7 +2097,8 @@
         h2h={n:vs.length,last:vals[0],when:((vs[0].Year||'')+' '+(vs[0].RoundName||'')).trim(),avg:vals.reduce((s,x)=>s+x,0)/vals.length,hits:vals.filter(x=>x>=line).length};}}
     const META='font-size:11px;color:var(--text-3);text-transform:uppercase;letter-spacing:.5px;font-weight:700;margin-bottom:4px';
     const BOX='margin-top:10px;padding:10px 12px;border-radius:6px;background:var(--surface-2);border:1px solid var(--border)';
-    let h='<div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">'+teamLogo(p.team,40)+
+    let h='<div id="cmb-card" style="background:#0a0a0a;border-radius:12px;padding:14px">'+
+      '<div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">'+teamLogo(p.team,40)+
       '<div><div style="font-family:var(--font-display);font-weight:800;font-size:18px">'+esc(p.name)+'</div>'+
       '<div class="fxr-venue">'+posShort(p.position)+' · '+esc(p.team)+(opp?' · vs '+esc(opp):'')+'</div></div></div>';
     h+='<div style="font-family:var(--font-display);font-weight:800;font-size:15px;margin-bottom:10px">'+label+' '+line+'+</div>';
@@ -2065,8 +2109,8 @@
     if(posted){h+='<div style="margin-bottom:10px;font-size:12px;color:var(--text-2)"><i class="ti ti-coin"></i> Posted <strong>'+label+' '+posted.line+'</strong> '+
       (posted.over?'O '+(+posted.over).toFixed(2):'')+(posted.under?' / U '+(+posted.under).toFixed(2):'')+(posted.book?' · '+esc(posted.book):'')+'</div>';}
     const alts=altLines(p.name,stat);
-    if(alts.length){h+='<div style="margin-bottom:10px;font-size:11px;color:var(--text-2)"><span style="color:var(--text-3);text-transform:uppercase;letter-spacing:.5px;font-weight:700">Alt lines</span> &nbsp;'+
-      alts.map(a=>'<span style="display:inline-block;margin:2px 4px 0 0;padding:2px 7px;border-radius:5px;background:var(--surface-2);border:1px solid var(--border)">'+Math.round(a.line+0.5)+'+ '+(a.over!=null?'$'+a.over.toFixed(2):'—')+'</span>').join('')+'</div>';}
+    if(alts.length){h+='<div style="margin-bottom:10px;font-size:11px"><span style="color:var(--text-3);text-transform:uppercase;letter-spacing:.5px;font-weight:700">Alt lines · tap to check</span><div style="display:flex;flex-wrap:wrap;gap:5px;margin-top:5px">'+
+      alts.map(a=>{const L=Math.round(a.line+0.5),sel=L===Math.round(line);return '<button onclick="cmpSetLine('+L+')" style="cursor:pointer;font-size:11px;padding:4px 9px;border-radius:6px;border:1px solid '+(sel?'#22c55e':'var(--border)')+';background:'+(sel?'rgba(34,197,94,.15)':'var(--surface-2)')+';color:'+(sel?'#22c55e':'var(--text-2)')+';font-weight:700">'+L+'+ '+(a.over!=null?'$'+a.over.toFixed(2):'—')+'</button>';}).join('')+'</div></div>';}
     const cell=(val,k,dp)=>'<div class="statcell"><div class="v">'+(val==null?'—':fmt(val,dp==null?1:dp))+'</div><div class="k">'+k+'</div></div>';
     h+='<div class="statgrid">'+cell(seasonAvg,'Season')+cell(l3,'L3')+cell(l5,'L5')+cell(l10,'L10')+cell(seasonHigh,'High',0)+
       (hr?'<div class="statcell"><div class="v">'+Math.round(hr.rate*100)+'%</div><div class="k">Hit '+line+'+ ('+hr.n+')</div></div>':'')+'</div>';
@@ -2080,8 +2124,12 @@
     if(facs.length){h+='<div style="margin-top:14px"><div style="'+META+'">Analysis</div>'+
       facs.map(f=>{const t=FTONE[f.tone]||FTONE.neutral;return '<div style="display:flex;align-items:flex-start;gap:9px;padding:9px 11px;border-radius:7px;background:'+t[1]+'12;border:1px solid '+t[1]+'26;margin-bottom:6px"><i class="ti '+t[0]+'" style="color:'+t[1]+';font-size:15px;margin-top:1px;flex-shrink:0"></i><span style="font-size:12px;color:var(--text);font-weight:600;line-height:1.45">'+esc(f.text)+'</span></div>';}).join('')+'</div>';}
     h+=recentBars(p.name,stat,line,20,opp);
-    if(opp) h+=similarPlayers(p,stat,opp,4);
-    h+='<div style="text-align:center;margin-top:14px"><button class="seg on" onclick="cmpReset()"><i class="ti ti-search"></i> New search</button></div>';
+    if(opp) h+=similarPlayers(p,stat,opp,line,10);
+    h+='<div style="display:flex;align-items:center;gap:8px;margin-top:14px;padding-top:11px;border-top:1px solid var(--border)"><span style="font-weight:900;color:#22c55e;font-size:13px;letter-spacing:.5px">JUST THE TIP</span><span style="margin-left:auto;font-size:10px;color:var(--text-3);font-family:var(--font-mono);letter-spacing:.5px">JUSTTHETIPAUS.COM</span></div>';
+    h+='</div>';   // close #cmb-card
+    h+='<div style="display:flex;gap:8px;justify-content:center;margin-top:14px">'+
+      '<button class="seg on" id="cmb-share-btn" onclick="cmpShareImage()"><i class="ti ti-share"></i> Share image</button>'+
+      '<button class="seg on" onclick="cmpReset()"><i class="ti ti-search"></i> New search</button></div>';
     return h;
   }
   function cmpPlayerCard(p){
