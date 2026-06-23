@@ -1988,25 +1988,29 @@
     return {opp,pct,info:JTTScoring.muInfo(pct),rank:sorted.indexOf(oppRow[stat]||0)+1,total:rows.length,allowed:oppRow[stat]};
   }
   // ---- shared: recent-games bar chart (last n games vs a line) ----
-  function recentBars(name,statKey,line,n){
-    n=n||8;
+  function recentBars(name,statKey,line,n,opp){
+    n=n||20;
     const logs=(state.idx.logsByName[name]||[]).slice(-n);
     if(!logs.length) return '';
     const vals=logs.map(r=>r[statKey]||0);
     const mx=Math.max(line||0,...vals,1);
     const isG=statKey==='goals'||statKey==='behinds';
-    const bars=logs.map(r=>{
-      const v=r[statKey]||0, hit=(line!=null&&!isNaN(line))?v>=line:null;
-      const cls=hit==null?'neu':(hit?'hit':'miss');
-      return '<div class="rc-bar"><div class="rc-fill '+cls+'" style="height:'+Math.max(4,Math.round(v/mx*100))+'%"></div></div>';
+    const hasLine=(line!=null&&!isNaN(line));
+    const BAND=104;
+    const cols=logs.map(r=>{
+      const v=r[statKey]||0, hit=hasLine?v>=line:null, isOpp=opp&&r.opponent===opp;
+      const col=isOpp?'#f59e0b':(hit==null?'#3b82f6':(hit?'#22c55e':'#ef4444'));
+      const rnd=(''+(r.RoundName||'')).replace(/round\s*/i,'R').replace(/opening\s*round/i,'OR').replace(/\s+/g,'').slice(0,4)||'·';
+      const op=r.opponent?abbr(r.opponent):'·';
+      return '<div style="flex:1 1 0;display:flex;flex-direction:column;align-items:center;min-width:0">'+
+        '<div style="font-size:9px;font-weight:800;color:'+col+'">'+(isG?v:Math.round(v))+'</div>'+
+        '<div style="width:100%;height:'+BAND+'px;display:flex;align-items:flex-end"><div style="width:70%;margin:0 auto;background:'+col+';border-radius:2px 2px 0 0;height:'+Math.max(3,Math.round(v/mx*100))+'%"></div></div>'+
+        '<div style="font-size:8px;color:var(--text-3);margin-top:3px;white-space:nowrap">'+rnd+'</div>'+
+        '<div style="font-size:8px;font-weight:700;color:'+(isOpp?'#f59e0b':'var(--text-3)')+';white-space:nowrap">'+op+'</div></div>';
     }).join('');
-    const labs=logs.map(r=>{
-      const v=r[statKey]||0, opp=r.opponent?abbr(r.opponent):'·';
-      return '<div class="rc-lab"><span class="rc-v">'+(isG?v:Math.round(v))+'</span><span class="rc-x">'+opp+'</span></div>';
-    }).join('');
-    const mark=(line!=null&&!isNaN(line))?'<div class="rc-line" style="bottom:'+Math.round(line/mx*100)+'%"><span>'+line+'</span></div>':'';
-    return '<div style="margin-top:12px"><div style="font-size:11px;color:var(--text-3);text-transform:uppercase;letter-spacing:.5px;font-weight:700;margin-bottom:6px">Last '+logs.length+' games'+(line!=null&&!isNaN(line)?' vs '+line:'')+'</div>'+
-      '<div class="rc-chart">'+mark+bars+'</div><div class="rc-labs">'+labs+'</div></div>';
+    const dash=hasLine?'<div style="position:absolute;left:0;right:0;bottom:'+(18+Math.round(line/mx*BAND))+'px;border-top:1px dashed #999;pointer-events:none"><span style="position:absolute;right:0;top:-14px;font-size:9px;color:#bbb;font-weight:700">'+(isG?line:Math.round(line))+'+</span></div>':'';
+    return '<div style="margin-top:14px"><div style="font-size:11px;color:var(--text-3);text-transform:uppercase;letter-spacing:.5px;font-weight:700;margin-bottom:8px">Last '+logs.length+' games · <span style="color:#f59e0b">amber = vs '+(opp?abbr(opp):'opp')+'</span>'+(hasLine?' · dashed = '+(isG?line:Math.round(line))+'+':'')+'</div>'+
+      '<div style="position:relative;display:flex;gap:2px;align-items:flex-end">'+cols+dash+'</div></div>';
   }
 
   // ---- shared: stylistically-similar players (same position, nearest avg) vs same opp ----
@@ -2048,7 +2052,6 @@
     if(opp){const vs=logs.filter(r=>r.opponent===opp);
       if(vs.length){vs.sort((a,b)=>(''+(b.Year||'')).localeCompare(''+(a.Year||'')));const vals=vs.map(r=>r[stat]||0);
         h2h={n:vs.length,last:vals[0],when:((vs[0].Year||'')+' '+(vs[0].RoundName||'')).trim(),avg:vals.reduce((s,x)=>s+x,0)/vals.length,hits:vals.filter(x=>x>=line).length};}}
-    const sigs=((opp?JTTScoring.getContextSignals(p,stat,opp):[])||[]).filter(s=>Math.abs(s.pct||0)>=4).sort((a,b)=>Math.abs(b.pct)-Math.abs(a.pct)).slice(0,8);
     const META='font-size:11px;color:var(--text-3);text-transform:uppercase;letter-spacing:.5px;font-weight:700;margin-bottom:4px';
     const BOX='margin-top:10px;padding:10px 12px;border-radius:6px;background:var(--surface-2);border:1px solid var(--border)';
     let h='<div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">'+teamLogo(p.team,40)+
@@ -2072,9 +2075,11 @@
       '<span class="fxr-venue">'+(dvp.pct>0?'+':'')+dvp.pct.toFixed(0)+'% vs league · allows '+fmt(dvp.allowed,1)+' · #'+dvp.rank+'/'+dvp.total+' softest</span></div></div>';}
     if(h2h){h+='<div style="'+BOX+'"><div style="'+META+'">H2H vs '+esc(opp)+' ('+h2h.n+')</div>'+
       '<span class="fxr-venue">last '+fmt(h2h.last,1)+(h2h.when?' ('+esc(h2h.when)+')':'')+' · avg '+fmt(h2h.avg,1)+' · '+h2h.hits+'/'+h2h.n+' hit '+line+'+</span></div>';}
-    if(sigs.length){h+='<div style="margin-top:12px"><div style="'+META+'">Signals</div><div style="display:flex;flex-wrap:wrap;gap:6px">'+
-      sigs.map(s=>{const pos=s.pct>=0,c=pos?'#22c55e':'#ef4444';return '<span style="font-size:11px;padding:3px 9px;border-radius:5px;background:'+c+'1a;color:'+c+';font-weight:700">'+esc(s.label)+' '+(pos?'+':'')+Math.round(s.pct)+'%</span>';}).join('')+'</div></div>';}
-    h+=recentBars(p.name,stat,line,8);
+    const facs=(!isNaN(line)&&JTTScoring.cmpFactors)?JTTScoring.cmpFactors(p,stat,line,opp,label):[];
+    const FTONE={good:['ti-circle-check','#22c55e'],lean:['ti-circle-dot','#eab308'],neutral:['ti-arrow-right','#3b82f6'],warn:['ti-alert-triangle','#f97316'],bad:['ti-circle-x','#ef4444'],hot:['ti-flame','#22c55e'],cold:['ti-snowflake','#60a5fa']};
+    if(facs.length){h+='<div style="margin-top:14px"><div style="'+META+'">Analysis</div>'+
+      facs.map(f=>{const t=FTONE[f.tone]||FTONE.neutral;return '<div style="display:flex;align-items:flex-start;gap:9px;padding:9px 11px;border-radius:7px;background:'+t[1]+'12;border:1px solid '+t[1]+'26;margin-bottom:6px"><i class="ti '+t[0]+'" style="color:'+t[1]+';font-size:15px;margin-top:1px;flex-shrink:0"></i><span style="font-size:12px;color:var(--text);font-weight:600;line-height:1.45">'+esc(f.text)+'</span></div>';}).join('')+'</div>';}
+    h+=recentBars(p.name,stat,line,20,opp);
     if(opp) h+=similarPlayers(p,stat,opp,4);
     h+='<div style="text-align:center;margin-top:14px"><button class="seg on" onclick="cmpReset()"><i class="ti ti-search"></i> New search</button></div>';
     return h;
