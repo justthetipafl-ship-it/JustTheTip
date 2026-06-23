@@ -904,26 +904,36 @@
     return out.sort((a,b)=>(a.cost-b.cost)||(b.gap-a.gap));
   }
   function nerdEV(players,mode,opp){
-    // mode: 'model' (recency-weighted projection), 'market' (consensus no-vig), 'implied' (sharpest book no-vig)
+    // model   = recency-weighted projection vs the best over price
+    // implied = player's historical hit rate at the line vs the over price (odds vs history)
+    // market  = best over price vs the market-average over price across books (one-sided line value)
     const out=[];
     players.forEach(p=>NERD_MARKETS.forEach(([k])=>{
       const byL=_byLine(bookLines(p.name,k));
       Object.entries(byL).forEach(([line,rs])=>{
         const L=+line, bo=_bestOver(rs); if(!bo) return;
-        let prob=null, ref=null, real=false, n=0, proj=null;
+        let prob=null, ref=null, real=false, n=0, proj=null, ev=null, avg=null, nb=0;
         if(mode==='model'){
           const sp=sharpProb(p.name,k,L,opp);
           if(sp){ prob=sp.prob; real=true; n=Math.round(sp.nEff); proj=sp.mu; }
           else prob=estimateHitProb(p[k]||0,L);
           if(real&&SETTINGS.nerd.minSamp&&n<SETTINGS.nerd.minSamp) return;
-        } else {
-          const tw=rs.filter(r=>r.over!=null&&r.under!=null); if(!tw.length) return;
-          if(mode==='market'){ prob=tw.map(r=>_noVigOver(r.over,r.under)).reduce((a,b)=>a+b,0)/tw.length; }
-          else { const sharp=tw.slice().sort((a,b)=>_margin(a.over,a.under)-_margin(b.over,b.under))[0]; prob=_noVigOver(sharp.over,sharp.under); ref=sharp.book; }
+          ev=prob*bo.over-1;
+        } else if(mode==='implied'){
+          const hr=(typeof JTTScoring!=='undefined')?JTTScoring.getHitRate(p.name,k,L):null;
+          if(!hr||hr.rate==null) return;
+          if(SETTINGS.nerd.minSamp&&hr.n<SETTINGS.nerd.minSamp) return;
+          prob=hr.rate; n=hr.n; real=true;
+          ev=prob*bo.over-1;
+        } else {   // market: best over vs market-average over across books
+          const bk={}; rs.forEach(r=>{ if(r.over!=null&&(!bk[r.book]||r.over>bk[r.book])) bk[r.book]=r.over; });
+          const prices=Object.values(bk); nb=prices.length;
+          if(nb<2) return;
+          avg=prices.reduce((a,v)=>a+v,0)/nb;
+          ev=bo.over/avg-1; prob=1/avg;
         }
-        if(prob==null||prob<=0) return;
-        const ev=prob*bo.over-1;
-        if(ev*100>=(SETTINGS.nerd.minEv||0)) out.push({p,k,line:L,bo,prob,ev:ev*100,real,n,ref,proj});
+        if(ev==null) return;
+        if(ev*100>=(SETTINGS.nerd.minEv||0)) out.push({p,k,line:L,bo,prob,ev:ev*100,real,n,ref,proj,mode,avg,nb});
       });
     }));
     return out.sort((a,b)=>b.ev-a.ev);
@@ -946,10 +956,12 @@
       NM_LBL[m.k]+' · Over '+m.ov.line+' '+_bk(m.ov.book)+' $'+m.ov.over.toFixed(2)+' / Under '+m.un.line+' '+_bk(m.un.book)+' $'+m.un.under.toFixed(2)+' · cost '+m.cost.toFixed(1)+'%'));
     h+=(NS.middles&&midRows.length)?degWrap('ti-arrow-bar-both','Middles',midRows,'c-cyan'):'';
     const evRow=(e,col)=>{
-      const txt=e.proj!=null?('proj '+e.proj.toFixed(1)+' · '+Math.round(e.prob*100)+'%'+(e.n?' ('+e.n+'g)':''))
-        :('fair '+Math.round(e.prob*100)+'%'+(e.ref?' v '+_bk(e.ref):''));
-      return degRow(e.p.name,col,'+'+e.ev.toFixed(1)+'% EV',
-        NM_LBL[e.k]+' '+e.line+'+ · '+_bk(e.bo.book)+' $'+e.bo.over.toFixed(2)+' · '+txt);
+      const head=_bk(e.bo.book)+' $'+e.bo.over.toFixed(2);
+      let txt;
+      if(e.mode==='implied') txt=head+' · hit '+Math.round(e.prob*100)+'%'+(e.n?' ('+e.n+'g)':'');
+      else if(e.mode==='market') txt=head+' v avg $'+e.avg.toFixed(2)+' · '+e.nb+'bk';
+      else txt=head+(e.proj!=null?' · proj '+e.proj.toFixed(1):'')+' · '+Math.round(e.prob*100)+'%'+(e.n?' ('+e.n+'g)':'');
+      return degRow(e.p.name,col,'+'+e.ev.toFixed(1)+'% EV',NM_LBL[e.k]+' '+e.line+'+ · '+txt);
     };
     h+=(NS.model&&evM.length)?degWrap('ti-brain','+EV (model)',evM.slice(0,6).map(e=>evRow(e,'#22c55e')),'c-green'):'';
     h+=(NS.implied&&evI.length)?degWrap('ti-target-arrow','Implied EV',evI.slice(0,6).map(e=>evRow(e,'#84cc16')),'c-green'):'';
@@ -1818,6 +1830,29 @@
   window._sMultiMkt=function(k){ const a=SETTINGS.multi.markets, i=a.indexOf(k); if(i>=0)a.splice(i,1); else a.push(k); saveSettings(); _renderApp(); };
   window._sReset=function(){ SETTINGS=JSON.parse(JSON.stringify(DEFAULT_SETTINGS)); saveSettings(); _renderApp(); };
 
+  // Per-market odds breakdown: rows, two-way (over+under) count, distinct books — diagnoses which Nerd tiles can populate
+  function oddsDiag(){
+    const bi=state.idx.bookIdx||{}, agg={};
+    Object.values(bi).forEach(byM=>Object.entries(byM).forEach(([m,rows])=>{
+      const a=agg[m]=agg[m]||{rows:0,two:0,books:{}};
+      rows.forEach(r=>{ a.rows++; if(r.over!=null&&r.under!=null)a.two++; if(_bookOK(r.book)&&r.book)a.books[r.book]=1; });
+    }));
+    const mk=Object.keys(agg).sort();
+    if(!mk.length) return '<div class="data-status" style="font-size:11px;color:var(--text-3)">No per-book odds loaded yet. Arbs/EV need the live <code>odds.json</code> with a <code>books</code> array.</div>';
+    let h='<div class="data-status" style="display:block"><div style="overflow-x:auto"><table class="stbl" style="width:100%;font-size:11px;min-width:300px"><thead><tr><th style="text-align:left">Market</th><th>Rows</th><th>Two-way</th><th>My books</th></tr></thead><tbody>';
+    mk.forEach(m=>{ const a=agg[m], tw=a.two>0, nb=Object.keys(a.books).length;
+      h+='<tr><td style="text-align:left">'+m+'</td><td style="text-align:center">'+a.rows+'</td>'+
+         '<td style="text-align:center;color:'+(tw?'var(--accent)':'var(--text-3)')+'">'+a.two+'</td>'+
+         '<td style="text-align:center;color:'+(nb>=2?'var(--accent)':'var(--text-3)')+'">'+nb+'</td></tr>'; });
+    h+='</tbody></table></div>';
+    const anyTwo=mk.some(m=>agg[m].two>0), multiBook=mk.some(m=>Object.keys(agg[m].books).length>=2);
+    h+='<div style="font-size:10px;color:var(--text-3);margin-top:6px;line-height:1.6">'+
+      '<b>+EV Model</b> needs one over price. <b>Implied EV</b> needs an over price + player history. <b>Market EV</b> needs an over price across <b>2+ of your books</b>. <b>Arbs · Middles</b> still need <b>two-way</b> rows (over+under).'+
+      (multiBook?'':'<br><span style="color:var(--warn)">Only one book per market</span> — Market EV &amp; arbs compare across books; select more in My Bookmakers or widen the feed.')+
+      (anyTwo?'':'<br>No two-way rows — Arbs &amp; Middles can only run on a true O/U market (disposals). Model / Implied / Market EV work on the over-only markets.')+'</div></div>';
+    return h;
+  }
+
   function renderInfo(){
     const m=state.data.meta||{}, s=m.summary||{};
     const row=(l,v,cls)=>'<div class="data-status-row"><span>'+l+'</span><span class="'+(cls||'ok')+'">'+v+'</span></div>';
@@ -1833,7 +1868,7 @@
       row('FGS records', (state.data.fgs||[]).length)+
       (function(){const o=state.idx.oddsMeta||{count:0};const cls=o.count?'ok':'warn';const lbl=o.count?(o.count+' lines'+(o.sample?' (sample)':'')+(o.fromPaste?' · pasted':'')):'none loaded';return row('Odds / lines', lbl, cls);})()+
       row('Data version', state.dataVersion||'—')+'</div>';
-    h+='<div class="section-title">Odds feed</div><div class="data-status" style="font-size:11px;line-height:1.7">'+
+    h+='<div class="section-title">Odds feed</div>'+oddsDiag()+'<div class="data-status" style="font-size:11px;line-height:1.7">'+
       'Degen signals fire <b>only against real posted lines</b>. The feed is a separate <code>data/odds.json</code> '+
       '(or paste lines below to test now). Per-signal minimum odds are configurable — currently <b>no floor set</b>.'+
       '<div style="margin-top:8px"><button class="btn-sm" onclick="_oddsPasteOpen()"><i class="ti ti-clipboard-plus"></i> Load / paste lines</button>'+
