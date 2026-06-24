@@ -435,7 +435,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--src", default="bundle.json")
     ap.add_argument("--out", default="data")
-    ap.add_argument("--seasons", default="2025,2026",
+    ap.add_argument("--seasons", default="2024,2025,2026",
                     help="game-log seasons to keep (comma sep), '' = all")
     ap.add_argument("--current", default="2026", help="season for averages")
     ap.add_argument("--password", default=None,
