@@ -339,6 +339,12 @@
                        injury:'data/injury.json', odds:'data/odds.json',
                        results:'data/results.json', lineups:'data/lineups.json' };
 
+  // Live odds from the Cloudflare Worker (proximity-gated poller). Leave '' to use the
+  // committed data/odds.json. Set to your Worker, e.g.:
+  //   'https://jtt-afl-odds.<your-subdomain>.workers.dev/odds.json'
+  const ODDS_LIVE_URL = '';
+  const ODDS_REFRESH_MS = 150000;   // re-pull live odds every 2.5 min while the page is open (only when ODDS_LIVE_URL is set)
+
   // Per-signal minimum decimal odds. null = no minimum (fires on any priced line).
   // TODO: set the real floors later — e.g. SIGNAL_MIN_ODDS.green = 1.70
   const SIGNAL_MIN_ODDS = { over: null /*Green Lights*/, under: null /*Death Riders*/ };
@@ -390,7 +396,7 @@
 
   /* ===================== SETTINGS (localStorage) ===================== */
   const SETTINGS_KEY='jtt_afl_settings';
-  const ALL_BOOKS=[['sportsbet','Sportsbet'],['ladbrokes_au','Ladbrokes'],['tab','TAB'],['pointsbetau','Pointsbet'],['betr_au','Betr'],['unibet','Unibet'],['betfair_ex_au','Betfair']];
+  const ALL_BOOKS=[['sportsbet','Sportsbet'],['ladbrokes_au','Ladbrokes'],['tab','TAB'],['pointsbetau','Pointsbet'],['betr_au','Betr'],['dabble_au','Dabble'],['betright','BetRight'],['unibet','Unibet'],['betfair_ex_au','Betfair']];
   const _BOOK_NAMES=Object.fromEntries(ALL_BOOKS);
   function bookName(k){ return k?(_BOOK_NAMES[k]||(k.charAt(0).toUpperCase()+k.slice(1))):''; }
   const MULTI_MKTS=[['disposals','Disposals'],['goals','Goals'],['dreamteam','Fantasy'],['marks','Marks'],['tackles','Tackles'],['clearances','Clearances'],['kicks','Kicks'],['handballs','Handballs']];
@@ -426,10 +432,17 @@
     _bootStatus('Loading data…');
     let any=false;
     await Promise.all(Object.entries(DATA_FILES).map(async([k,u])=>{
-      try{const r=await fetch('./'+u+cb,{cache:'no-cache'});if(!r.ok)return;state.data[k]=await r.json();any=true;}
+      try{
+        let r;
+        if(k==='odds' && ODDS_LIVE_URL){
+          try{ r=await fetch(ODDS_LIVE_URL+cb,{cache:'no-cache'}); if(!r||!r.ok) throw 0; }
+          catch(_){ r=await fetch('./'+u+cb,{cache:'no-cache'}); }   // fall back to committed odds.json
+        } else { r=await fetch('./'+u+cb,{cache:'no-cache'}); }
+        if(!r.ok)return; state.data[k]=await r.json(); any=true;
+      }
       catch(e){console.warn('load fail',k,e);}
     }));
-    if(any){ adaptData(); _bootStatus('Ready'); _updateFreshnessPill(); _renderApp(); }
+    if(any){ adaptData(); _bootStatus('Ready'); _updateFreshnessPill(); _renderApp(); startOddsAutoRefresh(); }
     else { showLegacyLoader(); }
     _bootHide();
   }
@@ -596,6 +609,30 @@
   function renderTab(t){ if(t==='fixture')return renderFixture(); if(t==='stats')return renderStats(); if(t==='degen')return renderDegen(); if(t==='info')return renderInfo(); return ''; }
 
   function _updateFreshnessPill(){const el=document.getElementById('freshness-pill');if(!el)return;const ts=parseInt(state.dataVersion,10);if(!ts){el.textContent='Loaded';return;}const h=(Date.now()-ts*1000)/3.6e6;el.textContent=h<1?'Updated just now':h<24?'Updated '+Math.floor(h)+'h ago':'Updated '+Math.floor(h/24)+'d ago';el.classList.remove('stale','very-stale');if(h>72)el.classList.add('very-stale');else if(h>36)el.classList.add('stale');}
+
+  // ---- live odds auto-refresh (re-pull odds only; no full reload) ----
+  let _oddsTimer=null, _lastOddsStamp=null;
+  async function refreshOddsLive(){
+    if(!ODDS_LIVE_URL) return;
+    try{
+      const r=await fetch(ODDS_LIVE_URL+'?t='+Date.now(),{cache:'no-store'});
+      if(!r.ok) return;
+      const od=await r.json();
+      const stamp=(od&&od.updated)||null;
+      if(stamp && stamp===_lastOddsStamp) return;   // unchanged since last poll — skip re-render
+      _lastOddsStamp=stamp;
+      state.data.odds=od;
+      buildOddsIdx();
+      const op=document.getElementById('odds-fresh-pill'); if(op&&stamp) op.textContent='Odds '+stamp;
+      _renderApp();
+    }catch(e){ /* keep last odds on failure */ }
+  }
+  function startOddsAutoRefresh(){
+    if(!ODDS_LIVE_URL) return;
+    if(_oddsTimer) clearInterval(_oddsTimer);
+    _oddsTimer=setInterval(refreshOddsLive, ODDS_REFRESH_MS);
+    document.addEventListener('visibilitychange',()=>{ if(!document.hidden) refreshOddsLive(); });
+  }
 
   /* ---------- FIXTURE ---------- */
   function pips(team){const f=teamForm(team,5);return f.length?'<div class="form-pips">'+f.map(r=>'<span class="pip '+r+'">'+r+'</span>').join('')+'</div>':'';}
