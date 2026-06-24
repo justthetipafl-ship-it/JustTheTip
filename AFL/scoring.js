@@ -49,7 +49,25 @@ window.JTTScoring = (function () {
   function getStat(k){ return ALL.find(s=>s.k===k); }
 
   // ---- accessors (bound to split-data model) ----
-  function dvpByName(name){ return _dvpIdx[name] || []; }
+  // Representative-game filter: a player's sub/injury-shortened games (low time
+  // on ground) would otherwise drag down hit rate + average and inflate variance.
+  // The old tool gated scoring on TOG>=50 — mirror it so CMB scores line up.
+  const TOG_MIN = 50;
+  function _isValidTogGame(r){
+    if(!r) return true;
+    const raw = r.TimeOnGround!=null ? r.TimeOnGround
+              : r.tog!=null ? r.tog
+              : r.time_on_ground!=null ? r.time_on_ground
+              : null;
+    if(raw==null) return true;     // unknown TOG -> keep (better than dropping to zero data)
+    const t = parseFloat(raw);
+    if(isNaN(t)) return true;      // unparseable -> keep
+    return t >= TOG_MIN;
+  }
+  // Filtered to representative games — this is what drives scoring/avg/hit.
+  function dvpByName(name){ return (_dvpIdx[name]||[]).filter(_isValidTogGame); }
+  // Raw access (no TOG filter) — for callers that genuinely need every game.
+  function dvpByNameRaw(name){ return _dvpIdx[name] || []; }
   function isCurSeason(r){ return String(r.Year) === CUR; }
   function getPlayerPos(p){ return p.position; }
   function teamAbbrev(t){ return t; }   // data uses full names throughout
