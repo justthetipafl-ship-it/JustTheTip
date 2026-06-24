@@ -385,6 +385,7 @@
     {k:'death',    n:'Death Riders',  i:'ti-skull',        d:'Strong UNDER'},
     {k:'bogey',    n:'Bogey',         i:'ti-mood-sad',     d:'Struggles v opp'},
     {k:'streak',   n:'Streakers',     i:'ti-flame',        d:'Hot form'},
+    {k:'climb',    n:"Let's Climb",   i:'ti-stairs-up',    d:'Ladder value'},
     {k:'fgs',      n:'First Goal',    i:'ti-flag-3',       d:'FGS edges'},
     {k:'disp',     n:'Most Disposals',i:'ti-medal',        d:'Ball magnets'},
     {k:'form',     n:'Form Alerts',   i:'ti-trending-up',  d:'Trend shifts'},
@@ -758,7 +759,7 @@
     return '<div class="game-sec"><div class="gs-title"><i class="ti ti-history"></i> Last Time They Met</div>'+head+perf+'</div>';
   }
 
-  // ===== Defence vs Play Style + Player Spotlight (focused fixture) =====
+  // ===== Defence vs Play Style (focused fixture) =====
   const DVP_PLAY_STYLE_POS={'Accumulator Mid':'Midfielder','Contested Mid':'Midfielder','Running Mid':'Midfielder','Handball Mid':'Midfielder','Scoring MF':'Mid-Forward','Bear in the Square':'Key Forward','Key Target':'Key Forward','Pressure Fwd':'Gen. Forward','Small Forwards':'Gen. Forward','Clearance Beast':'Midfielder','Intercept Def':'Key Defender','Uncontested Marker':'Gen. Defender','Defensive Ball User':'Gen. Defender','Ruck Mid':'Ruck','Dominant Ruck':'Ruck','Winger':'Midfielder','Shankers':'All Positions','Cuddle Monsters':'All Positions','Fantasy Stars':'All Positions','Entry Man':'All Positions'};
   function allPlayStyles(p,pg){
     const cp=p.contested||0,clr=p.clearances||0,disp=p.disposals||0,kicks=p.kicks||0,hb=p.handballs||0,
@@ -791,6 +792,7 @@
   const DVPS_OPTS=[['disposals','Disposals'],['kicks','Kicks'],['handballs','Handballs'],['marks','Marks'],['tackles','Tackles'],['clearances','Clearances'],['goals','Goals'],['dreamteam','Fantasy']];
   function fxDvPS(team,opp){
     const statKey=window._fxDvpStat||'disposals';
+    const CS=(state.data.meta&&state.data.meta.currentSeason)||'2026';
     const statLbl=(DVPS_OPTS.find(o=>o[0]===statKey)||[,statKey])[1];
     const ours=playersOnTeam(team).filter(p=>(p.matches||0)>=2);
     const styleMap={};
@@ -802,7 +804,7 @@
       const set=new Set(allP.filter(pp=>{ const pg=JTTScoring.POS_TO_DVP[pp.position]||pp.position; if(!cross.has(sn)){ const ep=DVP_PLAY_STYLE_POS[sn]; if(ep&&ep!=='All Positions'&&ep!==pg) return false; } return allPlayStyles(pp,pg).includes(sn); }).map(pp=>pp.name));
       if(!set.size) return null;
       let oS=0,oN=0,lS=0,lN=0;
-      set.forEach(nm=>{ (state.idx.logsByName[nm]||[]).forEach(r=>{ const ro=r.opponent; if(!ro) return; const v=+(r[statKey]||0); lS+=v; lN++; if(ro===opp){ oS+=v; oN++; } }); });
+      set.forEach(nm=>{ (state.idx.logsByName[nm]||[]).forEach(r=>{ if((''+(r.Year||''))!==(''+CS)) return; const ro=r.opponent; if(!ro) return; const v=+(r[statKey]||0); lS+=v; lN++; if(ro===opp){ oS+=v; oN++; } }); });
       if(oN<2||lN<3) return null;
       const oppAvg=oS/oN, leagueAvg=lS/lN, pct=leagueAvg>0?((oppAvg-leagueAvg)/leagueAvg)*100:0;
       return {sn,oppAvg,pct,games:oN,ourCount:styleMap[sn].length,ourPlayers:styleMap[sn]};
@@ -816,40 +818,18 @@
         '<div class="dvps-sub">'+r.ourCount+' on '+abbr(team)+' · '+r.games+'g v '+abbr(opp)+'</div>'+
         '<div class="dvps-row"><span class="dvps-v" style="color:'+col+'">'+r.oppAvg.toFixed(dec)+'</span><span class="dvps-l">'+statLbl+'</span><span class="dvps-p" style="color:'+col+'">'+(r.pct>=0?'+':'')+r.pct.toFixed(0)+'%</span></div></div>';
     }).join('');
-    return '<div class="tp-sec"><div class="sec-title"><i class="ti ti-masks-theater"></i> Defence vs Play Style — '+abbr(opp)+' allows '+sel+'</div></div><div class="dvps-grid">'+cells+'</div>';
-  }
-  function fxSpotCard(name,statKey,opp){
-    const p=state.idx.byName[name]; if(!p) return '<div class="fxsp-empty">No data.</div>';
-    const logs=state.idx.logsByName[name]||[];
-    const avg=p[statKey]||0, l5=JTTScoring.getL5Avg(name,statKey);
-    const vsOpp=logs.filter(r=>r.opponent===opp);
-    const vsOppAvg=vsOpp.length?vsOpp.reduce((s,r)=>s+(r[statKey]||0),0)/vsOpp.length:null;
-    const dr=dvpRank(opp,p.position,statKey);
-    const dec=statKey==='goals'?1:statKey==='dreamteam'?0:1;
-    const stepBy={goals:1,disposals:1,handballs:1,kicks:1,tackles:2,marks:2,clearances:2,dreamteam:5}[statKey]||1;
-    const base=Math.max(1,Math.round(avg)); const rungs=[];
-    for(let i=0;i<=5;i++){ const l=base+i*stepBy; const hits=logs.filter(r=>(r[statKey]||0)>=l).length; const hr=logs.length?hits/logs.length:0; if(i>0&&hr<0.01) break; const h2h=vsOpp.length?vsOpp.filter(r=>(r[statKey]||0)>=l).length/vsOpp.length:null; const od=priceForLine(name,statKey,l); rungs.push({l,hr,h2h,od}); }
-    const ladder=rungs.map(s=>{ const c=s.hr>=0.7?'#22c55e':s.hr>=0.5?'#86efac':s.hr>=0.3?'#f97316':'#ef4444';
-      return '<tr><td class="name">'+s.l+'+</td><td style="color:'+c+'">'+Math.round(s.hr*100)+'%</td><td>'+(s.h2h!=null?Math.round(s.h2h*100)+'%':'—')+'</td><td>'+(s.od?'$'+s.od.price.toFixed(2):'—')+'</td></tr>'; }).join('');
-    const drStr=dr?('#'+dr.rank+'/'+dr.total+' '+(dr.pct>=0?'+':'')+dr.pct.toFixed(0)+'%'):'—';
-    return '<div class="fxsp-head" onclick="openPlayer(\''+esc(name).replace(/\x27/g,"\\\\\\x27")+'\')"><b>'+esc(name)+'</b> · '+esc(p.position||'')+'</div>'+
-      '<div class="fxsp-stats"><span>avg <b>'+avg.toFixed(dec)+'</b></span>'+(l5!=null?'<span>L5 <b>'+l5.toFixed(dec)+'</b></span>':'')+(vsOppAvg!=null?'<span>v '+abbr(opp)+' <b>'+vsOppAvg.toFixed(dec)+'</b> ('+vsOpp.length+'g)</span>':'')+'<span>DVP '+drStr+'</span></div>'+
-      '<div class="fxsp-lh"><i class="ti ti-stairs-up"></i> Ladder Potential'+(vsOpp.length?' · H2H from '+vsOpp.length+'g v '+abbr(opp):'')+'</div>'+
-      '<div class="stbl-wrap"><table class="stbl bx"><thead><tr><th>Line</th><th>Hit%</th><th>H2H%</th><th>Odds</th></tr></thead><tbody>'+ladder+'</tbody></table></div>';
-  }
-  function fxSpotlight(team,opp){
-    const tk=team.replace(/[^a-z0-9]/gi,'');
-    const opts=playersOnTeam(team).filter(p=>(p.matches||0)>=1).sort((a,b)=>(a.name||'').localeCompare(b.name||'')).map(p=>'<option value="'+esc(p.name)+'">'+esc(p.name)+'</option>').join('');
-    const stats=[['disposals','Disposals'],['kicks','Kicks'],['handballs','Handballs'],['marks','Marks'],['tackles','Tackles'],['goals','Goals'],['clearances','Clearances'],['dreamteam','Fantasy']].map(s=>'<option value="'+s[0]+'">'+s[1]+'</option>').join('');
-    return '<div class="tp-sec"><div class="sec-title"><i class="ti ti-zoom-scan"></i> Player Spotlight</div></div>'+
-      '<div class="fxsp" data-team="'+esc(team)+'" data-opp="'+esc(opp)+'">'+
-      '<div class="fxsp-ctrls"><select id="fxsp-p-'+tk+'" class="dvps-sel" onchange="buildFxSpot(\''+tk+'\')"><option value="">Select '+abbr(team)+' player…</option>'+opts+'</select>'+
-      '<select id="fxsp-s-'+tk+'" class="dvps-sel" onchange="buildFxSpot(\''+tk+'\')">'+stats+'</select></div>'+
-      '<div id="fxsp-card-'+tk+'" class="fxsp-card"></div></div>';
+    return '<div class="tp-sec"><div class="sec-title"><i class="ti ti-masks-theater"></i> Defence vs Play Style — '+abbr(opp)+' allows '+sel+' <span style="font-size:10px;color:var(--text-3);font-weight:600;letter-spacing:.04em">'+CS+' season</span></div></div><div class="dvps-grid">'+cells+'</div>';
   }
   const CMB_PICK_MARKETS=[['disposals','Disposals',15],['kicks','Kicks',8],['handballs','Handballs',8],['marks','Marks',3],['tackles','Tackles',3],['clearances','Clearances',3],['goals','Goals',0.6],['dreamteam','Fantasy',75]];
   function fxCmbPicks(team,opp){
-    const players=playersOnTeam(team).filter(p=>(p.matches||0)>=3);
+    const roster=playersOnTeam(team);
+    // Current-season games floor: a player who's missed most of the season
+    // shouldn't be able to top a market on historical form alone (e.g. a star
+    // back from injury with 4 games). Scales up to 6 as the season progresses,
+    // and never below 3, so early-season boards aren't emptied out.
+    const _maxM=roster.reduce((m,p)=>Math.max(m,p.matches||0),0);
+    const SEASON_FLOOR=Math.max(3,Math.min(6,Math.round(_maxM*0.5)));
+    const players=roster.filter(p=>(p.matches||0)>=SEASON_FLOOR);
     const cards=CMB_PICK_MARKETS.map(([k,l,minAvg])=>{
       const cands=[];
       players.forEach(p=>{
@@ -879,14 +859,6 @@
   }
   window.setFxDvpStat=function(v){ window._fxDvpStat=v; _renderApp(); };
   window.setFxMode=function(v){ state.view.fxMode=v; _renderApp(); };
-  window.buildFxSpot=function(tk){
-    const card=document.getElementById('fxsp-card-'+tk); if(!card) return;
-    const wrap=card.closest('.fxsp'); if(!wrap) return;
-    const team=wrap.getAttribute('data-team'), opp=wrap.getAttribute('data-opp');
-    const name=(document.getElementById('fxsp-p-'+tk)||{}).value||'';
-    const statKey=(document.getElementById('fxsp-s-'+tk)||{}).value||'disposals';
-    card.innerHTML=name?fxSpotCard(name,statKey,opp):'';
-  };
 
   // ===== Nerd Mode: Arbs / Middles / +EV / Implied EV / Market EV =====
   const NERD_MARKETS=[['disposals','Disposals'],['dreamteam','Fantasy'],['kicks','Kicks'],['handballs','Handballs'],['marks','Marks'],['tackles','Tackles'],['clearances','Clearances']];  // model EV fires on all; arbs/middles/de-vig auto-gate to two-way O/U markets (disposals, fantasy)
@@ -1064,10 +1036,9 @@
       BET_STATS.forEach(([k,l])=>{ mt+='<tr><td class="name">'+l+'</td><td>'+fmt(t[k])+'</td><td>'+fmt(ta?ta[k+'_a']:null)+'</td></tr>'; });
       mt+='</tbody></table></div>'; h+=mt;
     }
-    // Defence vs Play Style (how the opponent concedes vs this team's playstyles) + Player Spotlight
+    // Defence vs Play Style (how the opponent concedes vs this team's playstyles)
     h+=fxDvPS(team,opp);
     h+=fxCmbPicks(team,opp);
-    h+=fxSpotlight(team,opp);
     // Signals: Degen Crew, or Nerd-mode quant edges
     h+=((state.view.fxMode||'degen')==='nerd')?teamNerd(team,opp):teamDegen(team,opp);
     h+='</div>';
@@ -1083,11 +1054,11 @@
       const counts={ green:ov.length, death:un.length, snags:_fc(snags(),6).length,
         elite:_fc(elite(),8,40).length, bunnies:_fc(bunnies(),6).length, bogey:_fc(bogey(),6).length,
         streak:_fc(streakers(),6).length, form:_fc(formAlerts('spike'),6,25).length+_fc(formAlerts('drop'),6,25).length,
-        fgs:_fc(fgsEdges(),6).length, taggers:_fc(taggerAlerts(),8).length };
+        fgs:_fc(fgsEdges(),6).length, taggers:_fc(taggerAlerts(),8).length, climb:_fc(letsClimb(),6).length };
       total=Object.values(counts).reduce((a,b)=>a+b,0);
       html+=ouSection(ov,'over','Green Lights','ti-traffic-lights','c-green');
       html+=ouSection(un,'under','Death Riders','ti-skull','c-red');
-      ['snags','elite','bunnies','bogey','streak','form','fgs','taggers'].forEach(k=>{ html+=renderTile(k); });
+      ['snags','elite','bunnies','bogey','streak','climb','form','fgs','taggers'].forEach(k=>{ html+=renderTile(k); });
     } finally { _degenScope=prevScope; _degenFocused=prevFocus; }
     const hdr='<div class="tp-sec"><div class="sec-title"><i class="ti ti-flame"></i> Degen Signals</div><div class="sec-meta">'+total+' fired</div></div>';
     return hdr+(html||'<div class="tp-body-meta" style="border:0">No signals fired.</div>');
@@ -1632,6 +1603,54 @@
     });
     return out.sort((a,b)=>Math.abs(b.swing)-Math.abs(a.swing));
   }
+  // ===== Let's Climb — ladder-value plays =====
+  // Surfaces players whose hit rate stays high even when you climb the line ladder.
+  // Trigger: there's a posted line that already pays >=$1.70 (the starting point),
+  // and the player still hits >=70% TWO numbers up from it — measured either vs
+  // this round's opponent (needs >=3 H2H games) or over their last 10 games.
+  const CLIMB_MARKETS=[['disposals','Disposals'],['kicks','Kicks'],['handballs','Handballs'],['marks','Marks'],['tackles','Tackles'],['clearances','Clearances'],['goals','Goals']];
+  const CLIMB_MIN_ODDS=1.70, CLIMB_HIT=0.70, CLIMB_MIN_H2H=3, CLIMB_MIN_L10=8, CLIMB_STEPS=2;
+  function _climbValidTog(r){ const t=r.tog; if(t==null) return true; const v=parseFloat(t); return isNaN(v)||v>=50; }
+  function letsClimb(){
+    const teams=_fixtureSet(); const out=[];
+    (state.idx.players||[]).filter(p=>teams.has(p.team)).forEach(p=>{
+      const opp=nextOpp(p.team);
+      const sorted=[...allLogs(p.name)].filter(_climbValidTog)
+        .sort((a,b)=>{ const y=(+a.Year||0)-(+b.Year||0); return y||_roundNum(a.RoundName)-_roundNum(b.RoundName); });
+      if(!sorted.length) return;
+      const last10=sorted.slice(-10);
+      const h2h=opp?sorted.filter(r=>r.opponent===opp):[];
+      CLIMB_MARKETS.forEach(([k,l])=>{
+        // posted rung ladder = main O/U line + alt lines, keeping any with a price
+        const rungMap={};
+        const main=oddsFor(p.name,k); if(main&&main.line!=null&&main.over!=null) rungMap[main.line]={line:main.line,over:main.over,book:main.book};
+        altLines(p.name,k).forEach(a=>{ if(a.line!=null&&a.over!=null&&(!rungMap[a.line]||a.over>rungMap[a.line].over)) rungMap[a.line]={line:a.line,over:a.over,book:a.book}; });
+        const rungs=Object.values(rungMap).sort((x,y)=>x.line-y.line);
+        if(!rungs.length) return;
+        // starting point = lowest posted line whose OVER pays at least $1.70
+        const start=rungs.find(r=>r.over>=CLIMB_MIN_ODDS);
+        if(!start) return;
+        const N0=Math.round(start.line); if(!N0) return;       // "N0+" is the start number
+        const t1=N0+1, t2=N0+CLIMB_STEPS;                       // two numbers up
+        const hr=(g,line)=> g.length ? g.filter(r=>(r[k]||0)>=line).length/g.length : null;
+        let basis=null, rate1=null, rate2=null, gN=0;
+        if(h2h.length>=CLIMB_MIN_H2H){                          // path A: vs current opponent
+          const r1=hr(h2h,t1), r2=hr(h2h,t2);
+          if(r1!=null&&r2!=null&&r1>=CLIMB_HIT&&r2>=CLIMB_HIT){ basis='h2h'; rate1=r1; rate2=r2; gN=h2h.length; }
+        }
+        if(!basis&&last10.length>=CLIMB_MIN_L10){               // path B: last 10 games
+          const r1=hr(last10,t1), r2=hr(last10,t2);
+          if(r1!=null&&r2!=null&&r1>=CLIMB_HIT&&r2>=CLIMB_HIT){ basis='l10'; rate1=r1; rate2=r2; gN=last10.length; }
+        }
+        if(!basis) return;
+        const top=rungs.find(r=>Math.round(r.line)===t2);       // odds at the climb target, if posted
+        out.push({ p, opp, stat:l, statKey:k, startN:N0, startOver:start.over, startBook:start.book,
+          t1, t2, climbOver:top?top.over:null, climbBook:top?top.book:null, basis, rate1, rate2, games:gN });
+      });
+    });
+    // best climbed-line hit rate first, then the longer (more valuable) climb price
+    return out.sort((a,b)=> (b.rate2-a.rate2) || ((b.climbOver||b.startOver)-(a.climbOver||a.startOver)));
+  }
   function mostDisposals(){
     const teams=_fixtureSet();
     return (state.idx.players||[]).filter(p=>teams.has(p.team)&&(p.matches||0)>=3)
@@ -1771,7 +1790,7 @@
     try{
       out+=ouSection(collectOU([home,away],'over'),'over','Green Lights','ti-traffic-lights','c-green');
       out+=ouSection(collectOU([home,away],'under'),'under','Death Riders','ti-skull','c-red');
-      ['snags','elite','bunnies','bogey','streak','form','fgs','taggers'].forEach(k=>{ out+=renderTile(k); });
+      ['snags','elite','bunnies','bogey','streak','climb','form','fgs','taggers'].forEach(k=>{ out+=renderTile(k); });
     } finally { _degenScope=prevScope; _degenFocused=prevFocus; }
     return out || '<div class="empty"><div class="ico"><i class="ti ti-flame"></i></div>No Degen signals fired for this matchup.</div>';
   }
@@ -1843,6 +1862,18 @@
       const rows=_fc(taggerAlerts(),8).map(t=>degRow(t.threat.name,'#a855f7',t.type==='hard'?'HARD TAG risk':'Def tag risk',
         t.threat.position+' · '+abbr(t.threat.team)+' — likely '+t.tagger.name+' ('+abbr(t.oppTeam)+')',t.threat.name));
       return degWrap('ti-user-search','Lurking Taggers',rows);
+    }
+    if(k==='climb'){
+      const rows=_fc(letsClimb(),6,30).map(c=>{
+        const basisTxt=c.basis==='h2h'?(c.games+' H2H v '+abbr(c.opp)):('L'+Math.min(10,c.games));
+        const climbPx=c.climbOver?' $'+c.climbOver.toFixed(2):'';
+        const head=c.startN+'+ → '+c.t2+'+';
+        const sub=c.stat+' · '+abbr(c.p.team)+(c.opp?' v '+abbr(c.opp):'')+' · start $'+c.startOver.toFixed(2)+
+          (c.startBook?' ('+bookName(c.startBook)+')':'')+' → '+c.t2+'+'+climbPx+' · '+
+          c.t1+'+ '+Math.round(c.rate1*100)+'% / '+c.t2+'+ '+Math.round(c.rate2*100)+'% ('+basisTxt+')';
+        return degRow(c.p.name,'#22c55e',head,sub);
+      });
+      return degWrap('ti-stairs-up',"Let's Climb",rows,'c-green');
     }
     if(k==='multi'){
       return '<div id="multi-wrap">'+multiFilterBar()+'<div id="multi-results">'+multiResults()+'</div></div>';
