@@ -62,6 +62,10 @@
   .tp-collapse.c-red{border-left:3px solid #f87171;} .tp-collapse.c-red .tp-collapse-sum>i:first-child{color:#f87171;}
   .tp-collapse.c-purple{border-left:3px solid #a78bfa;} .tp-collapse.c-purple .tp-collapse-sum>i:first-child{color:#a78bfa;}
   .tp-collapse.c-cyan{border-left:3px solid #22d3ee;} .tp-collapse.c-cyan .tp-collapse-sum>i:first-child{color:#22d3ee;}
+  .dv-books{display:flex;flex-wrap:wrap;gap:5px;margin:0 0 8px;}
+  .dv-bk{padding:4px 9px;border-radius:13px;border:1px solid var(--border);background:transparent;color:var(--text-3);font-size:11px;font-weight:700;cursor:pointer;}
+  .dv-bk.on{border-color:var(--accent);background:rgba(34,197,94,.12);color:var(--text);}
+  .dv-bk i{font-style:normal;opacity:.6;font-size:10px;margin-left:2px;}
   .dv-ctrls{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:8px 0 10px;}
   .dv-tier{padding:5px 11px;border-radius:14px;border:1px solid var(--border);background:transparent;color:var(--text-3);font-size:12px;font-weight:700;cursor:pointer;}
   .dv-tier.on{border-color:var(--accent);background:rgba(34,197,94,.14);color:var(--text);}
@@ -1700,7 +1704,7 @@
   // ===== Déjà Vu SGM — legs that hit the last 3 H2H meetings, all on one book =====
   const DV_MARKETS=[['disposals','Disposals',15],['kicks','Kicks',8],['handballs','Handballs',6],['marks','Marks',3],['tackles','Tackles',3],['clearances','Clearances',2],['goals','Goals',1]];
   const DV_MIN_DEFAULT=1.25;
-  function _dvState(){ return state.view.dejaVu || (state.view.dejaVu={tier:3,minOdds:DV_MIN_DEFAULT,hail:false,sel:null,book:null,home:null,away:null}); }
+  function _dvState(){ return state.view.dejaVu || (state.view.dejaVu={tier:3,minOdds:DV_MIN_DEFAULT,maxOdds:0,hail:false,sel:null,book:null,home:null,away:null}); }
   function _dvMeetings(home,away){
     const mt=state.idx.matchTeams||{};
     const cand=Object.keys(mt).filter(m=>{const ts=Object.keys(mt[m]);return ts.includes(home)&&ts.includes(away);});
@@ -1752,58 +1756,71 @@
     return {meetings,all};
   }
   function _dvProduct(legs){ return legs.reduce((p,l)=>p*(l.over||1),1); }
-  function _dvPool(S){            // recompute the working book's leg pool (used by render + handlers)
+  function _dvDistinct(arr){ return new Set(arr.map(l=>l.name)).size; }
+  function _dvPool(S){            // working book's leg pool (min/max-odds filtered), used by render + handlers
     const {all}=_dvBoards(S.home,S.away);
-    const minOdds=S.hail?0:(S.minOdds==null?DV_MIN_DEFAULT:S.minOdds);
-    const byBook={}; Object.entries(all).forEach(([b,arr])=>{ const f=arr.filter(l=>l.over>=minOdds); if(f.length) byBook[b]=f; });
-    const books=Object.keys(byBook); if(!books.length) return {books:[],book:null,pool:[]};
-    const book=(S.book&&byBook[S.book])?S.book:books.sort((a,b)=>byBook[b].length-byBook[a].length)[0];
-    return {books,book,pool:byBook[book]};
+    const minOdds=S.minOdds==null?DV_MIN_DEFAULT:S.minOdds;
+    const maxOdds=S.maxOdds||0;  // 0 = no cap
+    const ok=l=>(S.hail?true:l.over>=minOdds)&&(maxOdds<=0||l.over<=maxOdds);
+    const byBook={}; Object.entries(all).forEach(([b,arr])=>{ const f=arr.filter(ok); if(f.length) byBook[b]=f; });
+    const books=Object.keys(byBook); if(!books.length) return {books:[],book:null,pool:[],byBook:{}};
+    const book=(S.book&&byBook[S.book])?S.book:books.sort((a,b)=>_dvDistinct(byBook[b])-_dvDistinct(byBook[a]))[0];
+    return {books,book,pool:byBook[book],byBook};
   }
+  // greedy ONE-leg-per-player pick of `need` legs from the ranked pool
+  function _dvSel1pp(pool,need){ const seen=new Set(),idx=[]; for(let i=0;i<pool.length&&idx.length<need;i++){ if(!seen.has(pool[i].name)){ seen.add(pool[i].name); idx.push(i); } } return idx; }
   function dejaVuSGM(home,away){
     const S=_dvState(); S.home=home; S.away=away;
     const title='<div class="tp-sec"><div class="sec-title"><i class="ti ti-versions"></i> Déjà Vu SGM</div></div>';
     const meetings=_dvMeetings(home,away);
     if(meetings.length<3) return title+'<div class="tp-body-meta" style="border:0">Need at least 3 prior meetings between '+abbr(home)+' and '+abbr(away)+'.</div>';
-    // no live per-book odds yet -> list the qualifying legs without pricing
+    // no live per-book odds yet -> preview the qualifying players (one row each)
     if(!(state.idx.bookIdx&&Object.keys(state.idx.bookIdx).length)){
       const {legs}=_dvLegs(home,away);
       if(!legs.length) return title+'<div class="tp-body-meta" style="border:0">No player cleared a market line in all 3 meetings.</div>';
-      const top=legs.slice().sort((a,b)=>b.strength-a.strength).slice(0,10)
-        .map(l=>'<div class="dv-leg"><span class="dv-n">'+esc(l.name)+'</span><span class="dv-l">'+l.line+'+ '+l.marketLabel+'</span><span class="dv-h">'+l.vals.join(' / ')+'</span></div>').join('');
-      return title+'<div class="tp-body-meta">'+legs.length+' legs hit all 3 meetings · single-book prices, tiers &amp; Hail Mary appear once the live per-book odds feed is on</div><div class="dv-legs">'+top+'</div>';
+      const seen=new Set(),top=[];
+      legs.slice().sort((a,b)=>b.strength-a.strength).forEach(l=>{ if(top.length<10&&!seen.has(l.name)){ seen.add(l.name); top.push(l); } });
+      const rows=top.map(l=>'<div class="dv-leg"><span class="dv-n">'+esc(l.name)+'</span><span class="dv-l">'+l.line+'+ '+l.marketLabel+'</span><span class="dv-h">'+l.vals.join(' / ')+'</span></div>').join('');
+      return title+'<div class="tp-body-meta">'+_dvDistinct(legs)+' players hit a line in all 3 meetings · single-book prices, tiers &amp; Hail Mary appear once the live per-book odds feed is on</div><div class="dv-legs">'+rows+'</div>';
     }
-    const {books,book,pool}=_dvPool(S);
-    const minOdds=S.hail?0:(S.minOdds==null?DV_MIN_DEFAULT:S.minOdds);
-    if(!pool.length) return title+'<div class="tp-body-meta" style="border:0">No legs meet the $'+minOdds.toFixed(2)+' minimum on a single book yet.</div>';
-    const need=S.hail?pool.length:S.tier;
-    if(!S.sel||S.sel._book!==book||S.sel._need!==need){ S.sel={_book:book,_need:need,idx:pool.map((_,i)=>i).slice(0,need)}; S.book=book; }
+    const {books,book,pool,byBook}=_dvPool(S);
+    const minOdds=S.minOdds==null?DV_MIN_DEFAULT:S.minOdds, maxOdds=S.maxOdds||0;
+    if(!pool.length) return title+'<div class="tp-body-meta" style="border:0">No legs fit the current odds filter on a single book yet.</div>';
+    if(S.book!==book) S.book=book;
+    const distinctN=_dvDistinct(pool);
+    const want=S.hail?distinctN:Math.min(S.tier,distinctN);   // one leg per player
+    if(!S.sel||S.sel._book!==book||S.sel._need!==want||S.sel._hail!==!!S.hail){ S.sel={_book:book,_need:want,_hail:!!S.hail,idx:_dvSel1pp(pool,want)}; }
     const sel=S.sel.idx;
     const slip=sel.map((pi,slot)=>{ const l=pool[pi]; if(!l) return '';
       const swap=S.hail?'':'<span class="dv-swap"><button onclick="_dvSwap('+slot+',-1)">◂</button><button onclick="_dvSwap('+slot+',1)">▸</button></span>';
       return '<div class="dv-leg"><span class="dv-n">'+esc(l.name)+'</span><span class="dv-l">'+l.betLine+'+ '+l.marketLabel+'</span><span class="dv-o">$'+l.over.toFixed(2)+'</span>'+swap+'</div>';
     }).join('');
     const comb=_dvProduct(sel.map(i=>pool[i]).filter(Boolean));
-    const tierBtns=[3,4,5].map(t=>'<button class="dv-tier'+(!S.hail&&S.tier===t?' on':'')+'"'+(pool.length>=t?'':' disabled')+' onclick="_dvTier('+t+')">'+t+' legs</button>').join('');
+    const tierBtns=[3,4,5].map(t=>'<button class="dv-tier'+(!S.hail&&S.tier===t?' on':'')+'"'+(distinctN>=t?'':' disabled')+' onclick="_dvTier('+t+')">'+t+' legs</button>').join('');
     const hailBtn='<button class="dv-tier dv-hail'+(S.hail?' on':'')+'" onclick="_dvHail()"><i class="ti ti-bolt"></i> Hail Mary</button>';
-    const stepper=S.hail?'':'<span class="dv-min">min&nbsp;$<button onclick="_dvMin(-1)">−</button><b>'+(S.minOdds==null?DV_MIN_DEFAULT:S.minOdds).toFixed(2)+'</b><button onclick="_dvMin(1)">+</button></span>';
-    const moreNote=(!S.hail&&pool.length>need)?(' · '+(pool.length-need)+' alt'+(pool.length-need>1?'s':'')+' — use ◂ ▸ to swap'):'';
+    const bookChips=books.length>1?('<div class="dv-books">'+books.slice().sort((a,b)=>_dvDistinct(byBook[b])-_dvDistinct(byBook[a])).map(b=>'<button class="dv-bk'+(b===book?' on':'')+'" onclick="_dvBook(\''+b+'\')">'+bookName(b)+' <i>'+_dvDistinct(byBook[b])+'</i></button>').join('')+'</div>'):'';
+    const steppers=S.hail?'':('<div class="dv-ctrls"><span class="dv-min">min&nbsp;$<button onclick="_dvMin(-1)">−</button><b>'+(S.minOdds==null?DV_MIN_DEFAULT:S.minOdds).toFixed(2)+'</b><button onclick="_dvMin(1)">+</button></span>'+
+      '<span class="dv-min">max&nbsp;<button onclick="_dvMax(-1)">−</button><b>'+(maxOdds>0?'$'+maxOdds.toFixed(2):'off')+'</b><button onclick="_dvMax(1)">+</button></span></div>');
+    const moreNote=(!S.hail&&distinctN>want)?(' · '+(distinctN-want)+' more player'+(distinctN-want>1?'s':'')+' to swap in'):'';
     return title+
-      '<div class="tp-body-meta">Hit the last 3 '+abbr(home)+' v '+abbr(away)+' meetings · one book: <b>'+bookName(book)+'</b> · '+pool.length+' qualify'+moreNote+'</div>'+
-      '<div class="dv-ctrls">'+tierBtns+hailBtn+stepper+'</div>'+
+      '<div class="tp-body-meta">Hit the last 3 '+abbr(home)+' v '+abbr(away)+' meetings · book: <b>'+bookName(book)+'</b> · '+distinctN+' players qualify'+moreNote+'</div>'+
+      '<div class="dv-ctrls">'+tierBtns+hailBtn+'</div>'+bookChips+steppers+
       '<div class="dv-legs">'+slip+'</div>'+
-      '<div class="dv-comb">'+(S.hail?pool.length:need)+'-leg combined <b>$'+comb.toFixed(2)+'</b><span class="dv-est">est · straight multi; a true SGM pays less</span></div>';
+      '<div class="dv-comb">'+want+'-leg combined <b>$'+comb.toFixed(2)+'</b><span class="dv-est">est · straight multi; a true SGM (esp. same-player) pays less</span></div>';
   }
   window._dvSwap=function(slot,dir){
     const S=_dvState(); if(!S.sel) return;
-    const {pool}=_dvPool(S); if(pool.length<=S.sel.idx.length) return;
-    const used=new Set(S.sel.idx); let i=S.sel.idx[slot];
-    for(let step=0;step<pool.length;step++){ i=(i+dir+pool.length)%pool.length; if(!used.has(i)) break; }
+    const {pool}=_dvPool(S); if(!pool.length) return;
+    const others=new Set(S.sel.idx.filter((_,j)=>j!==slot).map(i=>pool[i]&&pool[i].name));  // players in other slots
+    let i=S.sel.idx[slot];
+    for(let step=0;step<pool.length;step++){ i=(i+dir+pool.length)%pool.length; const c=pool[i]; if(c&&!others.has(c.name)) break; }
     S.sel.idx[slot]=i; _renderApp();
   };
   window._dvTier=function(t){ const S=_dvState(); S.hail=false; S.tier=t; S.sel=null; _renderApp(); };
   window._dvHail=function(){ const S=_dvState(); S.hail=!S.hail; S.sel=null; _renderApp(); };
-  window._dvMin=function(d){ const S=_dvState(); const cur=(S.minOdds==null?DV_MIN_DEFAULT:S.minOdds); S.minOdds=Math.max(1.01,Math.round((cur+d*0.05)*100)/100); S.sel=null; S.book=null; _renderApp(); };
+  window._dvBook=function(b){ const S=_dvState(); S.book=b; S.sel=null; _renderApp(); };
+  window._dvMin=function(d){ const S=_dvState(); const cur=(S.minOdds==null?DV_MIN_DEFAULT:S.minOdds); S.minOdds=Math.max(1.01,Math.round((cur+d*0.05)*100)/100); S.sel=null; _renderApp(); };
+  window._dvMax=function(d){ const S=_dvState(); let cur=S.maxOdds||0; if(cur<=0&&d>0) cur=2.00; else cur=Math.round((cur+d*0.25)*100)/100; if(cur<0)cur=0; if(cur>0&&cur<1.05)cur=0; S.maxOdds=cur; S.sel=null; _renderApp(); };
   function mostDisposals(){
     const teams=_fixtureSet();
     return (state.idx.players||[]).filter(p=>teams.has(p.team)&&(p.matches||0)>=3)
