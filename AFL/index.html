@@ -1679,8 +1679,13 @@
   function _dvMeetings(home,away){
     const mt=state.idx.matchTeams||{};
     const cand=Object.keys(mt).filter(m=>{const ts=Object.keys(mt[m]);return ts.includes(home)&&ts.includes(away);});
-    return cand.map(m=>{ const lg=(state.data.gamelogs||[]).find(r=>r.MatchId===m)||{}; return {m,y:+lg.Year||0,r:_roundNum(lg.RoundName)}; })
-      .sort((a,b)=>(b.y-a.y)||(b.r-a.r)).slice(0,3).map(d=>d.m);
+    // Some matches appear under two MatchIds (a date-style id and a slug). Collapse
+    // them so the same game can't fill two "meeting" slots — key by year+round, keep
+    // the id with the most rows as the representative.
+    const meta={}; (state.data.gamelogs||[]).forEach(r=>{ if(!r.MatchId)return; const x=meta[r.MatchId]=meta[r.MatchId]||{y:+r.Year||0,r:_roundNum(r.RoundName),n:0}; x.n++; });
+    const byMeet={};
+    cand.forEach(m=>{ const x=meta[m]; if(!x)return; const key=x.y+'|'+x.r; if(!byMeet[key]||x.n>byMeet[key].n) byMeet[key]={m,y:x.y,r:x.r}; });
+    return Object.values(byMeet).sort((a,b)=>(b.y-a.y)||(b.r-a.r)).slice(0,3).map(d=>d.m);
   }
   function _dvLegs(home,away){
     const meetings=_dvMeetings(home,away);
