@@ -67,6 +67,13 @@
   .ob-cell{text-align:center;padding:9px 12px;font-variant-numeric:tabular-nums;}
   .ob-cell.empty{color:var(--text-3);}
   .ob-px{font-family:var(--font-display);font-weight:800;font-size:13px;color:var(--text);}
+  .ob-pxrow{display:flex;align-items:center;justify-content:center;gap:4px;}
+  .ob-cr{margin-top:3px;display:flex;gap:6px;justify-content:center;font-size:9px;font-weight:800;font-variant-numeric:tabular-nums;}
+  .ob-cr .s{color:var(--text-2);} .ob-cr .s::before{content:"S";opacity:.5;margin-right:1px;font-size:7px;}
+  .ob-cr .h{color:var(--accent);} .ob-cr .h::before{content:"H";opacity:.6;margin-right:1px;font-size:7px;}
+  .ob-ou{margin-top:3px;font-size:9.5px;font-weight:700;color:var(--text-2);font-variant-numeric:tabular-nums;}
+  .ob-legend{font-size:9.5px;color:var(--text-3);margin:0 0 8px 2px;}
+  .ob-legend .s{color:var(--text-2);font-weight:800;} .ob-legend .h{color:var(--accent);font-weight:800;}
   .ob-bk{display:inline-block;margin-left:5px;font-size:8px;font-weight:800;color:var(--text-3);border:1px solid var(--border);border-radius:3px;padding:1px 3px;vertical-align:middle;letter-spacing:.02em;}
   .deg-sub{font-family:var(--font-mono);font-size:11px;color:var(--text-2);line-height:1.5;margin-top:3px;white-space:normal;word-break:break-word;}
   .deg-val{font-family:var(--font-display);font-weight:800;font-size:13.5px;line-height:1.3;text-align:right;max-width:100%;justify-self:end;white-space:normal;overflow-wrap:anywhere;word-break:break-word;}
@@ -738,28 +745,38 @@
     const tierSet=new Set(), perPlayer={};
     roster.forEach(p=>{ const m={}; altLines(p.name,mkt).forEach(a=>{ if(a.line==null||a.over==null) return; const t=Math.ceil(a.line);
       if(!m[t]||a.over>m[t].over) m[t]={over:a.over,book:a.book}; tierSet.add(t); }); perPlayer[p.name]=m; });
+    roster=roster.filter(p=>Object.keys(perPlayer[p.name]||{}).length>0);   // hide players with no posted lines
     const tiers=[...tierSet].sort((x,y)=>x-y);
     const title=esc(home)+' vs '+esc(away)+(g.time?' &middot; '+esc(g.time):'');
     const titleSec='<div class="tp-sec"><div class="sec-title"><i class="ti ti-coins"></i> '+title+'</div></div>';
-    if(!tiers.length) return titleSec+filters+emptyState('ti-line','No '+mkt+' lines posted','No alt-line prices for this market in the current feed — try another market.');
+    if(!tiers.length||!roster.length) return titleSec+filters+emptyState('ti-line','No '+mkt+' lines posted','No prices for this market in the current feed — try another market.');
+    const cs=String((state.data.meta&&state.data.meta.currentSeason)||'2026');
     const thead='<tr><th class="ob-pl">Player</th>'+tiers.map(t=>'<th>'+t+'+</th>').join('')+'</tr>';
     const body=roster.map(p=>{
       const opp=oppOf(p.team), m=perPlayer[p.name]||{};
-      const main=oddsFor(p.name,mkt); let refL=(main&&main.line!=null)?main.line:(p[mkt]!=null?p[mkt]:null);
-      const thresh=refL!=null?(Number.isInteger(refL)?refL:Math.ceil(refL)):null;
-      const hr=thresh!=null?_oddsHitRates(p.name,mkt,opp,thresh):null;
+      // value arrays for per-tier clear rates
+      const logs=state.idx.logsByName[p.name]||[]; const sVals=[],hVals=[];
+      logs.forEach(r=>{ const v=r[mkt]; if(v==null)return; if(String(r.Year)===cs)sVals.push(v); if(opp&&r.opponent===opp)hVals.push(v); });
+      const sRate=t=>sVals.length?Math.round(sVals.filter(v=>v>=t).length/sVals.length*100):null;
+      const hRate=t=>hVals.length?Math.round(hVals.filter(v=>v>=t).length/hVals.length*100):null;
       let dvpHtml='';
       if(window.JTTScoring && JTTScoring.getDVPPct){ const pos=(JTTScoring.POS_TO_DVP&&JTTScoring.POS_TO_DVP[p.position])||p.position;
         const dpct=JTTScoring.getDVPPct(opp,pos,mkt);
         if(dpct!=null){ const mi=JTTScoring.muInfo?JTTScoring.muInfo(dpct):null; dvpHtml='<span class="ob-dvp" style="color:'+(mi?mi.c:'var(--text-3)')+'">DVP '+(dpct>0?'+':'')+dpct.toFixed(0)+'%</span>'; } }
-      const hrHtml=hr?('<span class="ob-hr">S '+(hr.season!=null?Math.round(hr.season*100)+'%':'&ndash;')+' &middot; H2H '+(hr.h2h!=null?Math.round(hr.h2h*100)+'% ('+hr.hH+'/'+hr.hN+')':'&ndash;')+(thresh!=null?' @'+thresh+'+':'')+'</span>'):'';
-      const meta='<div class="ob-meta"><span class="ob-pos">'+posShort(p.position)+'</span>'+dvpHtml+hrHtml+'</div>';
-      const nameCell='<td class="ob-pl"><div class="ob-name" data-p="'+esc(p.name)+'" onclick="openPlayer(this.dataset.p)">'+esc(p.name)+'</div>'+meta+'</td>';
+      // two-way O/U line (over + under, same book)
+      const main=oddsFor(p.name,mkt);
+      const ouHtml=(main&&main.line!=null&&main.over!=null&&main.under!=null)
+        ? '<div class="ob-ou">O/U '+main.line+' &middot; O $'+main.over.toFixed(2)+' / U $'+main.under.toFixed(2)+' <span class="ob-bk">'+_bookShort(main.book)+'</span></div>' : '';
+      const meta='<div class="ob-meta"><span class="ob-pos">'+posShort(p.position)+'</span>'+dvpHtml+'</div>';
+      const nameCell='<td class="ob-pl"><div class="ob-name" data-p="'+esc(p.name)+'" onclick="openPlayer(this.dataset.p)">'+esc(p.name)+'</div>'+meta+ouHtml+'</td>';
       const cells=tiers.map(t=>{ const c=m[t]; if(!c) return '<td class="ob-cell empty">&ndash;</td>';
-        return '<td class="ob-cell"><span class="ob-px">'+c.over.toFixed(2)+'</span><span class="ob-bk">'+_bookShort(c.book)+'</span></td>'; }).join('');
+        const sr=sRate(t), hr=hRate(t);
+        const cr=(sr!=null||hr!=null)?'<div class="ob-cr" title="Season '+(sr!=null?sr+'%':'-')+' / H2H '+(hr!=null?hr+'%':'-')+' cleared at '+t+'+">'+(sr!=null?'<span class="s">'+sr+'</span>':'')+(hr!=null?'<span class="h">'+hr+'</span>':'')+'</div>':'';
+        return '<td class="ob-cell"><div class="ob-pxrow"><span class="ob-px">'+c.over.toFixed(2)+'</span><span class="ob-bk">'+_bookShort(c.book)+'</span></div>'+cr+'</td>'; }).join('');
       return '<tr>'+nameCell+cells+'</tr>';
     }).join('');
-    return titleSec+filters+'<div class="ob-wrap"><table class="ob-table"><thead>'+thead+'</thead><tbody>'+body+'</tbody></table></div>';
+    const legend='<div class="ob-legend">Cell: best over price + book &middot; <span class="s">S</span> season / <span class="h">H</span> H2H clear-rate at that line</div>';
+    return titleSec+filters+legend+'<div class="ob-wrap"><table class="ob-table"><thead>'+thead+'</thead><tbody>'+body+'</tbody></table></div>';
   }
 
   function _updateFreshnessPill(){const el=document.getElementById('freshness-pill');if(!el)return;const ts=parseInt(state.dataVersion,10);if(!ts){el.textContent='Loaded';return;}const h=(Date.now()-ts*1000)/3.6e6;el.textContent=h<1?'Updated just now':h<24?'Updated '+Math.floor(h)+'h ago':'Updated '+Math.floor(h/24)+'d ago';el.classList.remove('stale','very-stale');if(h>72)el.classList.add('very-stale');else if(h>36)el.classList.add('stale');}
