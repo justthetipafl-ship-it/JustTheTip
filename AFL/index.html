@@ -4,6 +4,8 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>JTT AFL — Just The Tip</title>
+  <link rel="icon" type="image/png" href="assets/jtt-check.png">
+  <link rel="apple-touch-icon" href="assets/jtt-check.png">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;600;700;800;900&family=IBM+Plex+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -2551,9 +2553,12 @@
   function abbr(t){return ABBR[t]||(t||'').slice(0,3).toUpperCase();}
 
   // ---- team logos: club-colour guernseys (original SVG) by default ----
-  // Set LOGO_BASE to 'logos/' (and drop <slug>.png into AFL/logos/) to use real
-  // logo files instead — each missing file falls back to its guernsey.
-  const LOGO_BASE='';
+  // Drop real club logos into AFL/assets/logos/<slug>.png to use them — each
+  // missing file falls back to its guernsey (and is cached so it won't refetch).
+  // Slugs are lowercase-hyphenated team names, e.g. brisbane.png, gold-coast.png,
+  // greater-western-sydney.png, st-kilda.png, western-bulldogs.png.
+  const LOGO_BASE='assets/logos/';
+  const _logoMiss=new Set();
   // {base, d:design, c2, c3}  — design ∈ solid|hoops|vstripe|sash|vee|yoke|bands
   const CLUB={
     'Adelaide':{base:'#002b5c',d:'yoke',c2:'#e21937',c3:'#ffd200'},
@@ -2600,13 +2605,14 @@
       '<path d="M42,8 C46,16 54,16 58,8" fill="none" stroke="'+c2+'" stroke-width="3.5"/>'+
       '</svg>';
   }
-  window.jttLogoFb=function(img){ const w=document.createElement('span'); w.innerHTML=teamJersey(img.dataset.team,+img.dataset.size||40); if(w.firstChild)img.replaceWith(w.firstChild); };
+  window.jttLogoFb=function(img){ if(img.dataset.slug)_logoMiss.add(img.dataset.slug); const w=document.createElement('span'); w.innerHTML=teamJersey(img.dataset.team,+img.dataset.size||40); if(w.firstChild)img.replaceWith(w.firstChild); };
   function teamLogo(team,size){
     size=size||40;
     if(!LOGO_BASE) return teamJersey(team,size);
     const slug=(team||'').toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'');
+    if(_logoMiss.has(slug)) return teamJersey(team,size);
     return '<img class="team-logo-img" src="'+LOGO_BASE+slug+'.png" width="'+size+'" height="'+size+'" alt="'+esc(team)+
-      '" data-team="'+esc(team)+'" data-size="'+size+'" onerror="jttLogoFb(this)">';
+      '" data-team="'+esc(team)+'" data-size="'+size+'" data-slug="'+slug+'" onerror="jttLogoFb(this)">';
   }
 
   /* ===================== INIT ===================== */
