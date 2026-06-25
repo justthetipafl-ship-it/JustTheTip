@@ -62,6 +62,26 @@
   .tp-collapse.c-red{border-left:3px solid #f87171;} .tp-collapse.c-red .tp-collapse-sum>i:first-child{color:#f87171;}
   .tp-collapse.c-purple{border-left:3px solid #a78bfa;} .tp-collapse.c-purple .tp-collapse-sum>i:first-child{color:#a78bfa;}
   .tp-collapse.c-cyan{border-left:3px solid #22d3ee;} .tp-collapse.c-cyan .tp-collapse-sum>i:first-child{color:#22d3ee;}
+  .dv-ctrls{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:8px 0 10px;}
+  .dv-tier{padding:5px 11px;border-radius:14px;border:1px solid var(--border);background:transparent;color:var(--text-3);font-size:12px;font-weight:700;cursor:pointer;}
+  .dv-tier.on{border-color:var(--accent);background:rgba(34,197,94,.14);color:var(--text);}
+  .dv-tier[disabled]{opacity:.35;cursor:not-allowed;}
+  .dv-tier.dv-hail{border-color:#f59e0b;color:#f59e0b;} .dv-tier.dv-hail.on{background:rgba(245,158,11,.16);color:#fde68a;}
+  .dv-min{margin-left:auto;font-size:11px;color:var(--text-3);display:inline-flex;align-items:center;gap:4px;}
+  .dv-min button{width:22px;height:22px;border-radius:6px;border:1px solid var(--border);background:var(--surface-2);color:var(--text);cursor:pointer;font-size:13px;line-height:1;}
+  .dv-min b{font-family:var(--font-mono);color:var(--text);}
+  .dv-legs{display:flex;flex-direction:column;gap:5px;}
+  .dv-leg{display:flex;align-items:center;gap:8px;padding:7px 10px;border:1px solid var(--border);border-left:3px solid #22c55e;border-radius:8px;background:var(--surface-2);font-size:13px;}
+  .dv-leg .dv-n{font-weight:600;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .dv-leg .dv-l{color:var(--text-3);font-size:11px;white-space:nowrap;}
+  .dv-leg .dv-o{font-family:var(--font-mono);font-weight:700;color:#22c55e;}
+  .dv-leg .dv-h{font-family:var(--font-mono);font-size:11px;color:var(--text-3);white-space:nowrap;}
+  .dv-swap{display:inline-flex;gap:3px;}
+  .dv-swap button{width:24px;height:24px;border-radius:6px;border:1px solid var(--border);background:var(--surface);color:var(--text-2);cursor:pointer;font-size:12px;line-height:1;}
+  .dv-swap button:hover{border-color:var(--accent);color:var(--text);}
+  .dv-comb{margin-top:9px;padding:8px 11px;border-radius:8px;background:rgba(34,197,94,.10);border:1px solid rgba(34,197,94,.3);font-size:13px;font-weight:700;}
+  .dv-comb b{font-family:var(--font-mono);font-size:15px;color:#22c55e;margin-left:4px;}
+  .dv-est{display:block;font-size:10px;font-weight:500;color:var(--text-3);margin-top:2px;}
   .fx-mode{display:flex;gap:6px;margin:14px 0 4px;}
   .fxm-btn{flex:1;display:flex;align-items:center;justify-content:center;gap:6px;background:var(--surface);border:1px solid var(--border);color:var(--text-2);
     padding:9px 12px;border-radius:8px;font-family:var(--font-display);font-weight:800;font-size:13px;letter-spacing:.3px;cursor:pointer;transition:all .12s;}
@@ -1010,6 +1030,7 @@
       '<button class="fxm-btn'+(fxMode==='nerd'?' on':'')+'" onclick="setFxMode(\'nerd\')"><i class="ti ti-math-function"></i> Nerd Mode</button></div>';
     if(fxMode==='nerd') h+=nerdFilterBar();
     h+='<div class="team-cols">'+teamPanel(g.home,g.away,true)+teamPanel(g.away,g.home,false)+'</div>';
+    h+=dejaVuSGM(g.home,g.away);
     return h;
   }
 
@@ -1651,6 +1672,108 @@
     // best climbed-line hit rate first, then the longer (more valuable) climb price
     return out.sort((a,b)=> (b.rate2-a.rate2) || ((b.climbOver||b.startOver)-(a.climbOver||a.startOver)));
   }
+  // ===== Déjà Vu SGM — legs that hit the last 3 H2H meetings, all on one book =====
+  const DV_MARKETS=[['disposals','Disposals',15],['kicks','Kicks',8],['handballs','Handballs',6],['marks','Marks',3],['tackles','Tackles',3],['clearances','Clearances',2],['goals','Goals',1]];
+  const DV_MIN_DEFAULT=1.25;
+  function _dvState(){ return state.view.dejaVu || (state.view.dejaVu={tier:3,minOdds:DV_MIN_DEFAULT,hail:false,sel:null,book:null,home:null,away:null}); }
+  function _dvMeetings(home,away){
+    const mt=state.idx.matchTeams||{};
+    const cand=Object.keys(mt).filter(m=>{const ts=Object.keys(mt[m]);return ts.includes(home)&&ts.includes(away);});
+    return cand.map(m=>{ const lg=(state.data.gamelogs||[]).find(r=>r.MatchId===m)||{}; return {m,y:+lg.Year||0,r:_roundNum(lg.RoundName)}; })
+      .sort((a,b)=>(b.y-a.y)||(b.r-a.r)).slice(0,3).map(d=>d.m);
+  }
+  function _dvLegs(home,away){
+    const meetings=_dvMeetings(home,away);
+    if(meetings.length<3) return {meetings,legs:[]};
+    const mset=new Set(meetings);
+    const onSide=new Set([...playersOnTeam(home),...playersOnTeam(away)].map(p=>p.name));
+    const byPlayer={};
+    (state.data.gamelogs||[]).forEach(r=>{ if(mset.has(r.MatchId)) (byPlayer[r.Player]=byPlayer[r.Player]||[]).push(r); });
+    const legs=[];
+    Object.entries(byPlayer).forEach(([name,rows])=>{
+      if(rows.length<3 || !onSide.has(name)) return;            // played all 3 + named this week
+      const p=state.idx.byName[name]; if(!p) return;
+      const opp=(p.team===home?away:home);
+      DV_MARKETS.forEach(([k,l,floor])=>{
+        const vals=rows.map(r=>+(r[k]||0));
+        const lineV=Math.min.apply(null,vals);                  // highest "X+" cleared all 3
+        if(lineV<floor) return;                                 // skip trivial legs
+        legs.push({name,team:p.team,opp,market:k,marketLabel:l,line:lineV,vals,pos:p.position,strength:lineV-floor});
+      });
+    });
+    return {meetings,legs};
+  }
+  // best posted over for a leg's "line+" on a given book (highest posted line still cleared all 3)
+  function _dvPrice(leg,book){
+    const rows=(((state.idx.bookIdx||{})[leg.name]||{})[leg.market]||[]).filter(r=>r.book===book&&r.over!=null&&r.line<=leg.line);
+    if(!rows.length) return null;
+    const pick=rows.sort((a,b)=>b.line-a.line)[0];
+    return {over:pick.over, betLine:Math.ceil(pick.line)};
+  }
+  // book -> ranked priced legs (one entry per leg, longest odds first)
+  function _dvBoards(home,away){
+    const {meetings,legs}=_dvLegs(home,away);
+    const all={};
+    legs.forEach(leg=>{
+      const books=new Set((((state.idx.bookIdx||{})[leg.name]||{})[leg.market]||[]).map(r=>r.book).filter(_bookOK));
+      books.forEach(b=>{ const pr=_dvPrice(leg,b); if(pr) (all[b]=all[b]||[]).push(Object.assign({},leg,{over:pr.over,betLine:pr.betLine,book:b})); });
+    });
+    Object.values(all).forEach(arr=>arr.sort((a,b)=>(b.over-a.over)||(b.strength-a.strength)));
+    return {meetings,all};
+  }
+  function _dvProduct(legs){ return legs.reduce((p,l)=>p*(l.over||1),1); }
+  function _dvPool(S){            // recompute the working book's leg pool (used by render + handlers)
+    const {all}=_dvBoards(S.home,S.away);
+    const minOdds=S.hail?0:(S.minOdds==null?DV_MIN_DEFAULT:S.minOdds);
+    const byBook={}; Object.entries(all).forEach(([b,arr])=>{ const f=arr.filter(l=>l.over>=minOdds); if(f.length) byBook[b]=f; });
+    const books=Object.keys(byBook); if(!books.length) return {books:[],book:null,pool:[]};
+    const book=(S.book&&byBook[S.book])?S.book:books.sort((a,b)=>byBook[b].length-byBook[a].length)[0];
+    return {books,book,pool:byBook[book]};
+  }
+  function dejaVuSGM(home,away){
+    const S=_dvState(); S.home=home; S.away=away;
+    const title='<div class="tp-sec"><div class="sec-title"><i class="ti ti-versions"></i> Déjà Vu SGM</div></div>';
+    const meetings=_dvMeetings(home,away);
+    if(meetings.length<3) return title+'<div class="tp-body-meta" style="border:0">Need at least 3 prior meetings between '+abbr(home)+' and '+abbr(away)+'.</div>';
+    // no live per-book odds yet -> list the qualifying legs without pricing
+    if(!(state.idx.bookIdx&&Object.keys(state.idx.bookIdx).length)){
+      const {legs}=_dvLegs(home,away);
+      if(!legs.length) return title+'<div class="tp-body-meta" style="border:0">No player cleared a market line in all 3 meetings.</div>';
+      const top=legs.slice().sort((a,b)=>b.strength-a.strength).slice(0,10)
+        .map(l=>'<div class="dv-leg"><span class="dv-n">'+esc(l.name)+'</span><span class="dv-l">'+l.line+'+ '+l.marketLabel+'</span><span class="dv-h">'+l.vals.join(' / ')+'</span></div>').join('');
+      return title+'<div class="tp-body-meta">'+legs.length+' legs hit all 3 meetings · single-book prices, tiers &amp; Hail Mary appear once the live per-book odds feed is on</div><div class="dv-legs">'+top+'</div>';
+    }
+    const {books,book,pool}=_dvPool(S);
+    const minOdds=S.hail?0:(S.minOdds==null?DV_MIN_DEFAULT:S.minOdds);
+    if(!pool.length) return title+'<div class="tp-body-meta" style="border:0">No legs meet the $'+minOdds.toFixed(2)+' minimum on a single book yet.</div>';
+    const need=S.hail?pool.length:S.tier;
+    if(!S.sel||S.sel._book!==book||S.sel._need!==need){ S.sel={_book:book,_need:need,idx:pool.map((_,i)=>i).slice(0,need)}; S.book=book; }
+    const sel=S.sel.idx;
+    const slip=sel.map((pi,slot)=>{ const l=pool[pi]; if(!l) return '';
+      const swap=S.hail?'':'<span class="dv-swap"><button onclick="_dvSwap('+slot+',-1)">◂</button><button onclick="_dvSwap('+slot+',1)">▸</button></span>';
+      return '<div class="dv-leg"><span class="dv-n">'+esc(l.name)+'</span><span class="dv-l">'+l.betLine+'+ '+l.marketLabel+'</span><span class="dv-o">$'+l.over.toFixed(2)+'</span>'+swap+'</div>';
+    }).join('');
+    const comb=_dvProduct(sel.map(i=>pool[i]).filter(Boolean));
+    const tierBtns=[3,4,5].map(t=>'<button class="dv-tier'+(!S.hail&&S.tier===t?' on':'')+'"'+(pool.length>=t?'':' disabled')+' onclick="_dvTier('+t+')">'+t+' legs</button>').join('');
+    const hailBtn='<button class="dv-tier dv-hail'+(S.hail?' on':'')+'" onclick="_dvHail()"><i class="ti ti-bolt"></i> Hail Mary</button>';
+    const stepper=S.hail?'':'<span class="dv-min">min&nbsp;$<button onclick="_dvMin(-1)">−</button><b>'+(S.minOdds==null?DV_MIN_DEFAULT:S.minOdds).toFixed(2)+'</b><button onclick="_dvMin(1)">+</button></span>';
+    const moreNote=(!S.hail&&pool.length>need)?(' · '+(pool.length-need)+' alt'+(pool.length-need>1?'s':'')+' — use ◂ ▸ to swap'):'';
+    return title+
+      '<div class="tp-body-meta">Hit the last 3 '+abbr(home)+' v '+abbr(away)+' meetings · one book: <b>'+bookName(book)+'</b> · '+pool.length+' qualify'+moreNote+'</div>'+
+      '<div class="dv-ctrls">'+tierBtns+hailBtn+stepper+'</div>'+
+      '<div class="dv-legs">'+slip+'</div>'+
+      '<div class="dv-comb">'+(S.hail?pool.length:need)+'-leg combined <b>$'+comb.toFixed(2)+'</b><span class="dv-est">est · straight multi; a true SGM pays less</span></div>';
+  }
+  window._dvSwap=function(slot,dir){
+    const S=_dvState(); if(!S.sel) return;
+    const {pool}=_dvPool(S); if(pool.length<=S.sel.idx.length) return;
+    const used=new Set(S.sel.idx); let i=S.sel.idx[slot];
+    for(let step=0;step<pool.length;step++){ i=(i+dir+pool.length)%pool.length; if(!used.has(i)) break; }
+    S.sel.idx[slot]=i; _renderApp();
+  };
+  window._dvTier=function(t){ const S=_dvState(); S.hail=false; S.tier=t; S.sel=null; _renderApp(); };
+  window._dvHail=function(){ const S=_dvState(); S.hail=!S.hail; S.sel=null; _renderApp(); };
+  window._dvMin=function(d){ const S=_dvState(); const cur=(S.minOdds==null?DV_MIN_DEFAULT:S.minOdds); S.minOdds=Math.max(1.01,Math.round((cur+d*0.05)*100)/100); S.sel=null; S.book=null; _renderApp(); };
   function mostDisposals(){
     const teams=_fixtureSet();
     return (state.idx.players||[]).filter(p=>teams.has(p.team)&&(p.matches||0)>=3)
