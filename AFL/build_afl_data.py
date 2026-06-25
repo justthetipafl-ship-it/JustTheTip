@@ -240,6 +240,37 @@ def prune_gamelogs(dvp, seasons):
     return out
 
 
+def dedupe_meetings(logs):
+    """Some matches appear twice in the source — under a date-style MatchId and a slug
+    MatchId — with identical rows. That double-counts games (match totals, recency,
+    streaks) and corrupts head-to-head history. Collapse each real match (year + round +
+    teams) to a single representative id (the one with the most rows) and drop the rest."""
+    def rn(v):
+        m = re.search(r"\d+", str(v or ""))
+        return int(m.group()) if m else 0
+    teams_of, meta_of, cnt = {}, {}, {}
+    for r in logs:
+        m = r.get("MatchId")
+        if not m:
+            continue
+        teams_of.setdefault(m, set()).add(r.get("Team"))
+        if m not in meta_of:
+            meta_of[m] = (str(r.get("Year")), rn(r.get("RoundName")))
+        cnt[m] = cnt.get(m, 0) + 1
+    by_key = {}
+    for m in teams_of:
+        y, rd = meta_of[m]
+        key = (y, rd, tuple(sorted(t for t in teams_of[m] if t)))
+        by_key.setdefault(key, []).append(m)
+    drop = set()
+    for ids in by_key.values():
+        if len(ids) < 2:
+            continue
+        ids.sort(key=lambda i: cnt[i], reverse=True)
+        drop.update(ids[1:])
+    return [r for r in logs if r.get("MatchId") not in drop] if drop else logs
+
+
 def build_demo(legacy_player):
     demo = {}
     for p in legacy_player:
@@ -447,6 +478,10 @@ def main():
 
     demo = build_demo(legacy_player)
     logs = prune_gamelogs(dvp, seasons)
+    _n0 = len(logs)
+    logs = dedupe_meetings(logs)
+    if len(logs) != _n0:
+        print(f"[build] deduped duplicate-MatchId rows: {_n0} -> {len(logs)} ({_n0 - len(logs)} dropped)")
     players = derive_players(logs, demo, args.current)
     teams = derive_teams(logs, args.current)
     teams_form = derive_teams_form(logs, args.current)
