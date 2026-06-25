@@ -508,8 +508,33 @@
   }
 
   /* ===================== DATA ADAPTERS / INDEXES ===================== */
+  // Some matches appear in the gamelogs twice — under a date-style id (e.g. 20260907)
+  // and a slug id (e.g. 2026-R9-Team-v-Team) — with identical rows. That double-counts
+  // games (match totals, last-10/20, streaks) and corrupts H2H "last 3 meetings".
+  // Collapse each real match (year + round + teams) to one representative id. Idempotent:
+  // once the source data is clean this finds nothing and does nothing.
+  function _dedupeGamelogs(d){
+    const gl=d.gamelogs||[]; if(gl.length<2) return;
+    const _rn=rd=>{const m=(''+rd).match(/\d+/);return m?+m[0]:0;};
+    const teamsOf={}, metaOf={}, cnt={};
+    gl.forEach(r=>{ const m=r.MatchId; if(!m)return; (teamsOf[m]=teamsOf[m]||new Set()).add(r.Team); if(!metaOf[m])metaOf[m]={y:r.Year,rd:_rn(r.RoundName)}; cnt[m]=(cnt[m]||0)+1; });
+    const byKey={};
+    Object.keys(teamsOf).forEach(m=>{ const k=metaOf[m].y+'|'+metaOf[m].rd+'|'+[...teamsOf[m]].sort().join('/'); (byKey[k]=byKey[k]||[]).push(m); });
+    const drop=new Set();
+    Object.values(byKey).forEach(ids=>{ if(ids.length<2)return; ids.sort((a,b)=>cnt[b]-cnt[a]); ids.slice(1).forEach(id=>drop.add(id)); });
+    if(!drop.size) return;
+    d.gamelogs=gl.filter(r=>!drop.has(r.MatchId));
+    // players.json match counts were derived from the duplicated rows — recompute from the
+    // deduped logs so games floors/filters use real current-season game counts. (Averages
+    // are unaffected by the duplication, so only the count needs fixing.)
+    const cs=String((d.meta&&d.meta.currentSeason)||'2026');
+    const games={}; d.gamelogs.forEach(r=>{ if(String(r.Year)===cs){ (games[r.Player]=games[r.Player]||new Set()).add(r.MatchId); } });
+    (d.players||[]).forEach(p=>{ if(games[p.name]) p.matches=games[p.name].size; });
+    d._dedupedMatches=drop.size;
+  }
   function adaptData(){
     const d=state.data;
+    _dedupeGamelogs(d);
     state.idx.players=d.players||[];
     state.idx.byName={}; state.idx.players.forEach(p=>state.idx.byName[p.name]=p);
     state.idx.teamMap={}; (d.teams||[]).forEach(t=>state.idx.teamMap[t.team]=t);
