@@ -32,7 +32,9 @@
   .fxr-venue{font-family:var(--font-mono);font-size:10px;color:var(--text-3);}
   .deg-row{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,44%);align-items:center;gap:10px;}
   .deg-main{min-width:0;text-align:left;}
-  .deg-nm{font-size:15px;line-height:1.2;}
+  .deg-nm{font-size:15px;line-height:1.2;display:flex;align-items:center;gap:5px;flex-wrap:wrap;}
+  .deg-pos{font-size:9px;font-weight:800;letter-spacing:.04em;padding:1px 5px;border-radius:3px;border:1px solid;flex-shrink:0;}
+  .deg-named{font-size:9px;font-weight:800;letter-spacing:.04em;padding:1px 5px;border-radius:3px;color:#22c55e;border:1px solid #22c55e55;background:#22c55e1a;flex-shrink:0;}
   .deg-sub{font-family:var(--font-mono);font-size:11px;color:var(--text-2);line-height:1.5;margin-top:3px;white-space:normal;word-break:break-word;}
   .deg-val{font-family:var(--font-display);font-weight:800;font-size:13.5px;line-height:1.3;text-align:right;max-width:100%;justify-self:end;white-space:normal;overflow-wrap:anywhere;word-break:break-word;}
   .deg-odds{color:var(--accent)!important;font-weight:800;white-space:nowrap;}
@@ -169,7 +171,15 @@
   .tp-lead:last-child{border-bottom:0;}
   .tp-lead .nm{color:var(--text-1);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
   .tp-lead .vv{font-family:var(--font-mono);font-weight:700;color:var(--accent);}
-  @media(max-width:680px){ .team-cols{grid-template-columns:1fr;} }
+  @media(max-width:680px){ .team-cols{grid-template-columns:1fr;} .cmbp-grid{grid-template-columns:1fr;} }
+  .dvpp-grid{display:flex;flex-wrap:wrap;gap:4px;margin-bottom:8px;}
+  .dvpp-pill{flex:1;min-width:96px;display:flex;align-items:center;gap:6px;padding:5px 7px;border:1px solid var(--border);border-radius:6px;background:var(--surface-2);}
+  .dvpp-pos{font-size:9px;font-weight:800;letter-spacing:.04em;padding:1px 6px;border-radius:3px;border:1px solid;flex-shrink:0;}
+  .dvpp-v{flex:1;text-align:right;font-size:13px;font-weight:800;color:var(--text);font-variant-numeric:tabular-nums;}
+  .dvpp-p{font-size:10px;font-weight:800;min-width:34px;text-align:right;font-variant-numeric:tabular-nums;}
+  .lu-grid{display:flex;flex-wrap:wrap;gap:4px;margin-bottom:8px;}
+  .lu-p{font-size:11px;font-weight:600;color:var(--text-2);background:var(--surface-2);border:1px solid var(--border);border-radius:5px;padding:3px 7px;}
+  .lu-p i{font-style:normal;color:var(--text-3);font-size:9px;font-weight:700;margin-left:4px;}
   .sub-tabs{display:flex;gap:6px;margin:0 0 14px;flex-wrap:wrap;}
   .sub-tab{display:inline-flex;align-items:center;gap:6px;padding:7px 14px;border-radius:8px;cursor:pointer;
     background:var(--surface);border:1px solid var(--border);color:var(--text-2);font-family:var(--font-display);
@@ -808,6 +818,35 @@
     return '<div class="game-sec"><div class="gs-title"><i class="ti ti-history"></i> Last Time They Met</div>'+head+perf+'</div>';
   }
 
+  // ===== DVP by Position (focused fixture) — opp's allowance per position vs league =====
+  window.setFxDvpPosStat=function(v){ window._fxDvpPosStat=v; _renderApp(); };
+  function fxDvpByPos(team,opp){
+    const rows=state.data.dvp||[]; if(!rows.length) return '';
+    const statKey=window._fxDvpPosStat||'disposals';
+    const oppRows=rows.filter(r=>r.team===opp); if(!oppRows.length) return '';
+    const sel='<select onchange="setFxDvpPosStat(this.value)" class="dvps-sel">'+DVPS_OPTS.map(o=>'<option value="'+o[0]+'"'+(o[0]===statKey?' selected':'')+'>'+o[1]+'</option>').join('')+'</select>';
+    const pills=POS_ORDER.map(pos=>{
+      const orow=oppRows.find(r=>r.pos===pos); if(!orow||orow[statKey]==null) return '';
+      const vals=rows.filter(r=>r.pos===pos&&r[statKey]!=null).map(r=>+r[statKey]);
+      const lg=vals.length?vals.reduce((a,b)=>a+b,0)/vals.length:0;
+      const val=+orow[statKey], pct=lg?((val-lg)/lg*100):0;
+      const c=pct>15?'#22c55e':pct>5?'#86efac':pct>-5?'var(--text-3)':pct>-15?'#f97316':'#ef4444';
+      const col=POS_C[pos]||'#888';
+      return '<div class="dvpp-pill" title="'+esc(pos)+' · vs league avg"><span class="dvpp-pos" style="color:'+col+';border-color:'+col+'55;background:'+col+'1a">'+posShort(pos)+'</span><span class="dvpp-v">'+val.toFixed(1)+'</span><span class="dvpp-p" style="color:'+c+'">'+(pct>=0?'+':'')+pct.toFixed(0)+'%</span></div>';
+    }).filter(Boolean).join('');
+    if(!pills) return '';
+    return '<div class="tp-sec"><div class="sec-title"><i class="ti ti-shield-half"></i> DVP by Position — '+abbr(opp)+' allows '+sel+'</div></div><div class="dvpp-grid">'+pills+'</div>';
+  }
+  // ===== Lineup (focused fixture) — named side once teams drop =====
+  function fxLineup(team){
+    const lu=(state.data.lineups||[]).filter(r=>r.team===team);
+    if(!lu.length) return '';
+    const named=lu.filter(r=>r.player && !/^NA\b/i.test(r.player) && !/UNCONFIRMED/i.test(r.status||''));
+    const title='<div class="tp-sec"><div class="sec-title"><i class="ti ti-clipboard-list"></i> Lineup'+(named.length?' ('+named.length+')':'')+'</div></div>';
+    if(!named.length) return title+'<div class="tp-body-meta" style="border:0">Teams not yet named — official sides drop Thursday night.</div>';
+    const chips=named.map(r=>'<span class="lu-p">'+esc(r.player)+(r.position?'<i>'+esc(r.position)+'</i>':'')+'</span>').join('');
+    return title+'<div class="lu-grid">'+chips+'</div>';
+  }
   // ===== Defence vs Play Style (focused fixture) =====
   const DVP_PLAY_STYLE_POS={'Accumulator Mid':'Midfielder','Contested Mid':'Midfielder','Running Mid':'Midfielder','Handball Mid':'Midfielder','Scoring MF':'Mid-Forward','Bear in the Square':'Key Forward','Key Target':'Key Forward','Pressure Fwd':'Gen. Forward','Small Forwards':'Gen. Forward','Clearance Beast':'Midfielder','Intercept Def':'Key Defender','Uncontested Marker':'Gen. Defender','Defensive Ball User':'Gen. Defender','Ruck Mid':'Ruck','Dominant Ruck':'Ruck','Winger':'Midfielder','Shankers':'All Positions','Cuddle Monsters':'All Positions','Fantasy Stars':'All Positions','Entry Man':'All Positions'};
   function allPlayStyles(p,pg){
@@ -1087,6 +1126,8 @@
       mt+='</tbody></table></div>'; h+=mt;
     }
     // Defence vs Play Style (how the opponent concedes vs this team's playstyles)
+    h+=fxLineup(team);
+    h+=fxDvpByPos(team,opp);
     h+=fxDvPS(team,opp);
     h+=fxCmbPicks(team,opp);
     // Signals: Degen Crew, or Nerd-mode quant edges
@@ -1915,10 +1956,18 @@
   }
 
   // ---- render helpers ----
+  function _degBadges(name){
+    let h='';
+    const p=state.idx&&state.idx.byName?state.idx.byName[name]:null;
+    if(p&&p.position){ const col=POS_C[p.position]||'#888'; h+='<span class="deg-pos" style="color:'+col+';border-color:'+col+'55;background:'+col+'1a">'+posShort(p.position)+'</span>'; }
+    const lu=(state.data.lineups||[]).find(r=>r.player===name && !/UNCONFIRMED/i.test(r.status||'') && !/^NA\b/i.test(r.player||''));
+    if(lu) h+='<span class="deg-named">NAMED</span>';
+    return h;
+  }
   function degRow(name,col,headline,sub,onclickName){
     const hl=s=>(''+s).replace(/(\$\d+(?:\.\d+)?)/g,'<b class="deg-odds">$1</b>');
     return '<div class="fixture-row deg-row" style="cursor:pointer;border-left:3px solid '+col+'" onclick="openPlayer(\''+esc(onclickName||name).replace(/\x27/g,"\\\x27")+'\')">'+
-      '<div class="deg-main"><div class="fxr-name deg-nm">'+name+'</div><div class="deg-sub">'+hl(sub)+'</div></div>'+
+      '<div class="deg-main"><div class="fxr-name deg-nm"><span>'+name+'</span>'+_degBadges(name)+'</div><div class="deg-sub">'+hl(sub)+'</div></div>'+
       '<div class="deg-val" style="color:'+col+'">'+hl(headline)+'</div></div>';
   }
   function muTag(pct){ const mi=JTTScoring.muInfo(pct); return mi?'<span style="color:'+mi.c+'">'+(pct>0?'+':'')+pct.toFixed(0)+'% '+mi.t+'</span>':''; }
