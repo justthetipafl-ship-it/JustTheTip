@@ -108,7 +108,7 @@ if (!is.na(next_round)) {
     writeLines(sort(names(lu)), "scripts/_afl_lineup_columns.txt")
     lg <- pick(lu, c("player.givenName","givenName","player.player.givenName"))
     ls <- pick(lu, c("player.surname","surname","player.player.surname"))
-    lname <- trimws(paste(lg, ls))
+    lname <- trimws(paste(ifelse(is.na(lg), "", lg), ifelse(is.na(ls), "", ls)))
     lteam <- norm_team(pick(lu, c("teamName","team.name","player.team.name")))
     lpos  <- as.character(pick(lu, c("position","player.position")))
     lstat <- as.character(pick(lu, c("selectionStatusId","status","playerPosition")))
