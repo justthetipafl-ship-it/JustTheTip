@@ -45,6 +45,29 @@
   .auth-img{width:34px;height:34px;border-radius:50%;display:block;}
   .boot-img{width:64px;height:64px;border-radius:50%;display:block;}
   .boot-wordmark{width:min(300px,72vw);height:auto;display:block;}
+  .ob-filters{display:flex;flex-direction:column;gap:8px;margin:10px 0 12px;}
+  .ob-filter{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
+  .ob-fl{font-size:9px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:var(--text-3);min-width:48px;}
+  .ob-chips{display:flex;gap:5px;flex-wrap:wrap;}
+  .ob-chip{background:var(--surface-2);border:1px solid var(--border);color:var(--text-2);font-family:var(--font-display);font-weight:700;font-size:11px;padding:4px 9px;border-radius:6px;cursor:pointer;}
+  .ob-chip.active{background:var(--accent);border-color:var(--accent);color:#08140c;}
+  .ob-wrap{overflow-x:auto;border:1px solid var(--border);border-radius:10px;-webkit-overflow-scrolling:touch;}
+  .ob-table{border-collapse:separate;border-spacing:0;width:max-content;min-width:100%;}
+  .ob-table th,.ob-table td{border-bottom:1px solid var(--border);white-space:nowrap;}
+  .ob-table thead th{position:sticky;top:0;background:var(--surface-2);font-family:var(--font-display);font-size:10px;font-weight:800;color:var(--text-3);letter-spacing:.04em;text-align:center;padding:9px 12px;z-index:2;}
+  .ob-table thead th.ob-pl{z-index:4;text-align:left;}
+  .ob-pl{position:sticky;left:0;background:var(--surface);min-width:158px;max-width:200px;text-align:left;padding:9px 12px;z-index:1;}
+  .ob-table tbody tr:hover .ob-pl{background:var(--surface-2);}
+  .ob-name{font-family:var(--font-display);font-weight:800;font-size:13px;color:var(--text);cursor:pointer;line-height:1.2;}
+  .ob-name:hover{color:var(--accent);}
+  .ob-meta{display:flex;flex-wrap:wrap;align-items:center;gap:7px;margin-top:3px;font-size:9.5px;line-height:1.3;}
+  .ob-pos{font-weight:800;color:var(--text-3);letter-spacing:.03em;}
+  .ob-dvp{font-weight:800;}
+  .ob-hr{color:var(--text-2);font-variant-numeric:tabular-nums;}
+  .ob-cell{text-align:center;padding:9px 12px;font-variant-numeric:tabular-nums;}
+  .ob-cell.empty{color:var(--text-3);}
+  .ob-px{font-family:var(--font-display);font-weight:800;font-size:13px;color:var(--text);}
+  .ob-bk{display:inline-block;margin-left:5px;font-size:8px;font-weight:800;color:var(--text-3);border:1px solid var(--border);border-radius:3px;padding:1px 3px;vertical-align:middle;letter-spacing:.02em;}
   .deg-sub{font-family:var(--font-mono);font-size:11px;color:var(--text-2);line-height:1.5;margin-top:3px;white-space:normal;word-break:break-word;}
   .deg-val{font-family:var(--font-display);font-weight:800;font-size:13.5px;line-height:1.3;text-align:right;max-width:100%;justify-self:end;white-space:normal;overflow-wrap:anywhere;word-break:break-word;}
   .deg-odds{color:var(--accent)!important;font-weight:800;white-space:nowrap;}
@@ -418,6 +441,7 @@
   ];
   const TABS = [
     {name:'fixture', label:'Fixture', icon:'ti-calendar-event'},
+    {name:'odds',    label:'Odds',    icon:'ti-coins'},
     {name:'stats',   label:'Stats',   icon:'ti-table'},
     {name:'degen',   label:'Degen Crew', icon:'ti-flame'},
     {name:'info',    label:'Info',    icon:'ti-info-circle'},
@@ -679,7 +703,64 @@
   function _renderTabnav(){document.getElementById('tabnav').innerHTML=TABS.map(t=>'<button class="tab'+(t.name===state.view.activeTab?' active':'')+'" onclick="_switchTab(\''+t.name+'\')"><i class="ti '+t.icon+'"></i>'+t.label+'</button>').join('');}
   function _switchTab(n){state.view.activeTab=n;state.view.fixtureId=null;_renderTabnav();_renderApp();window.scrollTo({top:0});}
   function _renderApp(){const p=document.getElementById('page-content');try{p.innerHTML=renderTab(state.view.activeTab)||'';}catch(e){console.error('renderTab',e);p.innerHTML='<div class="empty"><div class="ico"><i class="ti ti-alert-triangle"></i></div>Render error — see console</div>';}}
-  function renderTab(t){ if(t==='fixture')return renderFixture(); if(t==='stats')return renderStats(); if(t==='degen')return renderDegen(); if(t==='info')return renderInfo(); return ''; }
+  function renderTab(t){ if(t==='fixture')return renderFixture(); if(t==='odds')return renderOdds(); if(t==='stats')return renderStats(); if(t==='degen')return renderDegen(); if(t==='info')return renderInfo(); return ''; }
+
+  /* ===================== LIVE ODDS BOARD ===================== */
+  const ODDS_MKTS=[['disposals','Disposals'],['kicks','Kicks'],['handballs','Handballs'],['marks','Marks'],['tackles','Tackles'],['clearances','Clearances'],['goals','Goals'],['dreamteam','Fantasy']];
+  function _bookShort(k){ return ({sportsbet:'SB',tab:'TAB',pointsbet:'PB',ladbrokes:'LAD',neds:'NED',betr:'BTR',dabble:'DAB',betright:'BR',unibet:'UNI',bet365:'365',bluebet:'BLU',betfair:'BF'})[k]||(k||'').slice(0,3).toUpperCase(); }
+  function _oddsHitRates(name, market, opp, thresh){
+    const logs=state.idx.logsByName[name]||[];
+    const cs=String((state.data.meta&&state.data.meta.currentSeason)||'2026');
+    let sN=0,sH=0,hN=0,hH=0;
+    logs.forEach(r=>{ const v=r[market]; if(v==null) return;
+      if(String(r.Year)===cs){ sN++; if(v>=thresh) sH++; }
+      if(opp && r.opponent===opp){ hN++; if(v>=thresh) hH++; } });
+    return {sN,sH,hN,hH, season:sN?sH/sN:null, h2h:hN?hH/hN:null};
+  }
+  window.setOddsGame=function(i){ state.view.oddsGame=+i; _renderApp(); window.scrollTo({top:0}); };
+  window.setOddsMkt=function(m){ state.view.oddsMkt=m; _renderApp(); };
+  function renderOdds(){
+    const fx=state.data.fixture||[];
+    const gi=Math.min(state.view.oddsGame||0, Math.max(0,fx.length-1));
+    const mkt=state.view.oddsMkt||'disposals';
+    const head='<div class="tp-sec"><div class="sec-title"><i class="ti ti-coins"></i> Live Odds Board</div></div>';
+    const gameChips=fx.length?('<div class="ob-filter"><span class="ob-fl">Game</span><div class="ob-chips">'+fx.map((g,i)=>'<button class="ob-chip'+(i===gi?' active':'')+'" onclick="setOddsGame('+i+')">'+abbr(g.home)+' v '+abbr(g.away)+'</button>').join('')+'</div></div>'):'';
+    const mktChips='<div class="ob-filter"><span class="ob-fl">Market</span><div class="ob-chips">'+ODDS_MKTS.map(m=>'<button class="ob-chip'+(m[0]===mkt?' active':'')+'" onclick="setOddsMkt(\''+m[0]+'\')">'+m[1]+'</button>').join('')+'</div></div>';
+    const filters='<div class="ob-filters">'+gameChips+mktChips+'</div>';
+    const live=hasAnyOdds() && !(state.idx.oddsMeta&&state.idx.oddsMeta.sample);
+    if(!live){
+      const stamp=(state.idx.oddsMeta&&state.idx.oddsMeta.updated)?(' Last prices seen: '+state.idx.oddsMeta.updated+'.'):'';
+      return head+filters+emptyState('ti-clock-hour-7','Odds board is dormant','The board lights up inside the ~2-hour window before first bounce, when live prices load from the feed.'+stamp);
+    }
+    if(!fx.length) return head+emptyState('ti-calendar-off','No fixtures','Run the data build.');
+    const g=fx[gi], home=g.home, away=g.away, oppOf=t=>t===home?away:home;
+    let roster=playersOnTeam(home).concat(playersOnTeam(away)).sort((a,b)=>(a.name||'').localeCompare(b.name||''));
+    const tierSet=new Set(), perPlayer={};
+    roster.forEach(p=>{ const m={}; altLines(p.name,mkt).forEach(a=>{ if(a.line==null||a.over==null) return; const t=Math.ceil(a.line);
+      if(!m[t]||a.over>m[t].over) m[t]={over:a.over,book:a.book}; tierSet.add(t); }); perPlayer[p.name]=m; });
+    const tiers=[...tierSet].sort((x,y)=>x-y);
+    const title=esc(home)+' vs '+esc(away)+(g.time?' &middot; '+esc(g.time):'');
+    const titleSec='<div class="tp-sec"><div class="sec-title"><i class="ti ti-coins"></i> '+title+'</div></div>';
+    if(!tiers.length) return titleSec+filters+emptyState('ti-line','No '+mkt+' lines posted','No alt-line prices for this market in the current feed — try another market.');
+    const thead='<tr><th class="ob-pl">Player</th>'+tiers.map(t=>'<th>'+t+'+</th>').join('')+'</tr>';
+    const body=roster.map(p=>{
+      const opp=oppOf(p.team), m=perPlayer[p.name]||{};
+      const main=oddsFor(p.name,mkt); let refL=(main&&main.line!=null)?main.line:(p[mkt]!=null?p[mkt]:null);
+      const thresh=refL!=null?(Number.isInteger(refL)?refL:Math.ceil(refL)):null;
+      const hr=thresh!=null?_oddsHitRates(p.name,mkt,opp,thresh):null;
+      let dvpHtml='';
+      if(window.JTTScoring && JTTScoring.getDVPPct){ const pos=(JTTScoring.POS_TO_DVP&&JTTScoring.POS_TO_DVP[p.position])||p.position;
+        const dpct=JTTScoring.getDVPPct(opp,pos,mkt);
+        if(dpct!=null){ const mi=JTTScoring.muInfo?JTTScoring.muInfo(dpct):null; dvpHtml='<span class="ob-dvp" style="color:'+(mi?mi.c:'var(--text-3)')+'">DVP '+(dpct>0?'+':'')+dpct.toFixed(0)+'%</span>'; } }
+      const hrHtml=hr?('<span class="ob-hr">S '+(hr.season!=null?Math.round(hr.season*100)+'%':'&ndash;')+' &middot; H2H '+(hr.h2h!=null?Math.round(hr.h2h*100)+'% ('+hr.hH+'/'+hr.hN+')':'&ndash;')+(thresh!=null?' @'+thresh+'+':'')+'</span>'):'';
+      const meta='<div class="ob-meta"><span class="ob-pos">'+posShort(p.position)+'</span>'+dvpHtml+hrHtml+'</div>';
+      const nameCell='<td class="ob-pl"><div class="ob-name" data-p="'+esc(p.name)+'" onclick="openPlayer(this.dataset.p)">'+esc(p.name)+'</div>'+meta+'</td>';
+      const cells=tiers.map(t=>{ const c=m[t]; if(!c) return '<td class="ob-cell empty">&ndash;</td>';
+        return '<td class="ob-cell"><span class="ob-px">'+c.over.toFixed(2)+'</span><span class="ob-bk">'+_bookShort(c.book)+'</span></td>'; }).join('');
+      return '<tr>'+nameCell+cells+'</tr>';
+    }).join('');
+    return titleSec+filters+'<div class="ob-wrap"><table class="ob-table"><thead>'+thead+'</thead><tbody>'+body+'</tbody></table></div>';
+  }
 
   function _updateFreshnessPill(){const el=document.getElementById('freshness-pill');if(!el)return;const ts=parseInt(state.dataVersion,10);if(!ts){el.textContent='Loaded';return;}const h=(Date.now()-ts*1000)/3.6e6;el.textContent=h<1?'Updated just now':h<24?'Updated '+Math.floor(h)+'h ago':'Updated '+Math.floor(h/24)+'d ago';el.classList.remove('stale','very-stale');if(h>72)el.classList.add('very-stale');else if(h>36)el.classList.add('stale');}
 
