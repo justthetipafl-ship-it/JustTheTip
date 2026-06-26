@@ -64,12 +64,27 @@ if (!is.null(fx) && nrow(fx)) {
   not_done <- rounds[!done]
   next_round <- if (length(not_done)) min(not_done) else suppressWarnings(max(rounds))
   keep <- which(frn == next_round)
-  fixture <- lapply(keep, function(i) list(
-    home = fh[i], away = fa[i],
-    venue = if (is.na(fv[i])) "" else fv[i],
-    date  = substr(fdt[i], 1, 10),
-    time  = if (nchar(fdt[i]) >= 16) substr(fdt[i], 12, 16) else ""
-  ))
+  # utcStartTime is UTC; convert to the venue's local time (AFL displays local).
+  # Winter season = no DST for eastern states, so Australia/Sydney == +10 == AEST.
+  venue_tz <- function(v){
+    v <- tolower(if (is.na(v)) "" else v)
+    if (grepl("optus|perth|hbf|subiaco", v))            "Australia/Perth"
+    else if (grepl("adelaide|barossa|norwood", v))      "Australia/Adelaide"
+    else if (grepl("traeger|marrara|darwin|tio", v))    "Australia/Darwin"
+    else                                                "Australia/Sydney"
+  }
+  fixture <- lapply(keep, function(i) {
+    tz <- venue_tz(fv[i])
+    tt <- suppressWarnings(as.POSIXct(substr(fdt[i], 1, 19), format = "%Y-%m-%dT%H:%M:%S", tz = "UTC"))
+    if (is.na(tt)) { d <- substr(fdt[i], 1, 10); tm <- "" }
+    else {
+      d  <- format(tt, tz = tz, format = "%Y-%m-%d")
+      tm <- sub("^0", "", format(tt, tz = tz, format = "%I:%M %p"))   # "7:30 PM"
+    }
+    list(home = fh[i], away = fa[i],
+         venue = if (is.na(fv[i])) "" else fv[i],
+         date = d, time = tm, utc = substr(fdt[i], 1, 19))
+  })
 }
 message(sprintf("[fetch_afl] next round=%s, %d fixtures", as.character(next_round), length(fixture)))
 
