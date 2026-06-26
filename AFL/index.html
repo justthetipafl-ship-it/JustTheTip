@@ -39,11 +39,16 @@
   .wx-x i{font-size:11px;}
   .wx-wet i{color:#3b82f6;}
   .wx-wet .wx-d{color:#60a5fa;}
+  .odds-tf{display:flex;align-items:flex-start;gap:6px;margin:0 0 12px;padding:8px 10px;border:1px solid var(--border);border-radius:8px;background:var(--surface-2);font-size:11px;line-height:1.5;color:var(--text-3);}
+  .odds-tf i{font-size:14px;color:var(--accent);flex-shrink:0;margin-top:1px;}
   .deg-row{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,44%);align-items:center;gap:10px;}
   .deg-main{min-width:0;text-align:left;}
   .deg-nm{font-size:15px;line-height:1.2;display:flex;align-items:center;gap:5px;flex-wrap:wrap;}
   .deg-pos{font-size:9px;font-weight:800;letter-spacing:.04em;padding:1px 5px;border-radius:3px;border:1px solid;flex-shrink:0;}
   .deg-named{font-size:9px;font-weight:800;letter-spacing:.04em;padding:1px 5px;border-radius:3px;color:#22c55e;border:1px solid #22c55e55;background:#22c55e1a;flex-shrink:0;}
+  .deg-warn{display:inline-flex;align-items:center;justify-content:center;width:15px;height:15px;border-radius:50%;background:#ef4444;color:#fff;font-size:10px;font-weight:900;cursor:pointer;flex-shrink:0;line-height:1;}
+  .neg-tip{position:absolute;z-index:9999;background:#13161c;border:1px solid #ef444466;border-radius:8px;padding:8px 11px;font-size:11px;line-height:1.55;color:var(--text-1);box-shadow:0 8px 28px rgba(0,0,0,.55);display:none;}
+  .neg-tip b{color:#f87171;display:block;margin-bottom:3px;font-size:9px;text-transform:uppercase;letter-spacing:.05em;}
   .deg-v2{display:flex;flex-direction:column;align-items:flex-end;gap:1px;line-height:1.12;}
   .deg-v2a{font-family:var(--font-display);font-weight:800;font-size:14.5px;}
   .deg-v2b{font-weight:800;font-size:11px;opacity:.85;margin-top:1px;}
@@ -781,18 +786,20 @@
   }
   window.setOddsGame=function(i){ state.view.oddsGame=+i; _renderApp(); window.scrollTo({top:0}); };
   window.setOddsMkt=function(m){ state.view.oddsMkt=m; _renderApp(); };
+  const ODDS_TIMEFRAME_NOTE='Odds update on two cadences: a full sweep of every game runs each morning (~9 AM AEST) for a baseline, then live prices refresh about every 10 min within 3 hours of each game\u2019s first bounce.';
+  function oddsTimeframeNote(){ return '<div class="odds-tf"><i class="ti ti-clock-hour-4"></i><span>'+ODDS_TIMEFRAME_NOTE+'</span></div>'; }
   function renderOdds(){
     const fx=state.data.fixture||[];
     const gi=Math.min(state.view.oddsGame||0, Math.max(0,fx.length-1));
     const mkt=state.view.oddsMkt||'disposals';
-    const head='<div class="tp-sec"><div class="sec-title"><i class="ti ti-coins"></i> Live Odds Board</div></div>';
+    const head='<div class="tp-sec"><div class="sec-title"><i class="ti ti-coins"></i> Live Odds Board</div></div>'+oddsTimeframeNote();
     const gameChips=fx.length?('<div class="ob-filter"><span class="ob-fl">Game</span><div class="ob-chips">'+fx.map((g,i)=>'<button class="ob-chip'+(i===gi?' active':'')+'" onclick="setOddsGame('+i+')">'+abbr(g.home)+' v '+abbr(g.away)+'</button>').join('')+'</div></div>'):'';
     const mktChips='<div class="ob-filter"><span class="ob-fl">Market</span><div class="ob-chips">'+ODDS_MKTS.map(m=>'<button class="ob-chip'+(m[0]===mkt?' active':'')+'" onclick="setOddsMkt(\''+m[0]+'\')">'+m[1]+'</button>').join('')+'</div></div>';
     const filters='<div class="ob-filters">'+gameChips+mktChips+'</div>';
     const live=hasAnyOdds() && !(state.idx.oddsMeta&&state.idx.oddsMeta.sample);
     if(!live){
       const stamp=(state.idx.oddsMeta&&state.idx.oddsMeta.updated)?(' Last prices seen: '+state.idx.oddsMeta.updated+'.'):'';
-      return head+filters+emptyState('ti-clock-hour-7','Odds board is dormant','The board lights up inside the ~2-hour window before first bounce, when live prices load from the feed.'+stamp);
+      return head+filters+emptyState('ti-clock-hour-7','Odds board is dormant','Prices sweep every game each morning (~9 AM AEST), then refresh live within 3 hours of first bounce. The board lights up when the feed is active.'+stamp);
     }
     if(!fx.length) return head+emptyState('ti-calendar-off','No fixtures','Run the data build.');
     const g=fx[gi], home=g.home, away=g.away, oppOf=t=>t===home?away:home;
@@ -1286,6 +1293,7 @@
     if(fxMode==='nerd') h+=nerdFilterBar();
     h+='<div class="team-cols">'+teamPanel(g.home,g.away,true)+teamPanel(g.away,g.home,false)+'</div>';
     if(fxMode!=='nerd') h+=dejaVuSGM(g.home,g.away);
+    if(fxMode!=='nerd') h+=focusedMulti(g);
     return h;
   }
 
@@ -2044,7 +2052,7 @@
     const {all}=_dvBoards(S.home,S.away);
     const minOdds=S.minOdds==null?DV_MIN_DEFAULT:S.minOdds;
     const maxOdds=S.maxOdds||0;  // 0 = no cap
-    const ok=l=>(S.hail?true:l.over>=minOdds)&&(maxOdds<=0||l.over<=maxOdds);
+    const ok=l=>(l.over>=minOdds)&&(maxOdds<=0||l.over<=maxOdds);   // min/max apply to Hail Mary too
     const byBook={}; Object.entries(all).forEach(([b,arr])=>{ const f=arr.filter(ok); if(f.length) byBook[b]=f; });
     const books=Object.keys(byBook); if(!books.length) return {books:[],book:null,pool:[],byBook:{}};
     const book=(S.book&&byBook[S.book])?S.book:books.sort((a,b)=>_dvDistinct(byBook[b])-_dvDistinct(byBook[a]))[0];
@@ -2082,7 +2090,7 @@
     const tierBtns=[3,4,5].map(t=>'<button class="dv-tier'+(!S.hail&&S.tier===t?' on':'')+'"'+(distinctN>=t?'':' disabled')+' onclick="_dvTier('+t+')">'+t+' legs</button>').join('');
     const hailBtn='<button class="dv-tier dv-hail'+(S.hail?' on':'')+'" onclick="_dvHail()"><i class="ti ti-bolt"></i> Hail Mary</button>';
     const bookChips=books.length>1?('<div class="dv-books">'+books.slice().sort((a,b)=>_dvDistinct(byBook[b])-_dvDistinct(byBook[a])).map(b=>'<button class="dv-bk'+(b===book?' on':'')+'" onclick="_dvBook(\''+b+'\')">'+bookName(b)+' <i>'+_dvDistinct(byBook[b])+'</i></button>').join('')+'</div>'):'';
-    const steppers=S.hail?'':('<div class="dv-ctrls"><span class="dv-min">min&nbsp;$<button onclick="_dvMin(-1)">−</button><b>'+(S.minOdds==null?DV_MIN_DEFAULT:S.minOdds).toFixed(2)+'</b><button onclick="_dvMin(1)">+</button></span>'+
+    const steppers=('<div class="dv-ctrls"><span class="dv-min">min&nbsp;$<button onclick="_dvMin(-1)">−</button><b>'+(S.minOdds==null?DV_MIN_DEFAULT:S.minOdds).toFixed(2)+'</b><button onclick="_dvMin(1)">+</button></span>'+
       '<span class="dv-min">max&nbsp;<button onclick="_dvMax(-1)">−</button><b>'+(maxOdds>0?'$'+maxOdds.toFixed(2):'off')+'</b><button onclick="_dvMax(1)">+</button></span></div>');
     const moreNote=(!S.hail&&distinctN>want)?(' · '+(distinctN-want)+' more player'+(distinctN-want>1?'s':'')+' to swap in'):'';
     return title+
@@ -2200,6 +2208,23 @@
     if(scope==='round'){ let all=[]; fixtures.forEach(g=>all.push(...legsFor(g))); const grp=mk(M.today?'Today':'Full Round',all); return grp?[grp]:[]; }
     return fixtures.map(g=>mk(abbr(g.home)+' v '+abbr(g.away),legsFor(g))).filter(Boolean);
   }
+  // Multi Builder scoped to a single fixture (focused-fixture page)
+  function focusedMulti(g){
+    if(!g||!_oddsLive()) return '';                 // only when the live odds feed is on
+    const N=(SETTINGS.multi.legs)||6;
+    const pl=t=>(state.idx.players||[]).filter(p=>p.team===t&&(p.matches||0)>=3);
+    let legs=[...buildLegs(pl(g.home),g.away),...buildLegs(pl(g.away),g.home)].sort((a,b)=>b.score-a.score).slice(0,N);
+    if(!legs.length) return '';
+    let comb=1; legs.forEach(l=>{ if(l._odds) comb*=l._odds.price; });
+    const rows=legs.map(l=>{
+      const col=LEG_COL[l.type]||'#3b82f6';
+      const price='$'+l._odds.price.toFixed(2);
+      const probStr=(l.probReal?Math.round(l.prob*100)+'% hit':'~'+Math.round(l.prob*100)+'%')+(l.probReal&&l.probN?' ('+l.probN+'g)':'');
+      const why=(l.reasons&&l.reasons.length)?'<br><span class="deg-why"><i class="ti ti-bulb"></i> '+l.reasons.map(r=>esc(r.label)+' '+(r.pct>0?'+':'')+r.pct.toFixed(0)+'%').join(' \u00b7 ')+'</span>':'';
+      return degRow(l.p.name,col,price,l.betLabel+' \u00b7 vs '+abbr(l.opp)+' \u00b7 avg '+l.avg.toFixed(1)+' \u00b7 '+probStr+' \u00b7 '+bookName(l._odds.book)+why);
+    }).join('');
+    return '<div class="tp-sec" style="margin-top:14px"><div class="sec-title"><i class="ti ti-stack-2"></i> Multi Builder</div><div class="sec-meta">'+legs.length+'-leg \u00b7 $'+comb.toFixed(2)+'</div></div>'+rows;
+  }
 
   // ---- render helpers ----
   function _degRight(right,hl){
@@ -2209,12 +2234,43 @@
     }
     return hl(right);
   }
+  // ---- negative-signal index: does a player ALSO trip a downside flag this round? ----
+  let _negCache=null,_negKey=null;
+  function _negFlags(){
+    const key=(state.dataVersion||'')+'|'+((state.idx.oddsMeta&&state.idx.oddsMeta.updated)||'')+'|'+((state.data.fixture||[]).length);
+    if(_negCache&&_negKey===key) return _negCache;
+    const m={};
+    const add=(name,type,label,detail)=>{ if(!name)return; const a=(m[name]=m[name]||[]); if(!a.some(x=>x.type===type)) a.push({type,label,detail}); };
+    try{ bogey().forEach(b=>add(b.p.name,'bogey','Bogey',(b.opp?'quiet v '+abbr(b.opp):'quiet v opp')+(b.stat?' ('+b.stat.l+')':''))); }catch(e){}
+    try{ formAlerts('drop').forEach(fa=>add(fa.p.name,'cool','Form cooling',fa.stat+' L3 down '+Math.round(Math.abs(fa.swing)*100)+'%')); }catch(e){}
+    try{ taggerAlerts().forEach(t=>add(t.threat.name,'tag',(t.type==='hard'?'Hard tag risk':'Tag risk'),'likely '+((t.tagger&&t.tagger.name)||'a tagger'))); }catch(e){}
+    _negCache=m; _negKey=key; return m;
+  }
+  const _attrEsc=s=>(''+s).replace(/&/g,'&amp;').replace(/"/g,'&quot;');
+  function _warnBadge(name){
+    const neg=_negFlags()[name]; if(!neg||!neg.length) return '';
+    const tip='<b>Also flagged</b>'+neg.map(n=>'<br>\u2022 '+n.label+(n.detail?' \u2014 '+n.detail:'')).join('');
+    return '<span class="deg-warn" data-tip="'+_attrEsc(tip)+'" title="'+_attrEsc(neg.map(n=>n.label).join(' \u00b7 '))+'" onclick="_negTip(event,this)" onmouseenter="_negShow(this)" onmouseleave="_negHide()">!</span>';
+  }
+  function _negTipEl(){
+    let t=document.getElementById('neg-tip');
+    if(!t){ t=document.createElement('div'); t.id='neg-tip'; t.className='neg-tip'; document.body.appendChild(t);
+      document.addEventListener('click',function(e){ if(!(e.target&&e.target.classList&&e.target.classList.contains('deg-warn'))) t.style.display='none'; },true);
+      window.addEventListener('scroll',function(){ t.style.display='none'; },true); }
+    return t;
+  }
+  window._negShow=function(el){ const t=_negTipEl(); t.innerHTML=el.getAttribute('data-tip'); t.style.display='block';
+    const r=el.getBoundingClientRect(), w=Math.min(240,window.innerWidth-16);
+    t.style.maxWidth=w+'px'; t.style.left=Math.max(8,Math.min(window.innerWidth-w-8,r.left-8))+'px'; t.style.top=(r.bottom+window.scrollY+6)+'px'; };
+  window._negHide=function(){ const t=document.getElementById('neg-tip'); if(t) t.style.display='none'; };
+  window._negTip=function(ev,el){ ev.stopPropagation(); _negShow(el); };
   function _degBadges(name){
     let h='';
     const p=state.idx&&state.idx.byName?state.idx.byName[name]:null;
     if(p&&p.position){ const col=POS_C[p.position]||'#888'; h+='<span class="deg-pos" style="color:'+col+';border-color:'+col+'55;background:'+col+'1a">'+posShort(p.position)+'</span>'; }
     const lu=(state.data.lineups||[]).find(r=>r.player===name && !/UNCONFIRMED/i.test(r.status||'') && !/^NA\b/i.test(r.player||''));
     if(lu) h+='<span class="deg-named">NAMED</span>';
+    h+=_warnBadge(name);
     return h;
   }
   function degRow(name,col,right,sub,onclickName){
@@ -2499,7 +2555,7 @@
       row('FGS records', (state.data.fgs||[]).length)+
       (function(){const o=state.idx.oddsMeta||{count:0};const cls=o.count?'ok':'warn';const lbl=o.count?(o.count+' lines'+(o.sample?' (sample)':'')+(o.fromPaste?' · pasted':'')):'none loaded';return row('Odds / lines', lbl, cls);})()+
       row('Data version', state.dataVersion||'—')+'</div>';
-    h+='<div class="section-title">Odds feed</div>'+oddsDiag()+'<div class="data-status">'+
+    h+='<div class="section-title">Odds feed</div>'+oddsTimeframeNote()+oddsDiag()+'<div class="data-status">'+
       '<div style="margin-top:8px"><button class="btn-sm" onclick="_oddsPasteOpen()"><i class="ti ti-clipboard-plus"></i> Load / paste lines</button>'+
       (state.idx.oddsMeta&&state.idx.oddsMeta.fromPaste?' <button class="btn-sm" onclick="_oddsClear()"><i class="ti ti-trash"></i> Clear pasted</button>':'')+'</div>'+
       '<div id="odds-paste-wrap" style="display:none;margin-top:10px">'+
@@ -2715,7 +2771,9 @@
     if(facs.length){h+='<div style="margin-top:14px"><div style="'+META+'">Analysis</div>'+
       facs.map(f=>{const t=FTONE[f.tone]||FTONE.neutral;return '<div style="display:flex;align-items:flex-start;gap:9px;padding:9px 11px;border-radius:7px;background:'+t[1]+'12;border:1px solid '+t[1]+'26;margin-bottom:6px"><i class="ti '+t[0]+'" style="color:'+t[1]+';font-size:15px;margin-top:1px;flex-shrink:0"></i><span style="font-size:12px;color:var(--text);font-weight:600;line-height:1.45">'+esc(f.text)+'</span></div>';}).join('')+'</div>';}
     if(opp) h+=similarPlayers(p,stat,opp,line,10);
-    h+='<div style="display:flex;align-items:center;gap:8px;margin-top:14px;padding-top:11px;border-top:1px solid var(--border)"><span style="font-weight:900;color:#22c55e;font-size:13px;letter-spacing:.5px">JUST THE TIP</span><span style="margin-left:auto;font-size:10px;color:var(--text-3);font-family:var(--font-mono);letter-spacing:.5px">JUSTTHETIPAUS.COM</span></div>';
+    h+='<div style="display:flex;align-items:center;gap:8px;margin-top:14px;padding-top:11px;border-top:1px solid var(--border)">'+
+      '<img src="assets/jtt-wordmark.png" alt="Just The Tip" style="height:24px;width:auto;display:block" onerror="this.outerHTML=&quot;<span style=\'font-weight:900;color:#22c55e;font-size:13px;letter-spacing:.5px\'>JUST THE TIP</span>&quot;">'+
+      '<span style="margin-left:auto;font-size:10px;color:var(--text-3);font-family:var(--font-mono);letter-spacing:.5px">JUSTTHETIPAUS.COM</span></div>';
     h+='</div>';   // close #cmb-card
     h+='<div style="display:flex;gap:8px;justify-content:center;margin-top:14px;flex-wrap:wrap">'+
       '<button class="seg on" id="cmb-share-btn" onclick="cmpShareImage()"><i class="ti ti-download"></i> Save PNG</button>'+
