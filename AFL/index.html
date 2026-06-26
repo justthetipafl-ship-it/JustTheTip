@@ -735,17 +735,44 @@
   }
   function _bookOK(b){ const mb=SETTINGS.books; return !mb||!mb.length||mb.indexOf(b)>=0; }
   function oddsFor(player, market){
-    const mb=SETTINGS.books;
-    if(mb&&mb.length){ const rows=(((state.idx.bookIdx||{})[player]||{})[market]||[]).filter(r=>_bookOK(r.book)&&r.over!=null&&r.under!=null);
-      if(!rows.length) return null;
-      const b=rows.slice().sort((x,y)=>y.over-x.over)[0]; return {line:b.line,over:b.over,under:b.under,book:b.book}; }
-    return (state.idx.oddsIdx[player]||{})[market]||null;
+    const main=(state.idx.oddsIdx[player]||{})[market];                                   // two-way main line (line + under live here)
+    const rows=(((state.idx.bookIdx||{})[player]||{})[market]||[]).filter(r=>_bookOK(r.book)&&r.over!=null);
+    if(main && main.line!=null){
+      const atLine=rows.filter(r=>r.line===main.line).sort((x,y)=>y.over-x.over);          // best OVER across books at the main line
+      const useMain=_bookOK(main.book) && main.over!=null;
+      let over=useMain?main.over:null, book=useMain?main.book:null;
+      if(atLine.length && (over==null || atLine[0].over>over)){ over=atLine[0].over; book=atLine[0].book; }
+      if(over==null) return null;                                                          // book filter excluded everything
+      return {line:main.line, over:over, under:(useMain?main.under:null), book:book};
+    }
+    if(rows.length){                                                                       // over-only market w/o a main line: best over at modal line
+      const byL={}; rows.forEach(r=>{ (byL[r.line]=byL[r.line]||[]).push(r); });
+      const line=Object.keys(byL).map(Number).sort((a,b)=>(byL[b].length-byL[a].length)||(a-b))[0];
+      const b=byL[line].slice().sort((x,y)=>y.over-x.over)[0];
+      return {line:b.line,over:b.over,under:null,book:b.book};
+    }
+    return main||null;
   }
+  // best available UNDER price (across all / chosen books) at the consensus line — used for under bets (Bogey)
+  function bestUnder(name, market){
+    const rows=(((state.idx.bookIdx||{})[name]||{})[market]||[]).filter(r=>_bookOK(r.book)&&r.under!=null);
+    if(rows.length){
+      const byL={}; rows.forEach(r=>{ (byL[r.line]=byL[r.line]||[]).push(r); });
+      const line=Object.keys(byL).map(Number).sort((a,b)=>(byL[b].length-byL[a].length)||(a-b))[0];
+      const b=byL[line].slice().sort((x,y)=>y.under-x.under)[0];
+      return {line:b.line,under:b.under,book:b.book};
+    }
+    const m=(state.idx.oddsIdx[name]||{})[market];
+    return (m&&m.under!=null)?{line:m.line,under:m.under,book:m.book}:null;
+  }
+  function underTag(name,market){ const o=bestUnder(name,market); if(!o||o.under==null) return ''; return ' \u00b7 U '+o.line+' $'+o.under.toFixed(2)+' ('+bookName(o.book)+')'; }
   function altLines(player, market){
-    const mb=SETTINGS.books;
-    if(mb&&mb.length){ const rows=(((state.idx.bookIdx||{})[player]||{})[market]||[]).filter(r=>_bookOK(r.book)&&r.over!=null);
+    // Best available OVER price per line across all books (or the chosen books filter).
+    const rows=(((state.idx.bookIdx||{})[player]||{})[market]||[]).filter(r=>_bookOK(r.book)&&r.over!=null);
+    if(rows.length){
       const byL={}; rows.forEach(r=>{ if(!byL[r.line]||r.over>byL[r.line].over) byL[r.line]={line:r.line,over:r.over,book:r.book}; });
-      return Object.values(byL).sort((x,y)=>x.line-y.line); }
+      return Object.values(byL).sort((x,y)=>x.line-y.line);
+    }
     return ((state.idx.altIdx||{})[player]||{})[market]||[];
   }
   window._oddsPasteOpen=function(){ const w=document.getElementById('odds-paste-wrap'); if(w)w.style.display=w.style.display==='none'?'block':'none'; };
@@ -2363,7 +2390,7 @@
       const rows=_fc(bogey(),6).map(b=>{
         const head=b.lineBogey?('0/'+b.games+' cleared '+b.line)
           :(b.diffPct!=null?'-'+b.diffPct.toFixed(0)+'% v field':'worst matchup');
-        const sub=b.stat.l+' · vs '+abv(b.opp)+' '+M(b.thisAvg)+(b.worst!=null?' (next worst '+M(b.worst)+')':'')+' · '+b.games+' H2H'+lineTag(b.p.name,b.stat.k);
+        const sub=b.stat.l+' · vs '+abv(b.opp)+' '+M(b.thisAvg)+(b.worst!=null?' (next worst '+M(b.worst)+')':'')+' · '+b.games+' H2H'+underTag(b.p.name,b.stat.k);
         return degRow(b.p.name,'#ef4444',{v1:M(b.thisAvg),l1:b.stat.l,v2:(b.lineBogey?'0/'+b.games:(b.diffPct!=null?'-'+b.diffPct.toFixed(0)+'%':'—')),l2:(b.lineBogey?'cleared':'v field')},sub);
       });
       return degWrap('ti-mood-sad','Bogey',rows,'c-red');
