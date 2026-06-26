@@ -25,6 +25,11 @@ Usage:  python build_afl_data.py [--src bundle.json] [--out data] \
                                  [--seasons 2025,2026] [--password BEACH]
 """
 import argparse, hashlib, json, os, re, sys, time
+from datetime import datetime
+try:
+    from zoneinfo import ZoneInfo
+except Exception:
+    ZoneInfo = None
 from collections import defaultdict
 
 # --- stat contract: internal camelCase key  <-  Champion Data dvp field -----
@@ -199,6 +204,101 @@ def overlay_teams(teams, teamform, teamdef):
             tgt[k + "_a"] = v
         n += 1
     return n, matched, unmatched
+
+
+VENUE_COORDS = [
+    (("gabba", "brisbane"),                              (-27.4858, 153.0381)),
+    (("mcg", "m.c.g", "melbourne cricket"),              (-37.8200, 144.9834)),
+    (("marvel", "docklands", "etihad", "telstra dome"),  (-37.8166, 144.9475)),
+    (("scg", "s.c.g", "sydney cricket"),                 (-33.8915, 151.2244)),
+    (("engie", "giants", "showground", "olympic"),       (-33.8430, 151.0630)),
+    (("optus", "perth", "subiaco"),                      (-31.9505, 115.8890)),
+    (("adelaide oval",),                                 (-34.9156, 138.5961)),
+    (("kardinia", "gmhba", "geelong"),                   (-38.1580, 144.3540)),
+    (("heritage", "people first", "carrara", "gold coast"), (-28.0064, 153.3660)),
+    (("marrara", "tio", "darwin"),                       (-12.3990, 130.8870)),
+    (("manuka", "canberra"),                             (-35.3180, 149.1340)),
+    (("utas", "bellerive", "blundstone", "hobart"),      (-42.8770, 147.3730)),
+    (("mars", "ballarat", "eureka"),                     (-37.5290, 143.8470)),
+    (("norwood", "coopers"),                             (-34.9180, 138.6310)),
+    (("barossa",),                                       (-34.5380, 138.9520)),
+    (("traeger", "alice springs"),                       (-23.7000, 133.8740)),
+    (("cazaly", "cairns"),                               (-16.9356, 145.7490)),
+]
+
+
+def venue_coords(v):
+    v = (v or "").lower()
+    for keys, co in VENUE_COORDS:
+        if any(k in v for k in keys):
+            return co
+    return None
+
+
+def _venue_tz(v):
+    v = (v or "").lower()
+    if any(k in v for k in ("optus", "perth", "subiaco")):
+        return "Australia/Perth"
+    if any(k in v for k in ("adelaide", "barossa", "norwood", "coopers")):
+        return "Australia/Adelaide"
+    if any(k in v for k in ("marrara", "tio", "darwin", "traeger", "alice")):
+        return "Australia/Darwin"
+    return "Australia/Sydney"
+
+
+_WMO = {0: "Clear", 1: "Mainly clear", 2: "Partly cloudy", 3: "Overcast",
+        45: "Fog", 48: "Fog", 51: "Light drizzle", 53: "Drizzle", 55: "Heavy drizzle",
+        56: "Freezing drizzle", 57: "Freezing drizzle", 61: "Light rain", 63: "Rain",
+        65: "Heavy rain", 66: "Freezing rain", 67: "Freezing rain", 71: "Light snow",
+        73: "Snow", 75: "Heavy snow", 77: "Snow grains", 80: "Light showers",
+        81: "Showers", 82: "Heavy showers", 85: "Snow showers", 86: "Snow showers",
+        95: "Thunderstorm", 96: "Thunderstorm", 99: "Thunderstorm"}
+
+
+def fetch_weather(fixtures):
+    """Build-time forecast per fixture venue (open-meteo, free, no key)."""
+    import urllib.request
+    out = []
+    for g in fixtures:
+        co = venue_coords(g.get("venue"))
+        utc = g.get("utc")
+        if not co or not utc:
+            continue
+        lat, lon = co
+        try:
+            base = datetime.strptime(utc[:19], "%Y-%m-%dT%H:%M:%S")
+            if ZoneInfo:
+                base = base.replace(tzinfo=ZoneInfo("UTC")).astimezone(ZoneInfo(_venue_tz(g.get("venue"))))
+        except Exception as e:
+            sys.stderr.write(f"[weather] bad utc {utc}: {e}\n")
+            continue
+        date = base.strftime("%Y-%m-%d")
+        hour = base.strftime("%Y-%m-%dT%H:00")
+        url = (f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}"
+               f"&hourly=temperature_2m,precipitation_probability,wind_speed_10m,weather_code"
+               f"&start_date={date}&end_date={date}&timezone=auto")
+        try:
+            with urllib.request.urlopen(url, timeout=25) as r:
+                d = json.load(r)
+            H = d.get("hourly", {})
+            times = H.get("time", [])
+            if not times:
+                continue
+            idx = times.index(hour) if hour in times else len(times) // 2
+            pick = lambda k: (H.get(k) or [None] * len(times))[idx]
+            code = pick("weather_code")
+            t = pick("temperature_2m")
+            wind = pick("wind_speed_10m")
+            out.append({
+                "home": g["home"], "away": g["away"], "venue": g.get("venue", ""),
+                "temp": round(t) if t is not None else None,
+                "rainProb": pick("precipitation_probability"),
+                "wind": round(wind) if wind is not None else None,
+                "code": code, "desc": _WMO.get(code, "—"),
+            })
+        except Exception as e:
+            sys.stderr.write(f"[weather] {g.get('venue')}: {e}\n")
+    return out
 
 
 def to_num(v):
@@ -526,6 +626,9 @@ def main():
         json.dump(obj, open(p, "w"), separators=(",", ":"))
         return os.path.getsize(p)
 
+    weather = fetch_weather(fixture)
+    print(f"[build] weather rows: {len(weather)}")
+
     sizes = {
         "meta.json":     w("meta.json", meta),
         "players.json":  w("players.json", players),
@@ -538,6 +641,7 @@ def main():
         "injury.json":   w("injury.json", injury),
         "results.json":  w("results.json", extra.get("results") or []),
         "lineups.json":  w("lineups.json", extra.get("lineups") or []),
+        "weather.json":  w("weather.json", weather),
     }
     open(os.path.join(args.out, "version.txt"), "w").write(version)
 
