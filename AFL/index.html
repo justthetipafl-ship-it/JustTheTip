@@ -46,6 +46,9 @@
   .deg-nm{font-size:15px;line-height:1.2;display:flex;align-items:center;gap:5px;flex-wrap:wrap;}
   .deg-pos{font-size:9px;font-weight:800;letter-spacing:.04em;padding:1px 5px;border-radius:3px;border:1px solid;flex-shrink:0;}
   .deg-named{font-size:9px;font-weight:800;letter-spacing:.04em;padding:1px 5px;border-radius:3px;color:#22c55e;border:1px solid #22c55e55;background:#22c55e1a;flex-shrink:0;}
+.pm-odds{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:4px;}
+  .pm-od{display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:700;color:var(--text-2);background:var(--surface-2);border:1px solid var(--border);border-radius:6px;padding:5px 9px;}
+  .pm-od i{font-size:13px;color:var(--accent);}
   .deg-warn{display:inline-flex;align-items:center;justify-content:center;width:15px;height:15px;border-radius:50%;background:#ef4444;color:#fff;font-size:10px;font-weight:900;cursor:pointer;flex-shrink:0;line-height:1;}
   .neg-tip{position:absolute;z-index:9999;background:#13161c;border:1px solid #ef444466;border-radius:8px;padding:8px 11px;font-size:11px;line-height:1.55;color:var(--text-1);box-shadow:0 8px 28px rgba(0,0,0,.55);display:none;}
   .neg-tip b{color:#f87171;display:block;margin-bottom:3px;font-size:9px;text-transform:uppercase;letter-spacing:.05em;}
@@ -1564,9 +1567,18 @@
         '<div class="pm-meta">'+primary+' '+pLine+' · engine score '+v.score.toFixed(1)+(opp?'':' · no opponent in fixture')+'</div></div>'+
         (strip?'<div class="section-title">DVP Matchup ('+(p.position||'')+')</div><div class="statgrid">'+strip+'</div>':'');
     }
+    let oddsHtml='';
+    if(hasAnyOdds()){
+      const bits=[];
+      const gt=goalOddsTag(name);                                   // " · 1+ $X (book)" / 2+/3+
+      if(gt) bits.push('<span class="pm-od"><i class="ti ti-ball-football"></i> '+gt.replace(/^ \u00b7 /,'')+'</span>');
+      const d=oddsFor(name,'disposals');
+      if(d&&d.over!=null) bits.push('<span class="pm-od"><i class="ti ti-coin"></i> Disp '+d.line+' O $'+d.over.toFixed(2)+(d.under!=null?' / U $'+d.under.toFixed(2):'')+(d.book?' ('+bookName(d.book)+')':'')+'</span>');
+      if(bits.length) oddsHtml='<div class="section-title">Live odds <span style="font-weight:600;color:var(--text-3);font-size:9px">best price</span></div><div class="pm-odds">'+bits.join('')+'</div>';
+    }
     document.getElementById('pm-modal').innerHTML=
       '<div class="pm-hdr"><div><div class="pm-name">'+p.name+'</div><div class="pm-meta"><span class="pos-dot" style="background:'+(POS_C[p.position]||'#888')+'"></span>'+(p.position||'—')+' · '+(p.team||'')+' · '+(p.matches||0)+' games'+(p.age?' · '+(+p.age).toFixed(0)+'yo':'')+'</div></div><button class="pm-close" onclick="_pmClose()">&times;</button></div>'+
-      edge+
+      edge+oddsHtml+
       '<div class="section-title">Averages <span class="sub-tabs" style="float:right;display:inline-flex">'+seg+'</span></div><div class="statgrid">'+cells+'</div>'+
       recentBars(name,(p.position==='Key Forward'||p.position==='Gen. Forward'||p.position==='Mid-Forward')?'goals':'disposals',null,8)+
       pmBoxScores(name,6)+
