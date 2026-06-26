@@ -106,8 +106,8 @@ if (!is.na(next_round)) {
                  error = function(e) { message("[fetch_afl] lineup error (likely teams not named yet): ", conditionMessage(e)); NULL })
   if (!is.null(lu) && nrow(lu)) {
     writeLines(sort(names(lu)), "scripts/_afl_lineup_columns.txt")
-    lg <- pick(lu, c("player.givenName","givenName","player.player.givenName"))
-    ls <- pick(lu, c("player.surname","surname","player.player.surname"))
+    lg <- pick(lu, c("player.playerName.givenName","player.givenName","givenName","player.player.givenName"))
+    ls <- pick(lu, c("player.playerName.surname","player.surname","surname","player.player.surname"))
     lname <- trimws(paste(ifelse(is.na(lg), "", lg), ifelse(is.na(ls), "", ls)))
     lteam <- norm_team(pick(lu, c("teamName","team.name","player.team.name")))
     lpos  <- as.character(pick(lu, c("position","player.position")))
