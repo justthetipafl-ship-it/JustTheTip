@@ -1,73 +1,63 @@
-name: AFL fixtures + results + lineups (fitzRoy)
+name: AFL odds fallback snapshot
 
-# Match-level data the wheelo CSV pipeline doesn't carry:
-#   * fixtures — upcoming round
-#   * results  — OFFICIAL final scores (exact margins, no rushed-behind drift)
-#   * lineups  — selected sides for the upcoming round (Role Watch / Absorbers)
-# Game logs / player / team stats come from ingest_csv.py — this workflow NEVER
-# touches them; fetch_afl.R only refreshes fixture/results/lineups in bundle.json.
+# Live odds come from the Cloudflare Worker (proximity-gated; writes to KV and serves
+# /odds.json). The tool reads the Worker directly. This workflow only keeps the
+# COMMITTED AFL/data/odds.json fresh as a *fallback* for the rare case the Worker is
+# unreachable. It snapshots the Worker's current odds — it spends NO Odds API credits —
+# and commits only when the data actually changed and is non-empty, so there's at most
+# one commit/day (and none on days with no new odds).
 
 on:
   schedule:
-    - cron: "0 12 * * 4"   # Thu 12:00 UTC (~Thu 10pm AEST) — teams named -> lineups
-    - cron: "0 9  * * 0"   # Sun 09:00 UTC (~Sun 7pm AEST)  — post-round results
+    - cron: "0 13 * * *"   # daily 13:00 UTC (~11pm AEST) — after the evening's games
   workflow_dispatch:
-    inputs:
-      password:
-        description: "Weekly subscriber password (stored hashed, never in repo)"
-        required: false
 
 jobs:
-  refresh:
+  snapshot:
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@v4
-
-      - name: Set up R
-        uses: r-lib/actions/setup-r@v2
         with:
-          use-public-rspm: true
+          fetch-depth: 0
 
-      - name: Install R packages (cached)
-        uses: r-lib/actions/setup-r-dependencies@v2
-        with:
-          packages: |
-            cran::fitzRoy
-            cran::jsonlite
-            cran::dplyr
-
-      - name: Fetch fixtures + results + lineups (fitzRoy)
-        env:
-          AFL_BUNDLE: AFL/bundle.json
-          RESULTS_SEASONS: "2024,2025,2026"
-        run: Rscript scripts/fetch_afl.R
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
-      - name: Rebuild split data
+      - name: Snapshot live odds from the Worker
         run: |
-          PW="${{ github.event.inputs.password || secrets.AFL_WEEKLY_PASSWORD }}"
-          if [ -n "$PW" ]; then
-            python AFL/build_afl_data.py --src AFL/bundle.json --out AFL/data \
-              --seasons 2024,2025,2026 --current 2026 --password "$PW"
-          else
-            python AFL/build_afl_data.py --src AFL/bundle.json --out AFL/data \
-              --seasons 2024,2025,2026 --current 2026
+          if ! curl -fsS "https://jtt-afl-odds.justthetipafl.workers.dev/odds.json" -o /tmp/odds.json; then
+            echo "Worker unreachable — keeping existing fallback."; exit 0
           fi
+          python3 - <<'PY'
+          import json, sys
+          try:
+              d = json.load(open('/tmp/odds.json'))
+          except Exception as e:
+              print('Worker returned invalid JSON:', e); sys.exit(0)
+          lines = d.get('lines') or []
+          if not lines:
+              print('Worker odds are empty (no game in window recently) — keeping existing fallback.')
+              sys.exit(0)
+          d['source'] = (d.get('source') or 'worker') + ' (daily fallback snapshot)'
+          json.dump(d, open('AFL/data/odds.json', 'w'))
+          print(f"Wrote fallback: {len(lines)} lines, "
+                f"{len(d.get('alt') or [])} alt, {len(d.get('matchOdds') or [])} match games.")
+          PY
 
-      - name: Commit refreshed data
+      - name: Commit if changed
         run: |
           git config user.name  "jtt-bot"
           git config user.email "actions@github.com"
-          git add AFL/data AFL/bundle.json scripts/_afl_*_columns.txt 2>/dev/null || git add AFL/data
+          git add AFL/data/odds.json
           if git diff --cached --quiet; then
-            echo "No changes."
+            echo "No change to fallback odds — nothing to commit."
           else
-            git commit -m "chore(afl): fixtures/results/lineups $(date -u +%Y-%m-%dT%H:%MZ)"
-            git push
+            git commit -m "chore(afl): odds fallback snapshot $(date -u +%Y-%m-%dT%H:%MZ)"
+            pushed=0
+            for i in 1 2 3 4 5; do
+              if git pull --rebase --autostash origin main && git push; then
+                echo "pushed on attempt $i"; pushed=1; break
+              fi
+              echo "push contended by a concurrent commit, retrying ($i)…"; sleep $((RANDOM % 5 + 2))
+            done
+            if [ "$pushed" != "1" ]; then echo "::error::push failed after retries"; exit 1; fi
           fi
