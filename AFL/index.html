@@ -32,6 +32,11 @@
   .fxr-kickoff{font-family:var(--font-mono);font-size:11px;color:var(--text-2);letter-spacing:1px;}
   .fxr-vs{font-family:var(--font-display);font-weight:700;font-size:20px;color:var(--text-3);margin:3px 0;}
   .fxr-venue{font-family:var(--font-mono);font-size:10px;color:var(--text-3);}
+  .fx-hidebtn{display:inline-flex;align-items:center;gap:5px;padding:6px 11px;border-radius:16px;font-size:11px;font-weight:600;cursor:pointer;border:1px solid var(--border);background:transparent;color:var(--text-3);white-space:nowrap;flex-shrink:0;}
+  .fx-hidebtn.on{border-color:var(--accent);background:rgba(34,197,94,.13);color:var(--text);}
+  .fx-hidebtn i{font-size:13px;}
+  .fixture-row.fxr-done{opacity:.55;}
+  .fxr-ft{font-family:var(--font-display);font-weight:800;font-size:11px;color:var(--text-3);letter-spacing:.05em;}
   .wx{display:flex;align-items:center;justify-content:center;flex-wrap:wrap;gap:5px;margin-top:5px;font-family:var(--font-mono);font-size:10px;color:var(--text-3);}
   .wx i{font-size:13px;color:var(--text-2);}
   .wx-t{font-weight:700;color:var(--text-2);}
@@ -484,8 +489,7 @@
   const ODDS_REFRESH_MS = 150000;   // re-pull live odds every 2.5 min while the page is open (only when ODDS_LIVE_URL is set)
 
   // Per-signal minimum decimal odds. null = no minimum (fires on any priced line).
-  // TODO: set the real floors later — e.g. SIGNAL_MIN_ODDS.green = 1.70
-  const SIGNAL_MIN_ODDS = { over: null /*Green Lights*/, under: null /*Death Riders*/ };
+  const SIGNAL_MIN_ODDS = { over: 1.70 /*Green Lights — best over must be >= $1.70*/, under: null /*Death Riders*/ };
 
   // book market name -> internal stat key
   const ODDS_MARKET_ALIAS = {
@@ -541,12 +545,14 @@
   const MULTI_MKTS=[['disposals','Disposals'],['goals','Goals'],['dreamteam','Fantasy'],['marks','Marks'],['tackles','Tackles'],['clearances','Clearances'],['kicks','Kicks'],['handballs','Handballs']];
   const DEFAULT_SETTINGS={
     books:[],   // [] = use all books; otherwise restrict arbs/EV/best-price to these
+    hideCompleted:false,   // hide games that have already finished
     nerd:{ arbs:true, middles:true, model:true, implied:true, market:true, minEv:2, maxEv:0, maxOdds:0, minArb:0.5, minGap:1, maxCost:12, minSamp:6 },
     multi:{ legs:6, scope:'game', today:false, minProb:55, minScore:3, markets:MULTI_MKTS.map(m=>m[0]) }
   };
   let SETTINGS=(function(){
     try{ const s=JSON.parse(localStorage.getItem(SETTINGS_KEY)||'null'); if(!s) return JSON.parse(JSON.stringify(DEFAULT_SETTINGS));
       return { books:Array.isArray(s.books)?s.books:[],
+        hideCompleted:!!s.hideCompleted,
         nerd:Object.assign({},DEFAULT_SETTINGS.nerd,s.nerd||{}),
         multi:Object.assign({},DEFAULT_SETTINGS.multi,s.multi||{}) };
     }catch(e){ return JSON.parse(JSON.stringify(DEFAULT_SETTINGS)); }
@@ -899,6 +905,18 @@
   }
 
   /* ---------- FIXTURE ---------- */
+  // best-effort kickoff instant: prefer raw utc; else parse date+time (current data is UTC 24h, post-rebuild is venue-local 12h)
+  function gameStart(g){
+    if(g&&g.utc){ const s=g.utc.length<=19?g.utc+'Z':g.utc; const t=Date.parse(s); if(!isNaN(t)) return t; }
+    if(g&&g.date&&g.time){ const ap=g.time.match(/(am|pm)/i), mm=g.time.match(/(\d{1,2}):(\d{2})/);
+      if(!mm) return null; let h=+mm[1]; const m=+mm[2];
+      if(ap){ const pm=/pm/i.test(ap[1]); if(pm&&h<12)h+=12; if(!pm&&h===12)h=0; }
+      const t=Date.parse(g.date+'T'+String(h).padStart(2,'0')+':'+String(m).padStart(2,'0')+':00'+(ap?'+10:00':'Z'));
+      return isNaN(t)?null:t; }
+    return null;
+  }
+  function gameDone(g){ const t=gameStart(g); return t!=null && Date.now() > t + 150*60*1000; }   // ~150 min after bounce = completed
+  window._sHideCompleted=function(){ SETTINGS.hideCompleted=!SETTINGS.hideCompleted; saveSettings(); _renderApp(); };
   function pips(team){const f=teamForm(team,5);return f.length?'<div class="form-pips">'+f.map(r=>'<span class="pip '+r+'">'+r+'</span>').join('')+'</div>':'';}
   function _wxIcon(code){
     if(code==null) return 'ti-cloud';
@@ -925,11 +943,16 @@
     const fx=state.data.fixture||[];
     if(state.view.fixtureId!=null) return renderFocusedFixture(fx[state.view.fixtureId]);
     if(!fx.length) return emptyState('ti-calendar-off','No fixtures loaded','Fixtures refresh with the weekly data build.');
-    let h='<div class="page-header"><div class="page-title">Round '+(state.data.meta&&state.data.meta.round||'')+'</div><div class="page-sub">Tap a match for the matchup breakdown</div></div>';
-    fx.forEach((g,i)=>{
-      h+='<div class="fixture-row" onclick="state.view.fixtureId='+i+';_renderApp();window.scrollTo({top:0})">'+
+    const doneCount=fx.filter(gameDone).length;
+    let games=fx.map((g,i)=>({g,i}));
+    if(SETTINGS.hideCompleted) games=games.filter(x=>!gameDone(x.g));
+    const toggle=doneCount>0?'<button class="fx-hidebtn'+(SETTINGS.hideCompleted?' on':'')+'" onclick="_sHideCompleted()"><i class="ti ti-'+(SETTINGS.hideCompleted?'eye-off':'eye')+'"></i> '+(SETTINGS.hideCompleted?'Completed hidden ('+doneCount+')':'Hide completed ('+doneCount+')')+'</button>':'';
+    let h='<div class="page-header"><div style="display:flex;align-items:flex-start;justify-content:space-between;gap:10px"><div><div class="page-title">Round '+(state.data.meta&&state.data.meta.round||'')+'</div><div class="page-sub">Tap a match for the matchup breakdown</div></div>'+toggle+'</div></div>';
+    if(!games.length) return h+emptyState('ti-calendar-check','All games completed','Every game this round has finished. Toggle off to see results.');
+    games.forEach(({g,i})=>{
+      h+='<div class="fixture-row'+(gameDone(g)?' fxr-done':'')+'" onclick="state.view.fixtureId='+i+';_renderApp();window.scrollTo({top:0})">'+
         '<div class="fxr-team">'+teamLogo(g.home,40)+'<div class="fxr-name">'+g.home+'</div>'+pips(g.home)+'</div>'+
-        '<div class="fxr-center"><div class="fxr-kickoff">'+(g.date||'')+'<br>'+(g.time||'')+'</div><div class="fxr-vs">v</div><div class="fxr-venue">'+(g.venue||'TBC')+'</div>'+weatherChip(g.home,g.away)+'</div>'+
+        '<div class="fxr-center"><div class="fxr-kickoff">'+(g.date||'')+'<br>'+(g.time||'')+'</div><div class="fxr-vs">'+(gameDone(g)?'<span class="fxr-ft">FT</span>':'v')+'</div><div class="fxr-venue">'+(g.venue||'TBC')+'</div>'+weatherChip(g.home,g.away)+'</div>'+
         '<div class="fxr-team">'+teamLogo(g.away,40)+'<div class="fxr-name">'+g.away+'</div>'+pips(g.away)+'</div></div>';
     });
     return h;
@@ -1866,14 +1889,14 @@
     (state.idx.players||[]).filter(p=>(p.matches||0)>=3).forEach(p=>{
       const opp=nextOpp(p.team); if(!opp) return;
       const byOpp={}; allLogs(p.name).forEach(r=>{ if(r.opponent)(byOpp[r.opponent]=byOpp[r.opponent]||[]).push(r); });
-      const vt=byOpp[opp]; if(!vt||vt.length<2) return;            // need a H2H sample vs the current opp
+      const vt=byOpp[opp]; if(!vt||vt.length<3) return;            // need >=3 H2H meetings vs the current opp
       BUNNY_STATS.forEach(s=>{
         if((p[s.k]||0)<s.min) return;
         const thisAvg=_avg(vt.map(r=>r[s.k]||0));
         // (1) AVG flavour: averages MORE vs the current opp than vs any other team they've faced
         let best=null,bestOpp=null;
         Object.entries(byOpp).forEach(([o,rs])=>{ if(o===opp||rs.length<2)return; const a=_avg(rs.map(r=>r[s.k]||0)); if(best==null||a>best){best=a;bestOpp=o;} });
-        const avgBunny = (best==null) || (thisAvg>best);
+        const avgBunny = (best!=null) && (thisAvg>best);   // genuinely their best matchup (not just their only one)
         const diffPct  = (best!=null&&best>0)?((thisAvg-best)/best)*100:null;
         // (2) LINE flavour: cleared the posted line in EVERY H2H meeting (needs a posted line for the stat)
         const mkt = s.k==='disposals'?'disposals':null;    // only disposals has a posted O/U line today
@@ -2528,6 +2551,10 @@
     h+=card('My Bookmakers','ti-building-bank',
       '<div style="font-size:10px;color:var(--text-3);margin-bottom:6px">'+(SETTINGS.books.length?('Restricting arbs, EV &amp; best price to '+SETTINGS.books.length+' book'+(SETTINGS.books.length>1?'s':'')+'.'):'None selected — using all books. Pick the ones you hold accounts with and prices, arbs &amp; EV will use only those.')+'</div>'+
       ALL_BOOKS.map(([k,l])=>chip(SETTINGS.books.indexOf(k)>=0,l,"_sBook('"+k+"')")).join(''));
+    // Display
+    h+=card('Display','ti-eye',
+      '<div style="font-size:10px;color:var(--text-3);margin-bottom:6px">Tidy up the fixture list once games kick off.</div>'+
+      chip(!!SETTINGS.hideCompleted,'Hide completed games',"_sHideCompleted()"));
     // Nerd Mode
     h+=card('Nerd Mode','ti-math-function',
       sub('Show tiles')+
