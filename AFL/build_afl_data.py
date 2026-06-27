@@ -22,7 +22,7 @@ OUTPUT (data/):
   injury.json    injury list (passthrough)
 
 Usage:  python build_afl_data.py [--src bundle.json] [--out data] \
-                                 [--seasons 2025,2026] [--password BEACH]
+                                 [--seasons 2025,2026] [--password ******]
 """
 import argparse, hashlib, json, os, re, sys, time
 from datetime import datetime
