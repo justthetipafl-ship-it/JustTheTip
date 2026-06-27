@@ -46,6 +46,9 @@
   .wx-wet .wx-d{color:#60a5fa;}
   .odds-tf{display:flex;align-items:flex-start;gap:6px;margin:0 0 12px;padding:8px 10px;border:1px solid var(--border);border-radius:8px;background:var(--surface-2);font-size:11px;line-height:1.5;color:var(--text-3);}
   .odds-tf i{font-size:14px;color:var(--accent);flex-shrink:0;margin-top:1px;}
+  .odds-refresh{display:flex;align-items:center;gap:6px;margin:0 0 12px 2px;font-size:11px;font-weight:600;color:var(--text-3);}
+  .odds-refresh i{font-size:13px;color:var(--accent);}
+  .odds-refresh b{color:var(--text-2);font-weight:700;}
   .deg-row{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,44%);align-items:center;gap:10px;}
   .deg-main{min-width:0;text-align:left;}
   .deg-nm{font-size:15px;line-height:1.2;display:flex;align-items:center;gap:5px;flex-wrap:wrap;}
@@ -877,6 +880,19 @@
   window.setOddsMkt=function(m){ state.view.oddsMkt=m; _renderApp(); };
   const ODDS_TIMEFRAME_NOTE='Odds update on two cadences: a full sweep of every game runs each morning (~9 AM AEST) for a baseline, then live prices refresh about every 10 min within 3 hours of each game\u2019s first bounce.';
   function oddsTimeframeNote(){ return '<div class="odds-tf"><i class="ti ti-clock-hour-4"></i><span>'+ODDS_TIMEFRAME_NOTE+'</span></div>'; }
+  function _oddsAgo(iso){
+    if(!iso) return '';
+    const d=new Date(iso); if(isNaN(d.getTime())) return iso;     // unparseable → show raw
+    const mins=Math.max(0,Math.floor((Date.now()-d.getTime())/60000));
+    let rel; if(mins<1) rel='just now'; else if(mins<60) rel=mins+' min ago'; else if(mins<1440){ const h=Math.floor(mins/60); rel=h+'h '+(mins%60)+'m ago'; } else rel=Math.floor(mins/1440)+'d ago';
+    const local=d.toLocaleString(undefined,{day:'numeric',month:'short',hour:'numeric',minute:'2-digit'});
+    return local+' · '+rel;
+  }
+  function _oddsRefreshLine(){
+    const u=state.idx.oddsMeta&&state.idx.oddsMeta.updated;
+    if(!u) return '';
+    return '<div class="odds-refresh"><i class="ti ti-refresh"></i> Odds last refreshed <b>'+esc(_oddsAgo(u))+'</b></div>';
+  }
   function ODDS_MKT_LABEL(k){ const m=ODDS_MKTS.find(x=>x[0]===k); return m?m[1]:k; }
   // every book's best OVER at a given "X+" line for this market (sorted longest price first)
   function _obBookList(name,mkt,t){
@@ -920,7 +936,7 @@
     const tiers=[...tierSet].sort((x,y)=>x-y);
     const title=esc(home)+' vs '+esc(away)+(g.time?' &middot; '+esc(g.time):'');
     const titleSec='<div class="tp-sec"><div class="sec-title"><i class="ti ti-coins"></i> '+title+'</div></div>';
-    if(!tiers.length||!roster.length) return titleSec+filters+emptyState('ti-line','No '+mkt+' lines posted','No prices for this market in the current feed — try another market.');
+    if(!tiers.length||!roster.length) return titleSec+_oddsRefreshLine()+filters+emptyState('ti-line','No '+mkt+' lines posted','No prices for this market in the current feed — try another market.');
     const cs=String((state.data.meta&&state.data.meta.currentSeason)||'2026');
     const thead='<tr><th class="ob-pl">Player</th>'+tiers.map(t=>'<th>'+t+'+</th>').join('')+'</tr>';
     const body=roster.map(p=>{
@@ -950,7 +966,7 @@
       return '<tr>'+nameCell+cells+'</tr>';
     }).join('');
     const legend='<div class="ob-legend">Cell: best over price + book &middot; hover a price for all books &middot; <span class="s">S</span> season / <span class="h">H</span> H2H clear-rate at that line</div>';
-    return titleSec+filters+legend+'<div class="ob-wrap" onscroll="_obTipHide()"><table class="ob-table"><thead>'+thead+'</thead><tbody>'+body+'</tbody></table></div>';
+    return titleSec+_oddsRefreshLine()+filters+legend+'<div class="ob-wrap" onscroll="_obTipHide()"><table class="ob-table"><thead>'+thead+'</thead><tbody>'+body+'</tbody></table></div>';
   }
 
   function _updateFreshnessPill(){const el=document.getElementById('freshness-pill');if(!el)return;const ts=parseInt(state.dataVersion,10);if(!ts){el.textContent='Loaded';return;}const h=(Date.now()-ts*1000)/3.6e6;el.textContent=h<1?'Updated just now':h<24?'Updated '+Math.floor(h)+'h ago':'Updated '+Math.floor(h/24)+'d ago';el.classList.remove('stale','very-stale');if(h>72)el.classList.add('very-stale');else if(h>36)el.classList.add('stale');}
@@ -1279,7 +1295,8 @@
       const cands=[];
       players.forEach(p=>{
         const avg=p[k]||0; if(avg<minAvg) return;
-        const line=k==='dreamteam'?fantasyLine(avg):Math.round(avg); if(!line) return;
+        const line0=k==='dreamteam'?fantasyLine(avg):Math.round(avg); if(!line0) return;
+        const line=_snapToRung(p.name,k,line0);                  // snap to a real posted rung so line + odds match
         const sc=JTTScoring.scoreCMP(p,k,line,opp);
         if(sc===null||sc<3.5) return;
         cands.push({p,line,sc});
@@ -2610,7 +2627,7 @@
   }
   // price for a CMB pick at line≈avg: prefer the posted O/U if its line is near, else ladder/milestone
   function pickOdds(name, k, line){
-    if(k!=='goals'&&k!=='dreamteam'){ const od=oddsFor(name,k); if(od&&od.line!=null&&od.over!=null&&Math.abs(od.line-line)<=1.5) return {price:od.over,label:''+od.line}; }
+    if(k!=='goals'&&k!=='dreamteam'){ const od=oddsFor(name,k); if(od&&od.line!=null&&od.over!=null&&Math.ceil(od.line)===line) return {price:od.over,label:''+od.line}; }
     return priceForLine(name,k,line);
   }
   // price for the exact streak line (e.g. 25+ disposals from the alt ladder; anytime/2+ for goals)
