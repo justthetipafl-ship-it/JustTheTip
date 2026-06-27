@@ -118,6 +118,11 @@
   .cms-note{font-size:10px;color:var(--text-3);margin-top:6px;line-height:1.4;}
   .cms-warn{font-size:11px;color:#f97316;margin-top:8px;font-weight:600;}
   .deg-why{font-size:10px;color:var(--accent);font-weight:600;display:inline-block;margin-top:3px;line-height:1.4;}
+  .fxm-bar{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 10px;}
+  .fxm-ctl{display:inline-flex;align-items:center;gap:4px;font-size:10px;font-weight:600;color:var(--text-3);background:var(--surface-2);border:1px solid var(--border);border-radius:14px;padding:3px 4px 3px 9px;}
+  .fxm-ctl b{color:var(--text);font-family:var(--font-mono);font-size:11px;min-width:34px;text-align:center;}
+  .fxm-ctl button{width:20px;height:20px;border-radius:50%;border:1px solid var(--border);background:var(--surface);color:var(--text-2);cursor:pointer;font-size:13px;line-height:1;display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;}
+  .fxm-ctl button:hover{border-color:var(--accent);color:var(--text);}
   .snag-posbar{display:flex;gap:5px;flex-wrap:wrap;margin:0 0 12px;}
   .snag-pos{padding:5px 11px;border-radius:14px;font-size:11px;font-weight:600;cursor:pointer;border:1px solid var(--border);background:transparent;color:var(--text-3);}
   .snag-pos.on{border-color:#f59e0b;background:rgba(245,158,11,.13);color:var(--text);}
@@ -1856,7 +1861,7 @@
     if(sig.length){
       h+='<div class="section-title">Hot Elite Matchups · top-10 v bottom-5 defence</div>'+
         sig.slice(0,20).map(s=>degRow(s.p.name,'#22c55e',{v1:fmt(s.val,1),l1:s.def.l,v2:'#'+s.dvpRank,l2:'softest'},
-          posShort(s.p.position)+' · '+abbr(s.p.team)+' v '+abbr(s.opp)+' · '+fmt(s.val,1)+' '+s.def.l.toLowerCase()+lineTag(s.p.name,s.def.k))).join('');
+          posShort(s.p.position)+' · '+abbr(s.p.team)+' v '+abbr(s.opp)+' · '+fmt(s.val,1)+' '+s.def.l.toLowerCase()+multiLineTag(s.p.name,s.def.k))).join('');
     } else {
       h+='<div class="tp-body-meta" style="border:0;margin:8px 0">No top-10 player faces a bottom-5 defence this round.</div>';
     }
@@ -2271,23 +2276,52 @@
     if(scope==='round'){ let all=[]; fixtures.forEach(g=>all.push(...legsFor(g))); const grp=mk(M.today?'Today':'Full Round',all); return grp?[grp]:[]; }
     return fixtures.map(g=>mk(abbr(g.home)+' v '+abbr(g.away),legsFor(g))).filter(Boolean);
   }
-  // Multi Builder scoped to a single fixture (focused-fixture page)
+  // Multi Builder scoped to a single fixture (focused-fixture page), with its own filters
   function focusedMulti(g){
     if(!g||!_oddsLive()) return '';                 // only when the live odds feed is on
-    const N=(SETTINGS.multi.legs)||6;
-    const pl=t=>(state.idx.players||[]).filter(p=>p.team===t&&(p.matches||0)>=3);
-    let legs=[...buildLegs(pl(g.home),g.away),...buildLegs(pl(g.away),g.home)].sort((a,b)=>b.score-a.score).slice(0,N);
-    if(!legs.length) return '';
-    let comb=1; legs.forEach(l=>{ if(l._odds) comb*=l._odds.price; });
+    return '<div id="fx-multi">'+_fxmInner(g)+'</div>';
+  }
+  function _fxmInner(g){
+    const S=state.view.fxMulti||(state.view.fxMulti={legs:SETTINGS.multi.legs||6, minProb:SETTINGS.multi.minProb||55, minOdds:0, maxOdds:0});
+    const pool=t=>(state.idx.players||[]).filter(p=>p.team===t&&(p.matches||0)>=3);
+    let cands=[];
+    pool(g.home).forEach(p=>legCandidates(p,g.away).forEach(c=>cands.push(c)));
+    pool(g.away).forEach(p=>legCandidates(p,g.home).forEach(c=>cands.push(c)));
+    cands=cands.filter(c=>{
+      if(!c._odds) return false;
+      if((c.avg-c.line)<0.3) return false;
+      const dvpSk=LEG_DVP[c.statKey];
+      if(dvpSk&&c.opp){ const dp=JTTScoring.getDVPPct(c.opp,JTTScoring.POS_TO_DVP[c.p.position]||c.p.position,dvpSk); if(dp!==null&&dp<-10) return false; }
+      if(c.prob*100 < S.minProb) return false;                       // hit-rate filter
+      if(S.minOdds>0 && c._odds.price < S.minOdds) return false;     // odds floor
+      if(S.maxOdds>0 && c._odds.price > S.maxOdds) return false;     // odds ceiling
+      return true;
+    });
+    cands.sort((a,b)=>b.score-a.score);
+    const seen={}, legs=[];
+    for(const c of cands){ if(legs.length>=S.legs) break; if(seen[c.p.name]) continue; seen[c.p.name]=1; legs.push(c); }   // leg count
+    const stp=(lbl,k,d,disp)=>'<span class="fxm-ctl">'+lbl+'<button onclick="_fxmSet(\''+k+'\',-'+d+')">\u2212</button><b>'+disp+'</b><button onclick="_fxmSet(\''+k+'\','+d+')">+</button></span>';
+    const bar='<div class="fxm-bar">'+stp('Legs ','legs',1,S.legs)+stp('Hit ','minProb',5,S.minProb+'%')+
+      stp('Min ','minOdds',0.1,(S.minOdds>0?'$'+S.minOdds.toFixed(2):'any'))+stp('Max ','maxOdds',0.5,(S.maxOdds>0?'$'+S.maxOdds.toFixed(2):'off'))+'</div>';
+    const head='<div class="tp-sec" style="margin-top:14px"><div class="sec-title"><i class="ti ti-stack-2"></i> Multi Builder</div>'+(legs.length?'<div class="sec-meta">'+legs.length+'-leg \u00b7 $'+legs.reduce((a,l)=>a*l._odds.price,1).toFixed(2)+'</div>':'')+'</div>';
+    if(!legs.length) return head+bar+'<div class="tp-body-meta" style="border:0;margin:8px 0">No legs match these filters \u2014 loosen the hit-rate or odds range.</div>';
     const rows=legs.map(l=>{
       const col=LEG_COL[l.type]||'#3b82f6';
-      const price='$'+l._odds.price.toFixed(2);
       const probStr=(l.probReal?Math.round(l.prob*100)+'% hit':'~'+Math.round(l.prob*100)+'%')+(l.probReal&&l.probN?' ('+l.probN+'g)':'');
       const why=(l.reasons&&l.reasons.length)?'<br><span class="deg-why"><i class="ti ti-bulb"></i> '+l.reasons.map(r=>esc(r.label)+' '+(r.pct>0?'+':'')+r.pct.toFixed(0)+'%').join(' \u00b7 ')+'</span>':'';
-      return degRow(l.p.name,col,price,l.betLabel+' \u00b7 vs '+abbr(l.opp)+' \u00b7 avg '+l.avg.toFixed(1)+' \u00b7 '+probStr+' \u00b7 '+bookName(l._odds.book)+why);
+      return degRow(l.p.name,col,'$'+l._odds.price.toFixed(2),l.betLabel+' \u00b7 vs '+abbr(l.opp)+' \u00b7 avg '+l.avg.toFixed(1)+' \u00b7 '+probStr+' \u00b7 '+bookName(l._odds.book)+why);
     }).join('');
-    return '<div class="tp-sec" style="margin-top:14px"><div class="sec-title"><i class="ti ti-stack-2"></i> Multi Builder</div><div class="sec-meta">'+legs.length+'-leg \u00b7 $'+comb.toFixed(2)+'</div></div>'+rows;
+    return head+bar+rows;
   }
+  window._fxmSet=function(k,d){
+    const S=state.view.fxMulti; if(!S)return;
+    if(k==='legs') S.legs=Math.max(2,Math.min(10,S.legs+d));
+    else if(k==='minProb') S.minProb=Math.max(0,Math.min(95,S.minProb+d));
+    else if(k==='minOdds') S.minOdds=Math.max(0,+(S.minOdds+d).toFixed(2));
+    else if(k==='maxOdds') S.maxOdds=Math.max(0,+(S.maxOdds+d).toFixed(2));
+    const fx=state.data.fixture||[], g=fx[state.view.fixtureId];
+    const el=document.getElementById('fx-multi'); if(el&&g) el.innerHTML=_fxmInner(g);
+  };
 
   // ---- render helpers ----
   function _degRight(right,hl){
@@ -2344,6 +2378,16 @@
   }
   function muTag(pct){ const mi=JTTScoring.muInfo(pct); return mi?'<span style="color:'+mi.c+'">'+(pct>0?'+':'')+pct.toFixed(0)+'% '+mi.t+'</span>':''; }
   function lineTag(name,market){ const o=postedLine(name,market); if(!o||o.over==null||!o.book) return o&&o.line!=null?' · O '+o.line:''; return ' · O '+o.line+' $'+o.over.toFixed(2)+' ('+bookName(o.book)+')'; }
+  // Elite Matchups ladder: the posted line + the next two higher rungs (best over per line), e.g. " · 27+ $1.50 · 30+ $2.40 · 33+ $4.50"
+  function multiLineTag(name,market){
+    const alts=altLines(name,market);
+    if(!alts.length) return lineTag(name,market);
+    const main=oddsFor(name,market);
+    const start=(main&&main.line!=null)?main.line:alts[0].line;
+    const ladder=alts.filter(a=>a.line>=start-0.01&&a.over!=null).slice(0,3);
+    if(!ladder.length) return lineTag(name,market);
+    return ' \u00b7 '+ladder.map(a=>Math.ceil(a.line)+'+ $'+a.over.toFixed(2)).join(' \u00b7 ');
+  }
   // bookmaker price for an exact "X+" line: alt ladder, goals anytime/2+, or posted O/U fallback. -> {price,label} | null
   function priceForLine(name, statKey, line){
     if(statKey==='goals'||statKey==='goalsx'){
@@ -2409,7 +2453,7 @@
     }
     if(k==='elite'){
       const rows=_fc(elite(),8,40).map(s=>degRow(s.p.name,'#22c55e',{v1:M(s.val),l1:s.def.l,v2:'#'+s.dvpRank,l2:'softest'},
-        posShort(s.p.position)+' · '+abv(s.p.team)+' v '+abv(s.opp)+' · '+M(s.val)+' '+s.def.l.toLowerCase()+lineTag(s.p.name,s.def.k)));
+        posShort(s.p.position)+' · '+abv(s.p.team)+' v '+abv(s.opp)+' · '+M(s.val)+' '+s.def.l.toLowerCase()+multiLineTag(s.p.name,s.def.k)));
       return degWrap('ti-trophy','Elite Matchups',rows,'c-green');
     }
     if(k==='bunnies'){
@@ -2956,11 +3000,15 @@
   function _multiH2HBlock(){
     const M=window._cmbMulti; if(!M.legs.length) return '';
     const fx=M.legs[0].fixture, home=fx.home, away=fx.away;
-    const seen={};
-    const scan=(team,opp)=>playersOnTeam(team).forEach(p=>(state.idx.logsByName[p.name]||[]).forEach(r=>{
-      if(r.opponent===opp){ const k=(r.Year||'')+'|'+(r.RoundName||''); if(!seen[k])seen[k]={mid:r.MatchId,year:r.Year,round:r.RoundName,key:k}; } }));
-    scan(home,away); scan(away,home);
-    const meetings=Object.values(seen).sort((a,b)=>String(a.year+'-'+a.round).localeCompare(String(b.year+'-'+b.round)));
+    // Team-vs-team meetings come from matchTeams (games where BOTH teams played), not a roster
+    // scan — a traded player's logs vs this opponent for a PREVIOUS team would otherwise be
+    // miscounted as a meeting between the current two teams. Dedup by year+round.
+    const mt=state.idx.matchTeams||{};
+    const meta={}; (state.data.gamelogs||[]).forEach(r=>{ if(!r.MatchId)return; const x=meta[r.MatchId]=meta[r.MatchId]||{year:r.Year,round:r.RoundName,n:0}; x.n++; });
+    const byMeet={};
+    Object.keys(mt).forEach(m=>{ const ts=Object.keys(mt[m]); if(!(ts.includes(home)&&ts.includes(away)))return;
+      const x=meta[m]; if(!x)return; const key=(x.year||'')+'|'+(x.round||''); if(!byMeet[key]||x.n>byMeet[key].n) byMeet[key]={mid:m,year:x.year,round:x.round,key}; });
+    const meetings=Object.values(byMeet).sort((a,b)=>String(a.year+'-'+a.round).localeCompare(String(b.year+'-'+b.round)));
     const wrap='<div class="cmb-multi-sum" style="margin-top:10px">';
     if(!meetings.length) return wrap+'<div class="cms-h2h-hd"><span>H2H history</span></div><div class="cms-note">No prior meetings between '+esc(home)+' and '+esc(away)+' in the data.</div></div>';
     const legVal=(name,mid,key)=>{ const logs=state.idx.logsByName[name]||[]; let r=mid?logs.find(x=>x.MatchId===mid):null; if(!r)r=logs.find(x=>((x.Year||'')+'|'+(x.RoundName||''))===key); return r||null; };
