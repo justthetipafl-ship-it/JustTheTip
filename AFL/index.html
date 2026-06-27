@@ -173,6 +173,9 @@
     background:var(--surface-2);border:1px solid var(--border);border-radius:10px;padding:1px 9px;margin-left:auto;}
   .tp-collapse.c-green{border-left:3px solid var(--accent);} .tp-collapse.c-green .tp-collapse-sum>i:first-child{color:var(--accent);}
   .tp-collapse.c-amber{border-left:3px solid #facc15;} .tp-collapse.c-amber .tp-collapse-sum>i:first-child{color:#facc15;}
+  .nerd-more-wrap{display:none;} .nerd-more-wrap.open{display:block;}
+  .nerd-more-btn{display:block;width:100%;margin-top:6px;padding:7px;border:1px dashed var(--border);border-radius:8px;background:transparent;color:var(--text-3);font-size:11px;font-weight:700;cursor:pointer;}
+  .nerd-more-btn:hover{border-color:var(--accent);color:var(--text);} .nerd-more-btn i{font-size:12px;}
   .tp-collapse.c-blue{border-left:3px solid #60a5fa;} .tp-collapse.c-blue .tp-collapse-sum>i:first-child{color:#60a5fa;}
   .tp-collapse.c-red{border-left:3px solid #f87171;} .tp-collapse.c-red .tp-collapse-sum>i:first-child{color:#f87171;}
   .tp-collapse.c-purple{border-left:3px solid #a78bfa;} .tp-collapse.c-purple .tp-collapse-sum>i:first-child{color:#a78bfa;}
@@ -567,7 +570,7 @@
   const DEFAULT_SETTINGS={
     books:[],   // [] = use all books; otherwise restrict arbs/EV/best-price to these
     hideCompleted:false,   // hide games that have already finished
-    nerd:{ arbs:true, middles:true, model:true, implied:true, market:true, minEv:2, maxEv:0, maxOdds:0, minArb:0.5, minGap:1, maxCost:12, minSamp:6 },
+    nerd:{ arbs:true, middles:true, model:true, lineout:true, implied:true, market:true, minEv:2, maxEv:0, maxOdds:0, minArb:0.5, minGap:1, maxCost:12, minSamp:6 },
     multi:{ legs:6, scope:'game', today:false, minProb:55, minScore:3, markets:MULTI_MKTS.map(m=>m[0]) }
   };
   let SETTINGS=(function(){
@@ -1255,7 +1258,18 @@
   const NERD_MARKETS=[['disposals','Disposals'],['dreamteam','Fantasy'],['kicks','Kicks'],['handballs','Handballs'],['marks','Marks'],['tackles','Tackles'],['clearances','Clearances']];  // model EV fires on all; arbs/middles/de-vig auto-gate to two-way O/U markets (disposals, fantasy)
   const NM_LBL=Object.fromEntries(NERD_MARKETS);
   function bookLines(name,market){ return (((state.idx.bookIdx||{})[name]||{})[market]||[]).filter(r=>_bookOK(r.book)); }
-  function _noVigOver(over,under){ const io=1/over, iu=1/under; return io/(io+iu); }   // fair P(over)
+  function _noVigOver(over,under){ const io=1/over, iu=1/under; return io/(io+iu); }   // fair P(over), proportional
+  // Power-method devig (Clarke et al. 2017): find exponent k with (1/over)^k+(1/under)^k=1, then fair P=(1/over)^k.
+  // k>1 when there's overround, which shrinks longshots more than favourites (favourite-longshot correction).
+  function _powerDevig(over,under){
+    if(over==null||under==null||over<=1||under<=1) return null;
+    const qo=1/over, qu=1/under, f=k=>Math.pow(qo,k)+Math.pow(qu,k)-1;
+    let lo=0.3,hi=5;
+    if(f(lo)<=0||f(hi)>=0) return qo/(qo+qu);          // not bracketed (arb/degenerate) -> proportional
+    for(let i=0;i<48;i++){ const m=(lo+hi)/2; if(f(m)>0) lo=m; else hi=m; }
+    return Math.pow(qo,(lo+hi)/2);
+  }
+  function _normSfInv(p){ p=Math.min(0.999,Math.max(0.001,p)); let lo=-6,hi=6; for(let i=0;i<48;i++){ const m=(lo+hi)/2; if(_normSf(m)>p) lo=m; else hi=m; } return (lo+hi)/2; }
   function _margin(over,under){ return 1/over+1/under-1; }
   function _byLine(rows){ const m={}; rows.forEach(r=>{ (m[r.line]=m[r.line]||[]).push(r); }); return m; }
   function _bestOver(rs){ return rs.filter(r=>r.over!=null).sort((a,b)=>b.over-a.over)[0]||null; }
@@ -1327,10 +1341,12 @@
         const L=+line, bo=_bestOver(rs); if(!bo) return;
         let prob=null, ref=null, real=false, n=0, proj=null, ev=null, avg=null, nb=0;
         if(mode==='model'){
-          const sp=sharpProb(p.name,k,L,opp);
-          if(sp){ prob=sp.prob; real=true; n=Math.round(sp.nEff); proj=sp.mu; }
-          else prob=estimateHitProb(p[k]||0,L);
-          if(real&&SETTINGS.nerd.minSamp&&n<SETTINGS.nerd.minSamp) return;
+          // fair price = power-method devig of the consensus two-way at THIS line (favourite-longshot corrected)
+          const main=((state.idx.oddsIdx||{})[p.name]||{})[k];
+          if(!main||main.over==null||main.under==null||main.line!==L) return;   // need the consensus O/U at this exact line
+          prob=_powerDevig(main.over,main.under); if(prob==null) return;
+          real=true;
+          const sp=sharpProb(p.name,k,L,opp); if(sp){ proj=sp.mu; n=Math.round(sp.nEff); }   // projection shown as context only
           ev=prob*bo.over-1;
         } else if(mode==='implied'){
           const hr=(typeof JTTScoring!=='undefined')?JTTScoring.getHitRate(p.name,k,L):null;
@@ -1357,32 +1373,81 @@
   }
 
   function _bk(b){ return (typeof BOOK_LABEL!=='undefined'&&BOOK_LABEL[b])||b; }
+
+  // LineOut EV: a book's alt-ladder rung whose over price beats the fair price implied by the
+  // power-devigged consensus, projected to that rung along the player's distribution. Gap to the
+  // consensus is bounded in probability space (fair 0.30–0.70) so it can't flag short-favourite traps.
+  const _LO_RATE={disposals:0.07,dreamteam:0.02,kicks:0.09,handballs:0.10,marks:0.18,tackles:0.16,clearances:0.20};
+  function nerdLineOut(players,opp){
+    const out=[];
+    players.forEach(p=>NERD_MARKETS.forEach(([k])=>{
+      const main=((state.idx.oddsIdx||{})[p.name]||{})[k];
+      if(!main||main.over==null||main.under==null) return;              // consensus two-way anchors + devigs
+      const fairC=_powerDevig(main.over,main.under); if(fairC==null) return;
+      const sp=sharpProb(p.name,k,main.line,opp);
+      let sd=sp&&sp.sd>0?sp.sd:(0.3989/(_LO_RATE[k]||0.08));            // distribution shape (per-point rate)
+      const mu=main.line-_normSfInv(fairC)*sd;                          // anchor the mean to the market consensus
+      altLines(p.name,k).forEach(a=>{
+        if(a.over==null||a.line===main.line) return;
+        const fair=_normSf((a.line-mu)/sd);
+        if(fair<0.30||fair>0.70) return;                               // bounded gap (≈ logit ±0.85) — near-line rungs only
+        const ev=(fair*a.over-1)*100;
+        if(ev<(SETTINGS.nerd.minEv||0)) return;
+        if(SETTINGS.nerd.maxEv>0&&ev>SETTINGS.nerd.maxEv) return;
+        if(SETTINGS.nerd.maxOdds>0&&a.over>SETTINGS.nerd.maxOdds) return;
+        out.push({p,k,line:a.line,over:a.over,book:a.book,fair,ev,cons:main.line,diff:a.line-main.line});
+      });
+    }));
+    const best={}; out.forEach(c=>{ const key=c.p.name+'|'+c.k; if(!best[key]||c.ev>best[key].ev) best[key]=c; });
+    return Object.values(best).sort((a,b)=>b.ev-a.ev);
+  }
+
+  // Nerd section wrapper with a "show all" expander (sections routinely exceed 6 rows)
+  function nerdSection(icon,title,items,colorClass){
+    if(!items||!items.length) return '';
+    items=items.slice(0,30);
+    const SHOW=6, total=items.length;
+    let body=items.slice(0,SHOW).join('');
+    if(total>SHOW){
+      body+='<div class="nerd-more-wrap">'+items.slice(SHOW).join('')+'</div>'+
+        '<button class="nerd-more-btn" data-n="'+total+'" onclick="_nerdMore(this)">Show all '+total+' <i class="ti ti-chevron-down"></i></button>';
+    }
+    return '<details class="tp-collapse '+(colorClass||'')+'" open><summary class="tp-collapse-sum"><i class="ti '+icon+'"></i><span class="tp-collapse-title">'+title+'</span><span class="tp-count">'+total+'</span><i class="ti ti-chevron-down tp-collapse-chev"></i></summary><div class="tp-collapse-body">'+body+'</div></details>';
+  }
+  window._nerdMore=function(btn){
+    const w=btn.previousElementSibling; if(!w||!w.classList.contains('nerd-more-wrap'))return;
+    const open=w.classList.toggle('open');
+    btn.innerHTML=(open?'Show top 6':'Show all '+btn.dataset.n)+' <i class="ti ti-chevron-'+(open?'up':'down')+'"></i>';
+  };
   function teamNerd(team,opp){
     const players=playersOnTeam(team).filter(p=>(p.matches||0)>=2 && isPlaying(p.name,team));
     if(!(state.idx.bookIdx&&Object.keys(state.idx.bookIdx).length))
       return emptyState('ti-math-function','Nerd Mode needs multi-book odds','Arbs, middles & EV compare prices across bookmakers — they populate once the odds feed is live.');
     const prev=_degenScope, prevF=_degenFocused; _degenScope=null; _degenFocused=true;
-    const arbs=nerdArbs(players), mids=nerdMiddles(players), evM=nerdEV(players,'model',opp), evK=nerdEV(players,'market'), evI=nerdEV(players,'implied');
+    const arbs=nerdArbs(players), mids=nerdMiddles(players), evM=nerdEV(players,'model',opp), evK=nerdEV(players,'market'), evI=nerdEV(players,'implied'), lineout=nerdLineOut(players,opp);
     _degenScope=prev; _degenFocused=prevF;
     let h='';
-    const arbRows=arbs.slice(0,6).map(a=>degRow(a.p.name,'#a855f7','+'+a.profit.toFixed(1)+'% arb',
+    const arbRows=arbs.map(a=>degRow(a.p.name,'#a855f7','+'+a.profit.toFixed(1)+'% arb',
       NM_LBL[a.k]+' '+a.line+' · Over '+_bk(a.bo.book)+' $'+a.bo.over.toFixed(2)+' / Under '+_bk(a.bu.book)+' $'+a.bu.under.toFixed(2)));
     const NS=SETTINGS.nerd;
-    h+=(NS.arbs&&arbRows.length)?degWrap('ti-arrows-shuffle','Arbs',arbRows,'c-purple'):'';
-    const midRows=mids.slice(0,6).map(m=>degRow(m.p.name,'#06b6d4','middle '+m.gap.toFixed(1),
+    h+=(NS.arbs&&arbRows.length)?nerdSection('ti-arrows-shuffle','Arbs',arbRows,'c-purple'):'';
+    const midRows=mids.map(m=>degRow(m.p.name,'#06b6d4','middle '+m.gap.toFixed(1),
       NM_LBL[m.k]+' · Over '+m.ov.line+' '+_bk(m.ov.book)+' $'+m.ov.over.toFixed(2)+' / Under '+m.un.line+' '+_bk(m.un.book)+' $'+m.un.under.toFixed(2)+' · cost '+m.cost.toFixed(1)+'%'));
-    h+=(NS.middles&&midRows.length)?degWrap('ti-arrow-bar-both','Middles',midRows,'c-cyan'):'';
+    h+=(NS.middles&&midRows.length)?nerdSection('ti-arrow-bar-both','Middles',midRows,'c-cyan'):'';
     const evRow=(e,col)=>{
       const head=_bk(e.bo.book)+' $'+e.bo.over.toFixed(2);
       let txt;
       if(e.mode==='implied') txt=head+' · hit '+Math.round(e.prob*100)+'%'+(e.n?' ('+e.n+'g)':'');
       else if(e.mode==='market') txt=head+' v avg $'+e.avg.toFixed(2)+' · '+e.nb+'bk';
-      else txt=head+(e.proj!=null?' · proj '+e.proj.toFixed(1):'')+' · '+Math.round(e.prob*100)+'%'+(e.n?' ('+e.n+'g)':'');
+      else txt=head+' · fair $'+(1/e.prob).toFixed(2)+' ('+Math.round(e.prob*100)+'%)'+(e.proj!=null?' · proj '+e.proj.toFixed(1):'');
       return degRow(e.p.name,col,'+'+e.ev.toFixed(1)+'% EV',NM_LBL[e.k]+' '+e.line+'+ · '+txt);
     };
-    h+=(NS.model&&evM.length)?degWrap('ti-brain','+EV (model)',evM.slice(0,6).map(e=>evRow(e,'#22c55e')),'c-green'):'';
-    h+=(NS.implied&&evI.length)?degWrap('ti-target-arrow','Implied EV',evI.slice(0,6).map(e=>evRow(e,'#84cc16')),'c-green'):'';
-    h+=(NS.market&&evK.length)?degWrap('ti-chart-dots','Market EV',evK.slice(0,6).map(e=>evRow(e,'#10b981')),'c-green'):'';
+    h+=(NS.model&&evM.length)?nerdSection('ti-brain','+EV (power devig)',evM.map(e=>evRow(e,'#22c55e')),'c-green'):'';
+    const loRows=lineout.map(e=>degRow(e.p.name,'#f59e0b','+'+e.ev.toFixed(1)+'% EV',
+      NM_LBL[e.k]+' '+Math.ceil(e.line)+'+ · '+_bk(e.book)+' $'+e.over.toFixed(2)+' · fair '+Math.round(e.fair*100)+'% · '+(e.diff>0?'+':'')+e.diff.toFixed(1)+' vs cons '+e.cons));
+    h+=(NS.lineout&&loRows.length)?nerdSection('ti-ruler-measure','LineOut EV',loRows,'c-amber'):'';
+    h+=(NS.implied&&evI.length)?nerdSection('ti-target-arrow','Implied EV',evI.map(e=>evRow(e,'#84cc16')),'c-green'):'';
+    h+=(NS.market&&evK.length)?nerdSection('ti-chart-dots','Market EV',evK.map(e=>evRow(e,'#10b981')),'c-green'):'';
     if(!h) return emptyState('ti-math-function','No edges found','No arbs, middles or +EV bets for this team right now.');
     return h;
   }
@@ -2618,7 +2683,7 @@
   function nerdFilterBar(){
     const N=SETTINGS.nerd;
     let h='<div style="'+_fbar+'"><div style="font-size:10px;color:var(--text-3);margin-bottom:4px;text-transform:uppercase;letter-spacing:.04em">Nerd filters</div>';
-    h+='<div style="margin-bottom:4px">'+[['arbs','Arbs'],['middles','Middles'],['model','+EV Model'],['implied','Implied EV'],['market','Market EV']].map(([k,l])=>_fchip(!!N[k],l,"_sNerdTile('"+k+"')")).join('')+'</div>';
+    h+='<div style="margin-bottom:4px">'+[['arbs','Arbs'],['middles','Middles'],['model','Power Devig'],['lineout','LineOut'],['implied','Implied EV'],['market','Market EV']].map(([k,l])=>_fchip(!!N[k],l,"_sNerdTile('"+k+"')")).join('')+'</div>';
     h+='<div style="display:flex;flex-wrap:wrap;align-items:center">'+
       _fnum('Min EV%',N.minEv,"_sNerdNum('minEv',this.value)")+_fnum('Max EV%',N.maxEv,"_sNerdNum('maxEv',this.value)")+
       _fnum('Max odds',N.maxOdds,"_sNerdNum('maxOdds',this.value)")+_fnum('Min arb%',N.minArb,"_sNerdNum('minArb',this.value)")+
@@ -2665,7 +2730,7 @@
     // Nerd Mode
     h+=card('Nerd Mode','ti-math-function',
       sub('Show tiles')+
-      [['arbs','Arbs'],['middles','Middles'],['model','+EV Model'],['implied','Implied EV'],['market','Market EV']].map(([k,l])=>chip(!!N[k],l,"_sNerdTile('"+k+"')")).join('')+
+      [['arbs','Arbs'],['middles','Middles'],['model','Power Devig'],['lineout','LineOut'],['implied','Implied EV'],['market','Market EV']].map(([k,l])=>chip(!!N[k],l,"_sNerdTile('"+k+"')")).join('')+
       grid(fld('Min EV %',num(N.minEv,"_sNerdNum('minEv',this.value)"))+fld('Max EV %',num(N.maxEv,"_sNerdNum('maxEv',this.value)"))+
         fld('Max odds',num(N.maxOdds,"_sNerdNum('maxOdds',this.value)"))+fld('Min arb %',num(N.minArb,"_sNerdNum('minArb',this.value)"))+
         fld('Min middle gap',num(N.minGap,"_sNerdNum('minGap',this.value)"))+fld('Max middle cost %',num(N.maxCost,"_sNerdNum('maxCost',this.value)"))+
