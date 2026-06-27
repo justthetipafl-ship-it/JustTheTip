@@ -123,6 +123,8 @@
   .fxm-ctl b{color:var(--text);font-family:var(--font-mono);font-size:11px;min-width:34px;text-align:center;}
   .fxm-ctl button{width:20px;height:20px;border-radius:50%;border:1px solid var(--border);background:var(--surface);color:var(--text-2);cursor:pointer;font-size:13px;line-height:1;display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;}
   .fxm-ctl button:hover{border-color:var(--accent);color:var(--text);}
+  .fxm-ctl.fxm-book{padding:3px 6px 3px 9px;gap:5px;}
+  .fxm-ctl.fxm-book select{background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:10px;padding:2px 6px;font-size:11px;font-weight:600;font-family:inherit;cursor:pointer;}
   .snag-posbar{display:flex;gap:5px;flex-wrap:wrap;margin:0 0 12px;}
   .snag-pos{padding:5px 11px;border-radius:14px;font-size:11px;font-weight:600;cursor:pointer;border:1px solid var(--border);background:transparent;color:var(--text-3);}
   .snag-pos.on{border-color:#f59e0b;background:rgba(245,158,11,.13);color:var(--text);}
@@ -291,6 +293,18 @@
   .lu-grid{display:flex;flex-wrap:wrap;gap:4px;margin-bottom:8px;}
   .lu-p{font-size:11px;font-weight:600;color:var(--text-2);background:var(--surface-2);border:1px solid var(--border);border-radius:5px;padding:3px 7px;}
   .lu-p i{font-style:normal;color:var(--text-3);font-size:9px;font-weight:700;margin-left:4px;}
+  .lu-form{display:flex;flex-direction:column;gap:9px;margin-top:2px;}
+  .lu-line-lab{font-size:9px;text-transform:uppercase;letter-spacing:.09em;color:var(--text-3);text-align:center;margin-bottom:4px;font-weight:700;}
+  .lu-row{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;}
+  .lu-int{display:flex;flex-wrap:wrap;gap:6px;justify-content:center;}
+  .lu-int .lu-cell{flex:1 1 calc(25% - 6px);min-width:72px;}
+  .lu-cell{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;background:var(--surface-2);border:1px solid var(--border);border-radius:8px;padding:7px 4px;text-align:center;cursor:pointer;transition:border-color .12s;}
+  .lu-cell:hover{border-color:var(--accent);}
+  .lu-cell .nm{font-size:11px;font-weight:700;color:var(--text);line-height:1.15;}
+  .lu-cell .pos{font-size:8px;font-weight:700;letter-spacing:.04em;color:var(--text-3);}
+  .lu-cell.empty{opacity:.35;cursor:default;justify-content:center;min-height:34px;}
+  .lu-cell.empty:hover{border-color:var(--border);}
+  .lu-emg{font-size:10px;color:var(--text-3);margin-top:8px;text-align:center;line-height:1.4;}
   .sub-tabs{display:flex;gap:6px;margin:0 0 14px;flex-wrap:wrap;}
   .sub-tab{display:inline-flex;align-items:center;gap:6px;padding:7px 14px;border-radius:8px;cursor:pointer;
     background:var(--surface);border:1px solid var(--border);color:var(--text-2);font-family:var(--font-display);
@@ -1090,15 +1104,49 @@
     if(!pills) return '';
     return '<div class="tp-sec"><div class="sec-title"><i class="ti ti-shield-half"></i> DVP by Position — '+abbr(opp)+' allows '+sel+'</div></div><div class="dvpp-grid">'+pills+'</div>';
   }
-  // ===== Lineup (focused fixture) — named side once teams drop =====
+  // ===== Lineup (focused fixture) — named side as an AFL team sheet (formation), emergencies hidden =====
+  const LU_LINES=[
+    ['Backs',        ['BPL','FB','BPR']],
+    ['Half Backs',   ['HBFL','CHB','HBFR']],
+    ['Centre',       ['WL','C','WR']],
+    ['Half Forwards',['HFFL','CHF','HFFR']],
+    ['Forwards',     ['FPL','FF','FPR']],
+    ['Followers',    ['RK','RR','R']],
+  ];
+  const LU_LINE_CODES=new Set(LU_LINES.flatMap(l=>l[1]));
+  function _luCell(r){
+    if(!r) return '<div class="lu-cell empty">\u2014</div>';
+    const q=esc(r.player).replace(/\x27/g,"\\\\\\x27");
+    return '<div class="lu-cell" onclick="openPlayer(\''+q+'\')"><span class="nm">'+esc(r.player)+'</span><span class="pos">'+esc(r.position||'')+'</span></div>';
+  }
   function fxLineup(team){
     const lu=(state.data.lineups||[]).filter(r=>r.team===team);
     if(!lu.length) return '';
     const named=lu.filter(r=>{ const nm=(r.player||'').trim(); return nm && !/^na( na)?$/i.test(nm) && !/^NA\b/i.test(nm); });
-    const title='<div class="tp-sec"><div class="sec-title"><i class="ti ti-clipboard-list"></i> Lineup'+(named.length?' ('+named.length+')':'')+'</div></div>';
-    if(!named.length) return title+'<div class="tp-body-meta" style="border:0">Teams not yet named — official sides drop Thursday night.</div>';
-    const chips=named.map(r=>'<span class="lu-p">'+esc(r.player)+(r.position?'<i>'+esc(r.position)+'</i>':'')+'</span>').join('');
-    return title+'<div class="lu-grid">'+chips+'</div>';
+    const onField=named.filter(r=>(r.position||'').toUpperCase()!=='EMERG');   // ignore emergencies
+    const title='<div class="tp-sec"><div class="sec-title"><i class="ti ti-clipboard-list"></i> Lineup'+(onField.length?' ('+onField.length+')':'')+'</div></div>';
+    if(!onField.length) return title+'<div class="tp-body-meta" style="border:0">Teams not yet named — official sides drop Thursday night.</div>';
+    const byPos={}; onField.forEach(r=>{ const p=(r.position||'').toUpperCase(); if(LU_LINE_CODES.has(p)&&!byPos[p]) byPos[p]=r; });
+    const placed=new Set(Object.values(byPos).map(r=>r.player));
+    // does this side use the standard codes? if barely any line slots fill, fall back to a flat list
+    if(Object.keys(byPos).length<6){
+      const chips=onField.map(r=>'<span class="lu-p" onclick="openPlayer(\''+esc(r.player).replace(/\x27/g,"\\\\\\x27")+'\')" style="cursor:pointer">'+esc(r.player)+(r.position?'<i>'+esc(r.position)+'</i>':'')+'</span>').join('');
+      return title+'<div class="lu-grid">'+chips+'</div>';
+    }
+    let h=title+'<div class="lu-form">';
+    LU_LINES.forEach(([lab,codes])=>{
+      h+='<div class="lu-line"><div class="lu-line-lab">'+lab+'</div><div class="lu-row">'+codes.map(c=>_luCell(byPos[c])).join('')+'</div></div>';
+    });
+    // interchange = INT + any leftover named players not on a line (and not emergencies)
+    const bench=onField.filter(r=>!placed.has(r.player));
+    if(bench.length){
+      h+='<div class="lu-line"><div class="lu-line-lab">Interchange</div><div class="lu-int">'+bench.map(_luCell).join('')+'</div></div>';
+    }
+    h+='</div>';
+    // emergencies: ignored on the sheet, listed muted so the info isn't lost
+    const emg=named.filter(r=>(r.position||'').toUpperCase()==='EMERG');
+    if(emg.length) h+='<div class="lu-emg">EMG: '+emg.map(r=>esc(r.player)).join(' \u00b7 ')+'</div>';
+    return h;
   }
   // ===== Defence vs Play Style (focused fixture) =====
   const DVP_PLAY_STYLE_POS={'Accumulator Mid':'Midfielder','Contested Mid':'Midfielder','Running Mid':'Midfielder','Handball Mid':'Midfielder','Scoring MF':'Mid-Forward','Bear in the Square':'Key Forward','Key Target':'Key Forward','Pressure Fwd':'Gen. Forward','Small Forwards':'Gen. Forward','Clearance Beast':'Midfielder','Intercept Def':'Key Defender','Uncontested Marker':'Gen. Defender','Defensive Ball User':'Gen. Defender','Ruck Mid':'Ruck','Dominant Ruck':'Ruck','Winger':'Midfielder','Shankers':'All Positions','Cuddle Monsters':'All Positions','Fantasy Stars':'All Positions','Entry Man':'All Positions'};
@@ -2282,11 +2330,16 @@
     return '<div id="fx-multi">'+_fxmInner(g)+'</div>';
   }
   function _fxmInner(g){
-    const S=state.view.fxMulti||(state.view.fxMulti={legs:SETTINGS.multi.legs||6, minProb:SETTINGS.multi.minProb||55, minOdds:0, maxOdds:0});
+    const S=state.view.fxMulti||(state.view.fxMulti={legs:SETTINGS.multi.legs||6, minProb:SETTINGS.multi.minProb||55, minOdds:0, maxOdds:0, book:null});
+    if(S.book===undefined) S.book=null;
     const pool=t=>(state.idx.players||[]).filter(p=>p.team===t&&(p.matches||0)>=3);
     let cands=[];
-    pool(g.home).forEach(p=>legCandidates(p,g.away).forEach(c=>cands.push(c)));
-    pool(g.away).forEach(p=>legCandidates(p,g.home).forEach(c=>cands.push(c)));
+    const savedBooks=SETTINGS.books;                                 // price every leg on the chosen book so the multi is placeable
+    if(S.book) SETTINGS.books=[S.book];
+    try {
+      pool(g.home).forEach(p=>legCandidates(p,g.away).forEach(c=>cands.push(c)));
+      pool(g.away).forEach(p=>legCandidates(p,g.home).forEach(c=>cands.push(c)));
+    } finally { SETTINGS.books=savedBooks; }
     cands=cands.filter(c=>{
       if(!c._odds) return false;
       if((c.avg-c.line)<0.3) return false;
@@ -2301,10 +2354,13 @@
     const seen={}, legs=[];
     for(const c of cands){ if(legs.length>=S.legs) break; if(seen[c.p.name]) continue; seen[c.p.name]=1; legs.push(c); }   // leg count
     const stp=(lbl,k,d,disp)=>'<span class="fxm-ctl">'+lbl+'<button onclick="_fxmSet(\''+k+'\',-'+d+')">\u2212</button><b>'+disp+'</b><button onclick="_fxmSet(\''+k+'\','+d+')">+</button></span>';
+    const bookSel='<span class="fxm-ctl fxm-book">Book <select onchange="_fxmSet(\'book\',this.value)"><option value="">Best price</option>'+
+      ALL_BOOKS.map(([k,l])=>'<option value="'+k+'"'+(S.book===k?' selected':'')+'>'+l+'</option>').join('')+'</select></span>';
     const bar='<div class="fxm-bar">'+stp('Legs ','legs',1,S.legs)+stp('Hit ','minProb',5,S.minProb+'%')+
-      stp('Min ','minOdds',0.1,(S.minOdds>0?'$'+S.minOdds.toFixed(2):'any'))+stp('Max ','maxOdds',0.5,(S.maxOdds>0?'$'+S.maxOdds.toFixed(2):'off'))+'</div>';
-    const head='<div class="tp-sec" style="margin-top:14px"><div class="sec-title"><i class="ti ti-stack-2"></i> Multi Builder</div>'+(legs.length?'<div class="sec-meta">'+legs.length+'-leg \u00b7 $'+legs.reduce((a,l)=>a*l._odds.price,1).toFixed(2)+'</div>':'')+'</div>';
-    if(!legs.length) return head+bar+'<div class="tp-body-meta" style="border:0;margin:8px 0">No legs match these filters \u2014 loosen the hit-rate or odds range.</div>';
+      stp('Min ','minOdds',0.1,(S.minOdds>0?'$'+S.minOdds.toFixed(2):'any'))+stp('Max ','maxOdds',0.5,(S.maxOdds>0?'$'+S.maxOdds.toFixed(2):'off'))+bookSel+'</div>';
+    const meta=legs.length?(legs.length+'-leg \u00b7 $'+legs.reduce((a,l)=>a*l._odds.price,1).toFixed(2)+(S.book?' \u00b7 '+bookName(S.book):' \u00b7 best price')):'';
+    const head='<div class="tp-sec" style="margin-top:14px"><div class="sec-title"><i class="ti ti-stack-2"></i> Multi Builder</div>'+(meta?'<div class="sec-meta">'+meta+'</div>':'')+'</div>';
+    if(!legs.length) return head+bar+'<div class="tp-body-meta" style="border:0;margin:8px 0">No legs match these filters\u2014 '+(S.book?'try Best price or ':'')+'loosen the hit-rate or odds range.</div>';
     const rows=legs.map(l=>{
       const col=LEG_COL[l.type]||'#3b82f6';
       const probStr=(l.probReal?Math.round(l.prob*100)+'% hit':'~'+Math.round(l.prob*100)+'%')+(l.probReal&&l.probN?' ('+l.probN+'g)':'');
@@ -2319,6 +2375,7 @@
     else if(k==='minProb') S.minProb=Math.max(0,Math.min(95,S.minProb+d));
     else if(k==='minOdds') S.minOdds=Math.max(0,+(S.minOdds+d).toFixed(2));
     else if(k==='maxOdds') S.maxOdds=Math.max(0,+(S.maxOdds+d).toFixed(2));
+    else if(k==='book') S.book=d||null;
     const fx=state.data.fixture||[], g=fx[state.view.fixtureId];
     const el=document.getElementById('fx-multi'); if(el&&g) el.innerHTML=_fxmInner(g);
   };
