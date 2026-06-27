@@ -134,8 +134,10 @@ window.JTTScoring = (function () {
     const r = games.slice(-n).map(g=>g[statKey]||0); if(!r.length) return null;
     return r.reduce((a,b)=>a+b,0)/r.length;
   }
-  function getHitRate(name, statKey, line){
-    const games = dvpByName(name); if(games.length<3) return null;
+  function getHitRate(name, statKey, line, curOnly){
+    let games = dvpByName(name);
+    if(curOnly) games = games.filter(isCurSeason);     // Implied EV: this-season form only
+    if(games.length<3) return null;
     const hits = games.filter(g=>(g[statKey]||0)>=line).length;
     return {rate:hits/games.length, n:games.length};
   }
