@@ -93,6 +93,10 @@
   .ob-chips{display:flex;gap:5px;flex-wrap:wrap;}
   .ob-chip{background:var(--surface-2);border:1px solid var(--border);color:var(--text-2);font-family:var(--font-display);font-weight:700;font-size:11px;padding:4px 9px;border-radius:6px;cursor:pointer;}
   .ob-chip.active{background:var(--accent);border-color:var(--accent);color:#08140c;}
+  .ob-search-wrap{margin-top:2px;}
+  .ob-search{flex:1;min-width:160px;max-width:340px;background:var(--surface-2);border:1px solid var(--border);color:var(--text);font-family:var(--font-display);font-weight:600;font-size:12px;padding:6px 10px;border-radius:6px;}
+  .ob-search:focus{outline:none;border-color:var(--accent);}
+  .ob-search::placeholder{color:var(--text-3);font-weight:500;}
   .ob-wrap{overflow:auto;max-height:72vh;max-height:72dvh;border:1px solid var(--border);border-radius:10px;-webkit-overflow-scrolling:touch;}
   .ob-table{border-collapse:separate;border-spacing:0;width:max-content;min-width:100%;}
   .ob-table th,.ob-table td{border-bottom:1px solid var(--border);white-space:nowrap;}
@@ -888,7 +892,7 @@
       if(opp && r.opponent===opp){ hN++; if(v>=thresh) hH++; } });
     return {sN,sH,hN,hH, season:sN?sH/sN:null, h2h:hN?hH/hN:null};
   }
-  window.setOddsGame=function(i){ state.view.oddsGame=+i; _renderApp(); window.scrollTo({top:0}); };
+  window.setOddsGame=function(i){ state.view.oddsGame=+i; state.view.oddsSearch=''; _renderApp(); window.scrollTo({top:0}); };
   window.setOddsMkt=function(m){ state.view.oddsMkt=m; _renderApp(); };
   const ODDS_TIMEFRAME_NOTE='Odds update on two cadences: a full sweep of every game runs each morning (~9 AM AEST) for a baseline, then live prices refresh about every 10 min within 3 hours of each game\u2019s first bounce.';
   function oddsTimeframeNote(){ return '<div class="odds-tf"><i class="ti ti-clock-hour-4"></i><span>'+ODDS_TIMEFRAME_NOTE+'</span></div>'; }
@@ -941,16 +945,31 @@
       return head+filters+emptyState('ti-clock-hour-7','Odds board is dormant','Prices sweep every game each morning (~9 AM AEST), then refresh live within 3 hours of first bounce. The board lights up when the feed is active.'+stamp);
     }
     if(!fx.length) return head+emptyState('ti-calendar-off','No fixtures','Run the data build.');
-    const g=fx[gi], home=g.home, away=g.away, oppOf=t=>t===home?away:home;
+    const g=fx[gi];
+    const title=esc(g.home)+' vs '+esc(g.away)+(g.time?' &middot; '+esc(g.time):'');
+    const titleSec='<div class="tp-sec"><div class="sec-title"><i class="ti ti-coins"></i> '+title+'</div></div>';
+    const search='<div class="ob-filter ob-search-wrap"><span class="ob-fl">Player</span><input class="ob-search" id="ob-search" type="search" placeholder="Search player\u2026" value="'+esc(state.view.oddsSearch||'')+'" oninput="state.view.oddsSearch=this.value;rerenderOdds()"></div>';
+    return head+filters+titleSec+_oddsRefreshLine()+search+'<div id="ob-mount">'+_oddsBoardTable()+'</div>';
+  }
+  window.rerenderOdds=function(){ const m=document.getElementById('ob-mount'); if(m) m.innerHTML=_oddsBoardTable(); };
+  function _oddsBoardTable(){
+    const fx=state.data.fixture||[];
+    const gi=Math.min(state.view.oddsGame||0, Math.max(0,fx.length-1));
+    const mkt=state.view.oddsMkt||'disposals';
+    const g=fx[gi]; if(!g) return '';
+    const home=g.home, away=g.away, oppOf=t=>t===home?away:home;
     let roster=playersOnTeam(home).concat(playersOnTeam(away)).filter(p=>isPlaying(p.name,p.team)).sort((a,b)=>(a.name||'').localeCompare(b.name||''));
+    const q=(state.view.oddsSearch||'').trim().toLowerCase();
+    if(q) roster=roster.filter(p=>(p.name||'').toLowerCase().includes(q));     // player search
     const tierSet=new Set(), perPlayer={};
     roster.forEach(p=>{ const m={}; _obMkts(mkt).forEach(mk=>altLines(p.name,mk).forEach(a=>{ if(a.line==null||a.over==null) return; const t=Math.ceil(a.line);
       if(!m[t]||a.over>m[t].over) m[t]={over:a.over,book:a.book}; tierSet.add(t); })); perPlayer[p.name]=m; });
     roster=roster.filter(p=>Object.keys(perPlayer[p.name]||{}).length>0);   // hide players with no posted lines
     const tiers=[...tierSet].sort((x,y)=>x-y);
-    const title=esc(home)+' vs '+esc(away)+(g.time?' &middot; '+esc(g.time):'');
-    const titleSec='<div class="tp-sec"><div class="sec-title"><i class="ti ti-coins"></i> '+title+'</div></div>';
-    if(!tiers.length||!roster.length) return titleSec+_oddsRefreshLine()+filters+emptyState('ti-line','No '+mkt+' lines posted','No prices for this market in the current feed — try another market.');
+    if(!tiers.length||!roster.length){
+      return q ? emptyState('ti-search','No match for \u201c'+esc(state.view.oddsSearch.trim())+'\u201d','No '+esc(ODDS_MKT_LABEL(mkt)).toLowerCase()+' lines posted for that player \u2014 try another name or market.')
+               : emptyState('ti-line','No '+mkt+' lines posted','No prices for this market in the current feed \u2014 try another market.');
+    }
     const cs=String((state.data.meta&&state.data.meta.currentSeason)||'2026');
     const thead='<tr><th class="ob-pl">Player</th>'+tiers.map(t=>'<th>'+t+'+</th>').join('')+'</tr>';
     const body=roster.map(p=>{
@@ -980,7 +999,7 @@
       return '<tr>'+nameCell+cells+'</tr>';
     }).join('');
     const legend='<div class="ob-legend">Cell: best over price + book &middot; hover a price for all books &middot; <span class="s">S</span> season / <span class="h">H</span> H2H clear-rate at that line</div>';
-    return titleSec+_oddsRefreshLine()+filters+legend+'<div class="ob-wrap" onscroll="_obTipHide()"><table class="ob-table"><thead>'+thead+'</thead><tbody>'+body+'</tbody></table></div>';
+    return legend+'<div class="ob-wrap" onscroll="_obTipHide()"><table class="ob-table"><thead>'+thead+'</thead><tbody>'+body+'</tbody></table></div>';
   }
 
   function _updateFreshnessPill(){const el=document.getElementById('freshness-pill');if(!el)return;const ts=parseInt(state.dataVersion,10);if(!ts){el.textContent='Loaded';return;}const h=(Date.now()-ts*1000)/3.6e6;el.textContent=h<1?'Updated just now':h<24?'Updated '+Math.floor(h)+'h ago':'Updated '+Math.floor(h/24)+'d ago';el.classList.remove('stale','very-stale');if(h>72)el.classList.add('very-stale');else if(h>36)el.classList.add('stale');}
