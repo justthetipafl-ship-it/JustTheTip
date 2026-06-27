@@ -1491,7 +1491,7 @@
       if(e.mode==='implied') txt=head+' · hit '+Math.round(e.prob*100)+'%'+(e.n?' ('+e.n+'g)':'');
       else if(e.mode==='market') txt=head+' v avg $'+e.avg.toFixed(2)+' · '+e.nb+'bk';
       else txt=head+' · fair $'+(1/e.prob).toFixed(2)+' ('+Math.round(e.prob*100)+'%)'+(e.proj!=null?' · proj '+e.proj.toFixed(1):'');
-      return degRow(e.p.name,col,'+'+e.ev.toFixed(1)+'% EV',NM_LBL[e.k]+' '+e.line+'+ · '+txt);
+      return degRow(e.p.name,col,'+'+e.ev.toFixed(1)+'% EV',NM_LBL[e.k]+' '+Math.ceil(e.line)+'+ · '+txt);
     };
     h+=(NS.model&&evM.length)?nerdSection('ti-brain','+EV (power devig)',evM.map(e=>evRow(e,'#22c55e')),'c-green'):'';
     const loRows=lineout.map(e=>degRow(e.p.name,'#f59e0b','+'+e.ev.toFixed(1)+'% EV',
@@ -1904,7 +1904,7 @@
   const ELITE_DEFS = [{k:'disposals',l:'Disposals'},{k:'marks',l:'Marks'},{k:'tackles',l:'Tackles'},
     {k:'kicks',l:'Kicks'},{k:'handballs',l:'Handballs'},{k:'clearances',l:'Clearances'}];
   const BUNNY_STATS = [{k:'disposals',l:'Disposals',min:15},{k:'dreamteam',l:'Fantasy',min:60}];
-  const BOGEY_STATS = [{k:'disposals',l:'Disposals',min:15},{k:'dreamteam',l:'Fantasy',min:60}];
+  const BOGEY_STATS = [{k:'disposals',l:'Disposals',min:15}];   // disposals only — fantasy has no posted under line to bet
   const STREAK_STATS = [['disposals','Disposals'],['kicks','Kicks'],['handballs','Handballs'],['marks','Marks'],
     ['tackles','Tackles'],['clearances','Clearances'],['goals','Goals'],['dreamteam','Fantasy']];
   const TAGGER_NAMES = { hard:['Oisín Mullin','Toby Bedford','James Jordon','Koltyn Tholstrup',"Finn O'Sullivan"],
@@ -2401,12 +2401,23 @@
   const LEG_DVP={disposals:'disposals',goals:'goals',marks:'marks',tackles:'tackles',clearances:'clearances',kicks:'kicks',handballs:'handballs'};
   const LEG_COL={DISPOSALS:'#3b82f6',KICKS:'#60a5fa',HANDBALLS:'#93c5fd',GOALS:'#f59e0b',MARKS:'#06b6d4',TACKLES:'#f97316',CLEARANCES:'#1d9e75',FANTASY:'#8b5cf6'};
   function estimateHitProb(avg,line){ if(avg<=0) return 0; const sd=Math.max(1,avg*0.32); const z=(avg-line)/sd; return Math.min(0.97,Math.max(0.03,0.5+0.5*Math.tanh(z*0.9))); }
+  // Snap a model target line to a real posted "X+" rung so the leg's line and odds always match
+  // (the book has no 9+ kicks rung, so an un-snapped 9+ leg was being priced off the 10+ rung).
+  // Picks the highest posted rung at/below the target (safer for a multi), else the lowest posted rung.
+  function _snapToRung(name, statKey, target){
+    if(statKey==='goals'||statKey==='goalsx') return target;       // goals priced via the goals/goalsx split, not a single ladder
+    const lad=[...new Set(altLines(name,statKey).map(a=>Math.ceil(a.line)))].sort((a,b)=>a-b);
+    if(!lad.length) return target;                                 // no posted ladder (odds off / none) — keep the model line
+    let pick=null; for(const r of lad){ if(r<=target) pick=r; }
+    return pick!=null?pick:lad[0];
+  }
   function legCandidates(p,opp){
     const c=[]; const pos=JTTScoring.POS_TO_DVP[p.position]||p.position;
     const add=(statKey,line,avg,type,label)=>{
       if((SETTINGS.multi.markets||[]).indexOf(statKey)<0) return;
+      line=_snapToRung(p.name,statKey,line);                    // snap to a real posted rung so line + odds match
       if(line<1||avg<=line) return;
-      const hr=JTTScoring.getHitRate(p.name,statKey,line);
+      const hr=JTTScoring.getHitRate(p.name,statKey,line,true);  // season hit rate
       const prob=hr?hr.rate:estimateHitProb(avg,line);
       const sigs=opp?JTTScoring.getContextSignals(p,statKey,opp):[];
       const score=sigs.reduce((s,sig)=>s+sig.pct*sig.weight,0);
