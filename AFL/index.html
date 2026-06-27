@@ -113,6 +113,14 @@
   .ob-ou{margin-top:3px;font-size:9.5px;font-weight:700;color:var(--text-2);font-variant-numeric:tabular-nums;}
   .ob-legend{font-size:9.5px;color:var(--text-3);margin:0 0 8px 2px;}
   .ob-legend .s{color:var(--text-2);font-weight:800;} .ob-legend .h{color:var(--accent);font-weight:800;}
+  .ob-cell.ob-hascell{cursor:help;}
+  .ob-cell.ob-hascell:hover{background:var(--surface-2);}
+  .ob-tip{position:fixed;z-index:9999;display:none;background:var(--surface-3);border:1px solid var(--border-light);border-radius:8px;padding:7px 9px;box-shadow:0 10px 28px rgba(0,0,0,.55);min-width:138px;max-width:240px;pointer-events:none;}
+  .ob-tip-hd{font-size:9px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:var(--text-3);margin-bottom:5px;display:flex;justify-content:space-between;gap:10px;}
+  .ob-tip-row{display:flex;justify-content:space-between;gap:16px;font-size:11.5px;font-weight:700;color:var(--text-2);padding:2px 0;font-variant-numeric:tabular-nums;}
+  .ob-tip-row b{color:var(--text);font-family:var(--font-display);}
+  .ob-tip-row.best b{color:var(--accent);}
+  .ob-tip-row.best span::after{content:" \2605";color:var(--accent);font-size:8px;}
   .cmb-tabs{display:flex;gap:4px;margin-bottom:12px;background:var(--surface-2);padding:4px;border-radius:8px;}
   .cmb-tab{flex:1;background:transparent;border:none;color:var(--text-3);font-family:var(--font-display);font-weight:800;font-size:12px;letter-spacing:.03em;padding:8px 10px;border-radius:6px;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:5px;}
   .cmb-tab.active{background:var(--surface);color:var(--text);}
@@ -869,6 +877,26 @@
   window.setOddsMkt=function(m){ state.view.oddsMkt=m; _renderApp(); };
   const ODDS_TIMEFRAME_NOTE='Odds update on two cadences: a full sweep of every game runs each morning (~9 AM AEST) for a baseline, then live prices refresh about every 10 min within 3 hours of each game\u2019s first bounce.';
   function oddsTimeframeNote(){ return '<div class="odds-tf"><i class="ti ti-clock-hour-4"></i><span>'+ODDS_TIMEFRAME_NOTE+'</span></div>'; }
+  function ODDS_MKT_LABEL(k){ const m=ODDS_MKTS.find(x=>x[0]===k); return m?m[1]:k; }
+  // every book's best OVER at a given "X+" line for this market (sorted longest price first)
+  function _obBookList(name,mkt,t){
+    const rows=(((state.idx.bookIdx||{})[name]||{})[mkt]||[]).filter(r=>_bookOK(r.book)&&r.over!=null&&Math.ceil(r.line)===t);
+    const best={}; rows.forEach(r=>{ if(best[r.book]==null||r.over>best[r.book]) best[r.book]=r.over; });
+    return Object.entries(best).map(([b,o])=>({book:b,over:o})).sort((a,b)=>b.over-a.over);
+  }
+  function _obTipEl(){ let e=document.getElementById('ob-tip'); if(!e){ e=document.createElement('div'); e.id='ob-tip'; e.className='ob-tip'; document.body.appendChild(e); } return e; }
+  window._obTip=function(td){
+    const data=td.getAttribute('data-bk'); if(!data){ _obTipHide(); return; }
+    const hd=td.getAttribute('data-tt')||'All books';
+    const rows=data.split(';').map((s,i)=>{ const ix=s.lastIndexOf('|'); const b=s.slice(0,ix), o=s.slice(ix+1);
+      return '<div class="ob-tip-row'+(i===0?' best':'')+'"><span>'+b+'</span><b>$'+o+'</b></div>'; }).join('');
+    const e=_obTipEl(); e.innerHTML='<div class="ob-tip-hd"><span>'+hd+'</span><span>'+data.split(';').length+' books</span></div>'+rows; e.style.display='block';
+    const r=td.getBoundingClientRect(), tw=e.offsetWidth, th=e.offsetHeight;
+    let left=r.left+r.width/2-tw/2; left=Math.max(8,Math.min(left,window.innerWidth-tw-8));
+    let top=r.top-th-8; if(top<8) top=r.bottom+8;            // flip below the cell if no room above
+    e.style.left=Math.round(left)+'px'; e.style.top=Math.round(top)+'px';
+  };
+  window._obTipHide=function(){ const e=document.getElementById('ob-tip'); if(e) e.style.display='none'; };
   function renderOdds(){
     const fx=state.data.fixture||[];
     const gi=Math.min(state.view.oddsGame||0, Math.max(0,fx.length-1));
@@ -916,11 +944,13 @@
         const sr=sRate(t), hr=hRate(t);
         const crCol=v=>v<50?'#ef4444':v<70?'#eab308':'#22c55e';   // <50 red · 50-70 yellow · 70+ green
         const cr=(sr!=null||hr!=null)?'<div class="ob-cr" title="Season '+(sr!=null?sr+'%':'-')+' / H2H '+(hr!=null?hr+'%':'-')+' cleared at '+t+'+">'+(sr!=null?'<span class="s" style="color:'+crCol(sr)+'">'+sr+'%</span>':'')+(hr!=null?'<span class="h" style="color:'+crCol(hr)+'">'+hr+'%</span>':'')+'</div>':'';
-        return '<td class="ob-cell"><div class="ob-pxrow"><span class="ob-px">'+c.over.toFixed(2)+'</span><span class="ob-bk">'+_bookShort(c.book)+'</span></div>'+cr+'</td>'; }).join('');
+        const bl=_obBookList(p.name,mkt,t);                        // every book at this line, best price each
+        const hov=bl.length>=2?(' ob-hascell" data-bk="'+esc(bl.map(x=>bookName(x.book)+'|'+x.over.toFixed(2)).join(';'))+'" data-tt="'+t+'+ '+esc(ODDS_MKT_LABEL(mkt))+'" onmouseenter="_obTip(this)" onmouseleave="_obTipHide()" onclick="_obTip(this)'):'';
+        return '<td class="ob-cell'+hov+'"><div class="ob-pxrow"><span class="ob-px">'+c.over.toFixed(2)+'</span><span class="ob-bk">'+_bookShort(c.book)+'</span></div>'+cr+'</td>'; }).join('');
       return '<tr>'+nameCell+cells+'</tr>';
     }).join('');
-    const legend='<div class="ob-legend">Cell: best over price + book &middot; <span class="s">S</span> season / <span class="h">H</span> H2H clear-rate at that line</div>';
-    return titleSec+filters+legend+'<div class="ob-wrap"><table class="ob-table"><thead>'+thead+'</thead><tbody>'+body+'</tbody></table></div>';
+    const legend='<div class="ob-legend">Cell: best over price + book &middot; hover a price for all books &middot; <span class="s">S</span> season / <span class="h">H</span> H2H clear-rate at that line</div>';
+    return titleSec+filters+legend+'<div class="ob-wrap" onscroll="_obTipHide()"><table class="ob-table"><thead>'+thead+'</thead><tbody>'+body+'</tbody></table></div>';
   }
 
   function _updateFreshnessPill(){const el=document.getElementById('freshness-pill');if(!el)return;const ts=parseInt(state.dataVersion,10);if(!ts){el.textContent='Loaded';return;}const h=(Date.now()-ts*1000)/3.6e6;el.textContent=h<1?'Updated just now':h<24?'Updated '+Math.floor(h)+'h ago':'Updated '+Math.floor(h/24)+'d ago';el.classList.remove('stale','very-stale');if(h>72)el.classList.add('very-stale');else if(h>36)el.classList.add('stale');}
