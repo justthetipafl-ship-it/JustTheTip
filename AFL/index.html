@@ -2378,13 +2378,17 @@
   }
   function muTag(pct){ const mi=JTTScoring.muInfo(pct); return mi?'<span style="color:'+mi.c+'">'+(pct>0?'+':'')+pct.toFixed(0)+'% '+mi.t+'</span>':''; }
   function lineTag(name,market){ const o=postedLine(name,market); if(!o||o.over==null||!o.book) return o&&o.line!=null?' · O '+o.line:''; return ' · O '+o.line+' $'+o.over.toFixed(2)+' ('+bookName(o.book)+')'; }
-  // Elite Matchups ladder: the posted line + the next two higher rungs (best over per line), e.g. " · 27+ $1.50 · 30+ $2.40 · 33+ $4.50"
+  // Elite Matchups ladder: start at the first rung paying ~$1.60+ (skip the cramped chalk), then the next two up,
+  // e.g. " · 19+ $1.62 · 20+ $2.10 · 21+ $2.70"
   function multiLineTag(name,market){
     const alts=altLines(name,market);
     if(!alts.length) return lineTag(name,market);
-    const main=oddsFor(name,market);
-    const start=(main&&main.line!=null)?main.line:alts[0].line;
-    const ladder=alts.filter(a=>a.line>=start-0.01&&a.over!=null).slice(0,3);
+    const priced=alts.filter(a=>a.over!=null);                 // ascending by line (over rises with the line)
+    if(!priced.length) return lineTag(name,market);
+    const FLOOR=1.60;
+    let startIdx=priced.findIndex(a=>a.over>=FLOOR);
+    if(startIdx<0) startIdx=Math.max(0,priced.length-3);       // nothing reaches $1.60 -> show the longest rungs we have
+    const ladder=priced.slice(startIdx,startIdx+3);
     if(!ladder.length) return lineTag(name,market);
     return ' \u00b7 '+ladder.map(a=>Math.ceil(a.line)+'+ $'+a.over.toFixed(2)).join(' \u00b7 ');
   }
