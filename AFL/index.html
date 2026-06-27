@@ -735,6 +735,9 @@
     // next-opponent per team from the fixture
     state.idx.nextOpp={};
     (d.fixture||[]).forEach(g=>{ state.idx.nextOpp[g.home]=g.away; state.idx.nextOpp[g.away]=g.home; });
+    // chronological order (finals included) so every .slice(-n) recency view — box scores,
+    // recent bars, prop calculator, L5/L10, and the engine (shares these arrays) — shows the latest games
+    Object.values(state.idx.logsByName).forEach(a=>a.sort((x,y)=>((+x.Year||0)-(+y.Year||0))||(_roundNum(x.RoundName)-_roundNum(y.RoundName))));
     // hand the derived model to the scoring engine
     if(window.JTTScoring){
       JTTScoring.configure({
@@ -1845,7 +1848,18 @@
   const _fixtureSet = ()=> _degenScope || new Set((state.data.fixture||[]).flatMap(g=>[g.home,g.away]).filter(Boolean));
   const allLogs = n => state.idx.logsByName[n]||[];
   const curLogs = n => allLogs(n).filter(r=>String(r.Year)===CUR_SEASON());
-  function _roundNum(rd){ if(!rd) return 0; const m=(''+rd).match(/\d+/); return m?+m[0]:0; }
+  function _roundNum(rd){
+    if(!rd) return 0;
+    const s=''+rd;
+    const wk=s.match(/finals?\s*week\s*(\d+)/i); if(wk) return 120+(+wk[1]);   // Finals Week N
+    if(/grand\s*final/i.test(s)) return 124;
+    if(/prelim/i.test(s))        return 123;
+    if(/semi/i.test(s))          return 122;
+    if(/(qualif|elimin)/i.test(s)) return 121;
+    if(/final/i.test(s))         return 120;                                    // any other finals → after R24
+    if(/opening\s*round/i.test(s)) return 0;
+    const m=s.match(/\d+/); return m?+m[0]:0;                                   // Round N
+  }
   function fantasyLine(avg){ const flr=Math.floor(avg/5)*5; const base=Math.max(70,flr); return (avg-base<3)?Math.max(70,base-5):base; }
   function realisticLine2(k,avg){
     if(k==='disposals'){ if(avg<18)return null; const l=Math.round(avg)-5; return l>=15?l:null; }
