@@ -2222,31 +2222,35 @@
     return {meetings,legs};
   }
   // best posted over for a leg's "line+" on a given book (highest posted line still cleared all 3)
-  function _dvPrice(leg,book){
+  // Highest "X+" rung the book offers at/below the player's max-cleared line whose price fits the odds
+  // window. Every rung <= leg.line also cleared all 3 meetings, so when the top line is over the max-odds
+  // cap we step DOWN to the longest qualifying line still inside the band (instead of dropping the player).
+  function _dvPrice(leg,book,minOdds,maxOdds){
     const rows=(((state.idx.bookIdx||{})[leg.name]||{})[leg.market]||[]).filter(r=>r.book===book&&r.over!=null&&r.line<=leg.line);
     if(!rows.length) return null;
-    const pick=rows.sort((a,b)=>b.line-a.line)[0];
-    return {over:pick.over, betLine:Math.ceil(pick.line)};
+    rows.sort((a,b)=>b.line-a.line);                                  // longest line (longest odds) first
+    const pick=rows.find(r=>r.over>=(minOdds||0)&&(!maxOdds||maxOdds<=0||r.over<=maxOdds));
+    if(!pick) return null;
+    return {over:pick.over, betLine:Math.ceil(pick.line), line:pick.line};
   }
   // book -> ranked priced legs (one entry per leg, longest odds first)
-  function _dvBoards(home,away){
+  function _dvBoards(home,away,minOdds,maxOdds){
     const {meetings,legs}=_dvLegs(home,away);
     const all={};
     legs.forEach(leg=>{
       const books=new Set((((state.idx.bookIdx||{})[leg.name]||{})[leg.market]||[]).map(r=>r.book).filter(_bookOK));
-      books.forEach(b=>{ const pr=_dvPrice(leg,b); if(pr) (all[b]=all[b]||[]).push(Object.assign({},leg,{over:pr.over,betLine:pr.betLine,book:b})); });
+      books.forEach(b=>{ const pr=_dvPrice(leg,b,minOdds,maxOdds); if(pr) (all[b]=all[b]||[]).push(Object.assign({},leg,{over:pr.over,betLine:pr.betLine,line:pr.line,book:b})); });
     });
     Object.values(all).forEach(arr=>arr.sort((a,b)=>(b.over-a.over)||(b.strength-a.strength)));
     return {meetings,all};
   }
   function _dvProduct(legs){ return legs.reduce((p,l)=>p*(l.over||1),1); }
   function _dvDistinct(arr){ return new Set(arr.map(l=>l.name)).size; }
-  function _dvPool(S){            // working book's leg pool (min/max-odds filtered), used by render + handlers
-    const {all}=_dvBoards(S.home,S.away);
+  function _dvPool(S){            // working book's leg pool (already priced inside the odds window)
     const minOdds=S.minOdds==null?DV_MIN_DEFAULT:S.minOdds;
     const maxOdds=S.maxOdds||0;  // 0 = no cap
-    const ok=l=>(l.over>=minOdds)&&(maxOdds<=0||l.over<=maxOdds);   // min/max apply to Hail Mary too
-    const byBook={}; Object.entries(all).forEach(([b,arr])=>{ const f=arr.filter(ok); if(f.length) byBook[b]=f; });
+    const {all}=_dvBoards(S.home,S.away,minOdds,maxOdds);
+    const byBook={}; Object.entries(all).forEach(([b,arr])=>{ if(arr.length) byBook[b]=arr; });
     const books=Object.keys(byBook); if(!books.length) return {books:[],book:null,pool:[],byBook:{}};
     const book=(S.book&&byBook[S.book])?S.book:books.sort((a,b)=>_dvDistinct(byBook[b])-_dvDistinct(byBook[a]))[0];
     return {books,book,pool:byBook[book],byBook};
