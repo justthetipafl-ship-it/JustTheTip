@@ -54,6 +54,25 @@
 .pm-odds{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:4px;}
   .pm-od{display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:700;color:var(--text-2);background:var(--surface-2);border:1px solid var(--border);border-radius:6px;padding:5px 9px;}
   .pm-od i{font-size:13px;color:var(--accent);}
+  /* ---- player prop calculator ---- */
+  .pc-wrap{background:var(--surface-2);border:1px solid var(--border);border-radius:8px;padding:10px;margin-top:4px;}
+  .pc-chips{display:flex;flex-wrap:wrap;gap:5px;margin-bottom:9px;}
+  .pc-chip{font-size:11px;font-weight:700;padding:4px 10px;border-radius:14px;border:1px solid var(--border);background:var(--surface);color:var(--text-3);cursor:pointer;}
+  .pc-chip.on{background:var(--accent);border-color:var(--accent);color:#0b0b0b;}
+  .pc-row{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:8px;}
+  .pc-line{display:inline-flex;align-items:center;gap:0;border:1px solid var(--border-light);border-radius:8px;overflow:hidden;}
+  .pc-line button{width:30px;height:30px;border:none;background:var(--surface-3);color:var(--text-2);font-size:17px;font-weight:700;cursor:pointer;line-height:1;}
+  .pc-line button:active{background:var(--accent);color:#0b0b0b;}
+  .pc-line b{padding:0 12px;font-size:14px;font-weight:800;color:var(--text);min-width:96px;text-align:center;font-family:var(--font-display);}
+  .pc-hr{font-family:var(--font-display);font-weight:800;font-size:22px;line-height:1;text-align:right;display:flex;flex-direction:column;align-items:flex-end;gap:2px;}
+  .pc-hr span{font-size:9px;font-weight:700;color:var(--text-3);letter-spacing:.04em;}
+  .pc-scopes{display:flex;gap:5px;margin-bottom:8px;}
+  .pc-scope{flex:1;font-size:11px;font-weight:700;padding:5px 0;border-radius:6px;border:1px solid var(--border);background:var(--surface);color:var(--text-3);cursor:pointer;text-align:center;}
+  .pc-scope.on{background:var(--surface-3);border-color:var(--accent);color:var(--accent);}
+  .pc-odds{font-size:11.5px;font-weight:700;color:var(--text-2);background:var(--surface);border:1px solid var(--border);border-left:3px solid var(--accent);border-radius:6px;padding:7px 10px;margin-bottom:6px;line-height:1.5;}
+  .pc-odds b{color:var(--text);font-family:var(--font-display);}
+  .pc-noodds{color:var(--text-3);border-left-color:var(--border-light);font-weight:600;}
+  .pc-empty{font-size:11px;color:var(--text-3);text-align:center;padding:18px 0;}
   .deg-warn{display:inline-flex;align-items:center;justify-content:center;width:15px;height:15px;border-radius:50%;background:#ef4444;color:#fff;font-size:10px;font-weight:900;cursor:pointer;flex-shrink:0;line-height:1;}
   .neg-tip{position:absolute;z-index:9999;background:#13161c;border:1px solid #ef444466;border-radius:8px;padding:8px 11px;font-size:11px;line-height:1.55;color:var(--text-1);box-shadow:0 8px 28px rgba(0,0,0,.55);display:none;}
   .neg-tip b{color:#f87171;display:block;margin-bottom:3px;font-size:9px;text-transform:uppercase;letter-spacing:.05em;}
@@ -1673,7 +1692,7 @@
 
   /* ---------- PLAYER MODAL ---------- */
   // ---- player modal: avg by mode + game-by-game box scores ----
-  let _pmName=null, _pmMode='season';
+  let _pmName=null, _pmMode='season', _pcState=null;
   function pmAvg(name,key,mode){
     if(mode==='season'){const p=state.idx.byName[name];return p&&p[key]!=null?p[key]:lastN(name,key,99);}
     if(mode==='l5')return lastN(name,key,5);
@@ -1732,7 +1751,7 @@
       '<div class="pm-hdr"><div><div class="pm-name">'+p.name+'</div><div class="pm-meta"><span class="pos-dot" style="background:'+(POS_C[p.position]||'#888')+'"></span>'+(p.position||'—')+' · '+(p.team||'')+' · '+(p.matches||0)+' games'+(p.age?' · '+(+p.age).toFixed(0)+'yo':'')+'</div></div><button class="pm-close" onclick="_pmClose()">&times;</button></div>'+
       edge+oddsHtml+
       '<div class="section-title">Averages <span class="sub-tabs" style="float:right;display:inline-flex">'+seg+'</span></div><div class="statgrid">'+cells+'</div>'+
-      recentBars(name,(p.position==='Key Forward'||p.position==='Gen. Forward'||p.position==='Mid-Forward')?'goals':'disposals',null,8)+
+      propCalc(name)+
       pmBoxScores(name,6)+
       (opp?similarPlayers(p,(p.position==='Key Forward'||p.position==='Gen. Forward'||p.position==='Mid-Forward')?'goals':'disposals',opp,4):'');
   }
@@ -1740,7 +1759,7 @@
   window._pmToCMB=function(name,stat,line){_pmClose();_cmbOpen();setTimeout(()=>{const i=document.getElementById('cmp-input');if(i){i.value=name+' '+line+' '+(CMP_STAT_LABELS[stat]||stat).toLowerCase();window.cmbRun&&window.cmbRun();}},120);};
   window.openPlayer=function(name){
     if(!state.idx.byName[name])return;
-    _pmName=name; _pmMode='season';
+    _pmName=name; _pmMode='season'; _pcState=null;
     _pmRender();
     document.getElementById('pm-overlay').classList.add('open');
   };
@@ -2854,6 +2873,109 @@
     return {opp,pct,info:JTTScoring.muInfo(pct),rank:sorted.indexOf(oppRow[stat]||0)+1,total:rows.length,allowed:oppRow[stat]};
   }
   // ---- shared: recent-games bar chart (last n games vs a line) ----
+  // ===== Player prop calculator (old-tool style, now with live odds) =====
+  const PC_STATS=[['disposals','Disp'],['goals','Goals'],['kicks','Kicks'],['handballs','HB'],['marks','Marks'],['tackles','Tackles'],['clearances','Clear'],['dreamteam','Fantasy']];
+  function _pcInit(p,opp){
+    const isFwd=p.position==='Key Forward'||p.position==='Gen. Forward'||p.position==='Mid-Forward';
+    const stat=isFwd?'goals':'disposals';
+    return {stat, line:_pcDefaultLine(p.name,stat), scope:'season'};
+  }
+  function _pcDefaultLine(name,stat){
+    if(stat==='goals') return 1;                                  // default anytime goal (1+)
+    const od=oddsFor(name,stat);
+    if(od&&od.line!=null) return Math.max(1,Math.ceil(od.line));  // snap to the posted line
+    const p=state.idx.byName[name]; const a=p?(p[stat]||0):0;
+    return Math.max(1,Math.round(a));                             // else round the season avg
+  }
+  function _pcGames(name,scope,opp){
+    const all=state.idx.logsByName[name]||[];
+    const cs=(state.data.meta&&state.data.meta.currentSeason)||'2026';
+    if(scope==='h2h'&&opp) return all.filter(r=>r.opponent===opp);
+    if(scope==='l5')  return all.slice(-5);
+    if(scope==='l10') return all.slice(-10);
+    const cur=all.filter(r=>(''+(r.Year||''))===(''+cs));         // season = current season only
+    return cur.length?cur:all.slice(-15);
+  }
+  // best over (and any two-way under) at a given "X+" line for this market
+  function _pcOddsAt(name,stat,line){
+    if(stat==='goals'){
+      if(line<=1){ const o=oddsFor(name,'goals'); return (o&&o.over!=null)?{over:o.over,under:null,book:o.book}:null; }
+      const lad=altLines(name,'goalsx'); const r=lad.find(x=>Math.ceil(x.line)===line);
+      return r?{over:r.over,under:null,book:r.book}:null;
+    }
+    const lad=altLines(name,stat); const r=lad.find(x=>Math.ceil(x.line)===line);
+    const m=(state.idx.oddsIdx[name]||{})[stat];                  // consensus two-way (carries the under)
+    const twoWay=(m&&m.line!=null&&Math.ceil(m.line)===line&&m.over!=null);
+    if(r||twoWay){
+      let over=r?r.over:m.over, book=r?r.book:m.book;
+      if(twoWay&&m.over!=null&&(over==null||m.over>over)){ /* keep best over from ladder */ }
+      return {over, under:twoWay?m.under:null, book};
+    }
+    return null;
+  }
+  function _pcChart(games,statKey,line,opp){
+    if(!games.length) return '<div class="pc-empty">No games in this window</div>';
+    const isG=statKey==='goals'||statKey==='behinds';
+    const vals=games.map(r=>r[statKey]||0);
+    const mx=Math.max(line||0,...vals,1);
+    const BAND=104;
+    const cols=games.map(r=>{
+      const v=r[statKey]||0, hit=v>=line, isOpp=opp&&r.opponent===opp;
+      const col=isOpp?'#f59e0b':(hit?'#22c55e':'#ef4444');
+      const rnd=(''+(r.RoundName||'')).replace(/round\s*/i,'R').replace(/opening\s*round/i,'OR').replace(/\s+/g,'').slice(0,4)||'\u00b7';
+      const op=r.opponent?abbr(r.opponent):'\u00b7';
+      return '<div style="flex:1 1 0;display:flex;flex-direction:column;align-items:center;min-width:0">'+
+        '<div style="font-size:9px;font-weight:800;color:'+col+'">'+(isG?v:Math.round(v))+'</div>'+
+        '<div style="width:100%;height:'+BAND+'px;display:flex;align-items:flex-end"><div style="width:70%;margin:0 auto;background:'+col+';border-radius:2px 2px 0 0;height:'+Math.max(3,Math.round(v/mx*100))+'%"></div></div>'+
+        '<div style="font-size:8px;color:var(--text-3);margin-top:3px;white-space:nowrap">'+rnd+'</div>'+
+        '<div style="font-size:8px;font-weight:700;color:'+(isOpp?'#f59e0b':'var(--text-3)')+';white-space:nowrap">'+op+'</div></div>';
+    }).join('');
+    const dash='<div style="position:absolute;left:0;right:0;bottom:'+(18+Math.round(line/mx*BAND))+'px;border-top:1px dashed #999;pointer-events:none"><span style="position:absolute;right:0;top:-14px;font-size:9px;color:#bbb;font-weight:700">'+(isG?line:Math.round(line))+'+</span></div>';
+    return '<div style="margin-top:10px"><div style="position:relative;display:flex;gap:2px;align-items:flex-end">'+cols+dash+'</div></div>';
+  }
+  function propCalc(name){
+    const p=state.idx.byName[name]; if(!p) return '';
+    const opp=nextOpp(p.team);
+    if(!_pcState) _pcState=_pcInit(p,opp);
+    const S=_pcState, label=(PC_STATS.find(s=>s[0]===S.stat)||[null,S.stat])[1];
+    const chips=PC_STATS.map(([k,l])=>'<button class="pc-chip'+(k===S.stat?' on':'')+'" onclick="_pcStat(\''+k+'\')">'+l+'</button>').join('');
+    const SCOPES=[['season','Season'],['l10','L10'],['l5','L5']].concat(opp?[['h2h','v '+abbr(opp)]]:[]);
+    const scopes=SCOPES.map(([k,l])=>'<button class="pc-scope'+(k===S.scope?' on':'')+'" onclick="_pcScope(\''+k+'\')">'+l+'</button>').join('');
+    const games=_pcGames(name,S.scope,opp);
+    const vals=games.map(r=>r[S.stat]||0), hits=vals.filter(v=>v>=S.line).length;
+    const hr=games.length?hits/games.length:null;
+    const hrCol=hr==null?'#888':(hr>=0.6?'#22c55e':hr>=0.45?'#eab308':'#ef4444');
+    const stepper='<div class="pc-line"><button onclick="_pcLine(-1)">\u2212</button><b>'+S.line+'+ '+label+'</b><button onclick="_pcLine(1)">+</button></div>';
+    const hrHtml='<div class="pc-hr" style="color:'+hrCol+'">'+(hr==null?'\u2014':Math.round(hr*100)+'%')+'<span>'+hits+'/'+games.length+' hit \u00b7 '+S.scope.toUpperCase()+'</span></div>';
+    // odds at the chosen line
+    const od=_pcOddsAt(name,S.stat,S.line);
+    let oddsHtml;
+    if(od&&od.over!=null){
+      let implied=null, devig=false;
+      if(od.under!=null){ const d=_powerDevig(od.over,od.under); if(d!=null){ implied=d; devig=true; } else implied=1/od.over; }
+      else implied=1/od.over;
+      const edge=(implied!=null&&hr!=null)?(hr-implied):null;
+      const parts=['Over <b>$'+od.over.toFixed(2)+'</b>'+(od.book?' '+bookName(od.book):'')];
+      if(od.under!=null) parts.push('Under $'+od.under.toFixed(2));
+      if(implied!=null) parts.push('implied '+Math.round(implied*100)+'%'+(devig?' (devig)':''));
+      if(edge!=null){ const ec=edge>=0?'#22c55e':'#ef4444'; parts.push('<span style="color:'+ec+';font-weight:800">edge '+(edge>=0?'+':'')+Math.round(edge*100)+'%</span>'); }
+      oddsHtml='<div class="pc-odds">'+parts.join(' \u00b7 ')+'</div>';
+    } else {
+      oddsHtml='<div class="pc-odds pc-noodds">No price at '+S.line+'+ '+label+(hasAnyOdds()?'':' \u00b7 odds not loaded')+'</div>';
+    }
+    return '<div class="section-title">Prop calculator</div>'+
+      '<div class="pc-wrap">'+
+        '<div class="pc-chips">'+chips+'</div>'+
+        '<div class="pc-row">'+stepper+hrHtml+'</div>'+
+        '<div class="pc-scopes">'+scopes+'</div>'+
+        oddsHtml+
+        _pcChart(games,S.stat,S.line,opp)+
+      '</div>';
+  }
+  window._pcStat=function(k){ if(_pcState){ _pcState.stat=k; _pcState.line=_pcDefaultLine(_pmName,k); _pmRender(); } };
+  window._pcScope=function(k){ if(_pcState){ _pcState.scope=k; _pmRender(); } };
+  window._pcLine=function(d){ if(_pcState){ _pcState.line=Math.max(1,_pcState.line+d); _pmRender(); } };
+
   function recentBars(name,statKey,line,n,opp){
     n=n||20;
     const logs=(state.idx.logsByName[name]||[]).slice(-n);
