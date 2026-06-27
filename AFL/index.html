@@ -210,6 +210,17 @@
   .tp-collapse.c-red{border-left:3px solid #f87171;} .tp-collapse.c-red .tp-collapse-sum>i:first-child{color:#f87171;}
   .tp-collapse.c-purple{border-left:3px solid #a78bfa;} .tp-collapse.c-purple .tp-collapse-sum>i:first-child{color:#a78bfa;}
   .tp-collapse.c-cyan{border-left:3px solid #22d3ee;} .tp-collapse.c-cyan .tp-collapse-sum>i:first-child{color:#22d3ee;}
+  .lc-card{background:var(--surface-2);border:1px solid var(--border);border-radius:9px;padding:9px 11px;margin-bottom:8px;cursor:pointer;transition:border-color .12s;}
+  .lc-card:hover{border-color:var(--accent);}
+  .lc-hd{display:flex;align-items:baseline;gap:6px;flex-wrap:wrap;margin-bottom:6px;}
+  .lc-nm{font-family:var(--font-display);font-weight:800;font-size:13px;color:var(--text);}
+  .lc-meta{font-size:10px;color:var(--text-3);font-weight:700;margin-left:auto;text-transform:uppercase;letter-spacing:.03em;}
+  .lc-rung{display:grid;grid-template-columns:42px 1fr 1fr minmax(104px,auto);gap:8px;align-items:center;padding:5px 0;border-top:1px solid var(--border);font-size:12px;}
+  .lc-cols{border-top:none;padding:0 0 2px;font-size:9px;color:var(--text-3);text-transform:uppercase;letter-spacing:.04em;font-weight:700;}
+  .lc-line{font-family:var(--font-display);font-weight:800;color:var(--text);}
+  .lc-hr{font-weight:800;font-variant-numeric:tabular-nums;}
+  .lc-od{font-weight:800;font-variant-numeric:tabular-nums;text-align:right;color:var(--text);display:flex;align-items:baseline;gap:5px;justify-content:flex-end;}
+  .lc-bk{font-size:9px;color:var(--text-3);font-weight:700;}
   .dv-books{display:flex;flex-wrap:wrap;gap:5px;margin:0 0 8px;}
   .dv-bk{padding:4px 9px;border-radius:13px;border:1px solid var(--border);background:transparent;color:var(--text-3);font-size:11px;font-weight:700;cursor:pointer;}
   .dv-bk.on{border-color:var(--accent);background:rgba(34,197,94,.12);color:var(--text);}
@@ -1325,6 +1336,8 @@
   // ===== Nerd Mode: Arbs / Middles / +EV / Implied EV / Market EV =====
   const NERD_MARKETS=[['disposals','Disposals'],['dreamteam','Fantasy'],['kicks','Kicks'],['handballs','Handballs'],['marks','Marks'],['tackles','Tackles'],['clearances','Clearances']];  // model EV fires on all; arbs/middles/de-vig auto-gate to two-way O/U markets (disposals, fantasy)
   const NM_LBL=Object.fromEntries(NERD_MARKETS);
+  // market filter: an undefined/absent list means "all on" (covers existing saved settings + new users)
+  function _nerdMktOn(k){ const m=SETTINGS.nerd.markets; return !Array.isArray(m) || m.indexOf(k)>=0; }
   function bookLines(name,market){ return (((state.idx.bookIdx||{})[name]||{})[market]||[]).filter(r=>_bookOK(r.book)); }
   function _noVigOver(over,under){ const io=1/over, iu=1/under; return io/(io+iu); }   // fair P(over), proportional
   // Power-method devig (Clarke et al. 2017): find exponent k with (1/over)^k+(1/under)^k=1, then fair P=(1/over)^k.
@@ -1373,7 +1386,7 @@
 
   function nerdArbs(players){
     const out=[];
-    players.forEach(p=>NERD_MARKETS.forEach(([k])=>{
+    players.forEach(p=>NERD_MARKETS.forEach(([k])=>{ if(!_nerdMktOn(k)) return;
       const byL=_byLine(bookLines(p.name,k));
       Object.entries(byL).forEach(([line,rs])=>{
         const bo=_bestOver(rs), bu=_bestUnder(rs);
@@ -1385,7 +1398,7 @@
   }
   function nerdMiddles(players){
     const out=[];
-    players.forEach(p=>NERD_MARKETS.forEach(([k])=>{
+    players.forEach(p=>NERD_MARKETS.forEach(([k])=>{ if(!_nerdMktOn(k)) return;
       const rows=bookLines(p.name,k);
       const overs=rows.filter(r=>r.over!=null), unders=rows.filter(r=>r.under!=null);
       let best=null;
@@ -1403,7 +1416,7 @@
     // implied = player's historical hit rate at the line vs the over price (odds vs history)
     // market  = best over price vs the market-average over price across books (one-sided line value)
     const out=[];
-    players.forEach(p=>NERD_MARKETS.forEach(([k])=>{
+    players.forEach(p=>NERD_MARKETS.forEach(([k])=>{ if(!_nerdMktOn(k)) return;
       const byL=_byLine(bookLines(p.name,k));
       Object.entries(byL).forEach(([line,rs])=>{
         const L=+line, bo=_bestOver(rs); if(!bo) return;
@@ -1448,7 +1461,7 @@
   const _LO_RATE={disposals:0.07,dreamteam:0.02,kicks:0.09,handballs:0.10,marks:0.18,tackles:0.16,clearances:0.20};
   function nerdLineOut(players,opp){
     const out=[];
-    players.forEach(p=>NERD_MARKETS.forEach(([k])=>{
+    players.forEach(p=>NERD_MARKETS.forEach(([k])=>{ if(!_nerdMktOn(k)) return;
       const main=((state.idx.oddsIdx||{})[p.name]||{})[k];
       if(!main||main.over==null||main.under==null) return;              // consensus two-way anchors + devigs
       const fairC=_powerDevig(main.over,main.under); if(fairC==null) return;
@@ -1874,7 +1887,7 @@
   function signalCard(r,kind){
     const col=r.verdictCol;
     const priceTxt=r.odds!=null?' @ $'+r.odds.toFixed(2)+(r.book?' ('+r.book+')':''):'';
-    return '<div class="fixture-row" style="grid-template-columns:1fr auto;cursor:pointer;border-left:3px solid '+col+'" onclick="openPlayer(\''+esc(r.p.name).replace(/\x27/g,"\\\x27")+'\')">'+
+    return '<div class="fixture-row" style="grid-template-columns:1fr auto;cursor:pointer" onclick="openPlayer(\''+esc(r.p.name).replace(/\x27/g,"\\\x27")+'\')">'+
       '<div style="text-align:left"><div class="fxr-name" style="font-size:15px">'+r.p.name+'</div>'+
       '<div class="fxr-venue">'+(r.p.position||'')+' · '+abbr(r.team)+' v '+abbr(r.oppName)+' · '+r.games2026+' gm</div></div>'+
       '<div style="text-align:right"><div style="font-family:var(--font-display);font-weight:800;color:'+col+';font-size:14px">'+r.verdictLabel+'</div>'+
@@ -2226,6 +2239,7 @@
   function _climbValidTog(r){ const t=r.tog; if(t==null) return true; const v=parseFloat(t); return isNaN(v)||v>=50; }
   function letsClimb(){
     const teams=_fixtureSet(); const out=[];
+    const cs=String((state.data.meta&&state.data.meta.currentSeason)||'2026');
     (state.idx.players||[]).filter(p=>teams.has(p.team)).forEach(p=>{
       const opp=nextOpp(p.team);
       const sorted=[...allLogs(p.name)].filter(_climbValidTog)
@@ -2233,36 +2247,53 @@
       if(!sorted.length) return;
       const last10=sorted.slice(-10);
       const h2h=opp?sorted.filter(r=>r.opponent===opp):[];
+      const season=sorted.filter(r=>String(r.Year)===cs);
       CLIMB_MARKETS.forEach(([k,l])=>{
-        // posted rung ladder = main O/U line + alt lines, keeping any with a price
+        // posted rung ladder, keyed by the "X+" integer, keeping the best over at each rung
         const rungMap={};
-        const main=oddsFor(p.name,k); if(main&&main.line!=null&&main.over!=null) rungMap[main.line]={line:main.line,over:main.over,book:main.book};
-        altLines(p.name,k).forEach(a=>{ if(a.line!=null&&a.over!=null&&(!rungMap[a.line]||a.over>rungMap[a.line].over)) rungMap[a.line]={line:a.line,over:a.over,book:a.book}; });
+        const main=oddsFor(p.name,k); if(main&&main.line!=null&&main.over!=null){ const L=Math.ceil(main.line); rungMap[L]={line:L,over:main.over,book:main.book}; }
+        altLines(p.name,k).forEach(a=>{ if(a.line!=null&&a.over!=null){ const L=Math.ceil(a.line); if(!rungMap[L]||a.over>rungMap[L].over) rungMap[L]={line:L,over:a.over,book:a.book}; } });
         const rungs=Object.values(rungMap).sort((x,y)=>x.line-y.line);
         if(!rungs.length) return;
-        // starting point = lowest posted line whose OVER pays at least $1.70
+        // starting point = lowest posted line whose OVER pays at least the floor
         const start=rungs.find(r=>r.over>=CLIMB_MIN_ODDS);
         if(!start) return;
-        const N0=Math.round(start.line); if(!N0) return;       // "N0+" is the start number
-        const t1=N0+1, t2=N0+CLIMB_STEPS;                       // two numbers up
+        const N0=start.line, t1=N0+1, t2=N0+CLIMB_STEPS;
         const hr=(g,line)=> g.length ? g.filter(r=>(r[k]||0)>=line).length/g.length : null;
+        // qualification gate (player must hold a high hit rate as the line climbs)
         let basis=null, rate1=null, rate2=null, gN=0;
-        if(h2h.length>=CLIMB_MIN_H2H){                          // path A: vs current opponent
-          const r1=hr(h2h,t1), r2=hr(h2h,t2);
-          if(r1!=null&&r2!=null&&r1>=CLIMB_HIT&&r2>=CLIMB_HIT){ basis='h2h'; rate1=r1; rate2=r2; gN=h2h.length; }
-        }
-        if(!basis&&last10.length>=CLIMB_MIN_L10){               // path B: last 10 games
-          const r1=hr(last10,t1), r2=hr(last10,t2);
-          if(r1!=null&&r2!=null&&r1>=CLIMB_HIT&&r2>=CLIMB_HIT){ basis='l10'; rate1=r1; rate2=r2; gN=last10.length; }
-        }
+        if(h2h.length>=CLIMB_MIN_H2H){ const r1=hr(h2h,t1),r2=hr(h2h,t2); if(r1!=null&&r2!=null&&r1>=CLIMB_HIT&&r2>=CLIMB_HIT){ basis='h2h'; rate1=r1; rate2=r2; gN=h2h.length; } }
+        if(!basis&&last10.length>=CLIMB_MIN_L10){ const r1=hr(last10,t1),r2=hr(last10,t2); if(r1!=null&&r2!=null&&r1>=CLIMB_HIT&&r2>=CLIMB_HIT){ basis='l10'; rate1=r1; rate2=r2; gN=last10.length; } }
         if(!basis) return;
-        const top=rungs.find(r=>Math.round(r.line)===t2);       // odds at the climb target, if posted
-        out.push({ p, opp, stat:l, statKey:k, startN:N0, startOver:start.over, startBook:start.book,
-          t1, t2, climbOver:top?top.over:null, climbBook:top?top.book:null, basis, rate1, rate2, games:gN });
+        // display ladder: posted rungs from the start line up, each with H2H + season hit rate + odds
+        const ladder=rungs.filter(r=>r.line>=N0).slice(0,6).map(r=>({
+          line:r.line, over:r.over, book:r.book,
+          h2hRate: h2h.length?hr(h2h,r.line):null, h2hN: h2h.length,
+          seasonRate: season.length?hr(season,r.line):null, seasonN: season.length
+        }));
+        out.push({ p, opp, stat:l, statKey:k, startN:N0, t1, t2, basis, rate1, rate2, games:gN,
+          startOver:start.over, startBook:start.book, climbOver:(rungs.find(r=>r.line===t2)||{}).over||null, ladder });
       });
     });
-    // best climbed-line hit rate first, then the longer (more valuable) climb price
     return out.sort((a,b)=> (b.rate2-a.rate2) || ((b.climbOver||b.startOver)-(a.climbOver||a.startOver)));
+  }
+  function _lcCol(v){ return v==null?'var(--text-3)':v>=0.7?'#22c55e':v>=0.5?'#eab308':'#ef4444'; }
+  function climbCard(c){
+    const nm=esc(c.p.name), q=nm.replace(/\x27/g,"\\\x27");
+    const pct=v=>v==null?'—':Math.round(v*100)+'%';
+    const h2hN=c.ladder[0]?c.ladder[0].h2hN:0, szN=c.ladder[0]?c.ladder[0].seasonN:0;
+    const rung=r=>'<div class="lc-rung">'+
+        '<span class="lc-line">'+r.line+'+</span>'+
+        '<span class="lc-hr" style="color:'+_lcCol(r.h2hRate)+'">'+pct(r.h2hRate)+'</span>'+
+        '<span class="lc-hr" style="color:'+_lcCol(r.seasonRate)+'">'+pct(r.seasonRate)+'</span>'+
+        '<span class="lc-od">'+(r.over!=null?'$'+r.over.toFixed(2)+'<span class="lc-bk">'+bookName(r.book)+'</span>':'<span class="lc-bk">—</span>')+'</span>'+
+      '</div>';
+    return '<div class="lc-card" onclick="openPlayer(\''+q+'\')">'+
+      '<div class="lc-hd"><span class="lc-nm">'+nm+'</span>'+_degBadges(c.p.name)+
+        '<span class="lc-meta">'+c.stat+' · '+abbr(c.p.team)+(c.opp?' v '+abbr(c.opp):'')+'</span></div>'+
+      '<div class="lc-rung lc-cols"><span>Line</span><span>H2H'+(h2hN?' ('+h2hN+'g)':'')+'</span><span>Season'+(szN?' ('+szN+'g)':'')+'</span><span class="lc-od">Best over</span></div>'+
+      c.ladder.map(rung).join('')+
+    '</div>';
   }
   // ===== Déjà Vu SGM — legs that hit the last 3 H2H meetings, all on one book =====
   const DV_MARKETS=[['disposals','Disposals',15],['kicks','Kicks',8],['handballs','Handballs',6],['marks','Marks',3],['tackles','Tackles',3],['clearances','Clearances',2],['goals','Goals',1]];
@@ -2589,7 +2620,7 @@
   }
   function degRow(name,col,right,sub,onclickName){
     const hl=s=>(''+s).replace(/(\$\d+(?:\.\d+)?)/g,'<b class="deg-odds">$1</b>');
-    return '<div class="fixture-row deg-row" style="cursor:pointer;border-left:3px solid '+col+'" onclick="openPlayer(\''+esc(onclickName||name).replace(/\x27/g,"\\\x27")+'\')">'+
+    return '<div class="fixture-row deg-row" style="cursor:pointer" onclick="openPlayer(\''+esc(onclickName||name).replace(/\x27/g,"\\\x27")+'\')">'+
       '<div class="deg-main"><div class="fxr-name deg-nm"><span>'+name+'</span>'+_degBadges(name)+'</div><div class="deg-sub">'+hl(sub)+'</div></div>'+
       '<div class="deg-val" style="color:'+col+'">'+_degRight(right,hl)+'</div></div>';
   }
@@ -2711,15 +2742,7 @@
       return degWrap('ti-user-search','Lurking Taggers',rows);
     }
     if(k==='climb'){
-      const rows=_fc(letsClimb(),6,30).map(c=>{
-        const basisTxt=c.basis==='h2h'?(c.games+' H2H v '+abbr(c.opp)):('L'+Math.min(10,c.games));
-        const climbPx=c.climbOver?' $'+c.climbOver.toFixed(2):'';
-        const head=c.startN+'+ → '+c.t2+'+';
-        const sub=c.stat+' · '+abbr(c.p.team)+(c.opp?' v '+abbr(c.opp):'')+' · start $'+c.startOver.toFixed(2)+
-          (c.startBook?' ('+bookName(c.startBook)+')':'')+' → '+c.t2+'+'+climbPx+' · '+
-          c.t1+'+ '+Math.round(c.rate1*100)+'% / '+c.t2+'+ '+Math.round(c.rate2*100)+'% ('+basisTxt+')';
-        return degRow(c.p.name,'#22c55e',{v1:c.startN+'+→'+c.t2+'+',l1:'climb',v2:Math.round(c.rate2*100)+'%',l2:'@'+c.t2+'+'},sub);
-      });
+      const rows=_fc(letsClimb(),6,30).map(climbCard);
       return degWrap('ti-stairs-up',"Let's Climb",rows,'c-green');
     }
     if(k==='multi'){
@@ -2772,6 +2795,7 @@
     const N=SETTINGS.nerd;
     let h='<div style="'+_fbar+'"><div style="font-size:10px;color:var(--text-3);margin-bottom:4px;text-transform:uppercase;letter-spacing:.04em">Nerd filters</div>';
     h+='<div style="margin-bottom:4px">'+[['arbs','Arbs'],['middles','Middles'],['model','Power Devig'],['lineout','LineOut'],['implied','Implied EV'],['market','Market EV']].map(([k,l])=>_fchip(!!N[k],l,"_sNerdTile('"+k+"')")).join('')+'</div>';
+    h+='<div style="margin-bottom:4px">'+NERD_MARKETS.map(([k,l])=>_fchip(_nerdMktOn(k),l,"_sNerdMkt('"+k+"')")).join('')+'</div>';
     h+='<div style="display:flex;flex-wrap:wrap;align-items:center">'+
       _fnum('Min EV%',N.minEv,"_sNerdNum('minEv',this.value)")+_fnum('Max EV%',N.maxEv,"_sNerdNum('maxEv',this.value)")+
       _fnum('Max odds',N.maxOdds,"_sNerdNum('maxOdds',this.value)")+_fnum('Min arb%',N.minArb,"_sNerdNum('minArb',this.value)")+
@@ -2819,6 +2843,8 @@
     h+=card('Nerd Mode','ti-math-function',
       sub('Show tiles')+
       [['arbs','Arbs'],['middles','Middles'],['model','Power Devig'],['lineout','LineOut'],['implied','Implied EV'],['market','Market EV']].map(([k,l])=>chip(!!N[k],l,"_sNerdTile('"+k+"')")).join('')+
+      sub('Markets')+
+      NERD_MARKETS.map(([k,l])=>chip(_nerdMktOn(k),l,"_sNerdMkt('"+k+"')")).join('')+
       grid(fld('Min EV %',num(N.minEv,"_sNerdNum('minEv',this.value)"))+fld('Max EV %',num(N.maxEv,"_sNerdNum('maxEv',this.value)"))+
         fld('Max odds',num(N.maxOdds,"_sNerdNum('maxOdds',this.value)"))+fld('Min arb %',num(N.minArb,"_sNerdNum('minArb',this.value)"))+
         fld('Min middle gap',num(N.minGap,"_sNerdNum('minGap',this.value)"))+fld('Max middle cost %',num(N.maxCost,"_sNerdNum('maxCost',this.value)"))+
@@ -2837,6 +2863,14 @@
   }
   window._sBook=function(k){ const i=SETTINGS.books.indexOf(k); if(i>=0)SETTINGS.books.splice(i,1); else SETTINGS.books.push(k); saveSettings(); _renderApp(); };
   window._sNerdTile=function(k){ SETTINGS.nerd[k]=!SETTINGS.nerd[k]; saveSettings(); _renderApp(); };
+  window._sNerdMkt=function(k){
+    let m=SETTINGS.nerd.markets;
+    if(!Array.isArray(m)) m=NERD_MARKETS.map(x=>x[0]);   // first toggle: start from all-on
+    const i=m.indexOf(k);
+    if(i>=0){ if(m.length>1) m.splice(i,1); }            // keep at least one market on
+    else m.push(k);
+    SETTINGS.nerd.markets=m; saveSettings(); _renderApp();
+  };
   window._sNerdNum=function(k,v){ const n=parseFloat(v); if(!isNaN(n)&&n>=0) SETTINGS.nerd[k]=n; saveSettings(); _renderApp(); };
   window._sMultiScope=function(s){ SETTINGS.multi.scope=s; saveSettings(); _renderApp(); };
   window._sMultiToday=function(){ SETTINGS.multi.today=!SETTINGS.multi.today; saveSettings(); _renderApp(); };
