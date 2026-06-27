@@ -907,8 +907,10 @@
   }
   function ODDS_MKT_LABEL(k){ const m=ODDS_MKTS.find(x=>x[0]===k); return m?m[1]:k; }
   // every book's best OVER at a given "X+" line for this market (sorted longest price first)
+  // the Goals board spans two feed keys: 'goals' = anytime (0.5 -> 1+), 'goalsx' = milestones (1.5 -> 2+, etc.)
+  function _obMkts(mkt){ return mkt==='goals' ? ['goals','goalsx'] : [mkt]; }
   function _obBookList(name,mkt,t){
-    const rows=(((state.idx.bookIdx||{})[name]||{})[mkt]||[]).filter(r=>_bookOK(r.book)&&r.over!=null&&Math.ceil(r.line)===t);
+    const rows=_obMkts(mkt).flatMap(mk=>(((state.idx.bookIdx||{})[name]||{})[mk]||[])).filter(r=>_bookOK(r.book)&&r.over!=null&&Math.ceil(r.line)===t);
     const best={}; rows.forEach(r=>{ if(best[r.book]==null||r.over>best[r.book]) best[r.book]=r.over; });
     return Object.entries(best).map(([b,o])=>({book:b,over:o})).sort((a,b)=>b.over-a.over);
   }
@@ -942,8 +944,8 @@
     const g=fx[gi], home=g.home, away=g.away, oppOf=t=>t===home?away:home;
     let roster=playersOnTeam(home).concat(playersOnTeam(away)).filter(p=>isPlaying(p.name,p.team)).sort((a,b)=>(a.name||'').localeCompare(b.name||''));
     const tierSet=new Set(), perPlayer={};
-    roster.forEach(p=>{ const m={}; altLines(p.name,mkt).forEach(a=>{ if(a.line==null||a.over==null) return; const t=Math.ceil(a.line);
-      if(!m[t]||a.over>m[t].over) m[t]={over:a.over,book:a.book}; tierSet.add(t); }); perPlayer[p.name]=m; });
+    roster.forEach(p=>{ const m={}; _obMkts(mkt).forEach(mk=>altLines(p.name,mk).forEach(a=>{ if(a.line==null||a.over==null) return; const t=Math.ceil(a.line);
+      if(!m[t]||a.over>m[t].over) m[t]={over:a.over,book:a.book}; tierSet.add(t); })); perPlayer[p.name]=m; });
     roster=roster.filter(p=>Object.keys(perPlayer[p.name]||{}).length>0);   // hide players with no posted lines
     const tiers=[...tierSet].sort((x,y)=>x-y);
     const title=esc(home)+' vs '+esc(away)+(g.time?' &middot; '+esc(g.time):'');
@@ -1888,11 +1890,12 @@
   function signalCard(r,kind){
     const col=r.verdictCol;
     const priceTxt=r.odds!=null?' @ $'+r.odds.toFixed(2)+(r.book?' ('+r.book+')':''):'';
-    return '<div class="fixture-row" style="grid-template-columns:1fr auto;cursor:pointer" onclick="openPlayer(\''+esc(r.p.name).replace(/\x27/g,"\\\x27")+'\')">'+
-      '<div style="text-align:left"><div class="fxr-name" style="font-size:15px">'+r.p.name+'</div>'+
-      '<div class="fxr-venue">'+(r.p.position||'')+' · '+abbr(r.team)+' v '+abbr(r.oppName)+' · '+r.games2026+' gm</div></div>'+
-      '<div style="text-align:right"><div style="font-family:var(--font-display);font-weight:800;color:'+col+';font-size:14px">'+r.verdictLabel+'</div>'+
-      '<div class="fxr-venue">'+(kind==='over'?'O':'U')+' '+r.line+priceTxt+' · L5 '+fmt(r.l5)+' · hit '+Math.round(r.hitRate*100)+'%'+(r.dvpPct!=null?' · dvp '+(r.dvpPct>0?'+':'')+r.dvpPct.toFixed(0)+'%':'')+'</div></div></div>';
+    const detail=(kind==='over'?'O':'U')+' '+r.line+priceTxt+' · L5 '+fmt(r.l5)+' · hit '+Math.round(r.hitRate*100)+'%'+(r.dvpPct!=null?' · dvp '+(r.dvpPct>0?'+':'')+r.dvpPct.toFixed(0)+'%':'');
+    return '<div class="fixture-row deg-row" style="cursor:pointer" onclick="openPlayer(\''+esc(r.p.name).replace(/\x27/g,"\\\x27")+'\')">'+
+      '<div class="deg-main"><div class="fxr-name deg-nm"><span>'+r.p.name+'</span></div>'+
+      '<div class="deg-sub">'+(r.p.position||'')+' · '+abbr(r.team)+' v '+abbr(r.oppName)+' · '+r.games2026+' gm</div></div>'+
+      '<div class="deg-val" style="color:'+col+'"><div>'+r.verdictLabel+'</div>'+
+      '<div class="deg-sub" style="color:var(--text-2);margin-top:2px">'+detail+'</div></div></div>';
   }
   function ouSection(list,kind,title,icon,colorClass){
     if(!hasAnyOdds()) return _degenFocused?'':emptyState(icon,'No lines loaded','Signals fire only against real posted lines. Connect an odds feed (or paste lines in Info) to light these up.');
