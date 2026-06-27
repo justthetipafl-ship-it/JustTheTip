@@ -18,7 +18,6 @@ OUTPUT (data/):
   teams.json     per-team "for" and "allowed" averages DERIVED from game logs
   gamelogs.json  pruned game logs (only the columns the UI reads)
   fixture.json   upcoming matches (passthrough)
-  fgs.json       first-goal-scorer (passthrough)
   injury.json    injury list (passthrough)
 
 Usage:  python build_afl_data.py [--src bundle.json] [--out data] \
@@ -311,16 +310,15 @@ def to_num(v):
 
 
 def load_source(src):
-    """Return (gamelogs, legacy_player, fixture, fgs, injury, legacy_meta, extra)."""
+    """Return (gamelogs, legacy_player, fixture, injury, legacy_meta, extra)."""
     if os.path.isdir(src) and os.path.exists(os.path.join(src, "dvp.raw.json")):
         dvp = json.load(open(os.path.join(src, "dvp.raw.json")))
-        return dvp, [], [], [], [], {}, {}
+        return dvp, [], [], [], {}, {}
     d = json.load(open(src))
     return (
         d.get("dvp", []),
         d.get("player", []),
         d.get("fixture", []),
-        d.get("fgs", []),
         d.get("injury", []),
         {k: d.get(k) for k in ("version", "created", "round", "summary", "formats")},
         {"teamform": d.get("teamform", []), "teamdef": d.get("teamdef", []),
@@ -573,7 +571,7 @@ def main():
                     help="weekly password -> stored as SHA-256 (never plaintext)")
     args = ap.parse_args()
 
-    dvp, legacy_player, fixture, fgs, injury, legacy_meta, extra = load_source(args.src)
+    dvp, legacy_player, fixture, injury, legacy_meta, extra = load_source(args.src)
     seasons = set(s.strip() for s in args.seasons.split(",") if s.strip())
 
     demo = build_demo(legacy_player)
@@ -637,7 +635,6 @@ def main():
         "dvp.json":      w("dvp.json", dvp_table),
         "gamelogs.json": w("gamelogs.json", logs),
         "fixture.json":  w("fixture.json", fixture),
-        "fgs.json":      w("fgs.json", fgs),
         "injury.json":   w("injury.json", injury),
         "results.json":  w("results.json", extra.get("results") or []),
         "lineups.json":  w("lineups.json", extra.get("lineups") or []),
