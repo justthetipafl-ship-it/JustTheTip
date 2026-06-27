@@ -502,7 +502,7 @@
   const AUTH_STORAGE_KEY = "jtt_afl_auth";
   const DATA_FILES = { meta:'data/meta.json', players:'data/players.json', teams:'data/teams.json',
                        teams_form:'data/teams_form.json', dvp:'data/dvp.json',
-                       gamelogs:'data/gamelogs.json', fixture:'data/fixture.json', fgs:'data/fgs.json',
+                       gamelogs:'data/gamelogs.json', fixture:'data/fixture.json',
                        injury:'data/injury.json', odds:'data/odds.json',
                        results:'data/results.json', lineups:'data/lineups.json', weather:'data/weather.json' };
 
@@ -553,7 +553,6 @@
     {k:'bogey',    n:'Bogey',         i:'ti-mood-sad',     d:'Struggles v opp'},
     {k:'streak',   n:'Streakers',     i:'ti-flame',        d:'Hot form'},
     {k:'climb',    n:"Let's Climb",   i:'ti-stairs-up',    d:'Ladder value'},
-    {k:'fgs',      n:'First Goal',    i:'ti-flag-3',       d:'FGS edges'},
     {k:'form',     n:'Form Alerts',   i:'ti-trending-up',  d:'Trend shifts'},
     {k:'taggers',  n:'Lurking Taggers',i:'ti-user-search', d:'Tag risk'},
   ];
@@ -650,7 +649,7 @@
     const agg={},cnt={},teamOf={};
     logs.filter(r=>String(r.Year)===cur).forEach(r=>{const nm=r.Player;if(!nm)return;cnt[nm]=(cnt[nm]||0)+1;teamOf[nm]=r.Team;agg[nm]=agg[nm]||{};for(const k in STAT_MAP){if(r[k]!=null)agg[nm][k]=(agg[nm][k]||0)+r[k];}});
     const players=Object.keys(cnt).map(nm=>{const n=cnt[nm],row={name:nm,matches:n,team:teamOf[nm]||(demo[nm]||{}).team,position:(demo[nm]||{}).position||'',age:(demo[nm]||{}).age};for(const k in STAT_MAP)row[k]=n?+(agg[nm][k]/n).toFixed(3):null;return row;});
-    state.data.players=players; state.data.gamelogs=logs; state.data.fixture=b.fixture||[]; state.data.fgs=b.fgs||[]; state.data.injury=b.injury||[];
+    state.data.players=players; state.data.gamelogs=logs; state.data.fixture=b.fixture||[]; state.data.injury=b.injury||[];
     state.data.meta={round:b.round,currentSeason:cur,summary:{players:players.length,gamelogs:logs.length}};
     state.dataVersion=String(Math.floor(Date.now()/1000));
   }
@@ -1524,11 +1523,11 @@
       const counts={ green:ov.length, death:un.length, snags:_fc(snags(),6).length,
         elite:_fc(elite(),8,40).length, bunnies:_fc(bunnies(),6).length, bogey:_fc(bogey(),6).length,
         streak:_fc(streakers(),6).length, form:_fc(formAlerts('spike'),6,25).length+_fc(formAlerts('drop'),6,25).length,
-        fgs:_fc(fgsEdges(),6).length, taggers:_fc(taggerAlerts(),8).length, climb:_fc(letsClimb(),6).length };
+        taggers:_fc(taggerAlerts(),8).length, climb:_fc(letsClimb(),6).length };
       total=Object.values(counts).reduce((a,b)=>a+b,0);
       html+=ouSection(ov,'over','Green Lights','ti-traffic-lights','c-green');
       html+=ouSection(un,'under','Death Riders','ti-skull','c-red');
-      ['snags','elite','bunnies','bogey','streak','climb','form','fgs','taggers'].forEach(k=>{ html+=renderTile(k); });
+      ['snags','elite','bunnies','bogey','streak','climb','form','taggers'].forEach(k=>{ html+=renderTile(k); });
     } finally { _degenScope=prevScope; _degenFocused=prevFocus; }
     const hdr='<div class="tp-sec"><div class="sec-title"><i class="ti ti-flame"></i> Degen Signals</div><div class="sec-meta">'+total+' fired</div></div>';
     return hdr+(html||'<div class="tp-body-meta" style="border:0">No signals fired.</div>');
@@ -2318,17 +2317,6 @@
         return {p,opp,dvpPct:opp?JTTScoring.getDVPPct(opp,pos,'disposals'):null,l5:JTTScoring.getL5Avg(p.name,'disposals')};
       });
   }
-  function fgsEdges(){
-    const teams=_fixtureSet(); const cnt={};
-    (state.data.fgs||[]).forEach(r=>{
-      const sp=r['First Shot Player'], gp=r['First Goal Player'], tm=r.Team;
-      if(sp){ (cnt[sp]=cnt[sp]||{shot:0,goal:0,team:tm,n:0}).shot++; cnt[sp].n++; cnt[sp].team=tm; }
-      if(gp){ (cnt[gp]=cnt[gp]||{shot:0,goal:0,team:tm,n:0}).goal++; cnt[gp].team=tm; }
-    });
-    return Object.entries(cnt).map(([name,v])=>({name,team:v.team,shots:v.shot,goals:v.goal,
-      p:state.idx.byName[name]})).filter(x=>x.team&&teams.has(x.team)&&(x.shots+x.goals)>=2)
-      .sort((a,b)=>(b.goals*2+b.shots)-(a.goals*2+a.shots)).slice(0,20);
-  }
   function taggerAlerts(){
     const scope=_degenScope;
     const taggers=[...TAGGER_NAMES.hard.map(n=>({n,t:'hard'})),...TAGGER_NAMES.defensive.map(n=>({n,t:'defensive'}))]
@@ -2567,7 +2555,7 @@
     try{
       out+=ouSection(collectOU([home,away],'over'),'over','Green Lights','ti-traffic-lights','c-green');
       out+=ouSection(collectOU([home,away],'under'),'under','Death Riders','ti-skull','c-red');
-      ['snags','elite','bunnies','bogey','streak','climb','form','fgs','taggers'].forEach(k=>{ out+=renderTile(k); });
+      ['snags','elite','bunnies','bogey','streak','climb','form','taggers'].forEach(k=>{ out+=renderTile(k); });
     } finally { _degenScope=prevScope; _degenFocused=prevFocus; }
     return out || '<div class="empty"><div class="ico"><i class="ti ti-flame"></i></div>No Degen signals fired for this matchup.</div>';
   }
@@ -2625,11 +2613,6 @@
       const up=_fc(formAlerts('spike'),6,25).map(a=>degRow(a.p.name,'#22c55e',{v1:'▲ +'+Math.round(a.swing*100)+'%',l1:'swing',v2:M(a.l3),l2:'L3'},a.stat+' · L3 '+M(a.l3)+' vs season '+M(a.seasonAvg)+formNote('spike',a.runDvp,a.thisDvp)));
       const dn=_fc(formAlerts('drop'),6,25).map(a=>degRow(a.p.name,'#ef4444',{v1:'▼ '+Math.round(a.swing*100)+'%',l1:'swing',v2:M(a.l3),l2:'L3'},a.stat+' · L3 '+M(a.l3)+' vs season '+M(a.seasonAvg)+formNote('drop',a.runDvp,a.thisDvp)));
       return degWrap('ti-trending-up','Spiking',up,'c-green')+degWrap('ti-trending-down','Cooling',dn,'c-red');
-    }
-    if(k==='fgs'){
-      const rows=_fc(fgsEdges(),6).map(f=>degRow(f.name,'#06b6d4',{v1:f.goals,l1:'1st goals',v2:f.shots,l2:'1st shots'},
-        abbr(f.team)+' · '+f.shots+' first shots · '+f.goals+' first goals'+lineTag(f.name,'goals'),f.name));
-      return degWrap('ti-flag-3','First Goal',rows,'c-blue');
     }
     if(k==='taggers'){
       const rows=_fc(taggerAlerts(),8).map(t=>degRow(t.threat.name,'#a855f7',t.type==='hard'?'HARD TAG risk':'Def tag risk',
@@ -2805,7 +2788,6 @@
       row('Game logs', (s.gamelogs||(state.data.gamelogs||[]).length||0))+
       row('Fixtures', (state.data.fixture||[]).length)+
       row('Injuries', (state.data.injury||[]).length)+
-      row('FGS records', (state.data.fgs||[]).length)+
       (function(){const o=state.idx.oddsMeta||{count:0};const cls=o.count?'ok':'warn';const lbl=o.count?(o.count+' lines'+(o.sample?' (sample)':'')+(o.fromPaste?' · pasted':'')):'none loaded';return row('Odds / lines', lbl, cls);})()+
       row('Data version', state.dataVersion||'—')+'</div>';
     h+='<div class="section-title">Odds feed</div>'+oddsTimeframeNote()+oddsDiag()+'<div class="data-status">'+
