@@ -17896,15 +17896,27 @@ function filterFixturesByScope(scope) {
   const sorted = fixtures.slice().sort((a, b) => a.timestamp - b.timestamp);
   if (scope === 'tournament') return sorted;
 
-  // Matchday: today's matches; if none, next match day
+  // Matchday: today's matches; if none (or if hideCompleted would strip them
+  // all), fall through to the next match day with at least one un-played
+  // fixture. This avoids the dead-zone where today's matches all went FT
+  // and the page shows nothing.
+  const finishedStatuses = new Set(['FT', 'AET', 'PEN']);
+  const hideCompleted = !!state.view.hideCompleted;
+  const passesHideFilter = (f) => !hideCompleted || !finishedStatuses.has(f.status);
+
   const now = Math.floor(Date.now() / 1000);
   const dayStart = new Date(); dayStart.setHours(0,0,0,0);
   const dayEnd = new Date(); dayEnd.setHours(23,59,59,999);
   const ts0 = Math.floor(dayStart.getTime() / 1000);
   const ts1 = Math.floor(dayEnd.getTime() / 1000);
+
   let display = sorted.filter(f => f.timestamp >= ts0 && f.timestamp <= ts1);
-  if (!display.length) {
-    const next = sorted.find(f => f.timestamp > now);
+
+  // Fall through to next match day if today is empty OR if hideCompleted
+  // would leave today completely empty (every today fixture is FT/AET/PEN).
+  const todayHasVisible = display.some(passesHideFilter);
+  if (!todayHasVisible) {
+    const next = sorted.find(f => f.timestamp > now && passesHideFilter(f));
     if (next) {
       const nextDay = new Date(next.timestamp * 1000);
       nextDay.setHours(0,0,0,0);
