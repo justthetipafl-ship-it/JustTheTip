@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Just The Tip — player-prop research, sport by sport</title>
+<meta name="description" content="Just The Tip — player-prop research tools across AFL, World Cup, MLB and more. Stats, signals and multis. Research, not advice.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@600;700;800;900&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#0a0e14; --bg2:#0c111a; --tile:#111927;
+    --border:#1e2a3b;
+    --green:#22c55e; --green-soft:rgba(34,197,94,.14);
+    --text:#eaf2f8; --text-2:#90a4ba; --text-3:#5d7088;
+    --display:'Archivo','Segoe UI',system-ui,sans-serif;
+    --mono:ui-monospace,'SF Mono',Menlo,monospace;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html{-webkit-text-size-adjust:100%}
+  body{
+    background:
+      radial-gradient(1100px 520px at 50% -8%, rgba(34,197,94,.07), transparent 60%),
+      var(--bg);
+    color:var(--text); font-family:var(--display);
+    min-height:100vh; padding:40px 20px 56px;
+    -webkit-font-smoothing:antialiased;
+  }
+  .wrap{max-width:1040px;margin:0 auto}
+
+  /* ---------- header ---------- */
+  header{text-align:center;margin:14px 0 46px;animation:rise .6s ease both}
+  .brand{display:inline-flex;align-items:center;gap:13px;margin-bottom:18px}
+  .brand img{height:42px;width:auto;display:block}
+  .brand .mark{width:40px;height:40px;flex:0 0 auto}
+  .brand .word{font-weight:900;font-size:25px;letter-spacing:2px;color:#fff}
+  h1{font-weight:800;font-size:clamp(26px,5vw,40px);line-height:1.08;letter-spacing:-.01em}
+  h1 .hl{color:var(--green)}
+  .sub{margin-top:12px;color:var(--text-2);font-size:15px;font-weight:600}
+  .sub .dot{color:var(--text-3);margin:0 7px}
+
+  /* ---------- section eyebrow ---------- */
+  .eyebrow{display:flex;align-items:center;gap:12px;margin:0 4px 18px;
+    font-family:var(--mono);font-size:11px;font-weight:700;letter-spacing:.18em;
+    text-transform:uppercase;color:var(--text-3)}
+  .eyebrow::after{content:"";flex:1;height:1px;background:linear-gradient(90deg,var(--border),transparent)}
+  .eyebrow.live{color:var(--green)}
+  .eyebrow .ld{width:7px;height:7px;border-radius:50%;background:var(--green);
+    box-shadow:0 0 0 0 rgba(34,197,94,.5);animation:pulse 2s infinite}
+
+  /* ---------- grid ---------- */
+  .grid{display:grid;gap:14px;grid-template-columns:repeat(auto-fill,minmax(150px,1fr))}
+  .live-grid{grid-template-columns:repeat(auto-fit,minmax(190px,1fr));margin-bottom:48px;max-width:760px;margin-left:auto;margin-right:auto}
+
+  .tile{
+    position:relative;display:flex;flex-direction:column;align-items:center;
+    text-align:center;text-decoration:none;color:inherit;
+    background:linear-gradient(180deg,var(--tile),var(--bg2));
+    border:1px solid var(--border);border-radius:16px;
+    padding:26px 16px 20px;transition:transform .18s ease,border-color .18s ease,box-shadow .18s ease;
+    animation:rise .6s ease both;
+  }
+  .tile .shield{width:96px;height:96px;object-fit:contain;
+    filter:drop-shadow(0 6px 14px rgba(0,0,0,.45));transition:transform .18s ease}
+  .tile .name{margin-top:14px;font-weight:800;font-size:18px;letter-spacing:.01em}
+  .tile .desc{margin-top:4px;font-size:12px;font-weight:600;color:var(--text-2);line-height:1.35;font-family:var(--mono)}
+
+  /* live tiles */
+  .tile.live{cursor:pointer}
+  .tile.live:hover{transform:translateY(-5px);border-color:rgba(34,197,94,.55);
+    box-shadow:0 14px 30px -12px rgba(34,197,94,.35)}
+  .tile.live:hover .shield{transform:scale(1.05)}
+  .tile.live:focus-visible{outline:2px solid var(--green);outline-offset:3px}
+  .tile .badge{position:absolute;top:12px;right:12px;display:inline-flex;align-items:center;gap:5px;
+    font-family:var(--mono);font-size:9.5px;font-weight:700;letter-spacing:.1em;color:var(--green);
+    background:var(--green-soft);border:1px solid rgba(34,197,94,.32);border-radius:20px;padding:3px 8px}
+  .tile .badge .ld{width:6px;height:6px;border-radius:50%;background:var(--green);animation:pulse 2s infinite}
+  .tile .go{margin-top:13px;font-family:var(--mono);font-size:11px;font-weight:700;color:var(--green);
+    display:inline-flex;align-items:center;gap:5px;opacity:.0;transition:opacity .18s ease}
+  .tile.live:hover .go{opacity:1}
+
+  /* coming-soon tiles */
+  .tile.soon{filter:saturate(.5)}
+  .tile.soon .shield{filter:grayscale(.85) opacity(.4) drop-shadow(0 4px 10px rgba(0,0,0,.4))}
+  .tile.soon .name{color:var(--text-2)}
+  .tile.soon .tag{position:absolute;top:12px;right:12px;font-family:var(--mono);font-size:9px;
+    font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--text-3);
+    background:#0e1622;border:1px solid var(--border);border-radius:20px;padding:3px 8px}
+
+  footer{text-align:center;margin-top:50px;font-family:var(--mono);font-size:11px;
+    color:var(--text-3);letter-spacing:.04em}
+  footer a{color:var(--text-2);text-decoration:none}
+  footer .sep{margin:0 8px;opacity:.5}
+
+  @keyframes pulse{0%{box-shadow:0 0 0 0 rgba(34,197,94,.5)}70%{box-shadow:0 0 0 7px rgba(34,197,94,0)}100%{box-shadow:0 0 0 0 rgba(34,197,94,0)}}
+  @keyframes rise{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:none}}
+  .tile:nth-child(2){animation-delay:.05s}.tile:nth-child(3){animation-delay:.1s}
+  .tile:nth-child(4){animation-delay:.12s}.tile:nth-child(5){animation-delay:.15s}
+
+  @media (max-width:520px){
+    body{padding:28px 14px 40px}
+    .grid{grid-template-columns:repeat(auto-fill,minmax(132px,1fr));gap:11px}
+    .live-grid{grid-template-columns:1fr}
+    .tile .shield{width:84px;height:84px}
+  }
+  @media (prefers-reduced-motion:reduce){
+    *{animation:none!important;transition:none!important}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <div class="brand">
+      <img src="assets/jtt-wordmark.png" alt="Just The Tip"
+        onerror="this.outerHTML='<svg class=&quot;mark&quot; viewBox=&quot;0 0 40 40&quot;><circle cx=&quot;20&quot; cy=&quot;20&quot; r=&quot;20&quot; fill=&quot;#22c55e&quot;/><path d=&quot;M12 20.5L17.5 26L28 14.5&quot; stroke=&quot;white&quot; stroke-width=&quot;3.4&quot; fill=&quot;none&quot; stroke-linecap=&quot;round&quot; stroke-linejoin=&quot;round&quot;/></svg><span class=&quot;word&quot;>JUST THE TIP</span>'">
+    </div>
+    <h1>Player-prop research,<br><span class="hl">sport by sport.</span></h1>
+    <p class="sub">Stats, signals &amp; multis built for one game at a time<span class="dot">·</span>research, not advice</p>
+  </header>
+
+  <section>
+    <div class="eyebrow live"><span class="ld"></span>Live now</div>
+    <div class="grid live-grid">
+
+      <a class="tile live" href="/AFL/">
+        <span class="badge"><span class="ld"></span>LIVE</span>
+        <img class="shield" src="icons/afl.png" alt="AFL">
+        <span class="name">AFL</span>
+        <span class="desc">Aussie Rules — disposals,<br>goals, marks &amp; more</span>
+        <span class="go">Open tool →</span>
+      </a>
+
+      <a class="tile live" href="/wc/">
+        <span class="badge"><span class="ld"></span>LIVE</span>
+        <img class="shield" src="icons/soccer.png" alt="World Cup">
+        <span class="name">World Cup</span>
+        <span class="desc">Football 2026 — shots,<br>passes, cards &amp; goals</span>
+        <span class="go">Open tool →</span>
+      </a>
+
+      <a class="tile live" href="/mlb/">
+        <span class="badge"><span class="ld"></span>LIVE</span>
+        <img class="shield" src="icons/baseball.png" alt="MLB">
+        <span class="name">MLB</span>
+        <span class="desc">Baseball — hits, strikeouts<br>&amp; total bases</span>
+        <span class="go">Open tool →</span>
+      </a>
+
+    </div>
+  </section>
+
+  <section>
+    <div class="eyebrow">Coming soon</div>
+    <div class="grid">
+
+      <div class="tile soon"><span class="tag">Soon</span><img class="shield" src="icons/gridiron.png" alt="NFL"><span class="name">NFL</span></div>
+      <div class="tile soon"><span class="tag">Soon</span><img class="shield" src="icons/gridiron.png" alt="NCAAF"><span class="name">NCAAF</span></div>
+      <div class="tile soon"><span class="tag">Soon</span><img class="shield" src="icons/basketball.png" alt="NBA"><span class="name">NBA</span></div>
+      <div class="tile soon"><span class="tag">Soon</span><img class="shield" src="icons/basketball.png" alt="NBL"><span class="name">NBL</span></div>
+      <div class="tile soon"><span class="tag">Soon</span><img class="shield" src="icons/hockey.png" alt="NHL"><span class="name">NHL</span></div>
+      <div class="tile soon"><span class="tag">Soon</span><img class="shield" src="icons/rugby.png" alt="NRL"><span class="name">NRL</span></div>
+      <div class="tile soon"><span class="tag">Soon</span><img class="shield" src="icons/cricket.png" alt="Cricket"><span class="name">Cricket</span></div>
+      <div class="tile soon"><span class="tag">Soon</span><img class="shield" src="icons/tennis.png" alt="Tennis"><span class="name">Tennis</span></div>
+      <div class="tile soon"><span class="tag">Soon</span><img class="shield" src="icons/golf.png" alt="Golf"><span class="name">Golf</span></div>
+      <div class="tile soon"><span class="tag">Soon</span><img class="shield" src="icons/mma.png" alt="UFC"><span class="name">UFC</span></div>
+
+    </div>
+  </section>
+
+  <footer>
+    <a href="https://justthetipaus.com">justthetipaus.com</a><span class="sep">·</span>research, not advice<span class="sep">·</span>18+ gamble responsibly
+  </footer>
+
+</div>
+</body>
+</html>
