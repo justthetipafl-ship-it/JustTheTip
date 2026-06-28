@@ -262,6 +262,14 @@
   .mb-an-warn i{font-size:12px;margin-top:1px;flex-shrink:0;}
   .mb-an-ok{margin-top:7px;font-size:10.5px;color:var(--text-3);display:flex;align-items:flex-start;gap:5px;line-height:1.4;}
   .mb-an-ok i{font-size:12px;margin-top:1px;flex-shrink:0;color:#22c55e;}
+  .mb-an-odds{margin-top:8px;display:flex;flex-wrap:wrap;align-items:center;gap:8px;}
+  .mb-an-in{display:inline-flex;align-items:center;gap:1px;font-family:var(--font-mono);font-weight:700;color:var(--text);background:var(--surface);border:1px solid var(--border);border-radius:7px;padding:3px 8px;}
+  .mb-an-in.on{border-color:var(--accent);background:rgba(34,197,94,.08);}
+  .mb-an-in input{width:58px;background:transparent;border:0;color:var(--text);font-family:var(--font-mono);font-weight:700;font-size:13px;outline:none;padding:0;}
+  .mb-an-in input::placeholder{color:var(--text-3);font-weight:400;}
+  .mb-an-in input::-webkit-outer-spin-button,.mb-an-in input::-webkit-inner-spin-button{-webkit-appearance:none;margin:0;}
+  .mb-an-clr{background:none;border:0;color:#f59e0b;font-size:11px;font-weight:700;cursor:pointer;text-decoration:underline;padding:0;}
+  .mb-an-note{font-size:10px;color:var(--text-3);}
   .dv-ctrls{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:8px 0 10px;}
   .dv-tier{padding:5px 11px;border-radius:14px;border:1px solid var(--border);background:transparent;color:var(--text-3);font-size:12px;font-weight:700;cursor:pointer;}
   .dv-tier.on{border-color:var(--accent);background:rgba(34,197,94,.14);color:var(--text);}
@@ -2657,7 +2665,7 @@
     let s=store[label];
     if(!s){ s=store[label]={_key:'',locked:[],idx:[]}; }
     if(s._key!==key){                                          // (re)seed: keep locked players, fill rest (round-robin across games when cross-game)
-      s._key=key; s.locked=s.locked.filter(n=>names.indexOf(n)>=0);
+      s._key=key; s.manual=null; s.locked=s.locked.filter(n=>names.indexOf(n)>=0);
       const idx=s.locked.map(n=>names.indexOf(n)).filter(i=>i>=0);
       const order=_mbSeedOrder(pool,crossGame);
       for(const i of order){ if(idx.length>=N) break; if(idx.indexOf(i)<0) idx.push(i); }
@@ -2672,7 +2680,7 @@
       const s=_mbSel(b.label,b.pool,N,cross);
       const legs=s.idx.map(i=>b.pool[i]).filter(Boolean);
       let comb=1,priced=0; legs.forEach(l=>{ const o=l._odds; const px=o?o.price:(l.prob>0?1/l.prob:null); if(px)comb*=px; if(o)priced++; });
-      return {label:b.label,legs,comb,priced,bi,lockedNames:s.locked.slice()};
+      return {label:b.label,legs,comb,priced,bi,lockedNames:s.locked.slice(),manual:s.manual||null};
     });   // _mbPools already drops empty pools; keep emptied blocks so Add stays available
   }
   window._mbSwap=function(bi,slot,dir){
@@ -2682,24 +2690,25 @@
     const used=new Set(s.idx); let i=cur;
     for(let step=0;step<b.pool.length;step++){ i=(i+dir+b.pool.length)%b.pool.length; if(!used.has(i)) break; }
     if(!used.has(i)) s.idx[slot]=i;
-    _renderApp();
+    s.manual=null; _reRenderMulti();
   };
+  window._mbOdds=function(bi,v){ const b=_mbBlockPool(bi); if(!b)return; const s=(state.view.multiSel||{})[b.label]; if(!s)return; const n=parseFloat(v); s.manual=(n&&n>1)?n:null; _reRenderMulti(); };
   window._mbRemove=function(bi,slot){
     const b=_mbBlockPool(bi); if(!b)return; const s=(state.view.multiSel||{})[b.label]; if(!s)return;
     const cur=s.idx[slot]; if(cur!=null&&b.pool[cur]){ const nm=b.pool[cur].p.name; s.locked=s.locked.filter(n=>n!==nm); }
-    s.idx.splice(slot,1); _renderApp();
+    s.idx.splice(slot,1); s.manual=null; _reRenderMulti();
   };
   window._mbLock=function(bi,slot){
     const b=_mbBlockPool(bi); if(!b)return; const s=(state.view.multiSel||{})[b.label]; if(!s)return;
     const cur=s.idx[slot]; if(cur==null||!b.pool[cur])return; const nm=b.pool[cur].p.name;
-    const i=s.locked.indexOf(nm); if(i>=0)s.locked.splice(i,1); else s.locked.push(nm); _renderApp();
+    const i=s.locked.indexOf(nm); if(i>=0)s.locked.splice(i,1); else s.locked.push(nm); _reRenderMulti();
   };
   window._mbAdd=function(bi){
     const b=_mbBlockPool(bi); if(!b)return; const s=(state.view.multiSel||{})[b.label]; if(!s)return;
     if(s.idx.length>=12) return;                               // hard cap
     const used=new Set(s.idx);
     for(let i=0;i<b.pool.length;i++){ if(!used.has(i)){ s.idx.push(i); break; } }
-    _renderApp();
+    s.manual=null; _reRenderMulti();
   };
   // Multi Builder scoped to a single fixture (focused-fixture page), with its own filters
   function focusedMulti(g){
@@ -2732,7 +2741,7 @@
     const pool=_fxmPool(g), names=pool.map(l=>l.p.name);
     const key=[state.view.fixtureId,S.legs,S.minProb,S.minOdds,S.maxOdds,S.book||''].join('|');
     if(!S.sel) S.sel={_key:'',locked:[],idx:[]};
-    if(S.sel._key!==key){ S.sel._key=key; S.sel.locked=(S.sel.locked||[]).filter(n=>names.indexOf(n)>=0);
+    if(S.sel._key!==key){ S.sel._key=key; S.sel.manual=null; S.sel.locked=(S.sel.locked||[]).filter(n=>names.indexOf(n)>=0);
       const idx=S.sel.locked.map(n=>names.indexOf(n)).filter(i=>i>=0);
       for(let i=0;i<pool.length&&idx.length<S.legs;i++){ if(idx.indexOf(i)<0) idx.push(i); }
       S.sel.idx=idx;
@@ -2753,14 +2762,15 @@
       : '<div class="tp-body-meta" style="border:0;margin:8px 0;opacity:.7">Removed every leg \u2014 tap Add leg to rebuild.</div>';
     const addBtn='<button class="mb-add" onclick="_fxmAdd()"><i class="ti ti-plus"></i> Add leg</button>';
     const shareBtn=legs.length>=2?'<button class="slip-share-btn" onclick="_openSlipShare(\'fxmulti\')"><i class="ti ti-share"></i> Share card</button>':'';
-    return head+bar+hint+rows+addBtn+_multiAnalysisHTML(legs)+shareBtn;
+    return head+bar+hint+rows+addBtn+_multiAnalysisHTML(legs,S.sel.manual,'_fxmOdds(this.value)')+shareBtn;
   }
   function _fxmG(){ const fx=state.data.fixture||[]; return fx[state.view.fixtureId]; }
   function _fxmRerender(){ const g=_fxmG(); const el=document.getElementById('fx-multi'); if(el&&g) el.innerHTML=_fxmInner(g); }
-  window._fxmSwap=function(slot,dir){ const g=_fxmG(); if(!g)return; const S=state.view.fxMulti, s=S&&S.sel; if(!s)return; const pool=_fxmPool(g); const cur=s.idx[slot]; if(cur==null||!pool[cur])return; if(s.locked.indexOf(pool[cur].p.name)>=0)return; const used=new Set(s.idx); let i=cur; for(let st=0;st<pool.length;st++){ i=(i+dir+pool.length)%pool.length; if(!used.has(i))break; } if(!used.has(i))s.idx[slot]=i; _fxmRerender(); };
-  window._fxmRemove=function(slot){ const g=_fxmG(); if(!g)return; const S=state.view.fxMulti, s=S&&S.sel; if(!s)return; const pool=_fxmPool(g); const cur=s.idx[slot]; if(cur!=null&&pool[cur]){ const nm=pool[cur].p.name; s.locked=s.locked.filter(n=>n!==nm); } s.idx.splice(slot,1); _fxmRerender(); };
+  window._fxmSwap=function(slot,dir){ const g=_fxmG(); if(!g)return; const S=state.view.fxMulti, s=S&&S.sel; if(!s)return; const pool=_fxmPool(g); const cur=s.idx[slot]; if(cur==null||!pool[cur])return; if(s.locked.indexOf(pool[cur].p.name)>=0)return; const used=new Set(s.idx); let i=cur; for(let st=0;st<pool.length;st++){ i=(i+dir+pool.length)%pool.length; if(!used.has(i))break; } if(!used.has(i))s.idx[slot]=i; s.manual=null; _fxmRerender(); };
+  window._fxmOdds=function(v){ const S=state.view.fxMulti, s=S&&S.sel; if(!s)return; const n=parseFloat(v); s.manual=(n&&n>1)?n:null; _fxmRerender(); };
+  window._fxmRemove=function(slot){ const g=_fxmG(); if(!g)return; const S=state.view.fxMulti, s=S&&S.sel; if(!s)return; const pool=_fxmPool(g); const cur=s.idx[slot]; if(cur!=null&&pool[cur]){ const nm=pool[cur].p.name; s.locked=s.locked.filter(n=>n!==nm); } s.idx.splice(slot,1); s.manual=null; _fxmRerender(); };
   window._fxmLock=function(slot){ const g=_fxmG(); if(!g)return; const S=state.view.fxMulti, s=S&&S.sel; if(!s)return; const pool=_fxmPool(g); const cur=s.idx[slot]; if(cur==null||!pool[cur])return; const nm=pool[cur].p.name; const i=s.locked.indexOf(nm); if(i>=0)s.locked.splice(i,1); else s.locked.push(nm); _fxmRerender(); };
-  window._fxmAdd=function(){ const g=_fxmG(); if(!g)return; const S=state.view.fxMulti, s=S&&S.sel; if(!s)return; if(s.idx.length>=12)return; const pool=_fxmPool(g); const used=new Set(s.idx); for(let i=0;i<pool.length;i++){ if(!used.has(i)){ s.idx.push(i); break; } } _fxmRerender(); };
+  window._fxmAdd=function(){ const g=_fxmG(); if(!g)return; const S=state.view.fxMulti, s=S&&S.sel; if(!s)return; if(s.idx.length>=12)return; const pool=_fxmPool(g); const used=new Set(s.idx); for(let i=0;i<pool.length;i++){ if(!used.has(i)){ s.idx.push(i); break; } } s.manual=null; _fxmRerender(); };
   function _buildFxSpec(){
     const g=_fxmG(); if(!g)return null; const S=state.view.fxMulti; if(!S||!S.sel)return null;
     const pool=_fxmPool(g); const legs=S.sel.idx.map(i=>pool[i]).filter(Boolean);
@@ -2999,22 +3009,28 @@
     finally { SETTINGS.books=saved; }
     return best;
   }
-  function _multiAnalysisHTML(legs){
+  function _multiAnalysisHTML(legs,manual,oddsCall){
     const a=_multiAnalysis(legs); if(!a) return '';
-    const pct=v=>Math.round(v*100)+'%', edgePos=a.edge>=0, edgeStr=(edgePos?'+':'')+(a.edge*100).toFixed(1)+'%';
+    const hasM=manual&&manual>1, effComb=hasM?manual:a.comb;
+    const implied=effComb>0?1/effComb:0, edge=a.trueProb-implied;
+    const pct=v=>Math.round(v*100)+'%', edgePos=edge>=0, edgeStr=(edgePos?'+':'')+(edge*100).toFixed(1)+'%';
     const bb=_multiBestBook(legs);
     let h='<div class="mb-an"><div class="mb-an-row">'+
       '<span class="mb-an-c"><span class="mb-an-k">True</span><b>'+pct(a.trueProb)+'</b></span>'+
-      '<span class="mb-an-c"><span class="mb-an-k">Implied</span><b>'+pct(a.impliedProb)+'</b></span>'+
-      '<span class="mb-an-c"><span class="mb-an-k">Edge</span><b class="'+(edgePos?'mb-pos':'mb-neg')+'">'+edgeStr+'</b></span>'+
+      '<span class="mb-an-c"><span class="mb-an-k">Implied</span><b>'+pct(implied)+'</b></span>'+
+      '<span class="mb-an-c"><span class="mb-an-k">Edge'+(hasM?' · your price':'')+'</span><b class="'+(edgePos?'mb-pos':'mb-neg')+'">'+edgeStr+'</b></span>'+
       '<span class="mb-an-c"><span class="mb-an-k">Fair</span><b>'+(a.fair?'$'+a.fair.toFixed(2):'—')+'</b></span></div>';
-    if(bb&&bb.comb>a.comb+0.01) h+='<div class="mb-an-book"><i class="ti ti-arrow-up-right"></i> Best book: <b>'+esc(bb.name)+' $'+bb.comb.toFixed(2)+'</b> — $'+(bb.comb-a.comb).toFixed(2)+' more than current</div>';
+    h+='<div class="mb-an-odds"><span class="mb-an-k">Your actual price</span>'+
+      '<span class="mb-an-in'+(hasM?' on':'')+'">$<input type="number" step="0.01" min="1" inputmode="decimal" value="'+(hasM?manual:'')+'" placeholder="'+a.comb.toFixed(2)+'" onchange="'+oddsCall+'"></span>'+
+      (hasM?'<button class="mb-an-clr" onclick="'+oddsCall.replace('this.value',"''")+'">clear</button><span class="mb-an-note">vs straight-multi est $'+a.comb.toFixed(2)+'</span>'
+           :'<span class="mb-an-note">enter your book price — combined or SGM — for a true edge</span>')+'</div>';
+    if(bb&&bb.comb>a.comb+0.01) h+='<div class="mb-an-book"><i class="ti ti-arrow-up-right"></i> Best book: <b>'+esc(bb.name)+' $'+bb.comb.toFixed(2)+'</b> — $'+(bb.comb-a.comb).toFixed(2)+' more than the est above</div>';
     else if(bb) h+='<div class="mb-an-book"><i class="ti ti-check"></i> Best price already — '+esc(bb.name)+' $'+bb.comb.toFixed(2)+'</div>';
     if(a.sameGame.length){
       const g=a.sameGame.map(k=>k+' ×'+a.byGame[k].length).join(', ');
-      h+='<div class="mb-an-warn"><i class="ti ti-alert-triangle"></i> Same-game legs ('+esc(g)+') are correlated — a real SGM pays less than this straight-multi price, so treat the edge as optimistic.</div>';
+      h+='<div class="mb-an-warn"><i class="ti ti-alert-triangle"></i> Same-game legs ('+esc(g)+') are correlated — '+(hasM?'you entered the real price, so this edge is honest.':'a real SGM pays less than this straight-multi price, so enter your actual price above for a true edge.')+'</div>';
     } else if(a.nGames>1){
-      h+='<div class="mb-an-ok"><i class="ti ti-circle-check"></i> '+a.nGames+' games, no same-game legs — independent, so the edge read is clean.</div>';
+      h+='<div class="mb-an-ok"><i class="ti ti-circle-check"></i> '+a.nGames+' games, no same-game legs — independent, so the straight-multi price is real.</div>';
     }
     return h+'</div>';
   }
@@ -3032,7 +3048,7 @@
         : '<div class="tp-body-meta" style="border:0;opacity:.7">Removed every leg — tap Add leg to rebuild.</div>';
       const combLabel=gm.legs.length?('$'+gm.comb.toFixed(2)+(gm.priced<gm.legs.length?' ('+gm.priced+'/'+gm.legs.length+' priced)':'')):'—';
       const addBtn='<button class="mb-add" onclick="_mbAdd('+gm.bi+')"><i class="ti ti-plus"></i> Add leg</button>';
-      const analysis=_multiAnalysisHTML(gm.legs);
+      const analysis=_multiAnalysisHTML(gm.legs,gm.manual,'_mbOdds('+gm.bi+',this.value)');
       const shareBtn=gm.legs.length>=2?'<button class="slip-share-btn" onclick="_openSlipShare(\'multi\','+i+')"><i class="ti ti-share"></i> Share card</button>':'';
       return '<div class="tp-body-meta" style="margin-top:8px"><b>'+gm.label+'</b> · '+gm.legs.length+'-leg '+scopeWord+' · combined <b>'+combLabel+'</b></div>'+legsHtml+addBtn+analysis+shareBtn;
     }).join('');
