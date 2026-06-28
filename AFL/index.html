@@ -119,6 +119,7 @@
   .ob-cr .h{color:var(--accent);} .ob-cr .h::before{content:"H";opacity:.6;margin-right:1px;font-size:7px;}
   .ob-ou{margin-top:3px;font-size:9.5px;font-weight:700;color:var(--text-2);font-variant-numeric:tabular-nums;}
   .ob-legend{font-size:9.5px;color:var(--text-3);margin:0 0 8px 2px;}
+  .ob-mybooks{color:var(--accent);font-weight:700;}
   .ob-legend .s{color:var(--text-2);font-weight:800;} .ob-legend .h{color:var(--accent);font-weight:800;}
   .ob-cell.ob-hascell{cursor:help;}
   .ob-cell.ob-hascell:hover{background:var(--surface-2);}
@@ -246,6 +247,9 @@
   .dv-swap{display:inline-flex;gap:3px;}
   .dv-swap button{width:24px;height:24px;border-radius:6px;border:1px solid var(--border);background:var(--surface);color:var(--text-2);cursor:pointer;font-size:12px;line-height:1;}
   .dv-swap button:hover{border-color:var(--accent);color:var(--text);}
+  .dv-rm{width:24px;height:24px;border-radius:6px;border:1px solid var(--border);background:var(--surface);color:var(--text-3);cursor:pointer;font-size:15px;line-height:1;flex-shrink:0;}
+  .dv-rm:hover{border-color:#ef4444;color:#ef4444;background:rgba(239,68,68,.12);}
+  .dv-restore{margin-left:8px;background:none;border:0;color:#f59e0b;font-size:11px;font-weight:700;cursor:pointer;text-decoration:underline;padding:0;}
   .dv-comb{margin-top:9px;padding:8px 11px;border-radius:8px;background:rgba(34,197,94,.10);border:1px solid rgba(34,197,94,.3);font-size:13px;font-weight:700;}
   .dv-comb b{font-family:var(--font-mono);font-size:15px;color:#22c55e;margin-left:4px;}
   .dv-est{display:block;font-size:10px;font-weight:500;color:var(--text-3);margin-top:2px;}
@@ -832,7 +836,7 @@
       const b=byL[line].slice().sort((x,y)=>y.over-x.over)[0];
       return {line:b.line,over:b.over,under:null,book:b.book};
     }
-    return main||null;
+    return (main && _bookOK(main.book))?main:null;
   }
   // best available UNDER price (across all / chosen books) at the consensus line — used for under bets (Bogey)
   function bestUnder(name, market){
@@ -854,7 +858,7 @@
       const byL={}; rows.forEach(r=>{ if(!byL[r.line]||r.over>byL[r.line].over) byL[r.line]={line:r.line,over:r.over,book:r.book}; });
       return Object.values(byL).sort((x,y)=>x.line-y.line);
     }
-    return ((state.idx.altIdx||{})[player]||{})[market]||[];
+    return (((state.idx.altIdx||{})[player]||{})[market]||[]).filter(r=>_bookOK(r.book));
   }
   window._oddsPasteOpen=function(){ const w=document.getElementById('odds-paste-wrap'); if(w)w.style.display=w.style.display==='none'?'block':'none'; };
   window._oddsPasteSave=function(){
@@ -938,7 +942,8 @@
     const head='<div class="tp-sec"><div class="sec-title"><i class="ti ti-coins"></i> Live Odds Board</div></div>'+oddsTimeframeNote();
     const gameChips=fx.length?('<div class="ob-filter"><span class="ob-fl">Game</span><div class="ob-chips">'+fx.map((g,i)=>'<button class="ob-chip'+(i===gi?' active':'')+'" onclick="setOddsGame('+i+')">'+abbr(g.home)+' v '+abbr(g.away)+'</button>').join('')+'</div></div>'):'';
     const mktChips='<div class="ob-filter"><span class="ob-fl">Market</span><div class="ob-chips">'+ODDS_MKTS.map(m=>'<button class="ob-chip'+(m[0]===mkt?' active':'')+'" onclick="setOddsMkt(\''+m[0]+'\')">'+m[1]+'</button>').join('')+'</div></div>';
-    const filters='<div class="ob-filters">'+gameChips+mktChips+'</div>';
+    const bookChips='<div class="ob-filter"><span class="ob-fl">My Books</span><div class="ob-chips"><button class="ob-chip'+(SETTINGS.books.length?'':' active')+'" onclick="_sBookAll()">All</button>'+ALL_BOOKS.map(([k,l])=>'<button class="ob-chip'+(SETTINGS.books.indexOf(k)>=0?' active':'')+'" onclick="_sBook(\''+k+'\')">'+l+'</button>').join('')+'</div></div>';
+    const filters='<div class="ob-filters">'+gameChips+mktChips+bookChips+'</div>';
     const live=hasAnyOdds() && !(state.idx.oddsMeta&&state.idx.oddsMeta.sample);
     if(!live){
       const stamp=(state.idx.oddsMeta&&state.idx.oddsMeta.updated)?(' Last prices seen: '+state.idx.oddsMeta.updated+'.'):'';
@@ -998,7 +1003,8 @@
         return '<td class="ob-cell'+hov+'"><div class="ob-pxrow"><span class="ob-px">'+c.over.toFixed(2)+'</span><span class="ob-bk">'+_bookShort(c.book)+'</span></div>'+cr+'</td>'; }).join('');
       return '<tr>'+nameCell+cells+'</tr>';
     }).join('');
-    const legend='<div class="ob-legend">Cell: best over price + book &middot; hover a price for all books &middot; <span class="s">S</span> season / <span class="h">H</span> H2H clear-rate at that line</div>';
+    const bookNote=SETTINGS.books.length?('<span class="ob-mybooks"><i class="ti ti-filter"></i> Your books ('+SETTINGS.books.length+'): '+SETTINGS.books.map(bookName).join(', ')+'</span> &middot; '):'';
+    const legend='<div class="ob-legend">'+bookNote+'Cell: best over price + book &middot; hover a price for all books &middot; <span class="s">S</span> season / <span class="h">H</span> H2H clear-rate at that line</div>';
     return legend+'<div class="ob-wrap" onscroll="_obTipHide()"><table class="ob-table"><thead>'+thead+'</thead><tbody>'+body+'</tbody></table></div>';
   }
 
@@ -2410,25 +2416,42 @@
     if(S.book!==book) S.book=book;
     const distinctN=_dvDistinct(pool);
     const want=S.hail?distinctN:Math.min(S.tier,distinctN);   // one leg per player
-    if(!S.sel||S.sel._book!==book||S.sel._need!==want||S.sel._hail!==!!S.hail){ S.sel={_book:book,_need:want,_hail:!!S.hail,idx:_dvSel1pp(pool,want)}; }
+    if(!S.sel||S.sel._book!==book||S.sel._need!==want||S.sel._hail!==!!S.hail){ S.sel={_book:book,_need:want,_hail:!!S.hail,idx:_dvSel1pp(pool,want)}; S.removed=[]; }
     const sel=S.sel.idx;
+    const removed=new Set(S.hail?(S.removed||[]):[]);
     const slip=sel.map((pi,slot)=>{ const l=pool[pi]; if(!l) return '';
-      const swap=S.hail?'':'<span class="dv-swap"><button onclick="_dvSwap('+slot+',-1)">◂</button><button onclick="_dvSwap('+slot+',1)">▸</button></span>';
-      return '<div class="dv-leg"><span class="dv-n">'+esc(l.name)+'</span><span class="dv-l">'+l.betLine+'+ '+l.marketLabel+'</span><span class="dv-o">$'+l.over.toFixed(2)+'</span>'+swap+'</div>';
+      if(removed.has(l.name)) return '';                                           // leg removed from the Hail Mary
+      const ctrl=S.hail
+        ? '<button class="dv-rm" onclick="_dvRemove('+pi+')" title="Remove leg" aria-label="Remove leg">&times;</button>'
+        : '<span class="dv-swap"><button onclick="_dvSwap('+slot+',-1)">◂</button><button onclick="_dvSwap('+slot+',1)">▸</button></span>';
+      return '<div class="dv-leg"><span class="dv-n">'+esc(l.name)+'</span><span class="dv-l">'+l.betLine+'+ '+l.marketLabel+'</span><span class="dv-o">$'+l.over.toFixed(2)+'</span>'+ctrl+'</div>';
     }).join('');
-    const comb=_dvProduct(sel.map(i=>pool[i]).filter(Boolean));
+    const activeLegs=sel.map(i=>pool[i]).filter(l=>l&&!removed.has(l.name));
+    const comb=_dvProduct(activeLegs);
+    const legN=activeLegs.length;
     const tierBtns=[3,4,5].map(t=>'<button class="dv-tier'+(!S.hail&&S.tier===t?' on':'')+'"'+(distinctN>=t?'':' disabled')+' onclick="_dvTier('+t+')">'+t+' legs</button>').join('');
     const hailBtn='<button class="dv-tier dv-hail'+(S.hail?' on':'')+'" onclick="_dvHail()"><i class="ti ti-bolt"></i> Hail Mary</button>';
     const bookChips=books.length>1?('<div class="dv-books">'+books.slice().sort((a,b)=>_dvDistinct(byBook[b])-_dvDistinct(byBook[a])).map(b=>'<button class="dv-bk'+(b===book?' on':'')+'" onclick="_dvBook(\''+b+'\')">'+bookName(b)+' <i>'+_dvDistinct(byBook[b])+'</i></button>').join('')+'</div>'):'';
     const steppers=('<div class="dv-ctrls"><span class="dv-min">min&nbsp;$<button onclick="_dvMin(-1)">−</button><b>'+(S.minOdds==null?DV_MIN_DEFAULT:S.minOdds).toFixed(2)+'</b><button onclick="_dvMin(1)">+</button></span>'+
       '<span class="dv-min">max&nbsp;<button onclick="_dvMax(-1)">−</button><b>'+(maxOdds>0?'$'+maxOdds.toFixed(2):'off')+'</b><button onclick="_dvMax(1)">+</button></span></div>');
     const moreNote=(!S.hail&&distinctN>want)?(' · '+(distinctN-want)+' more player'+(distinctN-want>1?'s':'')+' to swap in'):'';
+    const restore=(S.hail&&removed.size)?(' <button class="dv-restore" onclick="_dvRestore()">+'+removed.size+' removed · restore</button>'):'';
     return title+
       '<div class="tp-body-meta">Hit the last 3 '+abbr(home)+' v '+abbr(away)+' meetings · book: <b>'+bookName(book)+'</b> · '+distinctN+' players qualify'+moreNote+'</div>'+
       '<div class="dv-ctrls">'+tierBtns+hailBtn+'</div>'+bookChips+steppers+
       '<div class="dv-legs">'+slip+'</div>'+
-      '<div class="dv-comb">'+want+'-leg combined <b>$'+comb.toFixed(2)+'</b><span class="dv-est">est · straight multi; a true SGM (esp. same-player) pays less</span></div>';
+      '<div class="dv-comb">'+legN+'-leg combined <b>$'+comb.toFixed(2)+'</b>'+restore+'<span class="dv-est">est · straight multi; a true SGM (esp. same-player) pays less</span></div>';
   }
+  window._dvRemove=function(pi){
+    const S=_dvState(); if(!S.hail||!S.sel) return;
+    const {pool}=_dvPool(S); const l=pool[pi]; if(!l) return;
+    S.removed=S.removed||[]; const rm=new Set(S.removed);
+    const active=S.sel.idx.map(i=>pool[i]).filter(x=>x&&!rm.has(x.name)).length;
+    if(active<=2) return;                                   // keep at least a 2-leg multi
+    if(!rm.has(l.name)) S.removed.push(l.name);
+    _renderApp();
+  };
+  window._dvRestore=function(){ const S=_dvState(); S.removed=[]; _renderApp(); };
   window._dvSwap=function(slot,dir){
     const S=_dvState(); if(!S.sel) return;
     const {pool}=_dvPool(S); if(!pool.length) return;
@@ -2437,11 +2460,11 @@
     for(let step=0;step<pool.length;step++){ i=(i+dir+pool.length)%pool.length; const c=pool[i]; if(c&&!others.has(c.name)) break; }
     S.sel.idx[slot]=i; _renderApp();
   };
-  window._dvTier=function(t){ const S=_dvState(); S.hail=false; S.tier=t; S.sel=null; _renderApp(); };
-  window._dvHail=function(){ const S=_dvState(); S.hail=!S.hail; S.sel=null; _renderApp(); };
-  window._dvBook=function(b){ const S=_dvState(); S.book=b; S.sel=null; _renderApp(); };
-  window._dvMin=function(d){ const S=_dvState(); const cur=(S.minOdds==null?DV_MIN_DEFAULT:S.minOdds); S.minOdds=Math.max(1.01,Math.round((cur+d*0.05)*100)/100); S.sel=null; _renderApp(); };
-  window._dvMax=function(d){ const S=_dvState(); let cur=S.maxOdds||0; if(cur<=0&&d>0) cur=2.00; else cur=Math.round((cur+d*0.25)*100)/100; if(cur<0)cur=0; if(cur>0&&cur<1.05)cur=0; S.maxOdds=cur; S.sel=null; _renderApp(); };
+  window._dvTier=function(t){ const S=_dvState(); S.hail=false; S.tier=t; S.sel=null; S.removed=[]; _renderApp(); };
+  window._dvHail=function(){ const S=_dvState(); S.hail=!S.hail; S.sel=null; S.removed=[]; _renderApp(); };
+  window._dvBook=function(b){ const S=_dvState(); S.book=b; S.sel=null; S.removed=[]; _renderApp(); };
+  window._dvMin=function(d){ const S=_dvState(); const cur=(S.minOdds==null?DV_MIN_DEFAULT:S.minOdds); S.minOdds=Math.max(1.01,Math.round((cur+d*0.05)*100)/100); S.sel=null; S.removed=[]; _renderApp(); };
+  window._dvMax=function(d){ const S=_dvState(); let cur=S.maxOdds||0; if(cur<=0&&d>0) cur=2.00; else cur=Math.round((cur+d*0.25)*100)/100; if(cur<0)cur=0; if(cur>0&&cur<1.05)cur=0; S.maxOdds=cur; S.sel=null; S.removed=[]; _renderApp(); };
   function mostDisposals(){
     const teams=_fixtureSet();
     return (state.idx.players||[]).filter(p=>teams.has(p.team)&&(p.matches||0)>=3)
@@ -2885,6 +2908,7 @@
     return h;
   }
   window._sBook=function(k){ const i=SETTINGS.books.indexOf(k); if(i>=0)SETTINGS.books.splice(i,1); else SETTINGS.books.push(k); saveSettings(); _renderApp(); };
+  window._sBookAll=function(){ SETTINGS.books=[]; saveSettings(); _renderApp(); };
   window._sNerdTile=function(k){ SETTINGS.nerd[k]=!SETTINGS.nerd[k]; saveSettings(); _renderApp(); };
   window._sNerdMkt=function(k){
     let m=SETTINGS.nerd.markets;
