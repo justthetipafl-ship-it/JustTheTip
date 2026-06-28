@@ -311,6 +311,49 @@ def main():
     logs, stats, fixtures_data = load_existing()
     print(f"   loaded {len(logs['rows']):,} existing rows · {len(stats['matches'])} matches · {len(fixtures_data['fixtures'])} fixtures")
 
+    # 0. Backfill any missing WC fixtures from the API (knockout rounds get
+    #    added by FIFA after group stage / R16 / QF draws complete). This is
+    #    additive only — existing entries (including their status/scores) are
+    #    never modified. Cost: 1 API call per day.
+    try:
+        resp = api("/fixtures", {"league": 1, "season": 2026})
+        api_fixtures = resp.get("response", [])
+        existing_ids = {int(f["matchId"]) for f in fixtures_data["fixtures"]}
+        new_entries = []
+        for fx in api_fixtures:
+            fid = fx["fixture"]["id"]
+            if fid in existing_ids:
+                continue
+            new_entries.append({
+                "matchId":     fid,
+                "date":        fx["fixture"]["date"],
+                "timestamp":   fx["fixture"]["timestamp"],
+                "status":      fx["fixture"]["status"]["short"],
+                "venue":       (fx["fixture"].get("venue") or {}).get("name"),
+                "city":        (fx["fixture"].get("venue") or {}).get("city"),
+                "league":      fx["league"]["name"],
+                "leagueId":    fx["league"]["id"],
+                "season":      fx["league"]["season"],
+                "round":       fx["league"]["round"],
+                "homeTeam":    fx["teams"]["home"]["name"],
+                "homeTeamId":  fx["teams"]["home"]["id"],
+                "awayTeam":    fx["teams"]["away"]["name"],
+                "awayTeamId":  fx["teams"]["away"]["id"],
+                "homeScore":   fx["goals"]["home"],
+                "awayScore":   fx["goals"]["away"],
+            })
+        if new_entries:
+            from collections import Counter
+            rounds = Counter(e["round"] for e in new_entries)
+            print(f"\n   + {len(new_entries)} new fixtures added to schedule:")
+            for r_name, cnt in sorted(rounds.items()):
+                print(f"     · {r_name}: +{cnt}")
+            fixtures_data["fixtures"].extend(new_entries)
+            fixtures_data["fixtures"].sort(key=lambda f: f.get("timestamp") or 0)
+            fixtures_data["fixtureCount"] = len(fixtures_data["fixtures"])
+    except Exception as e:
+        print(f"   ! schedule backfill failed (continuing): {e}")
+
     # Build a set of matchIds we already have so we can skip them
     have_match_ids = {int(mid) for mid in stats["matches"].keys()}
     # And a set of fixtureIds in the WC schedule so we can update their status
