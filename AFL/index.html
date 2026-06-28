@@ -230,6 +230,9 @@
   .dv-bk{padding:4px 9px;border-radius:13px;border:1px solid var(--border);background:transparent;color:var(--text-3);font-size:11px;font-weight:700;cursor:pointer;}
   .dv-bk.on{border-color:var(--accent);background:rgba(34,197,94,.12);color:var(--text);}
   .dv-bk i{font-style:normal;opacity:.6;font-size:10px;margin-left:2px;}
+  .dv-mkts{display:flex;flex-wrap:wrap;gap:5px;margin:0 0 10px;}
+  .dv-mkt{padding:4px 9px;border-radius:13px;border:1px solid var(--border);background:transparent;color:var(--text-3);font-size:11px;font-weight:700;cursor:pointer;}
+  .dv-mkt.on{border-color:var(--accent);background:rgba(34,197,94,.12);color:var(--text);}
   .dv-ctrls{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:8px 0 10px;}
   .dv-tier{padding:5px 11px;border-radius:14px;border:1px solid var(--border);background:transparent;color:var(--text-3);font-size:12px;font-weight:700;cursor:pointer;}
   .dv-tier.on{border-color:var(--accent);background:rgba(34,197,94,.14);color:var(--text);}
@@ -250,6 +253,24 @@
   .dv-rm{width:24px;height:24px;border-radius:6px;border:1px solid var(--border);background:var(--surface);color:var(--text-3);cursor:pointer;font-size:15px;line-height:1;flex-shrink:0;}
   .dv-rm:hover{border-color:#ef4444;color:#ef4444;background:rgba(239,68,68,.12);}
   .dv-restore{margin-left:8px;background:none;border:0;color:#f59e0b;font-size:11px;font-weight:700;cursor:pointer;text-decoration:underline;padding:0;}
+  .slip-share-btn{margin-top:9px;width:100%;display:flex;align-items:center;justify-content:center;gap:7px;padding:9px;border-radius:8px;border:1px solid var(--border);background:var(--surface-2);color:var(--text-2);font-family:var(--font-display);font-weight:700;font-size:12px;cursor:pointer;}
+  .slip-share-btn:hover{border-color:var(--accent);color:var(--text);}
+  .share-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.72);z-index:200;align-items:center;justify-content:center;padding:18px;overflow:auto;}
+  .share-overlay.open{display:flex;}
+  .share-modal{background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:16px;max-width:420px;width:100%;max-height:94vh;overflow:auto;}
+  .share-modal-hd{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;font-family:var(--font-display);font-weight:800;font-size:15px;color:var(--text);}
+  .share-x{background:none;border:0;color:var(--text-2);font-size:24px;line-height:1;cursor:pointer;}
+  #share-card-mount{display:flex;justify-content:center;}
+  .share-toggle-row{display:flex;align-items:center;justify-content:space-between;margin:14px 2px 12px;font-size:13px;font-weight:600;color:var(--text-2);}
+  .share-toggle{width:42px;height:24px;border-radius:13px;border:1px solid var(--border);background:var(--surface-2);position:relative;cursor:pointer;transition:background .15s;flex-shrink:0;}
+  .share-toggle.on{background:var(--accent);border-color:var(--accent);}
+  .share-knob{position:absolute;top:2px;left:2px;width:18px;height:18px;border-radius:50%;background:#fff;transition:left .15s;}
+  .share-toggle.on .share-knob{left:20px;}
+  .share-actions{display:flex;gap:8px;}
+  .share-btn{flex:1;display:flex;align-items:center;justify-content:center;gap:6px;padding:11px;border-radius:9px;border:1px solid var(--border);background:var(--surface-2);color:var(--text);font-family:var(--font-display);font-weight:700;font-size:13px;cursor:pointer;}
+  .share-btn:hover{border-color:var(--accent);}
+  .share-btn.primary{background:var(--accent);border-color:var(--accent);color:#08140c;}
+  .share-btn[disabled]{opacity:.6;cursor:wait;}
   .dv-comb{margin-top:9px;padding:8px 11px;border-radius:8px;background:rgba(34,197,94,.10);border:1px solid rgba(34,197,94,.3);font-size:13px;font-weight:700;}
   .dv-comb b{font-family:var(--font-mono);font-size:15px;color:#22c55e;margin-left:4px;}
   .dv-est{display:block;font-size:10px;font-weight:500;color:var(--text-3);margin-top:2px;}
@@ -2327,8 +2348,10 @@
   // ===== Déjà Vu SGM — legs that hit the last 3 H2H meetings, all on one book =====
   const DV_MARKETS=[['disposals','Disposals',15],['kicks','Kicks',8],['handballs','Handballs',6],['marks','Marks',3],['tackles','Tackles',3],['clearances','Clearances',2],['goals','Goals',1]];
   const DV_MIN_DEFAULT=1.25;
-  function _dvState(){ return state.view.dejaVu || (state.view.dejaVu={tier:3,minOdds:DV_MIN_DEFAULT,maxOdds:0,hail:false,sel:null,book:null,home:null,away:null}); }
-  function _dvMeetings(home,away){
+  function _dvState(){ return state.view.dejaVu || (state.view.dejaVu={tier:3,minOdds:DV_MIN_DEFAULT,maxOdds:0,hail:false,sel:null,book:null,home:null,away:null,meets:3,markets:null}); }
+  function _dvMktOn(k){ const m=_dvState().markets; return !Array.isArray(m)||m.indexOf(k)>=0; }
+  function _dvMeetings(home,away,n){
+    n=n||3;
     const mt=state.idx.matchTeams||{};
     const cand=Object.keys(mt).filter(m=>{const ts=Object.keys(mt[m]);return ts.includes(home)&&ts.includes(away);});
     // Some matches appear under two MatchIds (a date-style id and a slug). Collapse
@@ -2337,23 +2360,25 @@
     const meta={}; (state.data.gamelogs||[]).forEach(r=>{ if(!r.MatchId)return; const x=meta[r.MatchId]=meta[r.MatchId]||{y:+r.Year||0,r:_roundNum(r.RoundName),n:0}; x.n++; });
     const byMeet={};
     cand.forEach(m=>{ const x=meta[m]; if(!x)return; const key=x.y+'|'+x.r; if(!byMeet[key]||x.n>byMeet[key].n) byMeet[key]={m,y:x.y,r:x.r}; });
-    return Object.values(byMeet).sort((a,b)=>(b.y-a.y)||(b.r-a.r)).slice(0,3).map(d=>d.m);
+    return Object.values(byMeet).sort((a,b)=>(b.y-a.y)||(b.r-a.r)).slice(0,n).map(d=>d.m);
   }
   function _dvLegs(home,away){
-    const meetings=_dvMeetings(home,away);
-    if(meetings.length<3) return {meetings,legs:[]};
+    const meets=_dvState().meets||3;
+    const meetings=_dvMeetings(home,away,meets);
+    if(meetings.length<meets) return {meetings,legs:[]};
     const mset=new Set(meetings);
     const onSide=new Set([...playersOnTeam(home),...playersOnTeam(away)].filter(p=>isPlaying(p.name,p.team)).map(p=>p.name));
     const byPlayer={};
     (state.data.gamelogs||[]).forEach(r=>{ if(mset.has(r.MatchId)) (byPlayer[r.Player]=byPlayer[r.Player]||[]).push(r); });
     const legs=[];
     Object.entries(byPlayer).forEach(([name,rows])=>{
-      if(rows.length<3 || !onSide.has(name)) return;            // played all 3 + named this week
+      if(rows.length<meets || !onSide.has(name)) return;        // played all N + named this week
       const p=state.idx.byName[name]; if(!p) return;
       const opp=(p.team===home?away:home);
       DV_MARKETS.forEach(([k,l,floor])=>{
+        if(!_dvMktOn(k)) return;                                 // market filter
         const vals=rows.map(r=>+(r[k]||0));
-        const lineV=Math.min.apply(null,vals);                  // highest "X+" cleared all 3
+        const lineV=Math.min.apply(null,vals);                  // highest "X+" cleared all N
         if(lineV<floor) return;                                 // skip trivial legs
         legs.push({name,team:p.team,opp,market:k,marketLabel:l,line:lineV,vals,pos:p.position,strength:lineV-floor});
       });
@@ -2398,17 +2423,21 @@
   function _dvSel1pp(pool,need){ const seen=new Set(),idx=[]; for(let i=0;i<pool.length&&idx.length<need;i++){ if(!seen.has(pool[i].name)){ seen.add(pool[i].name); idx.push(i); } } return idx; }
   function dejaVuSGM(home,away){
     const S=_dvState(); S.home=home; S.away=away;
+    const meets=S.meets||3;
     const title='<div class="tp-sec"><div class="sec-title"><i class="ti ti-versions"></i> Déjà Vu SGM</div></div>';
-    const meetings=_dvMeetings(home,away);
-    if(meetings.length<3) return title+'<div class="tp-body-meta" style="border:0">Need at least 3 prior meetings between '+abbr(home)+' and '+abbr(away)+'.</div>';
+    const mktChips='<div class="dv-mkts">'+DV_MARKETS.map(([k,l])=>'<button class="dv-mkt'+(_dvMktOn(k)?' on':'')+'" onclick="_dvMkt(\''+k+'\')">'+l+'</button>').join('')+'</div>';
+    const meetsStep='<span class="dv-min">hits&nbsp;<button onclick="_dvMeets(-1)">−</button><b>'+meets+'</b><button onclick="_dvMeets(1)">+</button></span>';
+    const meetings=_dvMeetings(home,away,meets);
+    if(meetings.length<meets) return title+'<div class="dv-ctrls">'+meetsStep+'</div>'+mktChips+'<div class="tp-body-meta" style="border:0">Need at least '+meets+' prior meetings between '+abbr(home)+' and '+abbr(away)+' — lower the hit count to widen the pool.</div>';
     // no live per-book odds yet -> preview the qualifying players (one row each)
     if(!(state.idx.bookIdx&&Object.keys(state.idx.bookIdx).length)){
       const {legs}=_dvLegs(home,away);
-      if(!legs.length) return title+'<div class="tp-body-meta" style="border:0">No player cleared a market line in all 3 meetings.</div>';
+      const ctrls='<div class="dv-ctrls">'+meetsStep+'</div>'+mktChips;
+      if(!legs.length) return title+ctrls+'<div class="tp-body-meta" style="border:0">No player cleared a market line in all '+meets+' meetings.</div>';
       const seen=new Set(),top=[];
       legs.slice().sort((a,b)=>b.strength-a.strength).forEach(l=>{ if(top.length<10&&!seen.has(l.name)){ seen.add(l.name); top.push(l); } });
       const rows=top.map(l=>'<div class="dv-leg"><span class="dv-n">'+esc(l.name)+'</span><span class="dv-l">'+l.line+'+ '+l.marketLabel+'</span><span class="dv-h">'+l.vals.join(' / ')+'</span></div>').join('');
-      return title+'<div class="tp-body-meta">'+_dvDistinct(legs)+' players hit a line in all 3 meetings · single-book prices, tiers &amp; Hail Mary appear once the live per-book odds feed is on</div><div class="dv-legs">'+rows+'</div>';
+      return title+ctrls+'<div class="tp-body-meta">'+_dvDistinct(legs)+' players hit a line in all '+meets+' meetings · single-book prices, tiers &amp; Hail Mary appear once the live per-book odds feed is on</div><div class="dv-legs">'+rows+'</div>';
     }
     const {books,book,pool,byBook}=_dvPool(S);
     const minOdds=S.minOdds==null?DV_MIN_DEFAULT:S.minOdds, maxOdds=S.maxOdds||0;
@@ -2432,15 +2461,16 @@
     const tierBtns=[3,4,5].map(t=>'<button class="dv-tier'+(!S.hail&&S.tier===t?' on':'')+'"'+(distinctN>=t?'':' disabled')+' onclick="_dvTier('+t+')">'+t+' legs</button>').join('');
     const hailBtn='<button class="dv-tier dv-hail'+(S.hail?' on':'')+'" onclick="_dvHail()"><i class="ti ti-bolt"></i> Hail Mary</button>';
     const bookChips=books.length>1?('<div class="dv-books">'+books.slice().sort((a,b)=>_dvDistinct(byBook[b])-_dvDistinct(byBook[a])).map(b=>'<button class="dv-bk'+(b===book?' on':'')+'" onclick="_dvBook(\''+b+'\')">'+bookName(b)+' <i>'+_dvDistinct(byBook[b])+'</i></button>').join('')+'</div>'):'';
-    const steppers=('<div class="dv-ctrls"><span class="dv-min">min&nbsp;$<button onclick="_dvMin(-1)">−</button><b>'+(S.minOdds==null?DV_MIN_DEFAULT:S.minOdds).toFixed(2)+'</b><button onclick="_dvMin(1)">+</button></span>'+
+    const steppers=('<div class="dv-ctrls">'+meetsStep+'<span class="dv-min">min&nbsp;$<button onclick="_dvMin(-1)">−</button><b>'+(S.minOdds==null?DV_MIN_DEFAULT:S.minOdds).toFixed(2)+'</b><button onclick="_dvMin(1)">+</button></span>'+
       '<span class="dv-min">max&nbsp;<button onclick="_dvMax(-1)">−</button><b>'+(maxOdds>0?'$'+maxOdds.toFixed(2):'off')+'</b><button onclick="_dvMax(1)">+</button></span></div>');
     const moreNote=(!S.hail&&distinctN>want)?(' · '+(distinctN-want)+' more player'+(distinctN-want>1?'s':'')+' to swap in'):'';
     const restore=(S.hail&&removed.size)?(' <button class="dv-restore" onclick="_dvRestore()">+'+removed.size+' removed · restore</button>'):'';
     return title+
-      '<div class="tp-body-meta">Hit the last 3 '+abbr(home)+' v '+abbr(away)+' meetings · book: <b>'+bookName(book)+'</b> · '+distinctN+' players qualify'+moreNote+'</div>'+
-      '<div class="dv-ctrls">'+tierBtns+hailBtn+'</div>'+bookChips+steppers+
+      '<div class="tp-body-meta">Hit the last '+meets+' '+abbr(home)+' v '+abbr(away)+' meetings · book: <b>'+bookName(book)+'</b> · '+distinctN+' players qualify'+moreNote+'</div>'+
+      '<div class="dv-ctrls">'+tierBtns+hailBtn+'</div>'+bookChips+steppers+mktChips+
       '<div class="dv-legs">'+slip+'</div>'+
-      '<div class="dv-comb">'+legN+'-leg combined <b>$'+comb.toFixed(2)+'</b>'+restore+'<span class="dv-est">est · straight multi; a true SGM (esp. same-player) pays less</span></div>';
+      '<div class="dv-comb">'+legN+'-leg combined <b>$'+comb.toFixed(2)+'</b>'+restore+'<span class="dv-est">est · straight multi; a true SGM (esp. same-player) pays less</span></div>'+
+      (legN>=2?'<button class="slip-share-btn" onclick="_openSlipShare(\'deja\')"><i class="ti ti-share"></i> Share card</button>':'');
   }
   window._dvRemove=function(pi){
     const S=_dvState(); if(!S.hail||!S.sel) return;
@@ -2452,6 +2482,8 @@
     _renderApp();
   };
   window._dvRestore=function(){ const S=_dvState(); S.removed=[]; _renderApp(); };
+  window._dvMeets=function(d){ const S=_dvState(); const cur=S.meets||3; S.meets=Math.max(2,Math.min(6,cur+d)); S.sel=null; S.removed=[]; _renderApp(); };
+  window._dvMkt=function(k){ const S=_dvState(); let m=S.markets; if(!Array.isArray(m)) m=DV_MARKETS.map(x=>x[0]); const i=m.indexOf(k); if(i>=0){ if(m.length>1) m.splice(i,1); } else m.push(k); S.markets=m; S.sel=null; S.removed=[]; _renderApp(); };
   window._dvSwap=function(slot,dir){
     const S=_dvState(); if(!S.sel) return;
     const {pool}=_dvPool(S); if(!pool.length) return;
@@ -2803,7 +2835,7 @@
       return emptyState('ti-stack-2','No priced legs','Nothing clears the current filters with a posted line. Loosen Min prob / Min score, or widen the markets above.');
     }
     const scopeWord=SETTINGS.multi.scope==='round'?(SETTINGS.multi.today?'today multi':'round multi'):'same-game multi';
-    const blocks=games.map(gm=>{
+    const blocks=games.map((gm,i)=>{
       const legs=gm.legs.map(l=>{
         const col=LEG_COL[l.type]||'#3b82f6';
         const price='$'+l._odds.price.toFixed(2);
@@ -2812,7 +2844,8 @@
         return degRow(l.p.name,col,price,l.betLabel+' · vs '+abbr(l.opp)+' · avg '+l.avg.toFixed(1)+' · '+probStr+' · '+bookName(l._odds.book)+why);
       }).join('');
       const combLabel='$'+gm.comb.toFixed(2)+(gm.priced<gm.legs.length?' ('+gm.priced+'/'+gm.legs.length+' priced)':'');
-      return '<div class="tp-body-meta" style="margin-top:8px"><b>'+gm.label+'</b> · '+gm.legs.length+'-leg '+scopeWord+' · combined <b>'+combLabel+'</b></div>'+legs;
+      return '<div class="tp-body-meta" style="margin-top:8px"><b>'+gm.label+'</b> · '+gm.legs.length+'-leg '+scopeWord+' · combined <b>'+combLabel+'</b></div>'+legs+
+        '<button class="slip-share-btn" onclick="_openSlipShare(\'multi\','+i+')"><i class="ti ti-share"></i> Share card</button>';
     }).join('');
     const totalLegs=games.reduce((a,g)=>a+g.legs.length,0);
     return '<details class="tp-collapse c-green" open><summary class="tp-collapse-sum"><i class="ti ti-stack-2"></i><span class="tp-collapse-title">Multi Builder</span><span class="tp-count">'+games.length+'</span><i class="ti ti-chevron-down tp-collapse-chev"></i></summary><div class="tp-collapse-body"><div class="tp-body-meta">'+scopeWord.replace(/^\w/,c=>c.toUpperCase())+(games.length>1?'s':'')+' · '+games.length+' · '+totalLegs+' legs</div>'+blocks+'</div></details>';
@@ -3235,6 +3268,97 @@
       } else { _dl(blob,'jtt-cmb-'+Date.now()+'.png'); _btnReset(b,'<i class="ti ti-copy"></i> Copy'); }
     },'image/png')).catch(e=>{ alert('Copy failed: '+(e&&e.message||e)); _btnReset(b,'<i class="ti ti-copy"></i> Copy'); });
   };
+
+  // ===== Branded share cards (slips: Multi Builder + Déjà Vu) =====
+  let _shareSpec=null, _shareOdds=true;
+  function _buildMultiSpec(i){
+    const games=multiBuilder(); const gm=games[i]; if(!gm||!gm.legs.length) return null;
+    const scope=SETTINGS.multi.scope==='round'?(SETTINGS.multi.today?'today multi':'round multi'):'same-game multi';
+    return { badge:'MULTI', kindLabel:scope, title:gm.label+' · '+gm.legs.length+'-leg '+scope,
+      legs:gm.legs.map(l=>({ name:l.p.name, line:l.betLabel, odds:l._odds?'$'+l._odds.price.toFixed(2):null,
+        signal:(l.probReal?Math.round(l.prob*100)+'% hit':'~'+Math.round(l.prob*100)+'%')+(l.probReal&&l.probN?' ('+l.probN+'g)':'') })),
+      comb:'$'+gm.comb.toFixed(2), legCount:gm.legs.length };
+  }
+  function _buildDejaSpec(){
+    const S=_dvState(); if(!S.home||!S.away||!S.sel) return null;
+    const meets=S.meets||3;
+    const {pool}=_dvPool(S); if(!pool.length) return null;
+    const removed=new Set(S.hail?(S.removed||[]):[]);
+    const active=S.sel.idx.map(i=>pool[i]).filter(l=>l&&!removed.has(l.name));
+    if(active.length<2) return null;
+    return { badge:'DÉJÀ VU SGM', kindLabel:'multi', title:abbr(S.home)+' v '+abbr(S.away)+' · hit the last '+meets+' meetings',
+      legs:active.map(l=>({ name:l.name, line:l.betLine+'+ '+l.marketLabel, odds:'$'+l.over.toFixed(2), signal:meets+'/'+meets+' meets' })),
+      comb:'$'+_dvProduct(active).toFixed(2), legCount:active.length };
+  }
+  function _shareCardHTML(spec,showOdds){
+    const legs=spec.legs.map(l=>{
+      const right=(showOdds&&l.odds)
+        ? '<span style="font-family:ui-monospace,Menlo,monospace;font-weight:800;color:#22c55e;font-size:13px;white-space:nowrap">'+l.odds+'</span>'
+        : '<span style="font-size:11px;font-weight:700;color:#22c55e;white-space:nowrap">'+esc(l.signal||'')+'</span>';
+      return '<div style="display:flex;align-items:center;gap:10px;padding:8px 11px;border:1px solid #1e2a1e;border-radius:9px;background:rgba(255,255,255,.025)">'+
+        '<span style="flex:1;min-width:0;font-weight:700;font-size:13px;color:#eaf2ea;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(l.name)+'</span>'+
+        '<span style="font-size:11px;color:#8fa39a;white-space:nowrap">'+esc(l.line)+'</span>'+right+'</div>';
+    }).join('');
+    const hero=(showOdds&&spec.comb)
+      ? '<div style="margin-top:13px;padding:12px 14px;border-radius:10px;background:rgba(34,197,94,.10);border:1px solid rgba(34,197,94,.32);display:flex;align-items:baseline;justify-content:space-between"><span style="font-size:12px;font-weight:700;color:#bfe9cd">'+spec.legCount+'-leg combined</span><span style="font-family:ui-monospace,Menlo,monospace;font-weight:800;font-size:23px;color:#22c55e">'+spec.comb+'</span></div>'
+      : '<div style="margin-top:13px;padding:12px 14px;border-radius:10px;background:rgba(34,197,94,.08);border:1px solid rgba(34,197,94,.25);font-size:14px;font-weight:800;color:#bfe9cd;text-align:center">'+spec.legCount+'-leg '+esc(spec.kindLabel)+'</div>';
+    return '<div id="share-card" style="width:360px;box-sizing:border-box;background:#0a0e0a;border:1px solid #1e2a1e;border-radius:16px;padding:22px 20px;font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif">'+
+      '<div style="display:flex;align-items:center;gap:9px;margin-bottom:5px">'+
+        '<img src="assets/jtt-wordmark.png" alt="Just The Tip" style="height:28px;width:auto;display:block" onerror="this.style.display=\'none\';this.nextElementSibling.style.display=\'inline-block\'">'+
+        '<span style="display:none;font-weight:800;letter-spacing:1.6px;font-size:15px;color:#fff">JUST THE TIP</span>'+
+        '<span style="margin-left:auto;font-size:9.5px;font-weight:800;letter-spacing:.6px;color:#f59e0b;border:1px solid rgba(245,158,11,.4);border-radius:5px;padding:2px 7px">'+esc(spec.badge)+'</span>'+
+      '</div>'+
+      '<div style="font-size:12px;color:#8fa39a;font-weight:700;margin-bottom:14px">'+esc(spec.title)+'</div>'+
+      '<div style="display:flex;flex-direction:column;gap:7px">'+legs+'</div>'+hero+
+      '<div style="margin-top:16px;display:flex;align-items:center;justify-content:space-between;font-size:10px;color:#6a7a6a;font-weight:600"><span>justthetipaus.com</span><span>research, not advice</span></div>'+
+    '</div>';
+  }
+  function _shareOverlayHTML(spec){
+    return '<div class="share-modal">'+
+      '<div class="share-modal-hd"><span>Share slip</span><button class="share-x" onclick="_shareClose()">&times;</button></div>'+
+      '<div id="share-card-mount">'+_shareCardHTML(spec,_shareOdds)+'</div>'+
+      '<div class="share-toggle-row"><span>Include odds &amp; price</span><button id="share-odds-toggle" class="share-toggle'+(_shareOdds?' on':'')+'" onclick="_shareToggleOdds()"><span class="share-knob"></span></button></div>'+
+      '<div class="share-actions"><button id="share-native" class="share-btn primary" onclick="_shareNative()"><i class="ti ti-share"></i> Share</button>'+
+      '<button id="share-save" class="share-btn" onclick="_shareSave()"><i class="ti ti-download"></i> Save</button>'+
+      '<button id="share-copy" class="share-btn" onclick="_shareCopy()"><i class="ti ti-copy"></i> Copy</button></div>'+
+    '</div>';
+  }
+  window._openSlipShare=function(kind,idx){
+    _shareSpec = kind==='multi' ? _buildMultiSpec(+idx) : _buildDejaSpec();
+    if(!_shareSpec){ alert('Nothing to share yet — build a slip with at least 2 legs first.'); return; }
+    _shareOdds=true;
+    let ov=document.getElementById('share-overlay');
+    if(!ov){ ov=document.createElement('div'); ov.id='share-overlay'; ov.className='share-overlay'; ov.onclick=function(e){ if(e.target===ov)_shareClose(); }; document.body.appendChild(ov); }
+    ov.innerHTML=_shareOverlayHTML(_shareSpec); ov.classList.add('open');
+  };
+  window._shareClose=function(){ const ov=document.getElementById('share-overlay'); if(ov)ov.classList.remove('open'); };
+  window._shareToggleOdds=function(){ _shareOdds=!_shareOdds; const m=document.getElementById('share-card-mount'); if(m&&_shareSpec)m.innerHTML=_shareCardHTML(_shareSpec,_shareOdds); const t=document.getElementById('share-odds-toggle'); if(t)t.className='share-toggle'+(_shareOdds?' on':''); };
+  function _shareRasterize(){
+    return new Promise((resolve,reject)=>{
+      const card=document.getElementById('share-card'); if(!card){reject(new Error('no card'));return;}
+      const go=()=>{ window.html2canvas(card,{backgroundColor:'#0a0e0a',scale:2,useCORS:true,logging:false}).then(cc=>{
+        const m=Math.round(cc.width*0.05); let ow=cc.width+m*2, oh=cc.height+m*2;
+        if(ow/oh>4/5) oh=Math.round(ow/(4/5));
+        const out=document.createElement('canvas'); out.width=ow; out.height=oh;
+        const x=out.getContext('2d'); x.fillStyle='#0a0e0a'; x.fillRect(0,0,ow,oh);
+        x.drawImage(cc,Math.round((ow-cc.width)/2),Math.round((oh-cc.height)/2)); resolve(out);
+      }).catch(reject); };
+      if(window.html2canvas) go();
+      else { const s=document.createElement('script'); s.src='https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js'; s.onload=go; s.onerror=()=>reject(new Error('Could not load the image library — check your connection.')); document.head.appendChild(s); }
+    });
+  }
+  function _shareBlob(cb){ _shareRasterize().then(c=>c.toBlob(cb,'image/png')).catch(e=>{ alert('Image failed: '+(e&&e.message||e)); cb(null); }); }
+  window._shareSave=function(){ const b=_btnBusy('share-save'); _shareBlob(blob=>{ if(blob)_dl(blob,'jtt-slip-'+Date.now()+'.png'); _btnReset(b,'<i class="ti ti-download"></i> Save'); }); };
+  window._shareCopy=function(){ const b=_btnBusy('share-copy'); _shareBlob(blob=>{ if(!blob){_btnReset(b,'<i class="ti ti-copy"></i> Copy');return;}
+    if(navigator.clipboard&&window.ClipboardItem){ navigator.clipboard.write([new window.ClipboardItem({'image/png':blob})])
+        .then(()=>{ if(b){b.innerHTML='<i class="ti ti-check"></i> Copied';} setTimeout(()=>_btnReset(b,'<i class="ti ti-copy"></i> Copy'),1500); })
+        .catch(()=>{ _dl(blob,'jtt-slip.png'); _btnReset(b,'<i class="ti ti-copy"></i> Copy'); }); }
+    else { _dl(blob,'jtt-slip.png'); _btnReset(b,'<i class="ti ti-copy"></i> Copy'); } }); };
+  window._shareNative=function(){ const b=_btnBusy('share-native'); _shareBlob(blob=>{ if(!blob){_btnReset(b,'<i class="ti ti-share"></i> Share');return;}
+    const file=new File([blob],'jtt-slip.png',{type:'image/png'});
+    if(navigator.canShare&&navigator.canShare({files:[file]})){ navigator.share({files:[file],title:'JTT slip',text:'My slip from Just The Tip'})
+        .then(()=>_btnReset(b,'<i class="ti ti-share"></i> Share')).catch(()=>_btnReset(b,'<i class="ti ti-share"></i> Share')); }
+    else { _dl(blob,'jtt-slip-'+Date.now()+'.png'); _btnReset(b,'<i class="ti ti-share"></i> Share'); } }); };
 
   function cmpAnalysis(p,stat,line){
     _cmbCtx={p,stat,line};
