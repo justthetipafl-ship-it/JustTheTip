@@ -185,6 +185,11 @@
   .ob-bk{display:inline-block;margin-left:5px;font-size:8px;font-weight:800;color:var(--text-3);border:1px solid var(--border);border-radius:3px;padding:1px 3px;vertical-align:middle;letter-spacing:.02em;}
   .deg-sub{font-family:var(--font-mono);font-size:11px;color:var(--text-2);line-height:1.5;margin-top:3px;white-space:normal;word-break:break-word;}
   .deg-val{font-family:var(--font-display);font-weight:800;font-size:13.5px;line-height:1.3;text-align:right;max-width:100%;justify-self:end;white-space:normal;overflow-wrap:anywhere;word-break:break-word;}
+  .deg-inj{display:inline-block;font-family:var(--font-mono);font-size:8.5px;font-weight:700;letter-spacing:.05em;color:#fecaca;background:rgba(239,68,68,.16);border:1px solid rgba(239,68,68,.4);border-radius:4px;padding:1px 4px;margin-left:5px;vertical-align:middle;}
+  .deg-game-hdr{font-family:var(--font-mono);font-size:10px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;color:var(--text-3);margin:14px 0 7px;padding-bottom:4px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:7px;}
+  .deg-game-hdr:first-child{margin-top:2px;}
+  .deg-game-hdr::before{content:"";width:3px;height:11px;background:var(--accent);border-radius:2px;flex:0 0 auto;}
+  .pm-injury{display:flex;align-items:center;gap:7px;margin:-4px 0 12px;padding:8px 11px;border-radius:6px;font-family:var(--font-mono);font-size:12px;font-weight:700;color:#fecaca;background:rgba(239,68,68,.12);border:1px solid rgba(239,68,68,.35);}
   .deg-odds{color:var(--accent)!important;font-weight:800;white-space:nowrap;}
   /* focused fixture header */
   .fixture-header{background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:16px;
@@ -797,6 +802,7 @@
     _dedupeGamelogs(d);
     state.idx.players=d.players||[];
     state.idx.byName={}; state.idx.players.forEach(p=>state.idx.byName[p.name]=p);
+    state.idx.injuryByName={}; (d.injury||[]).forEach(r=>{ if(r&&r.Player) state.idx.injuryByName[_normName(r.Player)]=r; });
     state.idx.teamMap={}; (d.teams||[]).forEach(t=>state.idx.teamMap[t.team]=t);
     // gamelogs by player and by match
     state.idx.logsByName={}; state.idx.matchTeams={}; state.idx.matchScore={};
@@ -1901,8 +1907,10 @@
       if(d&&d.over!=null) bits.push('<span class="pm-od"><i class="ti ti-coin"></i> Disp '+d.line+' O $'+d.over.toFixed(2)+(d.under!=null?' / U $'+d.under.toFixed(2):'')+(d.book?' ('+bookName(d.book)+')':'')+'</span>');
       if(bits.length) oddsHtml='<div class="section-title">Live odds <span style="font-weight:600;color:var(--text-3);font-size:9px">best price</span></div><div class="pm-odds">'+bits.join('')+'</div>';
     }
+    const _inj=_injuryFor(name);
+    const injPill=_inj?'<div class="pm-injury"><i class="ti ti-bandage"></i> OUT \u2014 '+esc(_inj.Injury||'Injury')+(_inj.Returning?' \u00b7 back '+esc(_inj.Returning):'')+'</div>':'';
     document.getElementById('pm-modal').innerHTML=
-      '<div class="pm-hdr"><div><div class="pm-name">'+p.name+'</div><div class="pm-meta"><span class="pos-dot" style="background:'+(POS_C[p.position]||'#888')+'"></span>'+(p.position||'—')+' · '+(p.team||'')+' · '+(p.matches||0)+' games'+(p.age?' · '+(+p.age).toFixed(0)+'yo':'')+'</div></div><button class="pm-close" onclick="_pmClose()">&times;</button></div>'+
+      '<div class="pm-hdr"><div><div class="pm-name">'+p.name+'</div><div class="pm-meta"><span class="pos-dot" style="background:'+(POS_C[p.position]||'#888')+'"></span>'+(p.position||'—')+' · '+(p.team||'')+' · '+(p.matches||0)+' games'+(p.age?' · '+(+p.age).toFixed(0)+'yo':'')+'</div></div><button class="pm-close" onclick="_pmClose()">&times;</button></div>'+injPill+
       edge+oddsHtml+
       '<div class="section-title">Averages <span class="sub-tabs" style="float:right;display:inline-flex">'+seg+'</span></div><div class="statgrid">'+cells+'</div>'+
       propCalc(name)+
@@ -1990,7 +1998,7 @@
     if(!list.length) return _degenFocused?'':emptyState(icon,'No '+title.toLowerCase()+' on the board','Lines are loaded, but none cleared the gate this slate — selective by design.');
     return '<details class="tp-collapse '+colorClass+'" open><summary class="tp-collapse-sum"><i class="ti '+icon+'"></i><span class="tp-collapse-title">'+title+'</span><i class="ti ti-chevron-down tp-collapse-chev"></i></summary><div class="tp-collapse-body">'+
       '<div class="tp-body-meta">Disposals · posted line · '+(kind==='over'?'score \u2265 5.5':'score \u2264 -3.5')+(SIGNAL_MIN_ODDS[kind==='over'?'over':'under']!=null?' · min $'+SIGNAL_MIN_ODDS[kind==='over'?'over':'under'].toFixed(2):'')+'</div>'+
-      list.map(r=>signalCard(r,kind)).join('')+'</div></details>';
+      _byGame(list, r=>r.team, r=>signalCard(r,kind)).join('')+'</div></details>';
   }
 
   /* ===================== DEGEN BUILD 3 ===================== */
@@ -2134,7 +2142,7 @@
     let h='';
     if(hot.length){
       h+='<div class="section-title">Hot Snags · top-10 scorer v bottom-5 defence</div>'+
-        hot.map(s=>degRow(s.p.name,'#f59e0b',{v1:fmt(s.val,2),l1:'gpg',v2:'#'+s.dvpRank,l2:posShort(s.p.position)},
+        _byGame(hot, s=>s.p.team, s=>degRow(s.p.name,'#f59e0b',{v1:fmt(s.val,2),l1:'gpg',v2:'#'+s.dvpRank,l2:posShort(s.p.position)},
           posShort(s.p.position)+' \xb7 '+abbr(s.p.team)+' v '+abbr(s.opp)+' \xb7 '+fmt(s.val,2)+' gpg'+goalOddsTag(s.p.name))).join('');
     } else {
       h+='<div class="tp-body-meta" style="border:0;margin:8px 0">No top-10 scorer'+(posF!=='All'?' ('+posShort(posF)+')':'')+' faces a bottom-5 goals defence this round.</div>';
@@ -2169,7 +2177,7 @@
     let h='';
     if(sig.length){
       h+='<div class="section-title">Hot Elite Matchups · top-10 v bottom-5 defence</div>'+
-        sig.slice(0,20).map(s=>degRow(s.p.name,'#22c55e',{v1:fmt(s.val,1),l1:s.def.l,v2:'#'+s.dvpRank,l2:'softest'},
+        _byGame(sig.slice(0,20), s=>s.p.team, s=>degRow(s.p.name,'#22c55e',{v1:fmt(s.val,1),l1:s.def.l,v2:'#'+s.dvpRank,l2:'softest'},
           posShort(s.p.position)+' · '+abbr(s.p.team)+' v '+abbr(s.opp)+' · '+fmt(s.val,1)+' '+s.def.l.toLowerCase()+multiLineTag(s.p.name,s.def.k))).join('');
     } else {
       h+='<div class="tp-body-meta" style="border:0;margin:8px 0">No top-10 player faces a bottom-5 defence this round.</div>';
@@ -2828,12 +2836,15 @@
     t.style.maxWidth=w+'px'; t.style.left=Math.max(8,Math.min(window.innerWidth-w-8,r.left-8))+'px'; t.style.top=(r.bottom+window.scrollY+6)+'px'; };
   window._negHide=function(){ const t=document.getElementById('neg-tip'); if(t) t.style.display='none'; };
   window._negTip=function(ev,el){ ev.stopPropagation(); _negShow(el); };
+  function _normName(s){ return (s||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-z ]/g,' ').replace(/\s+/g,' ').trim(); }
+  function _injuryFor(name){ const ix=state.idx&&state.idx.injuryByName; return ix?(ix[_normName(name)]||null):null; }
   function _degBadges(name){
     let h='';
     const p=state.idx&&state.idx.byName?state.idx.byName[name]:null;
     if(p&&p.position){ const col=POS_C[p.position]||'#888'; h+='<span class="deg-pos" style="color:'+col+';border-color:'+col+'55;background:'+col+'1a">'+posShort(p.position)+'</span>'; }
     const lu=(state.data.lineups||[]).find(r=>r.player===name && !/UNCONFIRMED/i.test(r.status||'') && !/^NA\b/i.test(r.player||''));
     if(lu) h+='<span class="deg-named">NAMED</span>';
+    const ij=_injuryFor(name); if(ij) h+='<span class="deg-inj" title="'+esc((ij.Injury||'Injury')+(ij.Returning?' \u00b7 '+ij.Returning:''))+'">OUT</span>';
     h+=_warnBadge(name);
     return h;
   }
@@ -2915,20 +2926,39 @@
     return full?arr.slice(0,full):arr;
   }
 
+  // ---- group Degen rows by game, ordered by fixture order ----
+  function _gameKeyOf(team){
+    const fx=state.data.fixture||[];
+    for(let i=0;i<fx.length;i++){ const g=fx[i]; if(g.home===team||g.away===team) return {idx:i,label:abbr(g.home)+' v '+abbr(g.away)}; }
+    return {idx:900,label:abbr(team)||'\u2014'};
+  }
+  // map data items -> array of html, with a game sub-header before each fixture's rows.
+  // no headers in focused-fixture view or when only one game is present (stays clean).
+  function _byGame(items, teamFn, rowFn){
+    if(!items||!items.length) return [];
+    if(_degenFocused) return items.map(rowFn);
+    const buckets=new Map();
+    items.forEach(it=>{ const g=_gameKeyOf(teamFn(it)); if(!buckets.has(g.idx))buckets.set(g.idx,{g,list:[]}); buckets.get(g.idx).list.push(it); });
+    const ordered=[...buckets.values()].sort((a,b)=>a.g.idx-b.g.idx);
+    if(ordered.length<=1) return items.map(rowFn);
+    const out=[];
+    ordered.forEach(b=>{ out.push('<div class="deg-game-hdr">'+b.g.label+'</div>'); b.list.forEach(it=>out.push(rowFn(it))); });
+    return out;
+  }
   function renderTile(k){
     const M=v=>fmt(v,1), abv=t=>abbr(t);
     if(k==='snags'){
-      const rows=_fc(snags(),6).map(s=>degRow(s.p.name,'#f59e0b',{v1:fmt(s.val,2),l1:'gpg',v2:'#'+s.dvpRank,l2:posShort(s.p.position)},
+      const rows=_byGame(_fc(snags(),6), s=>s.p.team, s=>degRow(s.p.name,'#f59e0b',{v1:fmt(s.val,2),l1:'gpg',v2:'#'+s.dvpRank,l2:posShort(s.p.position)},
         posShort(s.p.position)+' · '+abv(s.p.team)+' v '+abv(s.opp)+' · '+fmt(s.val,2)+' gpg'+goalOddsTag(s.p.name)));
       return degWrap('ti-ball-american-football','Snags',rows,'c-amber');
     }
     if(k==='elite'){
-      const rows=_fc(elite(),8,40).map(s=>degRow(s.p.name,'#22c55e',{v1:M(s.val),l1:s.def.l,v2:'#'+s.dvpRank,l2:'softest'},
+      const rows=_byGame(_fc(elite(),8,40), s=>s.p.team, s=>degRow(s.p.name,'#22c55e',{v1:M(s.val),l1:s.def.l,v2:'#'+s.dvpRank,l2:'softest'},
         posShort(s.p.position)+' · '+abv(s.p.team)+' v '+abv(s.opp)+' · '+M(s.val)+' '+s.def.l.toLowerCase()+multiLineTag(s.p.name,s.def.k)));
       return degWrap('ti-trophy','Elite Matchups',rows,'c-green');
     }
     if(k==='bunnies'){
-      const rows=_fc(bunnies(),6).map(b=>{
+      const rows=_byGame(_fc(bunnies(),6), b=>b.p.team, b=>{
         const head=b.lineBunny?(b.games+'/'+b.games+' cleared '+b.line)
           :(b.diffPct!=null?'+'+b.diffPct.toFixed(0)+'% v field':'best matchup');
         const sub=b.stat.l+' · vs '+abv(b.opp)+' '+M(b.thisAvg)+(b.best!=null?' (next best '+M(b.best)+')':'')+' · '+b.games+' H2H'+lineTag(b.p.name,b.stat.k);
@@ -2937,7 +2967,7 @@
       return degWrap('ti-carrot','Bunnies',rows,'c-blue');
     }
     if(k==='bogey'){
-      const rows=_fc(bogey(),6).map(b=>{
+      const rows=_byGame(_fc(bogey(),6), b=>b.p.team, b=>{
         const head=b.lineBogey?('0/'+b.games+' cleared '+b.line)
           :(b.diffPct!=null?'-'+b.diffPct.toFixed(0)+'% v field':'worst matchup');
         const sub=b.stat.l+' · vs '+abv(b.opp)+' '+M(b.thisAvg)+(b.worst!=null?' (next worst '+M(b.worst)+')':'')+' · '+b.games+' H2H'+underTag(b.p.name,b.stat.k);
@@ -2946,17 +2976,17 @@
       return degWrap('ti-mood-sad','Bogey',rows,'c-red');
     }
     if(k==='streak'){
-      const rows=_fc(streakers(),6).map(s=>degRow(s.p.name,'#f97316',{v1:s.streak,l1:'straight',v2:Math.round(s.rate*100)+'%',l2:'hit'},
+      const rows=_byGame(_fc(streakers(),6), s=>s.p.team, s=>degRow(s.p.name,'#f97316',{v1:s.streak,l1:'straight',v2:Math.round(s.rate*100)+'%',l2:'hit'},
         s.stat+' '+s.line+'+ · '+abbr(s.p.team)+(s.opp?' v '+abbr(s.opp):'')+' · hit '+Math.round(s.rate*100)+'%'+(s.dvpPct!=null?' · '+muTag(s.dvpPct):'')+streakOdds(s)));
       return degWrap('ti-flame','Streakers',rows,'c-amber');
     }
     if(k==='form'){
-      const up=_fc(formAlerts('spike'),6,25).map(a=>degRow(a.p.name,'#22c55e',{v1:'▲ +'+Math.round(a.swing*100)+'%',l1:'swing',v2:M(a.l3),l2:'L3'},a.stat+' · L3 '+M(a.l3)+' vs season '+M(a.seasonAvg)+formNote('spike',a.runDvp,a.thisDvp)));
-      const dn=_fc(formAlerts('drop'),6,25).map(a=>degRow(a.p.name,'#ef4444',{v1:'▼ '+Math.round(a.swing*100)+'%',l1:'swing',v2:M(a.l3),l2:'L3'},a.stat+' · L3 '+M(a.l3)+' vs season '+M(a.seasonAvg)+formNote('drop',a.runDvp,a.thisDvp)));
+      const up=_byGame(_fc(formAlerts('spike'),6,25), a=>a.p.team, a=>degRow(a.p.name,'#22c55e',{v1:'▲ +'+Math.round(a.swing*100)+'%',l1:'swing',v2:M(a.l3),l2:'L3'},a.stat+' · L3 '+M(a.l3)+' vs season '+M(a.seasonAvg)+formNote('spike',a.runDvp,a.thisDvp)));
+      const dn=_byGame(_fc(formAlerts('drop'),6,25), a=>a.p.team, a=>degRow(a.p.name,'#ef4444',{v1:'▼ '+Math.round(a.swing*100)+'%',l1:'swing',v2:M(a.l3),l2:'L3'},a.stat+' · L3 '+M(a.l3)+' vs season '+M(a.seasonAvg)+formNote('drop',a.runDvp,a.thisDvp)));
       return degWrap('ti-trending-up','Spiking',up,'c-green')+degWrap('ti-trending-down','Cooling',dn,'c-red');
     }
     if(k==='taggers'){
-      const rows=_fc(taggerAlerts(),8).map(t=>degRow(t.threat.name,'#a855f7',t.type==='hard'?'HARD TAG risk':'Def tag risk',
+      const rows=_byGame(_fc(taggerAlerts(),8), t=>t.threat.team, t=>degRow(t.threat.name,'#a855f7',t.type==='hard'?'HARD TAG risk':'Def tag risk',
         t.threat.position+' · '+abbr(t.threat.team)+' — likely '+t.tagger.name+' ('+abbr(t.oppTeam)+')',t.threat.name));
       return degWrap('ti-user-search','Lurking Taggers',rows);
     }
