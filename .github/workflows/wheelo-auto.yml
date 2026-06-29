@@ -1,0 +1,91 @@
+name: AFL game logs (wheelo auto-fetch)
+
+# Pulls each completed round's player game logs straight from wheeloratings'
+# static match-stats JSON (…/src/match_stats/table_data/{YYYY}{RR}.json), writes
+# them into AFL/csv/, then runs the SAME ingest + build as the manual CSV path.
+# Replaces exporting + committing the wheelo CSV by hand each week.
+#
+# Self-contained: fetch -> ingest -> build -> commit all in one job, so it does
+# not rely on the push triggering afl-csv.yml (GITHUB_TOKEN commits don't fire
+# other workflows). The upsert (Year+MatchId+Player) makes every run idempotent.
+
+on:
+  schedule:
+    - cron: "0 13 * * 1"   # Mon 13:00 UTC (~Mon 11pm AEST) — round wrapped
+    - cron: "0 13 * * 3"   # Wed 13:00 UTC — catch split rounds + stat corrections
+  workflow_dispatch:
+    inputs:
+      rounds:
+        description: "Rounds to fetch e.g. 15,16,17 (blank = recent window from meta.json)"
+        required: false
+      year:
+        description: "Season year (blank = current)"
+        required: false
+      password:
+        description: "Weekly subscriber password (stored hashed, never in repo)"
+        required: false
+
+jobs:
+  fetch-ingest:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # ---- pull wheelo round JSON -> AFL/csv/*.csv ----
+      - name: Fetch wheelo game logs
+        env:
+          CSV_DIR: AFL/csv
+          AFL_META: AFL/data/meta.json
+          WHEELO_ROUNDS: ${{ github.event.inputs.rounds }}
+          WHEELO_YEAR: ${{ github.event.inputs.year }}
+        run: python AFL/fetch_wheelo.py
+
+      # ---- ingest CSV game logs -> bundle.json (upsert by Year+MatchId+Player) ----
+      - name: Ingest game-log CSVs
+        env:
+          AFL_BUNDLE: AFL/bundle.json
+          CSV_DIR: AFL/csv
+          PLAYER_DIR: AFL/csv_players
+          TEAMFORM_DIR: AFL/csv_team_for
+          TEAMDEF_DIR: AFL/csv_team_against
+        run: python AFL/ingest_csv.py
+
+      # ---- split + derive players / teams / DVP / form from the logs ----
+      - name: Build split data files
+        run: |
+          PW="${{ github.event.inputs.password || secrets.AFL_WEEKLY_PASSWORD }}"
+          if [ -n "$PW" ]; then
+            python AFL/build_afl_data.py --src AFL/bundle.json --out AFL/data \
+              --seasons 2023,2024,2025,2026 --current 2026 --password "$PW"
+          else
+            python AFL/build_afl_data.py --src AFL/bundle.json --out AFL/data \
+              --seasons 2023,2024,2025,2026 --current 2026
+          fi
+
+      - name: Commit refreshed data
+        run: |
+          git config user.name  "jtt-bot"
+          git config user.email "actions@github.com"
+          git add AFL/csv AFL/data AFL/bundle.json 2>/dev/null || git add AFL/data
+          if git diff --cached --quiet; then
+            echo "No new game logs / no changes."
+          else
+            git commit -m "chore(afl): wheelo auto game-logs $(date -u +%Y-%m-%dT%H:%MZ)"
+            pushed=0
+            for i in 1 2 3 4 5; do
+              if git pull --rebase --autostash origin main && git push; then
+                echo "pushed on attempt $i"; pushed=1; break
+              fi
+              echo "push contended by a concurrent commit, retrying ($i)…"; sleep $((RANDOM % 5 + 2))
+            done
+            if [ "$pushed" != "1" ]; then echo "::error::push failed after retries"; exit 1; fi
+          fi
