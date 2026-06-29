@@ -1,20 +1,45 @@
 name: WC Backfill Knockout Fixtures
+
+# Manual trigger only. We do NOT want this firing on every push to main —
+# this workflow exists to do a one-shot additive merge of any missing WC
+# fixtures (R32, R16, QF, SF, Final) from the API into the local schedule.
 on:
   workflow_dispatch:
+
+# The workflow needs write access to commit the updated fixtures JSON back
+# to the repo. Without this block the default GITHUB_TOKEN is read-only and
+# the `git push` step fails with permission denied.
+permissions:
+  contents: write
+
 jobs:
   backfill:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with: { python-version: '3.11' }
-      - run: pip install requests
-      - run: python backfill_wc_knockout.py
-        env: { APIFOOTBALL_KEY: ${{ secrets.APIFOOTBALL_KEY }} }
-      - name: Commit
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install requests
+
+      - name: Run backfill
+        env:
+          APIFOOTBALL_KEY: ${{ secrets.APIFOOTBALL_KEY }}
+        run: python backfill_wc_knockout.py
+
+      - name: Commit any changes
         run: |
           git config user.email "actions@github.com"
           git config user.name "github-actions[bot]"
           git add wc/data/
-          git diff --staged --quiet || git commit -m "Backfill knockout fixtures"
-          git push
+          if git diff --staged --quiet; then
+            echo "No changes — nothing to commit."
+          else
+            git commit -m "Backfill WC knockout fixtures"
+            git push
+          fi
