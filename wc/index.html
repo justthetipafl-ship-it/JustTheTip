@@ -17489,15 +17489,40 @@ let _bracketMode = 'predict';
 let _bracketPicks = {};  // matchKey → teamId chosen as winner
 let _groupPicks = {};    // groupLabel → { first: tid, second: tid, third: tid }
 
-// FIFA 2026 R32 pairing template. Numbers reference seedings (1A = winner of A,
-// 2B = runner-up of B, 3X = 3rd-placed teams reseeded across qualifying groups).
-// Order is the bracket flow top-to-bottom in the left half, then right half.
-// This is a representative seeding; FIFA's final draw may vary.
+// FIFA 2026 R32 bracket — confirmed pairings as published by FIFA when the
+// group stage ended on June 27, 2026. Slots are listed in bracket-flow order:
+// adjacent pairs (0+1, 2+3, ...) feed into the same R16 match.
+//
+// Slot indices map to the official R32 match numbers:
+//   0=M73, 1=M75, 2=M74, 3=M77, 4=M76, 5=M78, 6=M79, 7=M80,
+//   8=M81, 9=M82, 10=M83, 11=M84, 12=M85, 13=M87, 14=M86, 15=M88
+//
+// R16 feed-in (from = [i*2, i*2+1] in renderTournamentBracket):
+//   R16 0: M73+M75   R16 4: M81+M82
+//   R16 1: M74+M77   R16 5: M83+M84
+//   R16 2: M76+M78   R16 6: M85+M87
+//   R16 3: M79+M80   R16 7: M86+M88
 const R32_SLOTS = [
-  ['1A', '2B'], ['1C', '3F'], ['1E', '3A'], ['1G', '2H'],
-  ['1B', '3E'], ['1D', '2F'], ['1F', '3B'], ['1H', '2G'],
-  ['1I', '2J'], ['1K', '3D'], ['1J', '2I'], ['1L', '3C'],
-  ['2A', '2C'], ['2D', '2K'], ['2E', '2L'], ['3G', '3H'],
+  // ── Top quarter (R16 0+1 → QF 0) ─────────────────────────────
+  ['2A', '2B'],  //  0 · M73 · South Africa vs Canada
+  ['1F', '2C'],  //  1 · M75 · Netherlands vs Morocco
+  ['1E', '3D'],  //  2 · M74 · Germany vs Paraguay
+  ['1I', '3F'],  //  3 · M77 · France vs Sweden
+  // ── Second quarter (R16 2+3 → QF 1) ──────────────────────────
+  ['1C', '2F'],  //  4 · M76 · Brazil vs Japan
+  ['2E', '2I'],  //  5 · M78 · Ivory Coast vs Norway
+  ['1A', '3E'],  //  6 · M79 · Mexico vs Ecuador
+  ['1L', '3K'],  //  7 · M80 · England vs DR Congo
+  // ── Third quarter (R16 4+5 → QF 2) ───────────────────────────
+  ['1D', '3B'],  //  8 · M81 · USA vs Bosnia & Herzegovina
+  ['1G', '3I'],  //  9 · M82 · Belgium vs Senegal
+  ['2K', '2L'],  // 10 · M83 · Portugal vs Croatia
+  ['1H', '2J'],  // 11 · M84 · Spain vs Austria
+  // ── Bottom quarter (R16 6+7 → QF 3) ──────────────────────────
+  ['1B', '3J'],  // 12 · M85 · Switzerland vs Algeria
+  ['1K', '3L'],  // 13 · M87 · Colombia vs Ghana
+  ['1J', '2H'],  // 14 · M86 · Argentina vs Cape Verde
+  ['2D', '2G'],  // 15 · M88 · Australia vs Egypt
 ];
 
 function getBracketTeam(slot) {
@@ -17680,7 +17705,7 @@ function renderTournamentBracket() {
         '<button class="br-reset" onclick="resetBracketPicks()">Reset picks</button>' +
       '</div>' +
     '</div>' +
-    '<div class="br-hint">Click teams to advance them through the bracket. Picks save automatically. R32 pairings shown are approximate — FIFA finalises the draw closer to tournament time.</div>' +
+    '<div class="br-hint">Click teams to advance them through the bracket. Picks save automatically. R32 pairings are the confirmed FIFA bracket from group-stage close.</div>' +
     renderGroupPredictor() +
     '<div class="br-scroll">' +
       '<div class="br-bracket">' +
