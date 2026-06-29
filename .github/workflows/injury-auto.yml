@@ -1,0 +1,55 @@
+name: AFL injury list (footywire auto-fetch)
+
+# Scrapes FootyWire's injury list into bundle["injury"] + data/injury.json,
+# closing the last manual AFL data gap. Self-contained + NON-DESTRUCTIVE: the
+# fetcher aborts rather than overwrite good data if the parse looks wrong (e.g.
+# FootyWire layout change or a block), so a bad week never wipes the list.
+
+on:
+  schedule:
+    - cron: "0 2 * * 3"   # Wed 02:00 UTC (~Wed midday AEST) — midweek list
+    - cron: "0 2 * * 5"   # Fri 02:00 UTC (~Fri midday AEST) — firming for the round
+    - cron: "0 2 * * 6"   # Sat 02:00 UTC (~Sat midday AEST) — pre weekend games
+  workflow_dispatch:
+
+jobs:
+  injuries:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: pip install beautifulsoup4
+
+      - name: Fetch FootyWire injuries
+        env:
+          AFL_BUNDLE: AFL/bundle.json
+          INJURY_OUT: AFL/data/injury.json
+        run: python AFL/fetch_injuries.py
+
+      - name: Commit refreshed injuries
+        run: |
+          git config user.name  "jtt-bot"
+          git config user.email "actions@github.com"
+          git add AFL/bundle.json AFL/data/injury.json 2>/dev/null || true
+          if git diff --cached --quiet; then
+            echo "No injury changes."
+          else
+            git commit -m "chore(afl): injury list $(date -u +%Y-%m-%dT%H:%MZ)"
+            pushed=0
+            for i in 1 2 3 4 5; do
+              if git pull --rebase --autostash origin main && git push; then
+                echo "pushed on attempt $i"; pushed=1; break
+              fi
+              echo "push contended by a concurrent commit, retrying ($i)…"; sleep $((RANDOM % 5 + 2))
+            done
+            if [ "$pushed" != "1" ]; then echo "::error::push failed after retries"; exit 1; fi
+          fi
