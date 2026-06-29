@@ -16144,15 +16144,67 @@ function computeGroupStandings() {
     );
   };
 
-  // Build all groups, sort each by best FIFA rank in group, then label A..L
+  // Build all groups, label them by FIFA's actual group letters (not by
+  // best-rank). Each group is identified by anchor teams from the confirmed
+  // FIFA 2026 draw — listed below as one or more name variants per group.
+  // Matching is case-insensitive and tolerant of common synonyms (USA /
+  // United States, Cape Verde / Cape Verde Islands, etc.).
+  const FIFA_GROUP_ANCHORS = {
+    A: ['Mexico', 'South Africa'],
+    B: ['Switzerland', 'Canada'],
+    C: ['Brazil', 'Morocco'],
+    D: ['USA', 'United States', 'United States of America', 'Australia'],
+    E: ['Germany', 'Ivory Coast', "Cote d'Ivoire", "Côte d'Ivoire"],
+    F: ['Netherlands', 'Japan'],
+    G: ['Belgium', 'Egypt'],
+    H: ['Spain', 'Cape Verde', 'Cape Verde Islands'],
+    I: ['France', 'Norway'],
+    J: ['Argentina', 'Austria'],
+    K: ['Colombia', 'Portugal'],
+    L: ['England', 'Croatia'],
+  };
+  const norm = (s) => (s || '').toLowerCase().trim();
+  const anchorSet = {};
+  Object.keys(FIFA_GROUP_ANCHORS).forEach(letter => {
+    FIFA_GROUP_ANCHORS[letter].forEach(name => { anchorSet[norm(name)] = letter; });
+  });
+
   const built = groups.map(g => ({
     teams: g,
-    bestRank: Math.min(...g.map(teamRank)),
     standings: buildGroupRecord(g),
-  })).sort((a, b) => a.bestRank - b.bestRank);
+  }));
 
-  const LETTERS = 'ABCDEFGHIJKLMNOP';
-  built.forEach((b, i) => { b.label = LETTERS[i] || ('G' + (i+1)); });
+  // Assign each detected group its FIFA letter by matching any team name to
+  // the anchor table. If no anchor team is in this group (e.g. fixtures file
+  // is missing data), fall back to the old best-rank ordering for that one
+  // group so the bracket at least renders something rather than going blank.
+  const unassigned = [];
+  built.forEach(b => {
+    let letter = null;
+    for (const tid of b.teams) {
+      const matched = anchorSet[norm(teamName(tid))];
+      if (matched) { letter = matched; break; }
+    }
+    if (letter) b.label = letter;
+    else unassigned.push(b);
+  });
+  if (unassigned.length) {
+    // Fall-through labelling for any group with no recognised anchor team.
+    // Should not happen on confirmed WC 2026 data, but keeps the UI alive.
+    const ratings = (state.data.ratings && state.data.ratings.teams) || {};
+    const teamRank = (tid) => (ratings[tid] && ratings[tid].rank) || 999;
+    const LETTERS = 'ABCDEFGHIJKL';
+    const used = new Set(built.map(b => b.label).filter(Boolean));
+    unassigned
+      .sort((a, b) => Math.min(...a.teams.map(teamRank)) - Math.min(...b.teams.map(teamRank)))
+      .forEach(b => {
+        const letter = LETTERS.split('').find(L => !used.has(L)) || ('G' + Math.random().toString(36).slice(2,5));
+        b.label = letter; used.add(letter);
+      });
+  }
+
+  // Final sort: by FIFA letter so the bracket consumers see groups in A..L order
+  built.sort((a, b) => (a.label || 'Z').localeCompare(b.label || 'Z'));
 
   _standingsCache = built;
   return built;
@@ -17489,41 +17541,68 @@ let _bracketMode = 'predict';
 let _bracketPicks = {};  // matchKey → teamId chosen as winner
 let _groupPicks = {};    // groupLabel → { first: tid, second: tid, third: tid }
 
-// FIFA 2026 R32 bracket — confirmed pairings as published by FIFA when the
-// group stage ended on June 27, 2026. Slots are listed in bracket-flow order:
-// adjacent pairs (0+1, 2+3, ...) feed into the same R16 match.
-//
-// Slot indices map to the official R32 match numbers:
-//   0=M73, 1=M75, 2=M74, 3=M77, 4=M76, 5=M78, 6=M79, 7=M80,
-//   8=M81, 9=M82, 10=M83, 11=M84, 12=M85, 13=M87, 14=M86, 15=M88
-//
-// R16 feed-in (from = [i*2, i*2+1] in renderTournamentBracket):
-//   R16 0: M73+M75   R16 4: M81+M82
-//   R16 1: M74+M77   R16 5: M83+M84
-//   R16 2: M76+M78   R16 6: M85+M87
-//   R16 3: M79+M80   R16 7: M86+M88
-const R32_SLOTS = [
+// FIFA 2026 R32 bracket — confirmed pairings, looked up directly from
+// state.data.fixtures.fixtures by team name. Each entry is a [home, away]
+// hint pair used to match the right R32 fixture. Adjacent slots feed the
+// same R16 match: 0+1 → R16 0, 2+3 → R16 1, ..., 14+15 → R16 7.
+const R32_BRACKET_ORDER = [
   // ── Top quarter (R16 0+1 → QF 0) ─────────────────────────────
-  ['2A', '2B'],  //  0 · M73 · South Africa vs Canada
-  ['1F', '2C'],  //  1 · M75 · Netherlands vs Morocco
-  ['1E', '3D'],  //  2 · M74 · Germany vs Paraguay
-  ['1I', '3F'],  //  3 · M77 · France vs Sweden
+  ['South Africa', 'Canada'],        //  0 · M73
+  ['Netherlands',  'Morocco'],       //  1 · M75
+  ['Germany',      'Paraguay'],      //  2 · M74
+  ['France',       'Sweden'],        //  3 · M77
   // ── Second quarter (R16 2+3 → QF 1) ──────────────────────────
-  ['1C', '2F'],  //  4 · M76 · Brazil vs Japan
-  ['2E', '2I'],  //  5 · M78 · Ivory Coast vs Norway
-  ['1A', '3E'],  //  6 · M79 · Mexico vs Ecuador
-  ['1L', '3K'],  //  7 · M80 · England vs DR Congo
+  ['Brazil',       'Japan'],         //  4 · M76
+  ['Ivory Coast',  'Norway'],        //  5 · M78
+  ['Mexico',       'Ecuador'],       //  6 · M79
+  ['England',      'DR Congo'],      //  7 · M80
   // ── Third quarter (R16 4+5 → QF 2) ───────────────────────────
-  ['1D', '3B'],  //  8 · M81 · USA vs Bosnia & Herzegovina
-  ['1G', '3I'],  //  9 · M82 · Belgium vs Senegal
-  ['2K', '2L'],  // 10 · M83 · Portugal vs Croatia
-  ['1H', '2J'],  // 11 · M84 · Spain vs Austria
+  ['USA',          'Bosnia & Herzegovina'],  //  8 · M81
+  ['Belgium',      'Senegal'],       //  9 · M82
+  ['Portugal',     'Croatia'],       // 10 · M83
+  ['Spain',        'Austria'],       // 11 · M84
   // ── Bottom quarter (R16 6+7 → QF 3) ──────────────────────────
-  ['1B', '3J'],  // 12 · M85 · Switzerland vs Algeria
-  ['1K', '3L'],  // 13 · M87 · Colombia vs Ghana
-  ['1J', '2H'],  // 14 · M86 · Argentina vs Cape Verde
-  ['2D', '2G'],  // 15 · M88 · Australia vs Egypt
+  ['Switzerland',  'Algeria'],       // 12 · M85
+  ['Colombia',     'Ghana'],         // 13 · M87
+  ['Argentina',    'Cape Verde'],    // 14 · M86
+  ['Australia',    'Egypt'],         // 15 · M88
 ];
+
+// Normalise a team name to a canonical key for matching. Strips punctuation,
+// collapses whitespace, lowercases, and folds common synonyms used by
+// API-Football vs wiki/FIFA spellings.
+function _normaliseTeamName(s) {
+  if (!s) return '';
+  let n = String(s).toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  n = n.replace(/[^a-z]/g, '');
+  // Synonym collapses — keep this list tight; only add proven aliases
+  if (n === 'unitedstates' || n === 'unitedstatesofamerica' || n === 'unitedstatesofamericausa') return 'usa';
+  if (n === 'bosniaandherzegovina' || n === 'bosniaherzegovina' || n === 'bosnia') return 'bosniaherzegovina';
+  if (n === 'cotedivoire') return 'ivorycoast';
+  if (n === 'capeverdeislands') return 'capeverde';
+  if (n === 'democraticrepublicofthecongo' || n === 'congodr' || n === 'drc') return 'drcongo';
+  if (n === 'koreasouth' || n === 'southkorea' || n === 'republicofkorea') return 'southkorea';
+  return n;
+}
+
+// Pull the R32 fixture for a given bracket-slot index by matching the two
+// expected team names against state.data.fixtures.fixtures (looking only at
+// knockout rounds). Returns null if no fixture matches — common before the
+// backfill script has run or for rounds beyond R32.
+function _r32FixtureForSlot(slotIdx) {
+  const pair = R32_BRACKET_ORDER[slotIdx];
+  if (!pair) return null;
+  const fixtures = (state.data.fixtures && state.data.fixtures.fixtures) || [];
+  if (!fixtures.length) return null;
+  const wantA = _normaliseTeamName(pair[0]);
+  const wantB = _normaliseTeamName(pair[1]);
+  return fixtures.find(f => {
+    if (!/round of 32|1\/16/i.test(f.round || '')) return false;
+    const h = _normaliseTeamName(f.homeTeam);
+    const a = _normaliseTeamName(f.awayTeam);
+    return (h === wantA && a === wantB) || (h === wantB && a === wantA);
+  }) || null;
+}
 
 function getBracketTeam(slot) {
   // Slot like "1A", "2B", "3X" — resolve to actual team name.
@@ -17639,10 +17718,21 @@ function renderTournamentBracket() {
   if (!groups) return '';
 
   // Render 6 columns: R32 (16) → R16 (8) → QF (4) → SF (2) → 3rd Place + Final
-  const r32 = R32_SLOTS.map((pair, i) => {
-    const t1 = getBracketTeam(pair[0]);
-    const t2 = getBracketTeam(pair[1]);
-    return { round: 'R32', idx: i, slots: pair, t1, t2 };
+  //
+  // R32 is populated directly from state.data.fixtures.fixtures — each slot
+  // looks up the actual fixture by team-name match (see R32_BRACKET_ORDER).
+  // That means the bracket shows real teams + real scores once they're in the
+  // fixtures file, no matter what derived group standings say.
+  const r32 = R32_BRACKET_ORDER.map((pair, i) => {
+    const fx = _r32FixtureForSlot(i);
+    return {
+      round: 'R32',
+      idx: i,
+      expected: pair,           // ["South Africa", "Canada"]
+      fixture: fx,              // null if backfill hasn't run yet
+      t1: fx ? { name: fx.homeTeam, teamId: fx.homeTeamId, score: fx.homeScore, status: fx.status } : null,
+      t2: fx ? { name: fx.awayTeam, teamId: fx.awayTeamId, score: fx.awayScore, status: fx.status } : null,
+    };
   });
 
   // Build downstream matches as placeholders for predictor mode
@@ -17658,8 +17748,11 @@ function renderTournamentBracket() {
   const renderMatch = (m) => {
     let teamA, teamB;
     if (m.round === 'R32') {
-      teamA = m.t1 ? { name: m.t1.name, key: 'R32_' + m.idx + '_A' } : { name: m.slots[0], placeholder: true };
-      teamB = m.t2 ? { name: m.t2.name, key: 'R32_' + m.idx + '_B' } : { name: m.slots[1], placeholder: true };
+      // Real fixture matched — show actual team names.
+      // No fixture yet — fall back to the expected team-name hint so subscribers
+      // see "South Africa" / "Canada" rather than abstract slot codes.
+      teamA = m.t1 ? { name: m.t1.name, key: 'R32_' + m.idx + '_A' } : { name: m.expected[0], placeholder: true };
+      teamB = m.t2 ? { name: m.t2.name, key: 'R32_' + m.idx + '_B' } : { name: m.expected[1], placeholder: true };
     } else {
       // Downstream: winner of upstream match (prediction-driven)
       const upRound = m.round === 'R16' ? 'R32' : m.round === 'QF' ? 'R16' : m.round === 'SF' ? 'QF' : 'SF';
