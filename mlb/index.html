@@ -369,7 +369,7 @@
 
   <script>
   /* ===== CONFIG ===== */
-  const AUTH_HASH = '9612769f08f06e720b4bcc60763aa7e8d71c2ce2ce3546444e309158bdbff840'; // demo: jtt-mlb-demo — workflow injects real hash
+  const AUTH_HASH = 'aab47a4d89b7b3de88f7a1684dd71f8eccfe06cafda2e5b1bf33505a1051955b'; // demo: jtt-mlb-demo — workflow injects real hash
   const AUTH_TTL_DAYS = 30, AUTH_STORAGE_KEY = 'jtt_mlb_auth_v1';
   const DATA_FILES = { bundle: 'data/mlb_bundle.json' };
   const TABS = [
@@ -1090,53 +1090,55 @@
     _jttShare(clone.innerHTML,fname);}
 
   /* ================= DÉJÀ VU MULTIS ================= */
-  let _dvMin=4;
+  let _dvMin=3;
   const DV_MARKETS=[{stat:'TB',line:1.5,lbl:'2+ TB'},{stat:'RBI',line:0.5,lbl:'1+ RBI'},{stat:'R',line:0.5,lbl:'1+ Run'},{stat:'H',line:0.5,lbl:'1+ Hit'}];
   function _dvStreakFor(log,stat,need){let n=0;for(const r of log){if((r[stat]||0)>=need)n++;else break;}return n;}
-  function _dvCandidate(b){const log=(b.gameLog||[]).slice(0,14);if(log.length<3)return null;
-    const opts=DV_MARKETS.map(m=>{const need=Math.ceil(m.line);return {m,need,streak:_dvStreakFor(log,m.stat,need)};}).filter(o=>o.streak>=2);
+  function _dvH2H(b,oppAbbr){return (b.h2h&&b.h2h[oppAbbr])?b.h2h[oppAbbr]:null;} // newest-first meetings vs that exact team
+  function _dvCandidate(b,oppAbbr){
+    const rows=_dvH2H(b,oppAbbr);if(!rows||rows.length<2)return null; // need a head-to-head history vs THIS opponent
+    const opts=DV_MARKETS.map(m=>{const need=Math.ceil(m.line);return {m,need,streak:_dvStreakFor(rows,m.stat,need)};}).filter(o=>o.streak>=1);
     if(!opts.length)return null;
     const maxS=Math.max.apply(null,opts.map(o=>o.streak));
-    const best=opts.find(o=>o.streak>=maxS-1)||opts[0]; // DV_MARKETS ordered rarest-first → prefers 2+TB/1+RBI/1+R over 1+Hit when close
-    const byDate={};log.forEach(r=>{byDate[r.date]=(r[best.m.stat]||0)>=best.need;});
-    return {id:b.id,b,market:best.m.stat,line:best.m.line,mlabel:best.m.lbl,streak:best.streak,byDate,dates:Object.keys(byDate)};}
+    const best=opts.find(o=>o.streak>=maxS-1)||opts[0]; // prefer rarer market when streak is close
+    const byDate={};rows.forEach(r=>{byDate[r.date]=(r[best.m.stat]||0)>=best.need;});
+    return {id:b.id,b,market:best.m.stat,line:best.m.line,mlabel:best.m.lbl,streak:best.streak,byDate,dates:Object.keys(byDate),meetings:rows.length};}
   function _dvComboStreak(legs){let dates=legs[0].dates.slice();legs.forEach(l=>{dates=dates.filter(d=>l.dates.indexOf(d)>=0);});
     dates.sort((a,b)=>b.localeCompare(a));let streak=0;for(const d of dates){if(legs.every(l=>l.byDate[d]))streak++;else break;}return {streak,shared:dates.length};}
   function dejaVuCombos(g,minStreak){
-    const cands=[];['away','home'].forEach(side=>{teamBatters(g[side].teamId).forEach(b=>{const c=_dvCandidate(b);if(c){c.side=side;c.abbr=b.abbr;cands.push(c);}});});
+    const A=g.away,B=g.home,cands=[];
+    teamBatters(A.teamId).forEach(b=>{const c=_dvCandidate(b,B.abbr);if(c){c.side='away';c.abbr=b.abbr;cands.push(c);}});
+    teamBatters(B.teamId).forEach(b=>{const c=_dvCandidate(b,A.abbr);if(c){c.side='home';c.abbr=b.abbr;cands.push(c);}});
     cands.sort((a,b)=>b.streak-a.streak);
-    const pool=cands.slice(0,9);const out=[];const used={};
-    // triples first (from strongest 6), then pairs
-    const top=pool.slice(0,6);
+    const pool=cands.slice(0,10),top=pool.slice(0,7),out=[];
     for(let i=0;i<top.length;i++)for(let j=i+1;j<top.length;j++)for(let k=j+1;k<top.length;k++){
       const legs=[top[i],top[j],top[k]];const r=_dvComboStreak(legs);if(r.shared>=minStreak&&r.streak>=minStreak)out.push({legs,streak:r.streak,shared:r.shared});}
     for(let i=0;i<pool.length;i++)for(let j=i+1;j<pool.length;j++){
       const legs=[pool[i],pool[j]];const r=_dvComboStreak(legs);if(r.shared>=minStreak&&r.streak>=minStreak)out.push({legs,streak:r.streak,shared:r.shared});}
     out.sort((a,b)=>b.streak-a.streak||b.legs.length-a.legs.length);
-    // de-dupe near-identical (same leg set)
     const seen={},uniq=[];for(const c of out){const key=c.legs.map(l=>l.id).sort().join('-');if(seen[key])continue;seen[key]=1;uniq.push(c);if(uniq.length>=8)break;}
     return uniq;}
+  function _dvBlurb(g){return 'Same-game combos where <b>every leg has hit in consecutive head-to-head meetings</b> between <b>'+g.away.abbr+'</b> and <b>'+g.home.abbr+'</b> — '+_dvMin+'+ straight. We\u2019ve seen this exact multi land before.';}
   function renderDejaVu(g){
     const combos=dejaVuCombos(g,_dvMin);
     let h='<div id="dejavu-wrap"><div class="dv-head"><div class="dv-title"><i class="ti ti-history"></i> Déjà Vu Multis</div>'+
-      '<div class="dv-stepper"><span class="dv-step-lbl">Min streak</span><button class="dv-step" onclick="_dvStep(-1)">&minus;</button><span class="dv-step-n" id="dv-step-n">'+_dvMin+'</span><button class="dv-step" onclick="_dvStep(1)">+</button></div></div>'+
-      '<div class="dv-blurb">Same-game combos where <b>every leg has hit in the same game</b> — '+_dvMin+'+ games running. We\u2019ve seen this one land before.</div>';
-    h+='<div id="dv-list">'+_dvListHTML(combos)+'</div></div>';
+      '<div class="dv-stepper"><span class="dv-step-lbl">Min H2H streak</span><button class="dv-step" onclick="_dvStep(-1)">&minus;</button><span class="dv-step-n" id="dv-step-n">'+_dvMin+'</span><button class="dv-step" onclick="_dvStep(1)">+</button></div></div>'+
+      '<div class="dv-blurb">'+_dvBlurb(g)+'</div>';
+    h+='<div id="dv-list">'+_dvListHTML(combos,g)+'</div></div>';
     return h;}
-  function _dvListHTML(combos){
-    if(!combos.length)return '<div class="empty"><div class="ico"><i class="ti ti-history-off"></i></div>No combos have co-hit '+_dvMin+'+ games in a row. Lower the streak to see more.</div>';
+  function _dvListHTML(combos,g){
+    if(!combos.length)return '<div class="empty"><div class="ico"><i class="ti ti-history-off"></i></div>No combo has hit '+_dvMin+'+ straight times in '+g.away.abbr+' v '+g.home.abbr+' meetings. Lower the streak, or there isn\u2019t enough head-to-head history on record yet.</div>';
     return combos.map((c,i)=>{
       const legs=c.legs.map(l=>'<div class="dv-leg"><span class="pname">'+esc(l.b.name)+' <span class="ptag">'+l.abbr+'</span></span><span class="dv-leg-mk">'+l.mlabel+'</span></div>').join('');
       return '<div class="dv-card" id="dv-card-'+i+'">'+
-        '<div class="dv-card-top"><div class="dv-streak"><span class="dv-streak-n">'+c.streak+'</span><span class="dv-streak-l">in a<br>row</span></div>'+
+        '<div class="dv-card-top"><div class="dv-streak"><span class="dv-streak-n">'+c.streak+'</span><span class="dv-streak-l">H2H<br>in a row</span></div>'+
         '<div class="dv-legs">'+legs+'</div></div>'+
-        '<div class="dv-foot"><span class="dv-note">'+c.legs.length+'-leg SGM · all hit together '+c.streak+' straight'+(c.shared>c.streak?' (of '+c.shared+' shared games)':'')+'</span>'+
-        '<button class="dv-share" onclick="_shareFrom(document.getElementById(\'dv-card-'+i+'\'),\'dejavu-'+c.legs.map(l=>l.abbr).join('-').toLowerCase()+'\')"><i class="ti ti-share"></i></button></div>'+
+        '<div class="dv-foot"><span class="dv-note">'+c.legs.length+'-leg SGM · all hit in the last '+c.streak+' '+g.away.abbr+' v '+g.home.abbr+' meeting'+(c.streak>1?'s':'')+(c.shared>c.streak?' (of '+c.shared+' on record)':'')+'</span>'+
+        '<button class="dv-share" onclick="_shareFrom(document.getElementById(\'dv-card-'+i+'\'),\'dejavu-'+g.away.abbr.toLowerCase()+'-'+g.home.abbr.toLowerCase()+'-'+c.legs.map(l=>l.abbr).join('-').toLowerCase()+'\')"><i class="ti ti-share"></i></button></div>'+
         '</div>';
     }).join('');}
   function _dvStep(d){_dvMin=Math.max(2,Math.min(10,_dvMin+d));const n=document.getElementById('dv-step-n');if(n)n.textContent=_dvMin;
-    const wrap=document.getElementById('dejavu-wrap');if(wrap){const b=wrap.querySelector('.dv-blurb');if(b)b.innerHTML='Same-game combos where <b>every leg has hit in the same game</b> — '+_dvMin+'+ games running. We\u2019ve seen this one land before.';}
-    const list=document.getElementById('dv-list');if(list&&_ctxGame)list.innerHTML=_dvListHTML(dejaVuCombos(_ctxGame,_dvMin));}
+    if(!_ctxGame)return;const wrap=document.getElementById('dejavu-wrap');if(wrap){const b=wrap.querySelector('.dv-blurb');if(b)b.innerHTML=_dvBlurb(_ctxGame);}
+    const list=document.getElementById('dv-list');if(list)list.innerHTML=_dvListHTML(dejaVuCombos(_ctxGame,_dvMin),_ctxGame);}
   </script>
 </body>
 </html>
