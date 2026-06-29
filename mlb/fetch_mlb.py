@@ -173,21 +173,48 @@ def hand_splits_bat(pid, season):
     # fall back to season-ish numbers if a split is missing
     return res
 
-def gamelog_bat(pid, season, idmap, limit=20):
+def gamelog_bat_rows(pid, season, idmap):
     d = api(f"people/{pid}/stats", stats="gameLog", group="hitting", season=season)
-    log = []
+    rows = []
     try: splits = d["stats"][0]["splits"]
     except Exception: splits = []
     for sp in reversed(splits):  # API is oldest-first; we want newest-first
         st = sp["stat"]; opp = (sp.get("opponent") or {}).get("id")
-        log.append({
+        rows.append({
             "date": sp.get("date", ""), "opp": idmap.get(opp, "?"),
             "H": i(st.get("hits")), "TB": i(st.get("totalBases")), "HR": i(st.get("homeRuns")),
             "RBI": i(st.get("rbi")), "R": i(st.get("runs")), "SB": i(st.get("stolenBases")),
             "BB": i(st.get("baseOnBalls")), "SO": i(st.get("strikeOuts")),
         })
-        if len(log) >= limit: break
-    return log
+    return rows
+
+def gamelog_bat(pid, season, idmap, limit=20):
+    return gamelog_bat_rows(pid, season, idmap)[:limit]
+
+# Deeper head-to-head history feeds the Déjà Vu Multis feature (consecutive
+# meetings between two specific teams). Pull this many prior seasons in
+# addition to the current one. Set to 0 to keep it current-season only.
+H2H_EXTRA_SEASONS = 1
+H2H_FIELDS = ("date", "H", "TB", "HR", "RBI", "R", "SB", "BB", "SO")
+
+def h2h_bat(pid, season, idmap, current_rows):
+    """Bucket every game (current + prior seasons) by opponent abbr, newest-first."""
+    rows = list(current_rows or [])
+    for back in range(1, H2H_EXTRA_SEASONS + 1):
+        try:
+            rows += gamelog_bat_rows(pid, season - back, idmap)
+        except Exception:
+            pass
+    h = {}
+    for r in rows:
+        opp = r.get("opp", "?")
+        if not opp or opp == "?":
+            continue
+        h.setdefault(opp, []).append({k: r.get(k) for k in H2H_FIELDS})
+    for opp in h:
+        h[opp].sort(key=lambda x: x.get("date", ""), reverse=True)  # newest meeting first
+        h[opp] = h[opp][:25]
+    return h
 
 def bvp(pid, opp_pitcher_id, season):
     d = api(f"people/{pid}/stats", stats="vsPlayerTotal",
@@ -569,7 +596,8 @@ def main():
                 "season": season_s,
                 "splitVsL": splits["splitVsL"] or seas_eq,
                 "splitVsR": splits["splitVsR"] or seas_eq,
-                "gameLog": gamelog_bat(pid, season, idmap),
+                "gameLog": (_bat_rows := gamelog_bat_rows(pid, season, idmap))[:20],
+                "h2h": h2h_bat(pid, season, idmap, _bat_rows),
                 "bvp": {},
                 "statcast": STATCAST_BAT.get(pid),
             }
