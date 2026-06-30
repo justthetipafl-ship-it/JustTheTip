@@ -2651,17 +2651,83 @@
     }
     return sel;
   }
+  // ===== Multi Builder modes — each builds a different leg pool; downstream selection/analysis shared =====
+  const _MKT_TYPE={disposals:'DISPOSALS',goals:'GOALS',dreamteam:'FANTASY',marks:'MARKS',tackles:'TACKLES',clearances:'CLEARANCES',kicks:'KICKS',handballs:'HANDBALLS'};
+  const _MKT_NM={disposals:'Disposals',goals:'Goals',dreamteam:'Fantasy',marks:'Marks',tackles:'Tackles',clearances:'Clearances',kicks:'Kicks',handballs:'Handballs'};
+  function _rungScan(name,statKey){
+    let lines; if(statKey==='goals') lines=[1,2,3];
+    else lines=[...new Set(altLines(name,statKey).map(r=>Math.round(r.line+0.5)))].filter(L=>L>=1);
+    const out=[]; lines.forEach(L=>{ const o=priceForLine(name,statKey,L); if(!o||o.price==null) return; const hr=JTTScoring.getHitRate(name,statKey,L,true); out.push({statKey,line:L,price:o.price,book:o.book,prob:hr?hr.rate:null,n:hr?hr.n:0}); });
+    return out;
+  }
+  function _mkLeg(p,opp,statKey,line,prob,n,price,book,reasons,extra){
+    return Object.assign({p,opp,statKey,type:_MKT_TYPE[statKey]||'',line,prob,probReal:true,probN:n,
+      avg:+(p[statKey]||line),score:0,betLabel:line+'+ '+(_MKT_NM[statKey]||statKey),
+      _odds:{price,book,label:line+'+'},reasons:reasons||[]},extra||{});
+  }
+  // 100% Hit Rater — legs cleared in EVERY season game (>=5), longest-priced first
+  function _safeLegs(players,opp){
+    const best={};
+    players.forEach(p=>legCandidates(p,opp).forEach(c=>{
+      if(!c._odds||!(c.probReal&&c.prob>=0.999&&c.probN>=5)) return;
+      if(!best[p.name]||c._odds.price>best[p.name]._odds.price){ c.reasons=[{label:c.probN+'/'+c.probN+' this season',pct:100}]; best[p.name]=c; }
+    }));
+    return Object.values(best).sort((a,b)=>b._odds.price-a._odds.price);
+  }
+  // Value Hunter — best +EV rung per player (our hit-rate beats the book's implied)
+  function _valueLegs(players,opp){
+    const EV_MIN=0.03, mkts=SETTINGS.multi.markets||[], best={};
+    players.forEach(p=>{ if((p.matches||0)<5) return;
+      mkts.forEach(mk=>_rungScan(p.name,mk).forEach(r=>{
+        if(r.prob==null||r.n<5||!r.price) return;
+        const edge=r.prob-1/r.price; if(edge<EV_MIN) return;
+        if(!best[p.name]||edge>best[p.name]._edge) best[p.name]=_mkLeg(p,opp,mk,r.line,r.prob,r.n,r.price,r.book,[{label:'+EV',pct:edge*100}],{_edge:edge,score:edge});
+      }));
+    });
+    return Object.values(best).sort((a,b)=>b._edge-a._edge);
+  }
+  // Lottery Ticket — longest-priced rung per player that still clears a real-shot floor
+  function _lottoLegs(players,opp){
+    const MIN_ODDS=3.0, FLOOR=0.18, mkts=SETTINGS.multi.markets||[], best={};
+    players.forEach(p=>{ if((p.matches||0)<5) return;
+      mkts.forEach(mk=>_rungScan(p.name,mk).forEach(r=>{
+        if(r.prob==null||r.n<4||!r.price||r.price<MIN_ODDS||r.prob<FLOOR) return;
+        if(!best[p.name]||r.price>best[p.name]._odds.price) best[p.name]=_mkLeg(p,opp,mk,r.line,r.prob,r.n,r.price,r.book,[{label:'live longshot',pct:r.prob*100}],{score:r.prob*r.price});
+      }));
+    });
+    return Object.values(best).sort((a,b)=>b._odds.price-a._odds.price);
+  }
+  function _modePool(players,opp){
+    const m=SETTINGS.multi.mode||'smart';
+    if(m==='safe') return _safeLegs(players,opp);
+    if(m==='value') return _valueLegs(players,opp);
+    if(m==='lotto') return _lottoLegs(players,opp);
+    return poolLegs(players,opp);   // 'smart' and 'team' use the signal-score pool
+  }
+  function _mbSortFn(){ const m=SETTINGS.multi.mode||'smart';
+    if(m==='value') return (a,b)=>(b._edge||0)-(a._edge||0);
+    if(m==='lotto'||m==='safe') return (a,b)=>b._odds.price-a._odds.price;
+    return (a,b)=>b.score-a.score;
+  }
   function _mbPools(){
-    const M=SETTINGS.multi, scope=M.scope||'game';
+    const M=SETTINGS.multi, mode=M.mode||'smart', scope=M.scope||'game';
     if(!_oddsLive()) return [];
     let fixtures=(state.data.fixture||[]).filter(g=>g.home&&g.away);
     if(M.today){ const t=_todayStr(); fixtures=fixtures.filter(g=>(g.date||'')===t); }
     const pl=t=>(state.idx.players||[]).filter(p=>p.team===t&&(p.matches||0)>=3);
-    const poolFor=g=>[...poolLegs(pl(g.home),g.away),...poolLegs(pl(g.away),g.home)].sort((a,b)=>b.score-a.score);
-    if(scope==='round'){ let all=[]; fixtures.forEach(g=>all.push(...poolFor(g))); all.sort((a,b)=>b.score-a.score); return all.length?[{label:M.today?'Today':'Full Round',pool:all}]:[]; }
+    const sortFn=_mbSortFn();
+    if(mode==='team'){
+      const tm=M.team; if(!tm) return [];
+      const g=fixtures.find(f=>f.home===tm||f.away===tm); if(!g) return [];
+      const opp=g.home===tm?g.away:g.home;
+      const pool=_modePool(pl(tm),opp).sort(sortFn);
+      return pool.length?[{label:abbr(tm)+' \u2014 your team',pool}]:[];
+    }
+    const poolFor=g=>[..._modePool(pl(g.home),g.away),..._modePool(pl(g.away),g.home)].sort(sortFn);
+    if(scope==='round'){ let all=[]; fixtures.forEach(g=>all.push(...poolFor(g))); all.sort(sortFn); return all.length?[{label:M.today?'Today':'Full Round',pool:all}]:[]; }
     return fixtures.map(g=>({label:abbr(g.home)+' v '+abbr(g.away),pool:poolFor(g)})).filter(b=>b.pool.length);
   }
-  function _mbFilterKey(){ const M=SETTINGS.multi; return [M.scope||'game',!!M.today,M.legs||6,M.minProb||55,M.minScore,(M.markets||[]).join(','),(state.view.fxMulti&&state.view.fxMulti.book)||''].join('|'); }
+  function _mbFilterKey(){ const M=SETTINGS.multi; return [M.mode||'smart',M.team||'',M.scope||'game',!!M.today,M.legs||6,M.minProb||55,M.minScore,(M.markets||[]).join(','),(state.view.fxMulti&&state.view.fxMulti.book)||''].join('|'); }
   function _mbSeedOrder(pool,crossGame){
     if(!crossGame) return pool.map((_,i)=>i);                  // score order
     const byG={}; pool.forEach((l,i)=>{ const k=[l.p.team,l.opp].sort().join('|'); (byG[k]=byG[k]||[]).push(i); });
@@ -3183,6 +3249,14 @@
   function multiFilterBar(){
     const M=SETTINGS.multi;
     let h='<div style="'+_fbar+'"><div style="font-size:10px;color:var(--text-3);margin-bottom:4px;text-transform:uppercase;letter-spacing:.04em">Multi filters</div>';
+    const MODES=[['smart','Smart'],['safe','100% Hit Rater'],['team','Thats My Team'],['lotto','Lottery Ticket'],['value','Value Hunter']];
+    h+='<div style="margin-bottom:5px">'+MODES.map(([k,l])=>_fchip((M.mode||'smart')===k,l,"_mMode('"+k+"')")).join('')+'</div>';
+    if((M.mode||'smart')==='team'){
+      const teams=[...new Set((state.data.fixture||[]).filter(g=>g.home&&g.away).flatMap(g=>[g.home,g.away]))].sort();
+      h+='<div style="margin-bottom:5px"><select onchange="_mTeam(this.value)" style="background:var(--surface-2);border:1px solid var(--border);color:var(--text);border-radius:8px;padding:5px 9px;font-size:12px;font-weight:600;max-width:220px">'+
+        '<option value="">Pick your team\u2026</option>'+teams.map(t=>'<option value="'+esc(t)+'"'+(M.team===t?' selected':'')+'>'+esc(t)+'</option>').join('')+'</select></div>';
+    }
+    h+='<div style="font-size:9.5px;color:var(--text-3);margin-bottom:6px">'+({smart:'Best-rated legs by our signal score.',safe:'Only legs cleared in every game this season \u2014 safe, short odds.',team:'Legs from your chosen team only \u2014 priced as a same-gamer.',lotto:'Longest-priced legs that still clear a real-shot floor.',value:'Every leg +EV \u2014 our hit-rate beats the book price.'}[M.mode||'smart'])+'</div>';
     h+='<div style="margin-bottom:4px">'+[['game','Per game'],['round','Across games']].map(([k,l])=>_fchip(M.scope===k,l,"_mScope('"+k+"')")).join('')+
       '<span style="display:inline-block;width:1px;height:16px;background:var(--border);margin:0 6px;vertical-align:middle"></span>'+
       _fchip(!!M.today,'Today only',"_mToday()")+'</div>';
@@ -3195,6 +3269,8 @@
   window._mToday=function(){ SETTINGS.multi.today=!SETTINGS.multi.today; saveSettings(); _reRenderMulti(); };
   window._mNum=function(k,v){ let n=parseFloat(v); if(!isNaN(n)&&n>=0){ if(k==='legs')n=Math.max(2,Math.min(12,Math.round(n))); SETTINGS.multi[k]=n; } saveSettings(); _reRenderMulti(); };
   window._mMkt=function(k){ const a=SETTINGS.multi.markets,i=a.indexOf(k); if(i>=0)a.splice(i,1); else a.push(k); saveSettings(); _reRenderMulti(); };
+  window._mMode=function(k){ SETTINGS.multi.mode=k; if(k==='team'&&!SETTINGS.multi.team){ const f=(state.data.fixture||[]).find(g=>g.home&&g.away); if(f)SETTINGS.multi.team=f.home; } saveSettings(); _reRenderMulti(); };
+  window._mTeam=function(v){ SETTINGS.multi.team=v||null; saveSettings(); _reRenderMulti(); };
   function _reRenderMulti(){ const el=document.getElementById('multi-wrap'); if(el) el.innerHTML=multiFilterBar()+'<div id="multi-results">'+multiResults()+'</div>'; }
 
   /* ---------- SETTINGS UI ---------- */
