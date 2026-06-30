@@ -255,22 +255,45 @@ def hand_splits_pit(pid, season):
         pass
     return res
 
-def gamelog_pit(pid, season, idmap, limit=20):
+def gamelog_pit_rows(pid, season, idmap):
     d = api(f"people/{pid}/stats", stats="gameLog", group="pitching", season=season)
-    log = []
+    rows = []
     try: splits = d["stats"][0]["splits"]
     except Exception: splits = []
     for sp in reversed(splits):
         st = sp["stat"]; opp = (sp.get("opponent") or {}).get("id")
         outs, ip = parse_ip(st.get("inningsPitched", "0"))
-        log.append({
+        rows.append({
             "date": sp.get("date", ""), "opp": idmap.get(opp, "?"), "IP": ip,
             "K": i(st.get("strikeOuts")), "BB": i(st.get("baseOnBalls")), "H": i(st.get("hits")),
             "ER": i(st.get("earnedRuns")), "HR": i(st.get("homeRuns")),
             "outs": outs, "win": i(st.get("wins")) == 1,
         })
-        if len(log) >= limit: break
-    return log
+    return rows
+
+def gamelog_pit(pid, season, idmap, limit=20):
+    return gamelog_pit_rows(pid, season, idmap)[:limit]
+
+H2H_PIT_FIELDS = ("date", "K", "IP", "outs", "ER", "H", "BB", "HR")
+
+def h2h_pit(pid, season, idmap, current_rows):
+    """Bucket a pitcher's starts (current + prior seasons) by opponent abbr, newest-first."""
+    rows = list(current_rows or [])
+    for back in range(1, H2H_EXTRA_SEASONS + 1):
+        try:
+            rows += gamelog_pit_rows(pid, season - back, idmap)
+        except Exception:
+            pass
+    h = {}
+    for r in rows:
+        opp = r.get("opp", "?")
+        if not opp or opp == "?":
+            continue
+        h.setdefault(opp, []).append({k: r.get(k) for k in H2H_PIT_FIELDS})
+    for opp in h:
+        h[opp].sort(key=lambda x: x.get("date", ""), reverse=True)
+        h[opp] = h[opp][:20]
+    return h
 
 # ---------------------------------------------------------------- league extras
 DIV_NAMES = {200:"AL West",201:"AL East",202:"AL Central",
@@ -634,7 +657,8 @@ def main():
             "season": season_s,
             "splitVsL": splits["splitVsL"] or seas_eq,
             "splitVsR": splits["splitVsR"] or seas_eq,
-            "gameLog": gamelog_pit(pid, season, idmap),
+            "gameLog": (_pit_rows := gamelog_pit_rows(pid, season, idmap))[:20],
+            "h2h": h2h_pit(pid, season, idmap, _pit_rows),
             "statcast": STATCAST_PIT.get(pid),
         }
     print(f"[JTT MLB]   {len(pitchers)} probable starters profiled")
