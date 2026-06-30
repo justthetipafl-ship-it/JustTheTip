@@ -3150,14 +3150,7 @@
     const impliedProb=comb>0?1/comb:0;
     const byGame={}; legs.forEach(l=>{ const k=_multiGameKey(l); (byGame[k]=byGame[k]||[]).push(l); });
     const games=Object.keys(byGame), sameGame=games.filter(k=>byGame[k].length>1);
-    let corrProb=sameGame.length?_multiCorrProb(byGame):trueProb;
-    corrProb=Math.min(corrProb, trueProb*2.2);                             // safety: correlation can't inflate the joint beyond ~2.2x independent
-    const sgmAdjusted=sameGame.length>0 && Math.abs(corrProb-trueProb)>0.004;
-    let rhoSum=0,rhoN=0; sameGame.forEach(k=>{ const ls=byGame[k]; for(let i=0;i<ls.length;i++)for(let j=i+1;j<ls.length;j++){ rhoSum+=_pairRho(ls[i],ls[j]); rhoN++; } });
-    const avgRho=rhoN?rhoSum/rhoN:0;
-    return {comb,trueProb,impliedProb,edge:trueProb-impliedProb,fair:trueProb>0?1/trueProb:null,
-            corrProb,corrFair:corrProb>0?1/corrProb:null,sgmAdjusted,avgRho,
-            ev:trueProb*comb-1,nGames:games.length,sameGame,byGame};
+    return {comb,trueProb,impliedProb,nGames:games.length,sameGame,byGame};
   }
   function _multiBestBook(legs){
     if(!legs||legs.length<2) return null;
@@ -3170,29 +3163,20 @@
   }
   function _multiAnalysisHTML(legs,manual,oddsCall){
     const a=_multiAnalysis(legs); if(!a) return '';
-    const aProb=a.sgmAdjusted?a.corrProb:a.trueProb, aFair=a.sgmAdjusted?a.corrFair:a.fair;
-    const hasM=manual&&manual>1, effComb=hasM?manual:a.comb;
-    const implied=effComb>0?1/effComb:0, edge=aProb-implied;
-    const pct=v=>Math.round(v*100)+'%', edgePos=edge>=0, edgeStr=(edgePos?'+':'')+(edge*100).toFixed(1)+'%';
+    const hasM=manual&&manual>1;
     const bb=_multiBestBook(legs);
-    let h='<div class="mb-an"><div class="mb-an-row">'+
-      '<span class="mb-an-c"><span class="mb-an-k">True'+(a.sgmAdjusted?' · SGM-adj':'')+'</span><b>'+pct(aProb)+'</b></span>'+
-      '<span class="mb-an-c"><span class="mb-an-k">Implied</span><b>'+pct(implied)+'</b></span>'+
-      '<span class="mb-an-c"><span class="mb-an-k">Edge'+(hasM?' · your price':'')+'</span><b class="'+(edgePos?'mb-pos':'mb-neg')+'">'+edgeStr+'</b></span>'+
-      '<span class="mb-an-c"><span class="mb-an-k">Fair</span><b>'+(aFair?'$'+aFair.toFixed(2):'—')+'</b></span></div>';
-    if(a.sgmAdjusted){ const dir=a.avgRho>=0?'lift':'lower';
-      h+='<div class="mb-an-adj"><i class="ti ti-affiliate"></i> Correlation-adjusted (ρ≈'+a.avgRho.toFixed(2)+'): same-game legs '+dir+' the joint — fair <b>$'+a.corrFair.toFixed(2)+'</b>, not <s>$'+a.fair.toFixed(2)+'</s> if independent.</div>'; }
+    let h='<div class="mb-an">';
     h+='<div class="mb-an-odds"><span class="mb-an-k">Your actual price</span>'+
       '<span class="mb-an-in'+(hasM?' on':'')+'">$<input type="number" step="0.01" min="1" inputmode="decimal" value="'+(hasM?manual:'')+'" placeholder="'+a.comb.toFixed(2)+'" onchange="'+oddsCall+'"></span>'+
       (hasM?'<button class="mb-an-clr" onclick="'+oddsCall.replace('this.value',"''")+'">clear</button><span class="mb-an-note">vs straight-multi est $'+a.comb.toFixed(2)+'</span>'
-           :'<span class="mb-an-note">enter your book price — combined or SGM — for a true edge</span>')+'</div>';
+           :'<span class="mb-an-note">combined straight-multi estimate $'+a.comb.toFixed(2)+'</span>')+'</div>';
     if(bb&&bb.comb>a.comb+0.01) h+='<div class="mb-an-book"><i class="ti ti-arrow-up-right"></i> Best book: <b>'+esc(bb.name)+' $'+bb.comb.toFixed(2)+'</b> — $'+(bb.comb-a.comb).toFixed(2)+' more than the est above</div>';
     else if(bb) h+='<div class="mb-an-book"><i class="ti ti-check"></i> Best price already — '+esc(bb.name)+' $'+bb.comb.toFixed(2)+'</div>';
     if(a.sameGame.length){
       const g=a.sameGame.map(k=>k+' ×'+a.byGame[k].length).join(', ');
-      h+='<div class="mb-an-warn"><i class="ti ti-alert-triangle"></i> Same-game legs ('+esc(g)+') — '+(hasM?'edge above is measured vs your entered SGM price and the correlation-adjusted odds, so it\'s honest.':'fair SGM ≈ <b>$'+(a.corrFair||a.fair).toFixed(2)+'</b> after adjusting for correlation — enter your book\'s actual SGM price above for the true edge.')+'</div>';
+      h+='<div class="mb-an-warn"><i class="ti ti-alert-triangle"></i> Same-game legs ('+esc(g)+') are correlated — a real same-game multi pays less than the straight-multi estimate above.</div>';
     } else if(a.nGames>1){
-      h+='<div class="mb-an-ok"><i class="ti ti-circle-check"></i> '+a.nGames+' games, no same-game legs — independent, so the straight-multi price is real.</div>';
+      h+='<div class="mb-an-ok"><i class="ti ti-circle-check"></i> '+a.nGames+' games, no same-game legs — independent, so the straight-multi estimate is real.</div>';
     }
     return h+'</div>';
   }
