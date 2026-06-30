@@ -3117,17 +3117,20 @@
       if(all)hit++; } return hit/M; }
   function _statSeries(name,statKey){ const m={}; (state.idx.logsByName[name]||[]).forEach(r=>{ const v=+r[statKey]; if(r.MatchId&&isFinite(v)) m[r.MatchId]=v; }); return m; }
   function _pairRho(a,b){
-    const key=[a.p.name+'|'+a.statKey,b.p.name+'|'+b.statKey].sort().join('~');
+    // Correlation of the two legs CO-CLEARING their lines (binary), across shared games — the quantity
+    // the copula actually needs. Continuous stat-correlation over-states binary co-occurrence and
+    // collapses multi-leg joints to absurdly short prices, so we measure hit/miss agreement instead.
+    const key=[a.p.name+'|'+a.statKey+'@'+a.line,b.p.name+'|'+b.statKey+'@'+b.line].sort().join('~');
     if(_corrCache.pair[key]!=null) return _corrCache.pair[key];
     const sa=_statSeries(a.p.name,a.statKey), sb=_statSeries(b.p.name,b.statKey);
     const mids=Object.keys(sa).filter(m=>m in sb); let rho;
-    if(mids.length>=5){
-      const xs=mids.map(m=>sa[m]), ys=mids.map(m=>sb[m]), n=xs.length;
+    if(mids.length>=6){
+      const xs=mids.map(m=>sa[m]>=a.line?1:0), ys=mids.map(m=>sb[m]>=b.line?1:0), n=xs.length;
       const mx=xs.reduce((s,v)=>s+v,0)/n, my=ys.reduce((s,v)=>s+v,0)/n;
       let sxy=0,sxx=0,syy=0; for(let i=0;i<n;i++){ const dx=xs[i]-mx,dy=ys[i]-my; sxy+=dx*dy; sxx+=dx*dx; syy+=dy*dy; }
-      rho=(sxx>0&&syy>0)? sxy/Math.sqrt(sxx*syy):0; rho*= n/(n+6);          // shrink toward 0 on thin samples
-    } else rho=(a.p.team===b.p.team)?0.12:-0.05;                            // gentle prior when <5 shared games
-    rho=Math.max(-0.7,Math.min(0.9,rho)); _corrCache.pair[key]=rho; return rho;
+      rho=(sxx>0&&syy>0)? sxy/Math.sqrt(sxx*syy):0; rho*= n/(n+9);          // shrink (binary corr is noisier)
+    } else rho=(a.p.team===b.p.team)?0.08:-0.04;                            // gentle prior when <6 shared games
+    rho=Math.max(-0.4,Math.min(0.55,rho)); _corrCache.pair[key]=rho; return rho;
   }
   function _clusterJoint(legs){
     if(legs.length===1) return legs[0].prob;
@@ -3147,7 +3150,8 @@
     const impliedProb=comb>0?1/comb:0;
     const byGame={}; legs.forEach(l=>{ const k=_multiGameKey(l); (byGame[k]=byGame[k]||[]).push(l); });
     const games=Object.keys(byGame), sameGame=games.filter(k=>byGame[k].length>1);
-    const corrProb=sameGame.length?_multiCorrProb(byGame):trueProb;
+    let corrProb=sameGame.length?_multiCorrProb(byGame):trueProb;
+    corrProb=Math.min(corrProb, trueProb*2.2);                             // safety: correlation can't inflate the joint beyond ~2.2x independent
     const sgmAdjusted=sameGame.length>0 && Math.abs(corrProb-trueProb)>0.004;
     let rhoSum=0,rhoN=0; sameGame.forEach(k=>{ const ls=byGame[k]; for(let i=0;i<ls.length;i++)for(let j=i+1;j<ls.length;j++){ rhoSum+=_pairRho(ls[i],ls[j]); rhoN++; } });
     const avgRho=rhoN?rhoSum/rhoN:0;
