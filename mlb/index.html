@@ -18,7 +18,11 @@
   .dv-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:4px;}
   .dv-title{font-family:var(--font-display);font-weight:800;font-size:15px;display:flex;align-items:center;gap:7px;}
   .dv-title i{color:var(--accent);}
-  .dv-stepper{display:flex;align-items:center;gap:6px;}
+  .dv-stepper{display:flex;align-items:center;gap:6px;flex-wrap:wrap;justify-content:flex-end;}
+  .dv-sp-toggle{display:inline-flex;align-items:center;gap:5px;background:var(--surface);border:1px solid var(--border);color:var(--text-3);font-family:var(--font-mono);font-size:10px;letter-spacing:.3px;padding:5px 9px;border-radius:20px;cursor:pointer;margin-right:4px;}
+  .dv-sp-toggle.on{background:rgba(34,197,94,.12);border-color:var(--accent);color:var(--accent);}
+  .dv-leg-sp .pname i{color:var(--accent);font-size:12px;}
+  .dv-leg-sp .dv-leg-mk{color:#5b9dff;background:rgba(91,157,255,.12);}
   .dv-step-lbl{font-family:var(--font-mono);font-size:9px;text-transform:uppercase;letter-spacing:.5px;color:var(--text-3);}
   .dv-step{width:26px;height:26px;border-radius:6px;border:1px solid var(--border);background:var(--surface);color:var(--text);font-size:15px;cursor:pointer;line-height:1;}
   .dv-step:hover{border-color:var(--accent);}
@@ -369,7 +373,7 @@
 
   <script>
   /* ===== CONFIG ===== */
-  const AUTH_HASH = '9612769f08f06e720b4bcc60763aa7e8d71c2ce2ce3546444e309158bdbff840'; // demo: jtt-mlb-demo — workflow injects real hash
+  const AUTH_HASH = 'aab47a4d89b7b3de88f7a1684dd71f8eccfe06cafda2e5b1bf33505a1051955b'; // demo: jtt-mlb-demo — workflow injects real hash
   const AUTH_TTL_DAYS = 30, AUTH_STORAGE_KEY = 'jtt_mlb_auth_v1';
   const DATA_FILES = { bundle: 'data/mlb_bundle.json' };
   const TABS = [
@@ -1090,26 +1094,42 @@
     _jttShare(clone.innerHTML,fname);}
 
   /* ================= DÉJÀ VU MULTIS ================= */
-  let _dvMin=3;
+  let _dvMin=2, _dvSameSP=true;
   const DV_MARKETS=[{stat:'TB',line:1.5,lbl:'2+ TB'},{stat:'RBI',line:0.5,lbl:'1+ RBI'},{stat:'R',line:0.5,lbl:'1+ Run'},{stat:'H',line:0.5,lbl:'1+ Hit'}];
+  const DV_K_LINES=[8.5,7.5,6.5,5.5,4.5,3.5]; // pitcher strikeout tiers, richest first
   function _dvStreakFor(log,stat,need){let n=0;for(const r of log){if((r[stat]||0)>=need)n++;else break;}return n;}
-  function _dvH2H(b,oppAbbr){return (b.h2h&&b.h2h[oppAbbr])?b.h2h[oppAbbr]:null;} // newest-first meetings vs that exact team
-  function _dvCandidate(b,oppAbbr){
-    const rows=_dvH2H(b,oppAbbr);if(!rows||rows.length<2)return null; // need a head-to-head history vs THIS opponent
+  function _dvProbSP(side){const g=_ctxGame;if(!g)return null;const pp=g[side]&&g[side].probablePitcher;return pp&&pp.id?pp.id:null;}
+  function _dvOppSPDates(myAbbr,oppStarterId){const p=oppStarterId&&PITCHERS()[oppStarterId];if(!p||!p.h2h||!p.h2h[myAbbr])return null;return new Set(p.h2h[myAbbr].map(r=>r.date));} // dates that exact starter faced my team
+  function _dvCandidate(b,oppAbbr,allow){
+    let rows=(b.h2h&&b.h2h[oppAbbr])?b.h2h[oppAbbr]:null;if(!rows)return null;
+    if(allow)rows=rows.filter(r=>allow.has(r.date));
+    if(rows.length<2)return null;
     const opts=DV_MARKETS.map(m=>{const need=Math.ceil(m.line);return {m,need,streak:_dvStreakFor(rows,m.stat,need)};}).filter(o=>o.streak>=1);
     if(!opts.length)return null;
     const maxS=Math.max.apply(null,opts.map(o=>o.streak));
-    const best=opts.find(o=>o.streak>=maxS-1)||opts[0]; // prefer rarer market when streak is close
+    const best=opts.find(o=>o.streak>=maxS-1)||opts[0];
     const byDate={};rows.forEach(r=>{byDate[r.date]=(r[best.m.stat]||0)>=best.need;});
     return {id:b.id,b,market:best.m.stat,line:best.m.line,mlabel:best.m.lbl,streak:best.streak,byDate,dates:Object.keys(byDate),meetings:rows.length};}
+  function _dvPitcherCandidate(pid,oppAbbr){
+    const p=pid&&PITCHERS()[pid];if(!p)return null;
+    const rows=(p.h2h&&p.h2h[oppAbbr])?p.h2h[oppAbbr]:null;if(!rows||rows.length<2)return null;
+    let best=null;for(const line of DV_K_LINES){const need=Math.ceil(line);const st=_dvStreakFor(rows,'K',need);if(st>=2&&(!best||st>best.streak)){best={line,need,streak:st};}}
+    if(!best)return null;
+    const byDate={};rows.forEach(r=>{byDate[r.date]=(r.K||0)>=best.need;});
+    return {id:p.id,b:p,isPitcher:true,abbr:p.abbr,market:'K',line:best.line,mlabel:best.need+'+ K',streak:best.streak,byDate,dates:Object.keys(byDate),meetings:rows.length};}
   function _dvComboStreak(legs){let dates=legs[0].dates.slice();legs.forEach(l=>{dates=dates.filter(d=>l.dates.indexOf(d)>=0);});
     dates.sort((a,b)=>b.localeCompare(a));let streak=0;for(const d of dates){if(legs.every(l=>l.byDate[d]))streak++;else break;}return {streak,shared:dates.length};}
   function dejaVuCombos(g,minStreak){
     const A=g.away,B=g.home,cands=[];
-    teamBatters(A.teamId).forEach(b=>{const c=_dvCandidate(b,B.abbr);if(c){c.side='away';c.abbr=b.abbr;cands.push(c);}});
-    teamBatters(B.teamId).forEach(b=>{const c=_dvCandidate(b,A.abbr);if(c){c.side='home';c.abbr=b.abbr;cands.push(c);}});
+    const spA=g.away.probablePitcher&&g.away.probablePitcher.id, spB=g.home.probablePitcher&&g.home.probablePitcher.id;
+    const allowA=_dvSameSP?_dvOppSPDates(A.abbr,spB):null; // A's hitters face B's starter
+    const allowB=_dvSameSP?_dvOppSPDates(B.abbr,spA):null; // B's hitters face A's starter
+    teamBatters(A.teamId).forEach(b=>{const c=_dvCandidate(b,B.abbr,allowA);if(c){c.side='away';c.abbr=b.abbr;cands.push(c);}});
+    teamBatters(B.teamId).forEach(b=>{const c=_dvCandidate(b,A.abbr,allowB);if(c){c.side='home';c.abbr=b.abbr;cands.push(c);}});
+    const pcA=_dvPitcherCandidate(spA,B.abbr);if(pcA){pcA.side='away';cands.push(pcA);}
+    const pcB=_dvPitcherCandidate(spB,A.abbr);if(pcB){pcB.side='home';cands.push(pcB);}
     cands.sort((a,b)=>b.streak-a.streak);
-    const pool=cands.slice(0,10),top=pool.slice(0,7),out=[];
+    const pool=cands.slice(0,11),top=pool.slice(0,7),out=[];
     for(let i=0;i<top.length;i++)for(let j=i+1;j<top.length;j++)for(let k=j+1;k<top.length;k++){
       const legs=[top[i],top[j],top[k]];const r=_dvComboStreak(legs);if(r.shared>=minStreak&&r.streak>=minStreak)out.push({legs,streak:r.streak,shared:r.shared});}
     for(let i=0;i<pool.length;i++)for(let j=i+1;j<pool.length;j++){
@@ -1117,28 +1137,35 @@
     out.sort((a,b)=>b.streak-a.streak||b.legs.length-a.legs.length);
     const seen={},uniq=[];for(const c of out){const key=c.legs.map(l=>l.id).sort().join('-');if(seen[key])continue;seen[key]=1;uniq.push(c);if(uniq.length>=8)break;}
     return uniq;}
-  function _dvBlurb(g){return 'Same-game combos where <b>every leg has hit in consecutive head-to-head meetings</b> between <b>'+g.away.abbr+'</b> and <b>'+g.home.abbr+'</b> — '+_dvMin+'+ straight. We\u2019ve seen this exact multi land before.';}
+  function _dvBlurb(g){return _dvSameSP
+    ?'Same-game combos that have hit in consecutive meetings <b>with the same two starters on the mound</b> ('+esc((g.away.probablePitcher||{}).name||'?')+' v '+esc((g.home.probablePitcher||{}).name||'?')+') — '+_dvMin+'+ straight. Includes pitcher strikeout legs.'
+    :'Same-game combos where <b>every leg has hit in consecutive head-to-head meetings</b> between <b>'+g.away.abbr+'</b> and <b>'+g.home.abbr+'</b> — '+_dvMin+'+ straight. Includes pitcher strikeout legs.';}
   function renderDejaVu(g){
     const combos=dejaVuCombos(g,_dvMin);
     let h='<div id="dejavu-wrap"><div class="dv-head"><div class="dv-title"><i class="ti ti-history"></i> Déjà Vu Multis</div>'+
-      '<div class="dv-stepper"><span class="dv-step-lbl">Min H2H streak</span><button class="dv-step" onclick="_dvStep(-1)">&minus;</button><span class="dv-step-n" id="dv-step-n">'+_dvMin+'</span><button class="dv-step" onclick="_dvStep(1)">+</button></div></div>'+
+      '<div class="dv-stepper"><button class="dv-sp-toggle'+(_dvSameSP?' on':'')+'" onclick="_dvToggleSP()"><i class="ti ti-ball-baseball"></i> Same SP</button>'+
+      '<span class="dv-step-lbl">Streak</span><button class="dv-step" onclick="_dvStep(-1)">&minus;</button><span class="dv-step-n" id="dv-step-n">'+_dvMin+'</span><button class="dv-step" onclick="_dvStep(1)">+</button></div></div>'+
       '<div class="dv-blurb">'+_dvBlurb(g)+'</div>';
     h+='<div id="dv-list">'+_dvListHTML(combos,g)+'</div></div>';
     return h;}
+  function _dvLegHTML(l){return '<div class="dv-leg'+(l.isPitcher?' dv-leg-sp':'')+'"><span class="pname">'+(l.isPitcher?'<i class="ti ti-ball-baseball"></i> ':'')+esc(l.b.name)+' <span class="ptag">'+l.abbr+(l.isPitcher?' SP':'')+'</span></span><span class="dv-leg-mk">'+l.mlabel+'</span></div>';}
   function _dvListHTML(combos,g){
-    if(!combos.length)return '<div class="empty"><div class="ico"><i class="ti ti-history-off"></i></div>No combo has hit '+_dvMin+'+ straight times in '+g.away.abbr+' v '+g.home.abbr+' meetings. Lower the streak, or there isn\u2019t enough head-to-head history on record yet.</div>';
+    const ctx=_dvSameSP?'with these starters':g.away.abbr+' v '+g.home.abbr+' meetings';
+    if(!combos.length)return '<div class="empty"><div class="ico"><i class="ti ti-history-off"></i></div>No combo has hit '+_dvMin+'+ straight '+ctx+'. Lower the streak'+(_dvSameSP?', turn off Same SP for broader team H2H,':'')+' or there isn\u2019t enough history on record yet.</div>';
     return combos.map((c,i)=>{
-      const legs=c.legs.map(l=>'<div class="dv-leg"><span class="pname">'+esc(l.b.name)+' <span class="ptag">'+l.abbr+'</span></span><span class="dv-leg-mk">'+l.mlabel+'</span></div>').join('');
+      const legs=c.legs.map(_dvLegHTML).join('');
+      const meetLbl=_dvSameSP?'with the same starters':g.away.abbr+' v '+g.home.abbr+' meeting'+(c.streak>1?'s':'');
       return '<div class="dv-card" id="dv-card-'+i+'">'+
-        '<div class="dv-card-top"><div class="dv-streak"><span class="dv-streak-n">'+c.streak+'</span><span class="dv-streak-l">H2H<br>in a row</span></div>'+
+        '<div class="dv-card-top"><div class="dv-streak"><span class="dv-streak-n">'+c.streak+'</span><span class="dv-streak-l">in a<br>row</span></div>'+
         '<div class="dv-legs">'+legs+'</div></div>'+
-        '<div class="dv-foot"><span class="dv-note">'+c.legs.length+'-leg SGM · all hit in the last '+c.streak+' '+g.away.abbr+' v '+g.home.abbr+' meeting'+(c.streak>1?'s':'')+(c.shared>c.streak?' (of '+c.shared+' on record)':'')+'</span>'+
+        '<div class="dv-foot"><span class="dv-note">'+c.legs.length+'-leg SGM · all hit the last '+c.streak+' '+meetLbl+(c.shared>c.streak?' (of '+c.shared+' on record)':'')+'</span>'+
         '<button class="dv-share" onclick="_shareFrom(document.getElementById(\'dv-card-'+i+'\'),\'dejavu-'+g.away.abbr.toLowerCase()+'-'+g.home.abbr.toLowerCase()+'-'+c.legs.map(l=>l.abbr).join('-').toLowerCase()+'\')"><i class="ti ti-share"></i></button></div>'+
         '</div>';
     }).join('');}
-  function _dvStep(d){_dvMin=Math.max(2,Math.min(10,_dvMin+d));const n=document.getElementById('dv-step-n');if(n)n.textContent=_dvMin;
-    if(!_ctxGame)return;const wrap=document.getElementById('dejavu-wrap');if(wrap){const b=wrap.querySelector('.dv-blurb');if(b)b.innerHTML=_dvBlurb(_ctxGame);}
+  function _dvRerender(){if(!_ctxGame)return;const wrap=document.getElementById('dejavu-wrap');if(wrap){const b=wrap.querySelector('.dv-blurb');if(b)b.innerHTML=_dvBlurb(_ctxGame);}
     const list=document.getElementById('dv-list');if(list)list.innerHTML=_dvListHTML(dejaVuCombos(_ctxGame,_dvMin),_ctxGame);}
+  function _dvStep(d){_dvMin=Math.max(2,Math.min(10,_dvMin+d));const n=document.getElementById('dv-step-n');if(n)n.textContent=_dvMin;_dvRerender();}
+  function _dvToggleSP(){_dvSameSP=!_dvSameSP;const t=document.querySelector('.dv-sp-toggle');if(t)t.classList.toggle('on',_dvSameSP);_dvRerender();}
   </script>
 </body>
 </html>
