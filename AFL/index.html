@@ -261,6 +261,8 @@
   .mb-pos{color:#22c55e!important;}
   .mb-neg{color:#ef4444!important;}
   .mb-an-book{margin-top:7px;font-size:11px;color:var(--text-2);display:flex;align-items:center;gap:5px;}
+  .mb-an-adj{margin-top:7px;font-size:10.5px;color:#22c55e;background:rgba(34,197,94,.08);border:1px solid rgba(34,197,94,.22);border-radius:6px;padding:6px 8px;display:flex;align-items:flex-start;gap:5px;line-height:1.4;}
+  .mb-an-adj s{color:var(--text-3);}
   .mb-an-book i{color:var(--accent);font-size:13px;}
   .mb-an-book b{color:var(--text);font-family:var(--font-mono);}
   .mb-an-warn{margin-top:7px;font-size:10.5px;color:#f59e0b;display:flex;align-items:flex-start;gap:5px;line-height:1.4;}
@@ -3020,6 +3022,57 @@
       '<button class="mb-c mb-rm" onclick="'+removeCall+'" title="Remove leg">\u00D7</button></div>';
   }
   // ---- whole-multi analysis: EV / edge, correlation honesty, best-book shopping (shared by both builders) ----
+  // ===== SGM correlation engine — Gaussian copula over empirical game-log correlations =====
+  // Same-game legs are correlated (a blow-out lifts a team's disposals/goals/margin together),
+  // so the independent product under-states the real joint. We estimate each pair's correlation
+  // from the players' shared game logs, then Monte-Carlo the joint under a Gaussian copula while
+  // keeping each leg's exact hit-rate marginal. Cross-game legs stay independent (multiplied).
+  const _corrCache={pair:{},joint:{}};
+  function _qnorm(p){
+    if(p<=0)return -38; if(p>=1)return 38;
+    const a=[-3.969683028665376e+01,2.209460984245205e+02,-2.759285104469687e+02,1.383577518672690e+02,-3.066479806614716e+01,2.506628277459239e+00];
+    const b=[-5.447609879822406e+01,1.615858368580409e+02,-1.556989798598866e+02,6.680131188771972e+01,-1.328068155288572e+01];
+    const c=[-7.784894002430293e-03,-3.223964580411365e-01,-2.400758277161838e+00,-2.549732539343734e+00,4.374664141464968e+00,2.938163982698783e+00];
+    const d=[7.784695709041462e-03,3.224671290700398e-01,2.445134137142996e+00,3.754408661907416e+00];
+    const pl=0.02425, ph=1-pl; let q,r;
+    if(p<pl){ q=Math.sqrt(-2*Math.log(p)); return (((((c[0]*q+c[1])*q+c[2])*q+c[3])*q+c[4])*q+c[5])/((((d[0]*q+d[1])*q+d[2])*q+d[3])*q+1); }
+    if(p<=ph){ q=p-0.5; r=q*q; return (((((a[0]*r+a[1])*r+a[2])*r+a[3])*r+a[4])*r+a[5])*q/(((((b[0]*r+b[1])*r+b[2])*r+b[3])*r+b[4])*r+1); }
+    q=Math.sqrt(-2*Math.log(1-p)); return -(((((c[0]*q+c[1])*q+c[2])*q+c[3])*q+c[4])*q+c[5])/((((d[0]*q+d[1])*q+d[2])*q+d[3])*q+1);
+  }
+  let _rnSpare=null;
+  function _randn(){ if(_rnSpare!=null){const v=_rnSpare;_rnSpare=null;return v;} let u=0,v=0; while(u===0)u=Math.random(); while(v===0)v=Math.random(); const m=Math.sqrt(-2*Math.log(u)); _rnSpare=m*Math.sin(2*Math.PI*v); return m*Math.cos(2*Math.PI*v); }
+  function _cholPD(R){ const n=R.length, L=Array.from({length:n},()=>new Array(n).fill(0));
+    for(let i=0;i<n;i++){ for(let j=0;j<=i;j++){ let s=R[i][j]; for(let k=0;k<j;k++) s-=L[i][k]*L[j][k];
+      if(i===j) L[i][j]=Math.sqrt(Math.max(s,1e-6)); else L[i][j]=s/(L[j][j]||1e-9); } } return L; }
+  function _copulaJoint(probs,R,M){ M=M||15000; const k=probs.length;
+    const t=probs.map(p=>_qnorm(1-Math.max(0.01,Math.min(0.99,p)))); const L=_cholPD(R); let hit=0;
+    for(let s=0;s<M;s++){ const g=new Array(k); for(let i=0;i<k;i++)g[i]=_randn(); let all=true;
+      for(let i=0;i<k;i++){ let zi=0; for(let j=0;j<=i;j++) zi+=L[i][j]*g[j]; if(zi<=t[i]){all=false;break;} }
+      if(all)hit++; } return hit/M; }
+  function _statSeries(name,statKey){ const m={}; (state.idx.logsByName[name]||[]).forEach(r=>{ const v=+r[statKey]; if(r.MatchId&&isFinite(v)) m[r.MatchId]=v; }); return m; }
+  function _pairRho(a,b){
+    const key=[a.p.name+'|'+a.statKey,b.p.name+'|'+b.statKey].sort().join('~');
+    if(_corrCache.pair[key]!=null) return _corrCache.pair[key];
+    const sa=_statSeries(a.p.name,a.statKey), sb=_statSeries(b.p.name,b.statKey);
+    const mids=Object.keys(sa).filter(m=>m in sb); let rho;
+    if(mids.length>=5){
+      const xs=mids.map(m=>sa[m]), ys=mids.map(m=>sb[m]), n=xs.length;
+      const mx=xs.reduce((s,v)=>s+v,0)/n, my=ys.reduce((s,v)=>s+v,0)/n;
+      let sxy=0,sxx=0,syy=0; for(let i=0;i<n;i++){ const dx=xs[i]-mx,dy=ys[i]-my; sxy+=dx*dy; sxx+=dx*dx; syy+=dy*dy; }
+      rho=(sxx>0&&syy>0)? sxy/Math.sqrt(sxx*syy):0; rho*= n/(n+6);          // shrink toward 0 on thin samples
+    } else rho=(a.p.team===b.p.team)?0.12:-0.05;                            // gentle prior when <5 shared games
+    rho=Math.max(-0.7,Math.min(0.9,rho)); _corrCache.pair[key]=rho; return rho;
+  }
+  function _clusterJoint(legs){
+    if(legs.length===1) return legs[0].prob;
+    const sig=legs.map(l=>l.p.name+'|'+l.statKey+'@'+l.line+'#'+Math.round((l.prob||0)*1000)).sort().join('~');
+    if(_corrCache.joint[sig]!=null) return _corrCache.joint[sig];
+    const k=legs.length, R=[];
+    for(let i=0;i<k;i++){ R[i]=[]; for(let j=0;j<k;j++){ R[i][j]= i===j?1:(i<j?_pairRho(legs[i],legs[j]):R[j][i]); } }
+    const j=_copulaJoint(legs.map(l=>l.prob||0.01),R,15000);
+    _corrCache.joint[sig]=j; return j;
+  }
+  function _multiCorrProb(byGame){ let p=1; Object.keys(byGame).forEach(k=>{ p*=_clusterJoint(byGame[k]); }); return p; }
   function _multiGameKey(l){ return [abbr(l.p.team),abbr(l.opp)].sort().join(' v '); }
   function _multiAnalysis(legs){
     if(!legs||legs.length<2) return null;
@@ -3028,7 +3081,13 @@
     const impliedProb=comb>0?1/comb:0;
     const byGame={}; legs.forEach(l=>{ const k=_multiGameKey(l); (byGame[k]=byGame[k]||[]).push(l); });
     const games=Object.keys(byGame), sameGame=games.filter(k=>byGame[k].length>1);
-    return {comb,trueProb,impliedProb,edge:trueProb-impliedProb,fair:trueProb>0?1/trueProb:null,ev:trueProb*comb-1,nGames:games.length,sameGame,byGame};
+    const corrProb=sameGame.length?_multiCorrProb(byGame):trueProb;
+    const sgmAdjusted=sameGame.length>0 && Math.abs(corrProb-trueProb)>0.004;
+    let rhoSum=0,rhoN=0; sameGame.forEach(k=>{ const ls=byGame[k]; for(let i=0;i<ls.length;i++)for(let j=i+1;j<ls.length;j++){ rhoSum+=_pairRho(ls[i],ls[j]); rhoN++; } });
+    const avgRho=rhoN?rhoSum/rhoN:0;
+    return {comb,trueProb,impliedProb,edge:trueProb-impliedProb,fair:trueProb>0?1/trueProb:null,
+            corrProb,corrFair:corrProb>0?1/corrProb:null,sgmAdjusted,avgRho,
+            ev:trueProb*comb-1,nGames:games.length,sameGame,byGame};
   }
   function _multiBestBook(legs){
     if(!legs||legs.length<2) return null;
@@ -3041,15 +3100,18 @@
   }
   function _multiAnalysisHTML(legs,manual,oddsCall){
     const a=_multiAnalysis(legs); if(!a) return '';
+    const aProb=a.sgmAdjusted?a.corrProb:a.trueProb, aFair=a.sgmAdjusted?a.corrFair:a.fair;
     const hasM=manual&&manual>1, effComb=hasM?manual:a.comb;
-    const implied=effComb>0?1/effComb:0, edge=a.trueProb-implied;
+    const implied=effComb>0?1/effComb:0, edge=aProb-implied;
     const pct=v=>Math.round(v*100)+'%', edgePos=edge>=0, edgeStr=(edgePos?'+':'')+(edge*100).toFixed(1)+'%';
     const bb=_multiBestBook(legs);
     let h='<div class="mb-an"><div class="mb-an-row">'+
-      '<span class="mb-an-c"><span class="mb-an-k">True</span><b>'+pct(a.trueProb)+'</b></span>'+
+      '<span class="mb-an-c"><span class="mb-an-k">True'+(a.sgmAdjusted?' · SGM-adj':'')+'</span><b>'+pct(aProb)+'</b></span>'+
       '<span class="mb-an-c"><span class="mb-an-k">Implied</span><b>'+pct(implied)+'</b></span>'+
       '<span class="mb-an-c"><span class="mb-an-k">Edge'+(hasM?' · your price':'')+'</span><b class="'+(edgePos?'mb-pos':'mb-neg')+'">'+edgeStr+'</b></span>'+
-      '<span class="mb-an-c"><span class="mb-an-k">Fair</span><b>'+(a.fair?'$'+a.fair.toFixed(2):'—')+'</b></span></div>';
+      '<span class="mb-an-c"><span class="mb-an-k">Fair</span><b>'+(aFair?'$'+aFair.toFixed(2):'—')+'</b></span></div>';
+    if(a.sgmAdjusted){ const dir=a.avgRho>=0?'lift':'lower';
+      h+='<div class="mb-an-adj"><i class="ti ti-affiliate"></i> Correlation-adjusted (ρ≈'+a.avgRho.toFixed(2)+'): same-game legs '+dir+' the joint — fair <b>$'+a.corrFair.toFixed(2)+'</b>, not <s>$'+a.fair.toFixed(2)+'</s> if independent.</div>'; }
     h+='<div class="mb-an-odds"><span class="mb-an-k">Your actual price</span>'+
       '<span class="mb-an-in'+(hasM?' on':'')+'">$<input type="number" step="0.01" min="1" inputmode="decimal" value="'+(hasM?manual:'')+'" placeholder="'+a.comb.toFixed(2)+'" onchange="'+oddsCall+'"></span>'+
       (hasM?'<button class="mb-an-clr" onclick="'+oddsCall.replace('this.value',"''")+'">clear</button><span class="mb-an-note">vs straight-multi est $'+a.comb.toFixed(2)+'</span>'
@@ -3058,7 +3120,7 @@
     else if(bb) h+='<div class="mb-an-book"><i class="ti ti-check"></i> Best price already — '+esc(bb.name)+' $'+bb.comb.toFixed(2)+'</div>';
     if(a.sameGame.length){
       const g=a.sameGame.map(k=>k+' ×'+a.byGame[k].length).join(', ');
-      h+='<div class="mb-an-warn"><i class="ti ti-alert-triangle"></i> Same-game legs ('+esc(g)+') are correlated — '+(hasM?'you entered the real price, so this edge is honest.':'a real SGM pays less than this straight-multi price, so enter your actual price above for a true edge.')+'</div>';
+      h+='<div class="mb-an-warn"><i class="ti ti-alert-triangle"></i> Same-game legs ('+esc(g)+') — '+(hasM?'edge above is measured vs your entered SGM price and the correlation-adjusted odds, so it\'s honest.':'fair SGM ≈ <b>$'+(a.corrFair||a.fair).toFixed(2)+'</b> after adjusting for correlation — enter your book\'s actual SGM price above for the true edge.')+'</div>';
     } else if(a.nGames>1){
       h+='<div class="mb-an-ok"><i class="ti ti-circle-check"></i> '+a.nGames+' games, no same-game legs — independent, so the straight-multi price is real.</div>';
     }
