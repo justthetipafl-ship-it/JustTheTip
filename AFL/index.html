@@ -691,7 +691,7 @@
     books:[],   // [] = use all books; otherwise restrict arbs/EV/best-price to these
     hideCompleted:false,   // hide games that have already finished
     nerd:{ arbs:true, middles:true, model:true, lineout:true, implied:true, market:true, minEv:2, maxEv:0, maxOdds:0, minArb:0.5, minGap:1, maxCost:12, minSamp:6 },
-    multi:{ legs:6, scope:'game', today:false, minProb:55, minScore:3, markets:MULTI_MKTS.map(m=>m[0]) }
+    multi:{ legs:6, scope:'game', today:false, book:null, minProb:55, minScore:3, markets:MULTI_MKTS.map(m=>m[0]) }
   };
   let SETTINGS=(function(){
     try{ const s=JSON.parse(localStorage.getItem(SETTINGS_KEY)||'null'); if(!s) return JSON.parse(JSON.stringify(DEFAULT_SETTINGS));
@@ -890,7 +890,8 @@
       updated:(src&&src.updated)||null,
       sample:!!(src&&src._sample) };
   }
-  function _bookOK(b){ const mb=SETTINGS.books; return !mb||!mb.length||mb.indexOf(b)>=0; }
+  let _mbActiveBook=null;
+  function _bookOK(b){ if(_mbActiveBook) return b===_mbActiveBook; const mb=SETTINGS.books; return !mb||!mb.length||mb.indexOf(b)>=0; }
   function oddsFor(player, market){
     const main=(state.idx.oddsIdx[player]||{})[market];                                   // two-way main line (line + under live here)
     const rows=(((state.idx.bookIdx||{})[player]||{})[market]||[]).filter(r=>_bookOK(r.book)&&r.over!=null);
@@ -2713,23 +2714,26 @@
   function _mbPools(){
     const M=SETTINGS.multi, mode=M.mode||'smart', scope=M.scope||'game';
     if(!_oddsLive()) return [];
-    let fixtures=(state.data.fixture||[]).filter(g=>g.home&&g.away);
-    if(M.today){ const t=_todayStr(); fixtures=fixtures.filter(g=>(g.date||'')===t); }
-    const pl=t=>(state.idx.players||[]).filter(p=>p.team===t&&(p.matches||0)>=3);
-    const sortFn=_mbSortFn();
-    if(mode==='team'){
-      const tm=M.team; if(!tm) return [];
-      const g=fixtures.find(f=>f.home===tm||f.away===tm); if(!g) return [];
-      const opp=g.home===tm?g.away:g.home;
-      const pool=_modePool(pl(tm),opp).sort(sortFn);
-      return pool.length?[{label:abbr(tm)+' \u2014 your team',pool}]:[];
-    }
-    const poolFor=g=>[..._modePool(pl(g.home),g.away),..._modePool(pl(g.away),g.home)].sort(sortFn);
-    if(mode==='lotto'){ let all=[]; fixtures.forEach(g=>all.push(...poolFor(g))); all.sort(sortFn); return all.length?[{label:'Lottery Legs',pool:all}]:[]; }
-    if(scope==='round'){ let all=[]; fixtures.forEach(g=>all.push(...poolFor(g))); all.sort(sortFn); return all.length?[{label:M.today?'Today':'Full Round',pool:all}]:[]; }
-    return fixtures.map(g=>({label:abbr(g.home)+' v '+abbr(g.away),pool:poolFor(g)})).filter(b=>b.pool.length);
+    _mbActiveBook=M.book||null;                                   // constrain all leg pricing to the chosen book
+    try{
+      let fixtures=(state.data.fixture||[]).filter(g=>g.home&&g.away);
+      if(M.today){ const t=_todayStr(); fixtures=fixtures.filter(g=>(g.date||'')===t); }
+      const pl=t=>(state.idx.players||[]).filter(p=>p.team===t&&(p.matches||0)>=3);
+      const sortFn=_mbSortFn();
+      if(mode==='team'){
+        const tm=M.team; if(!tm) return [];
+        const g=fixtures.find(f=>f.home===tm||f.away===tm); if(!g) return [];
+        const opp=g.home===tm?g.away:g.home;
+        const pool=_modePool(pl(tm),opp).sort(sortFn);
+        return pool.length?[{label:abbr(tm)+' — your team',pool}]:[];
+      }
+      const poolFor=g=>[..._modePool(pl(g.home),g.away),..._modePool(pl(g.away),g.home)].sort(sortFn);
+      if(mode==='lotto'){ let all=[]; fixtures.forEach(g=>all.push(...poolFor(g))); all.sort(sortFn); return all.length?[{label:'Lottery Legs',pool:all}]:[]; }
+      if(scope==='round'){ let all=[]; fixtures.forEach(g=>all.push(...poolFor(g))); all.sort(sortFn); return all.length?[{label:M.today?'Today':'Full Round',pool:all}]:[]; }
+      return fixtures.map(g=>({label:abbr(g.home)+' v '+abbr(g.away),pool:poolFor(g)})).filter(b=>b.pool.length);
+    } finally { _mbActiveBook=null; }
   }
-  function _mbFilterKey(){ const M=SETTINGS.multi; return [M.mode||'smart',M.team||'',M.scope||'game',!!M.today,M.legs||6,M.minProb||55,M.minScore,(M.markets||[]).join(','),(state.view.fxMulti&&state.view.fxMulti.book)||''].join('|'); }
+  function _mbFilterKey(){ const M=SETTINGS.multi; return [M.mode||'smart',M.team||'',M.book||'',M.scope||'game',!!M.today,M.legs||6,M.minProb||55,M.minScore,(M.markets||[]).join(','),(state.view.fxMulti&&state.view.fxMulti.book)||''].join('|'); }
   function _mbSeedOrder(pool,crossGame){
     if(!crossGame) return pool.map((_,i)=>i);                  // score order
     const byG={}; pool.forEach((l,i)=>{ const k=[l.p.team,l.opp].sort().join('|'); (byG[k]=byG[k]||[]).push(i); });
@@ -3166,7 +3170,7 @@
   }
   function _multiAnalysisHTML(legs,manual,oddsCall){
     const a=_multiAnalysis(legs); if(!a) return '';
-    const bb=_multiBestBook(legs);
+    const bb=SETTINGS.multi.book?null:_multiBestBook(legs);
     let h='<div class="mb-an">';
     if(bb&&bb.comb>a.comb+0.01) h+='<div class="mb-an-book"><i class="ti ti-arrow-up-right"></i> Best book: <b>'+esc(bb.name)+' $'+bb.comb.toFixed(2)+'</b> — $'+(bb.comb-a.comb).toFixed(2)+' more than the combined estimate</div>';
     else if(bb) h+='<div class="mb-an-book"><i class="ti ti-check"></i> Best price already — '+esc(bb.name)+' $'+bb.comb.toFixed(2)+'</div>';
@@ -3240,6 +3244,7 @@
     h+='<div style="font-size:9px;color:var(--text-3);margin-top:3px">Max EV% / Max odds = 0 means no cap.</div></div>';
     return h;
   }
+  function _mbBooksPresent(){ const s=new Set(), bi=state.idx.bookIdx||{}; for(const p in bi){ const mm=bi[p]; for(const mk in mm){ const rows=mm[mk]||[]; for(let i=0;i<rows.length;i++){ if(rows[i].book) s.add(rows[i].book); } } } return ALL_BOOKS.filter(bk=>s.has(bk[0])); }
   function multiFilterBar(){
     const M=SETTINGS.multi;
     let h='<div style="'+_fbar+'"><div style="font-size:10px;color:var(--text-3);margin-bottom:4px;text-transform:uppercase;letter-spacing:.04em">Multi filters</div>';
@@ -3251,6 +3256,14 @@
         '<option value="">Pick your team\u2026</option>'+teams.map(t=>'<option value="'+esc(t)+'"'+(M.team===t?' selected':'')+'>'+esc(t)+'</option>').join('')+'</select></div>';
     }
     h+='<div style="font-size:9.5px;color:var(--text-3);margin-bottom:6px">'+({smart:'Best-rated legs by our signal score.',safe:'Only legs cleared in every game this season \u2014 safe, short odds.',team:'Legs from your chosen team only \u2014 priced as a same-gamer.',lotto:'One longshot with a real shot \u2014 swap \u25c2\u25b8 to see others.',value:'Every leg +EV \u2014 our hit-rate beats the book price.'}[M.mode||'smart'])+'</div>';
+    const _books=_mbBooksPresent();
+    if(_books.length>=2){
+      h+='<div style="margin-bottom:6px"><span style="font-size:10px;color:var(--text-3);text-transform:uppercase;letter-spacing:.04em;margin-right:6px">Book</span>'+
+        '<select onchange="_mBook(this.value)" style="background:var(--surface-2);border:1px solid var(--border);color:var(--text);border-radius:8px;padding:5px 9px;font-size:12px;font-weight:600">'+
+        '<option value=""'+(!M.book?' selected':'')+'>Any (best price)</option>'+
+        _books.map(bk=>'<option value="'+bk[0]+'"'+(M.book===bk[0]?' selected':'')+'>'+esc(bk[1])+'</option>').join('')+
+        '</select></div>';
+    }
     h+='<div style="margin-bottom:4px">'+[['game','Per game'],['round','Across games']].map(([k,l])=>_fchip(M.scope===k,l,"_mScope('"+k+"')")).join('')+
       '<span style="display:inline-block;width:1px;height:16px;background:var(--border);margin:0 6px;vertical-align:middle"></span>'+
       _fchip(!!M.today,'Today only',"_mToday()")+'</div>';
@@ -3265,6 +3278,7 @@
   window._mMkt=function(k){ const a=SETTINGS.multi.markets,i=a.indexOf(k); if(i>=0)a.splice(i,1); else a.push(k); saveSettings(); _reRenderMulti(); };
   window._mMode=function(k){ SETTINGS.multi.mode=k; if(k==='team'&&!SETTINGS.multi.team){ const f=(state.data.fixture||[]).find(g=>g.home&&g.away); if(f)SETTINGS.multi.team=f.home; } saveSettings(); _reRenderMulti(); };
   window._mTeam=function(v){ SETTINGS.multi.team=v||null; saveSettings(); _reRenderMulti(); };
+  window._mBook=function(v){ SETTINGS.multi.book=v||null; saveSettings(); _reRenderMulti(); };
   function _reRenderMulti(){ const el=document.getElementById('multi-wrap'); if(el) el.innerHTML=multiFilterBar()+'<div id="multi-results">'+multiResults()+'</div>'; }
 
   /* ---------- SETTINGS UI ---------- */
