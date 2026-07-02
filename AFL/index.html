@@ -378,7 +378,8 @@
   .tp-sec{display:flex;align-items:baseline;gap:8px;margin:14px 0 8px;}
   .dvps-sel{background:var(--surface-2);border:1px solid var(--border);color:var(--text);padding:2px 7px;border-radius:4px;font-family:var(--font-mono);font-size:10px;font-weight:700;outline:none;cursor:pointer;}
   .dvps-grid{display:flex;flex-wrap:wrap;gap:5px;margin-bottom:6px;}
-  .dvps-cell{flex:1;min-width:120px;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:6px 8px;}
+  .dvps-cell{flex:1;min-width:120px;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:6px 8px;cursor:pointer;-webkit-tap-highlight-color:transparent;}
+  .dvps-cell:active{border-color:var(--accent);}
   .dvps-nm{font-size:10px;font-weight:800;color:var(--text);line-height:1.2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
   .dvps-sub{font-size:8.5px;font-weight:700;color:var(--text-3);margin-top:1px;}
   .dvps-row{display:flex;align-items:baseline;gap:4px;margin-top:3px;}
@@ -1385,7 +1386,7 @@
     const sel='<select onchange="setFxDvpStat(this.value)" class="dvps-sel">'+DVPS_OPTS.map(o=>'<option value="'+o[0]+'"'+(o[0]===statKey?' selected':'')+'>'+o[1]+'</option>').join('')+'</select>';
     const cells=rows.map(r=>{
       const col=r.pct>=8?'#22c55e':r.pct>=3?'#86efac':r.pct<=-8?'#ef4444':r.pct<=-3?'#f97316':'var(--text-2)';
-      return '<div class="dvps-cell" title="'+esc(r.ourPlayers.join(', '))+'"><div class="dvps-nm">'+r.sn+'</div>'+
+      return '<div class="dvps-cell" data-tip="'+_attrEsc('<b>'+r.sn+'</b><br>'+r.ourPlayers.join(', '))+'" title="'+esc(r.ourPlayers.join(', '))+'" onclick="_negTip(event,this)" onmouseenter="_negShow(this)" onmouseleave="_negHide()"><div class="dvps-nm">'+r.sn+'</div>'+
         '<div class="dvps-sub">'+r.ourCount+' on '+abbr(team)+' · '+r.games+'g v '+abbr(opp)+'</div>'+
         '<div class="dvps-row"><span class="dvps-v" style="color:'+col+'">'+r.oppAvg.toFixed(dec)+'</span><span class="dvps-l">'+statLbl+'</span><span class="dvps-p" style="color:'+col+'">'+(r.pct>=0?'+':'')+r.pct.toFixed(0)+'%</span></div></div>';
     }).join('');
@@ -1917,7 +1918,7 @@
       '<div class="section-title">Averages <span class="sub-tabs" style="float:right;display:inline-flex">'+seg+'</span></div><div class="statgrid">'+cells+'</div>'+
       propCalc(name)+
       pmBoxScores(name,6)+
-      (opp?similarPlayers(p,(p.position==='Key Forward'||p.position==='Gen. Forward'||p.position==='Mid-Forward')?'goals':'disposals',opp,4):'');
+      (opp?similarPlayers(p,_pcState?_pcState.stat:'disposals',opp,_pcState?_pcState.line:NaN,6):'');
   }
   window._pmSetMode=function(m){_pmMode=m;_pmRender();};
   window._pmToCMB=function(name,stat,line){_pmClose();_cmbOpen();setTimeout(()=>{const i=document.getElementById('cmp-input');if(i){i.value=name+' '+line+' '+(CMP_STAT_LABELS[stat]||stat).toLowerCase();window.cmbRun&&window.cmbRun();}},120);};
