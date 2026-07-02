@@ -2687,7 +2687,7 @@
     });
     return Object.values(best).sort((a,b)=>b._edge-a._edge);
   }
-  // Lottery Ticket — longest-priced rung per player that still clears a real-shot floor
+  // Lottery Legs — longest-priced rung per player that still clears a real-shot floor
   function _lottoLegs(players,opp){
     const MIN_ODDS=3.0, FLOOR=0.18, mkts=SETTINGS.multi.markets||[], best={};
     players.forEach(p=>{ if((p.matches||0)<5) return;
@@ -2725,6 +2725,7 @@
       return pool.length?[{label:abbr(tm)+' \u2014 your team',pool}]:[];
     }
     const poolFor=g=>[..._modePool(pl(g.home),g.away),..._modePool(pl(g.away),g.home)].sort(sortFn);
+    if(mode==='lotto'){ let all=[]; fixtures.forEach(g=>all.push(...poolFor(g))); all.sort(sortFn); return all.length?[{label:'Lottery Legs',pool:all}]:[]; }
     if(scope==='round'){ let all=[]; fixtures.forEach(g=>all.push(...poolFor(g))); all.sort(sortFn); return all.length?[{label:M.today?'Today':'Full Round',pool:all}]:[]; }
     return fixtures.map(g=>({label:abbr(g.home)+' v '+abbr(g.away),pool:poolFor(g)})).filter(b=>b.pool.length);
   }
@@ -2752,7 +2753,8 @@
   }
   function _mbBlockPool(bi){ return _mbPools()[bi]; }
   function multiBuilder(){
-    const N=SETTINGS.multi.legs||6, cross=(SETTINGS.multi.scope||'game')==='round';
+    const mode=SETTINGS.multi.mode||'smart';
+    const N=mode==='lotto'?1:(SETTINGS.multi.legs||6), cross=(SETTINGS.multi.scope||'game')==='round';
     return _mbPools().map((b,bi)=>{
       const s=_mbSel(b.label,b.pool,N,cross);
       const legs=s.idx.map(i=>b.pool[i]).filter(Boolean);
@@ -3164,43 +3166,46 @@
   }
   function _multiAnalysisHTML(legs,manual,oddsCall){
     const a=_multiAnalysis(legs); if(!a) return '';
-    const hasM=manual&&manual>1;
     const bb=_multiBestBook(legs);
     let h='<div class="mb-an">';
-    h+='<div class="mb-an-odds"><span class="mb-an-k">Your actual price</span>'+
-      '<span class="mb-an-in'+(hasM?' on':'')+'">$<input type="number" step="0.01" min="1" inputmode="decimal" value="'+(hasM?manual:'')+'" placeholder="'+a.comb.toFixed(2)+'" onchange="'+oddsCall+'"></span>'+
-      (hasM?'<button class="mb-an-clr" onclick="'+oddsCall.replace('this.value',"''")+'">clear</button><span class="mb-an-note">vs straight-multi est $'+a.comb.toFixed(2)+'</span>'
-           :'<span class="mb-an-note">combined straight-multi estimate $'+a.comb.toFixed(2)+'</span>')+'</div>';
-    if(bb&&bb.comb>a.comb+0.01) h+='<div class="mb-an-book"><i class="ti ti-arrow-up-right"></i> Best book: <b>'+esc(bb.name)+' $'+bb.comb.toFixed(2)+'</b> — $'+(bb.comb-a.comb).toFixed(2)+' more than the est above</div>';
+    if(bb&&bb.comb>a.comb+0.01) h+='<div class="mb-an-book"><i class="ti ti-arrow-up-right"></i> Best book: <b>'+esc(bb.name)+' $'+bb.comb.toFixed(2)+'</b> — $'+(bb.comb-a.comb).toFixed(2)+' more than the combined estimate</div>';
     else if(bb) h+='<div class="mb-an-book"><i class="ti ti-check"></i> Best price already — '+esc(bb.name)+' $'+bb.comb.toFixed(2)+'</div>';
     if(a.sameGame.length){
       const g=a.sameGame.map(k=>k+' ×'+a.byGame[k].length).join(', ');
-      h+='<div class="mb-an-warn"><i class="ti ti-alert-triangle"></i> Same-game legs ('+esc(g)+') are correlated — a real same-game multi pays less than the straight-multi estimate above.</div>';
+      h+='<div class="mb-an-warn"><i class="ti ti-alert-triangle"></i> Same-game legs ('+esc(g)+') are correlated — a real same-game multi pays less than the combined odds shown.</div>';
     } else if(a.nGames>1){
-      h+='<div class="mb-an-ok"><i class="ti ti-circle-check"></i> '+a.nGames+' games, no same-game legs — independent, so the straight-multi estimate is real.</div>';
+      h+='<div class="mb-an-ok"><i class="ti ti-circle-check"></i> '+a.nGames+' games, no same-game legs — independent, so the combined odds are real.</div>';
     }
     return h+'</div>';
   }
   function multiResults(){
     const games=multiBuilder();
+    const mode=SETTINGS.multi.mode||'smart';
     if(!games.length){
       if(!_oddsLive()) return emptyState('ti-stack-2','Waiting on live odds','Multi suggestions appear when the bookmaker odds feed is live — every leg is priced against a posted line.');
       return emptyState('ti-stack-2','No priced legs','Nothing clears the current filters with a posted line. Loosen Min prob / Min score, or widen the markets above.');
     }
     const scopeWord=SETTINGS.multi.scope==='round'?(SETTINGS.multi.today?'today multi':'round multi'):'same-game multi';
     const cross=SETTINGS.multi.scope==='round';
+    const showTag=cross||mode==='lotto';
     const blocks=games.map((gm,i)=>{
       const legsHtml=gm.legs.length
-        ? gm.legs.map((l,slot)=>_mbLegRow(l,gm.lockedNames.indexOf(l.p.name)>=0,_mbCtrls('_mbSwap('+gm.bi+','+slot,'_mbLock('+gm.bi+','+slot+')','_mbRemove('+gm.bi+','+slot+')',gm.lockedNames.indexOf(l.p.name)>=0),cross?abbr(l.p.team)+' v '+abbr(l.opp):'')).join('')
+        ? gm.legs.map((l,slot)=>_mbLegRow(l,gm.lockedNames.indexOf(l.p.name)>=0,_mbCtrls('_mbSwap('+gm.bi+','+slot,'_mbLock('+gm.bi+','+slot+')','_mbRemove('+gm.bi+','+slot+')',gm.lockedNames.indexOf(l.p.name)>=0),showTag?abbr(l.p.team)+' v '+abbr(l.opp):'')).join('')
         : '<div class="tp-body-meta" style="border:0;opacity:.7">Removed every leg — tap Add leg to rebuild.</div>';
       const combLabel=gm.legs.length?('$'+gm.comb.toFixed(2)+(gm.priced<gm.legs.length?' ('+gm.priced+'/'+gm.legs.length+' priced)':'')):'—';
       const addBtn='<button class="mb-add" onclick="_mbAdd('+gm.bi+')"><i class="ti ti-plus"></i> Add leg</button>';
-      const analysis=_multiAnalysisHTML(gm.legs,gm.manual,'_mbOdds('+gm.bi+',this.value)');
+      const analysis=_multiAnalysisHTML(gm.legs);
       const shareBtn=gm.legs.length>=2?'<button class="slip-share-btn" onclick="_openSlipShare(\'multi\','+i+')"><i class="ti ti-share"></i> Share card</button>':'';
-      return '<div class="tp-body-meta" style="margin-top:8px"><b>'+gm.label+'</b> · '+gm.legs.length+'-leg '+scopeWord+' · combined <b>'+combLabel+'</b></div>'+legsHtml+addBtn+analysis+shareBtn;
+      const hdr=(mode==='lotto')
+        ? '<div class="tp-body-meta" style="margin-top:8px"><b>'+gm.label+'</b> — longest-priced live shot — swap ◂ ▸ for another</div>'
+        : '<div class="tp-body-meta" style="margin-top:8px"><b>'+gm.label+'</b> — '+gm.legs.length+'-leg '+scopeWord+' — combined <b>'+combLabel+'</b></div>';
+      return hdr+legsHtml+(mode==='lotto'?'':addBtn)+analysis+shareBtn;
     }).join('');
     const totalLegs=games.reduce((a,g)=>a+g.legs.length,0);
-    return '<details class="tp-collapse c-green" open><summary class="tp-collapse-sum"><i class="ti ti-stack-2"></i><span class="tp-collapse-title">Multi Builder</span><span class="tp-count">'+games.length+'</span><i class="ti ti-chevron-down tp-collapse-chev"></i></summary><div class="tp-collapse-body"><div class="tp-body-meta">'+scopeWord.replace(/^\w/,c=>c.toUpperCase())+(games.length>1?'s':'')+' · '+games.length+' · '+totalLegs+' legs · lock, swap ◂▸ or remove any leg</div>'+blocks+'</div></details>';
+    const metaLine=(mode==='lotto')
+      ? 'Lottery Legs — one live longshot at a time — swap ◂ ▸ to cycle'
+      : scopeWord.replace(/^\w/,c=>c.toUpperCase())+(games.length>1?'s':'')+' — '+games.length+' — '+totalLegs+' legs — lock, swap ◂ ▸ or remove any leg';
+    return '<details class="tp-collapse c-green" open><summary class="tp-collapse-sum"><i class="ti ti-stack-2"></i><span class="tp-collapse-title">Multi Builder</span><span class="tp-count">'+games.length+'</span><i class="ti ti-chevron-down tp-collapse-chev"></i></summary><div class="tp-collapse-body"><div class="tp-body-meta">'+metaLine+'</div>'+blocks+'</div></details>';
   }
 
   window.degenTile=function(k){
@@ -3238,14 +3243,14 @@
   function multiFilterBar(){
     const M=SETTINGS.multi;
     let h='<div style="'+_fbar+'"><div style="font-size:10px;color:var(--text-3);margin-bottom:4px;text-transform:uppercase;letter-spacing:.04em">Multi filters</div>';
-    const MODES=[['smart','Smart'],['safe','100% Hit Rater'],['team','Thats My Team'],['lotto','Lottery Ticket'],['value','Value Hunter']];
+    const MODES=[['smart','Smart'],['safe','100% Hit Rater'],['team','Thats My Team'],['lotto','Lottery Legs'],['value','Value Hunter']];
     h+='<div style="margin-bottom:5px">'+MODES.map(([k,l])=>_fchip((M.mode||'smart')===k,l,"_mMode('"+k+"')")).join('')+'</div>';
     if((M.mode||'smart')==='team'){
       const teams=[...new Set((state.data.fixture||[]).filter(g=>g.home&&g.away).flatMap(g=>[g.home,g.away]))].sort();
       h+='<div style="margin-bottom:5px"><select onchange="_mTeam(this.value)" style="background:var(--surface-2);border:1px solid var(--border);color:var(--text);border-radius:8px;padding:5px 9px;font-size:12px;font-weight:600;max-width:220px">'+
         '<option value="">Pick your team\u2026</option>'+teams.map(t=>'<option value="'+esc(t)+'"'+(M.team===t?' selected':'')+'>'+esc(t)+'</option>').join('')+'</select></div>';
     }
-    h+='<div style="font-size:9.5px;color:var(--text-3);margin-bottom:6px">'+({smart:'Best-rated legs by our signal score.',safe:'Only legs cleared in every game this season \u2014 safe, short odds.',team:'Legs from your chosen team only \u2014 priced as a same-gamer.',lotto:'Longest-priced legs that still clear a real-shot floor.',value:'Every leg +EV \u2014 our hit-rate beats the book price.'}[M.mode||'smart'])+'</div>';
+    h+='<div style="font-size:9.5px;color:var(--text-3);margin-bottom:6px">'+({smart:'Best-rated legs by our signal score.',safe:'Only legs cleared in every game this season \u2014 safe, short odds.',team:'Legs from your chosen team only \u2014 priced as a same-gamer.',lotto:'One longshot with a real shot \u2014 swap \u25c2\u25b8 to see others.',value:'Every leg +EV \u2014 our hit-rate beats the book price.'}[M.mode||'smart'])+'</div>';
     h+='<div style="margin-bottom:4px">'+[['game','Per game'],['round','Across games']].map(([k,l])=>_fchip(M.scope===k,l,"_mScope('"+k+"')")).join('')+
       '<span style="display:inline-block;width:1px;height:16px;background:var(--border);margin:0 6px;vertical-align:middle"></span>'+
       _fchip(!!M.today,'Today only',"_mToday()")+'</div>';
