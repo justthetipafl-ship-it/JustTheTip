@@ -84,6 +84,12 @@ def r3(x): return round(float(x), 3)
 
 def _norm(s): return str(s or "").strip().lower()
 
+def _short(full):
+    """'Puka Nacua' -> 'p.nacua' (pbp short-name form, normalised)."""
+    parts = str(full or "").strip().split()
+    if len(parts) < 2: return _norm(full)
+    return _norm(parts[0][0] + "." + " ".join(parts[1:]))
+
 def write_json(path, obj):
     with open(path, "w") as f:
         json.dump(obj, f, separators=(",", ":"))
@@ -187,11 +193,13 @@ def build_snap_idx(sc):
     return out
 
 # ── pbp → red-zone / goal-line usage + first-TD log ─────────────────────────
-def build_pbp_derived(pbp, game_idx):
-    """returns (usage: name->{rzTgt, rzCarry, glCarry, games}, firsttd rows)"""
+def build_pbp_derived(pbp, short_idx):
+    """pbp names are short ('P.Nacua'); resolve to full names via short_idx
+    {(TEAM, short_norm): full_name}. Returns (usage: fullname->rates, firsttd)."""
     usage = defaultdict(lambda: {"rzTgt": 0, "rzCarry": 0, "glCarry": 0,
                                  "games": set()})
     firsttd = []
+    unresolved = set()
     if pbp is None or getattr(pbp, "empty", True):
         return {}, firsttd
     se = col(pbp, "season"); wk = col(pbp, "week"); gid = col(pbp, "game_id")
@@ -207,14 +215,22 @@ def build_pbp_derived(pbp, game_idx):
         season = int(g(r, se, 0)); week = int(g(r, wk, 0))
         y100 = g(r, yl, None); ptv = str(g(r, pt, "") or "")
         # usage
+        team_now = str(g(r, posteam, "") or "").upper()
+        def _resolve(short_raw):
+            sn = _norm(short_raw)
+            if not sn: return None
+            full = short_idx.get((team_now, sn))
+            if full is None:
+                unresolved.add((team_now, sn))
+            return full
         if isinstance(y100, float) and y100 <= 20:
             if ptv == "run":
-                nm = _norm(g(r, rusher, ""))
+                nm = _resolve(g(r, rusher, ""))
                 if nm:
                     usage[nm]["rzCarry"] += 1; usage[nm]["games"].add(gidv)
                     if y100 <= 5: usage[nm]["glCarry"] += 1
             elif ptv == "pass":
-                nm = _norm(g(r, recv, ""))
+                nm = _resolve(g(r, recv, ""))
                 if nm:
                     usage[nm]["rzTgt"] += 1; usage[nm]["games"].add(gidv)
         # first TD log
@@ -228,9 +244,12 @@ def build_pbp_derived(pbp, game_idx):
             if team in sf:
                 continue
             sf.add(team); sf.add("_game")
+            full = short_idx.get((team, _norm(player)), player)
             firsttd.append({"season": season, "week": week, "matchId": gidv,
-                            "team": team, "player": player,
+                            "team": team, "player": full,
                             "qtr": int(g(r, qtr, 0)), "gameFirst": game_first})
+    if unresolved:
+        print(f"  (pbp: {len(unresolved)} short names unresolved — usage skipped for them)")
     # collapse usage to per-game rates
     out = {}
     for nm, u in usage.items():
@@ -240,7 +259,7 @@ def build_pbp_derived(pbp, game_idx):
     return out, firsttd
 
 # ── players + gamelogs ──────────────────────────────────────────────────────
-def build_players_gamelogs(ps, snap_idx, game_idx, current, rz_usage):
+def build_players_gamelogs(ps, snap_idx, game_idx, current):
     name_c = col(ps, "player_display_name", "player_name")
     pos_c = col(ps, "position", "position_group")
     team_c = col(ps, "team", "recent_team")
@@ -268,6 +287,7 @@ def build_players_gamelogs(ps, snap_idx, game_idx, current, rz_usage):
 
     gamelogs = []
     agg = {}
+    short_idx = {}          # (TEAM, short_norm) -> full name; None = ambiguous
     for _, r in ps.iterrows():
         pos = str(g(r, pos_c, "")).strip().upper()
         if pos not in POSITIONS:
@@ -302,6 +322,10 @@ def build_players_gamelogs(ps, snap_idx, game_idx, current, rz_usage):
                                          "team": team, "rows": []})
         P["team"] = team; P["position"] = pos
         P["rows"].append(row)
+        sk = (team, _short(name))
+        prev = short_idx.get(sk, "__unset__")
+        if prev == "__unset__": short_idx[sk] = name
+        elif prev != name: short_idx[sk] = None   # ambiguous on this team
 
     # headline averages (current season; fall back one season, then all)
     players = []
@@ -320,12 +344,11 @@ def build_players_gamelogs(ps, snap_idx, game_idx, current, rz_usage):
         p["ypc"] = r1(p["rushYds"] / p["rushAtt"]) if p["rushAtt"] else 0.0
         tg = sum(x["targets"] for x in src)
         p["aDot"] = r1(sum(x["airYds"] for x in src) / tg) if tg else 0.0
-        u = rz_usage.get(_norm(P["name"]), {})
-        p["rzTgt"] = u.get("rzTgt", 0.0); p["rzCarry"] = u.get("rzCarry", 0.0)
-        p["glCarry"] = u.get("glCarry", 0.0)
+        p["rzTgt"] = 0.0; p["rzCarry"] = 0.0; p["glCarry"] = 0.0
         players.append(p)
     players.sort(key=lambda x: -x["fanPts"])
-    return players, gamelogs
+    short_idx = {k: v for k, v in short_idx.items() if v}
+    return players, gamelogs, short_idx
 
 # ── team aggregation (offense + allowed) ────────────────────────────────────
 def _team_games(gamelogs, results, current):
@@ -434,10 +457,12 @@ def build_injuries(inj, current):
 def build_lineups(dc, week):
     if dc is None or getattr(dc, "empty", True):
         return []
-    tm = col(dc, "club_code", "team")
-    nm = col(dc, "full_name", "player_name", "football_name")
-    pos = col(dc, "position", "depth_position", "pos_abb")
-    depth = col(dc, "depth_team", "rank", "depth")
+    print("  depth-chart cols:", list(dc.columns))
+    tm = col(dc, "club_code", "team", "team_abbr")
+    nm = col(dc, "full_name", "player_name", "football_name", "last_name")
+    pos = col(dc, "position", "depth_position", "pos_abb", "pos_abbr")
+    depth = col(dc, "depth_team", "depth_chart_order", "pos_rank", "depth_rank",
+                "rank", "depth", "order")
     wk = col(dc, "week"); se = col(dc, "season")
     sub = dc
     if wk and not dc[wk].isna().all():
@@ -449,8 +474,11 @@ def build_lineups(dc, week):
             continue
         name = str(g(r, nm, "")).strip()
         team = str(g(r, tm, "")).upper()
-        try: dep = int(float(g(r, depth, 9) or 9))
-        except (TypeError, ValueError): dep = 9
+        rawd = g(r, depth, None)
+        try: dep = int(float(rawd))
+        except (TypeError, ValueError):
+            m = __import__("re").search(r"\d+", str(rawd or ""))
+            dep = int(m.group(0)) if m else 9
         key = (team, _norm(name))
         if not name or key in seen:
             continue
@@ -458,6 +486,8 @@ def build_lineups(dc, week):
         out.append({"week": week, "team": team, "player": name, "position": p,
                     "depth": dep, "status": "STARTER" if dep == 1 else "DEPTH"})
     out.sort(key=lambda x: (x["team"], x["position"], x["depth"]))
+    if out and all(x["depth"] == 9 for x in out):
+        print("  WARNING: no depth values resolved — check depth-chart cols above")
     return out
 
 def build_divisions(tm):
@@ -519,8 +549,12 @@ def run_build(frames, out_dir, seasons, current, password, skip_weather=False):
     results = build_results(sch)
     fixture, next_week = build_fixture(sch)
     snap_idx = build_snap_idx(sc)
-    rz_usage, firsttd = build_pbp_derived(pbp, game_idx)
-    players, gamelogs = build_players_gamelogs(ps, snap_idx, game_idx, current, rz_usage)
+    players, gamelogs, short_idx = build_players_gamelogs(ps, snap_idx, game_idx, current)
+    rz_usage, firsttd = build_pbp_derived(pbp, short_idx)
+    for p in players:
+        u = rz_usage.get(p["name"])
+        if u:
+            p["rzTgt"] = u["rzTgt"]; p["rzCarry"] = u["rzCarry"]; p["glCarry"] = u["glCarry"]
     divisions = build_divisions(tm)
     teams = build_teams(gamelogs, results, current, divisions)
     teams_form = build_teams(gamelogs, results, current, divisions, form_n=FORM_N)
@@ -631,12 +665,12 @@ def selftest():
                        {"team_abbr": "BUF", "team_division": "AFC West", "team_conf": "AFC"}])
     pbp = pd.DataFrame([
         {"season": 2025, "week": 1, "game_id": "2025_01_BUF_KC", "yardline_100": 4.0,
-         "play_type": "run", "rusher_player_name": "KC RB1", "receiver_player_name": None,
-         "td_player_name": "KC RB1", "td_team": "KC", "touchdown": 1, "qtr": 1,
+         "play_type": "run", "rusher_player_name": "K.RB1", "receiver_player_name": None,
+         "td_player_name": "K.RB1", "td_team": "KC", "touchdown": 1, "qtr": 1,
          "posteam": "KC"},
         {"season": 2025, "week": 1, "game_id": "2025_01_BUF_KC", "yardline_100": 12.0,
-         "play_type": "pass", "rusher_player_name": None, "receiver_player_name": "BUF WR1",
-         "td_player_name": "BUF WR1", "td_team": "BUF", "touchdown": 1, "qtr": 2,
+         "play_type": "pass", "rusher_player_name": None, "receiver_player_name": "B.WR1",
+         "td_player_name": "B.WR1", "td_team": "BUF", "touchdown": 1, "qtr": 2,
          "posteam": "BUF"},
     ])
     out = "/tmp/nfl_selftest"
@@ -671,6 +705,7 @@ def selftest():
     assert res and res[-1]["hs"] == 27
     assert len(lu) == 6 and all(x["status"] == "STARTER" for x in lu)
     assert len(itd) == 2 and itd[0]["gameFirst"] and not itd[1]["gameFirst"]
+    assert itd[0]["player"] == "KC RB1" and itd[1]["player"] == "BUF WR1"  # short names resolved to full
     assert ij[0]["Player"] == "KC WR1" and ij[0]["Status"] == "Questionable"
     m = J("meta.json")
     assert m["week"] == 4 and m["password_hash"] == hashlib.sha256(b"testpw").hexdigest()
