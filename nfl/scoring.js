@@ -58,7 +58,8 @@ window.JTTScoring = (function () {
   const MIN_AVG = {
     passYds:150, passAtt:20, passComp:12, passTds:0.8, passInt:0.4,
     rushYds:25, rushAtt:6, rushTds:0.25, receptions:2, recYds:25, recTds:0.25,
-    rushRecYds:30, fanPts:6, anytimeTd:0.25
+    rushRecYds:30, fanPts:6, anytimeTd:0.25,
+    longRec:12, longRush:6, longComp:20
   };
 
   // ---- accessors (bound to split-data model) ----
