@@ -628,7 +628,8 @@
                        gamelogs:'data/gamelogs.json', fixture:'data/fixture.json',
                        injury:'data/injury.json', odds:'data/odds.json',
                        results:'data/results.json', lineups:'data/lineups.json', weather:'data/weather.json',
-                       firsttd:'data/firsttd.json', redzone:'data/redzone.json' };
+                       firsttd:'data/firsttd.json', redzone:'data/redzone.json',
+                       dbs:'data/dbs.json' };
 
   // Live odds from the Cloudflare Worker (proximity-gated poller). Leave '' to use the
   // committed data/odds.json. Set to your Worker, e.g.:
@@ -652,14 +653,17 @@
     player_reception_longest:'longRec', player_rush_longest:'longRush',
     player_pass_longest_completion:'longComp',
     longrec:'longRec', longrush:'longRush', longcomp:'longComp',
+    player_tackles_assists:'tackles', player_solo_tackles:'soloTk', player_sacks:'defSacks',
+    tackles:'tackles', solotk:'soloTk', defsacks:'defSacks',
+    'tackles + assists':'tackles', 'tackles and assists':'tackles', 'combined tackles':'tackles',
     'longest reception':'longRec', 'longest rush':'longRush', 'longest completion':'longComp',
     'anytime td':'anytimeTd', 'pass yards':'passYds', 'rush yards':'rushYds', 'receiving yards':'recYds'
   };
   // low-count TD/turnover markets: shown raw + Poisson-tailed in the sharp model
   const LOW_COUNT = new Set(['passTds','rushTds','recTds','anytimeTd','passInt','totalTds']);
-  const _dp = k => LOW_COUNT.has(k)||k==='glCarry'||k==='rzTgt'||k==='rzCarry' ? 2 : 1;
+  const _dp = k => LOW_COUNT.has(k)||k==='glCarry'||k==='rzTgt'||k==='rzCarry'||k==='tfl'||k==='defSacks' ? 2 : 1;
 
-  const POS_C = {'QB':'#ef4444','RB':'#22c55e','WR':'#3b82f6','TE':'#f59e0b'};
+  const POS_C = {'QB':'#ef4444','RB':'#22c55e','WR':'#3b82f6','TE':'#f59e0b','LB':'#a855f7','DL':'#f97316','DB':'#06b6d4'};
   // bettable player-prop markets, full labels (shared by Clash / Last Meeting / Matchup)
   const BET_STATS = [['passYds','Pass Yds'],['rushYds','Rush Yds'],['rushAtt','Rush Att'],
                      ['receptions','Receptions'],['targets','Targets'],['passTds','Pass TDs'],['rushTds','Rush TDs']];
@@ -677,6 +681,8 @@
         ['aDot','aDOT'],['recTds','ReTD'],['rzTgt','RZ'],['rushRecYds','R+R'],['fanPts','FP'],['snapPct','Snap%']]
   };
   DISPLAY_SETS.TE = DISPLAY_SETS.WR;
+  DISPLAY_SETS.LB = [['tackles','Tk+A'],['soloTk','Solo'],['astTk','Ast'],['tfl','TFL'],['defSacks','Sack'],['snapPct','Snap%']];
+  DISPLAY_SETS.DL = DISPLAY_SETS.LB; DISPLAY_SETS.DB = DISPLAY_SETS.LB;
   function DISPLAY_FOR(pos){ return DISPLAY_SETS[pos]||DISPLAY_SETS.All; }
   const DISPLAY = DISPLAY_SETS.All;
   const TABS = [
@@ -697,6 +703,7 @@
     {k:'bogey',    n:'Divisional Bogey',   i:'ti-mood-sad',     d:'Struggles v rival'},
     {k:'streak',   n:'Streakers',          i:'ti-flame',        d:'Hot form'},
     {k:'chunk',    n:'Chunk Plays',        i:'ti-bolt',         d:'Big-play streaks'},
+    {k:'wrap',     n:'Tackle Machines',    i:'ti-hammer',       d:'Tackle volume'},
     {k:'push',     n:'Playoff Push',       i:'ti-ladder',       d:'Standings pressure'},
     {k:'form',     n:'Form Alerts',        i:'ti-trending-up',  d:'Trend shifts'},
     {k:'clamp',    n:'Clamp Watch',        i:'ti-lock',         d:'Shadow CB risk'},
@@ -710,7 +717,7 @@
   const ALL_BOOKS=[['sportsbet','Sportsbet'],['ladbrokes_au','Ladbrokes'],['tab','TAB'],['pointsbetau','Pointsbet'],['betr_au','Betr'],['dabble_au','Dabble'],['betright','BetRight'],['unibet','Unibet'],['betfair_ex_au','Betfair']];
   const _BOOK_NAMES=Object.fromEntries(ALL_BOOKS);
   function bookName(k){ return k?(_BOOK_NAMES[k]||(k.charAt(0).toUpperCase()+k.slice(1))):''; }
-  const MULTI_MKTS=[['passYds','Pass Yds'],['rushYds','Rush Yds'],['recYds','Rec Yds'],['receptions','Receptions'],['rushAtt','Rush Att'],['passAtt','Pass Att'],['rushRecYds','Rush+Rec'],['anytimeTd','Anytime TD']];
+  const MULTI_MKTS=[['passYds','Pass Yds'],['rushYds','Rush Yds'],['recYds','Rec Yds'],['receptions','Receptions'],['rushAtt','Rush Att'],['passAtt','Pass Att'],['rushRecYds','Rush+Rec'],['anytimeTd','Anytime TD'],['tackles','Tackles+Ast']];
   const DEFAULT_SETTINGS={
     books:[],   // [] = use all books; otherwise restrict arbs/EV/best-price to these
     hideCompleted:false,   // hide games that have already finished
@@ -1001,7 +1008,7 @@
   function renderTab(t){ if(t==='fixture')return renderFixture(); if(t==='odds')return renderOdds(); if(t==='stats')return renderStats(); if(t==='degen')return renderDegen(); if(t==='info')return renderInfo(); return ''; }
 
   /* ===================== LIVE ODDS BOARD ===================== */
-  const ODDS_MKTS=[['passYds','Pass Yds'],['passTds','Pass TDs'],['passAtt','Pass Att'],['rushYds','Rush Yds'],['rushAtt','Rush Att'],['receptions','Receptions'],['recYds','Rec Yds'],['rushRecYds','Rush+Rec'],['anytimeTd','Anytime TD']];
+  const ODDS_MKTS=[['passYds','Pass Yds'],['passTds','Pass TDs'],['passAtt','Pass Att'],['rushYds','Rush Yds'],['rushAtt','Rush Att'],['receptions','Receptions'],['recYds','Rec Yds'],['rushRecYds','Rush+Rec'],['anytimeTd','Anytime TD'],['tackles','Tackles+Ast']];
   function _bookShort(k){ return ({sportsbet:'SB',tab:'TAB',pointsbet:'PB',ladbrokes:'LAD',neds:'NED',betr:'BTR',dabble:'DAB',betright:'BR',unibet:'UNI',bet365:'365',bluebet:'BLU',betfair:'BF'})[k]||(k||'').slice(0,3).toUpperCase(); }
   function _oddsHitRates(name, market, opp, thresh){
     const logs=state.idx.logsByName[name]||[];
@@ -1400,7 +1407,7 @@
     if(fp>=15) s.push('Fantasy Stars');
     return s.length?s:[pg];
   }
-  const DVPS_OPTS=[['receptions','Receptions'],['recYds','Rec Yds'],['recTds','Rec TDs'],['rushYds','Rush Yds'],['rushAtt','Rush Att'],['rushTds','Rush TDs'],['passYds','Pass Yds'],['passTds','Pass TDs'],['anytimeTd','Anytime TD'],['fanPts','Fan Pts']];
+  const DVPS_OPTS=[['receptions','Receptions'],['recYds','Rec Yds'],['recTds','Rec TDs'],['rushYds','Rush Yds'],['rushAtt','Rush Att'],['rushTds','Rush TDs'],['passYds','Pass Yds'],['passTds','Pass TDs'],['anytimeTd','Anytime TD'],['fanPts','Fan Pts'],['tackles','Tackles+Ast']];
   function fxDvPS(team,opp){
     const statKey=window._fxDvpStat||'receptions';
     const CS=(state.data.meta&&state.data.meta.currentSeason)||'2025';
@@ -1431,7 +1438,7 @@
     }).join('');
     return '<div class="tp-sec"><div class="sec-title"><i class="ti ti-masks-theater"></i> Defence vs Play Style — '+abbr(opp)+' allows '+sel+' <span style="font-size:10px;color:var(--text-3);font-weight:600;letter-spacing:.04em">'+CS+' season</span></div></div><div class="dvps-grid">'+cells+'</div>';
   }
-  const CMB_PICK_MARKETS=[['passYds','Pass Yds',180],['rushYds','Rush Yds',40],['recYds','Rec Yds',40],['receptions','Receptions',3],['rushAtt','Rush Att',10],['passTds','Pass TDs',1.2],['anytimeTd','Anytime TD',0.35]];
+  const CMB_PICK_MARKETS=[['passYds','Pass Yds',180],['rushYds','Rush Yds',40],['recYds','Rec Yds',40],['receptions','Receptions',3],['rushAtt','Rush Att',10],['passTds','Pass TDs',1.2],['anytimeTd','Anytime TD',0.35],['tackles','Tackles+Ast',6]];
   function fxCmbPicks(team,opp){
     const roster=playersOnTeam(team).filter(p=>isPlaying(p.name,team));
     // Current-season games floor: a player who's missed most of the season
@@ -1473,7 +1480,7 @@
   window.setFxMode=function(v){ state.view.fxMode=v; _renderApp(); };
 
   // ===== Nerd Mode: Arbs / Middles / +EV / Implied EV / Market EV =====
-  const NERD_MARKETS=[['passYds','Pass Yds'],['recYds','Rec Yds'],['rushYds','Rush Yds'],['receptions','Receptions'],['rushAtt','Rush Att'],['passAtt','Pass Att'],['rushRecYds','Rush+Rec']];  // model EV fires on all; arbs/middles/de-vig auto-gate to markets with two-way O/U rows
+  const NERD_MARKETS=[['passYds','Pass Yds'],['recYds','Rec Yds'],['rushYds','Rush Yds'],['receptions','Receptions'],['rushAtt','Rush Att'],['passAtt','Pass Att'],['rushRecYds','Rush+Rec'],['tackles','Tackles+Ast']];  // model EV fires on all; arbs/middles/de-vig auto-gate to markets with two-way O/U rows
   const NM_LBL=Object.fromEntries(NERD_MARKETS);
   // market filter: an undefined/absent list means "all on" (covers existing saved settings + new users)
   function _nerdMktOn(k){ const m=SETTINGS.nerd.markets; return !Array.isArray(m) || m.indexOf(k)>=0; }
@@ -1597,7 +1604,7 @@
   // LineOut EV: a book's alt-ladder rung whose over price beats the fair price implied by the
   // power-devigged consensus, projected to that rung along the player's distribution. Gap to the
   // consensus is bounded in probability space (fair 0.30–0.70) so it can't flag short-favourite traps.
-  const _LO_RATE={passYds:0.006,recYds:0.012,rushYds:0.012,receptions:0.20,rushAtt:0.09,passAtt:0.07,rushRecYds:0.010};
+  const _LO_RATE={passYds:0.006,recYds:0.012,rushYds:0.012,receptions:0.20,rushAtt:0.09,passAtt:0.07,rushRecYds:0.010,tackles:0.13};
   function nerdLineOut(players,opp){
     const out=[];
     players.forEach(p=>NERD_MARKETS.forEach(([k])=>{ if(!_nerdMktOn(k)) return;
@@ -1745,12 +1752,13 @@
       const counts={ green:ov.length, death:un.length, paydirt:_fc(snags(),6).length,
         elite:_fc(elite(),8,40).length, bunnies:_fc(bunnies(),6).length, bogey:_fc(bogey(),6).length,
         streak:_fc(streakers(),6).length, chunk:_fc(chunkPlays(),6).length,
+        wrap:_fc(tackleMachines(),6).length,
         form:_fc(formAlerts('spike'),6,25).length+_fc(formAlerts('drop'),6,25).length,
         clamp:clampArr?_fc(clampArr,8).length:0, push:_fc(playoffPush(),6).length };
       total=Object.values(counts).reduce((a,b)=>a+b,0);
       html+=ouSection(ov,'over','Green Lights','ti-traffic-lights','c-green');
       html+=ouSection(un,'under','Death Riders','ti-skull','c-red');
-      ['paydirt','elite','bunnies','bogey','streak','chunk','push','form','clamp'].forEach(k=>{ html+=renderTile(k); });
+      ['paydirt','elite','bunnies','bogey','streak','chunk','wrap','push','form','clamp'].forEach(k=>{ html+=renderTile(k); });
     } finally { _degenScope=prevScope; _degenFocused=prevFocus; }
     const hdr='<div class="tp-sec"><div class="sec-title"><i class="ti ti-flame"></i> Degen Signals</div><div class="sec-meta">'+total+' fired</div></div>';
     return hdr+(html||'<div class="tp-body-meta" style="border:0">No signals fired.</div>');
@@ -1773,8 +1781,8 @@
   const DVP_STATS=[['receptions','Receptions'],['targets','Targets'],['recYds','Rec Yds'],['recTds','Rec TDs'],
     ['rushYds','Rush Yds'],['rushAtt','Rush Att'],['rushTds','Rush TDs'],['passYds','Pass Yds'],
     ['passAtt','Pass Att'],['passTds','Pass TDs'],['passInt','INTs'],['rushRecYds','Rush+Rec'],
-    ['anytimeTd','Anytime TD'],['fanPts','Fan Pts']];
-  const POS_ORDER=['QB','RB','WR','TE'];
+    ['anytimeTd','Anytime TD'],['fanPts','Fan Pts'],['tackles','Tackles+Ast'],['soloTk','Solo Tackles'],['defSacks','Sacks Made']];
+  const POS_ORDER=['QB','RB','WR','TE','LB','DL','DB'];
 
   function renderStats(){
     const ps=state.idx.players||[];
@@ -1793,7 +1801,7 @@
   }
   function scannerView(){
     const v=state.view;
-    const positions=['','QB','RB','WR','TE'];
+    const positions=['','QB','RB','WR','TE','LB','DL','DB'];
     let h='<div class="filterbar"><input class="stat-search" id="stat-search" placeholder="Search player…" value="'+esc(v.search)+'" oninput="state.view.search=this.value;rerenderStats()">';
     h+='<div class="pos-pills">'+positions.map(p=>'<button class="dfilt-chip'+(v.posFilter===p?' active':'')+'" onclick="state.view.posFilter=\''+p+'\';rerenderStats()">'+(p||'All')+'</button>').join('')+'</div></div>';
     h+='<div id="stbl-mount">'+statsTable()+'</div>';
@@ -1910,7 +1918,9 @@
   function pmBoxScores(name,n){
     const logs=(state.idx.logsByName[name]||[]).slice(-(n||6)).reverse();
     if(!logs.length) return '';
-    const COLS=[['passYds','PaY'],['passTds','PaTD'],['rushYds','RuY'],['rushAtt','Car'],['receptions','Rec'],['recYds','ReY'],['totalTds','TD'],['fanPts','FP']];
+    const COLS=DEF_POS.has((state.idx.byName[name]||{}).position)
+      ?[['soloTk','Solo'],['astTk','Ast'],['tackles','Tk+A'],['tfl','TFL'],['defSacks','Sck'],['snapPct','Sn%']]
+      :[['passYds','PaY'],['passTds','PaTD'],['rushYds','RuY'],['rushAtt','Car'],['receptions','Rec'],['recYds','ReY'],['totalTds','TD'],['fanPts','FP']];
     const opp=nextOpp((state.idx.byName[name]||{}).team);
     let h='<div class="section-title">Recent Box Scores</div><div class="stbl-wrap"><table class="stbl bx"><thead><tr><th>Game</th>'+COLS.map(c=>'<th>'+c[1]+'</th>').join('')+'</tr></thead><tbody>';
     logs.forEach(r=>{
@@ -1929,10 +1939,11 @@
     const cells=DISPLAY_FOR(p.position).map(([k,l])=>'<div class="statcell"><div class="v">'+fmt(pmAvg(name,k,_pmMode),_dp(k))+'</div><div class="k">'+l+'</div></div>').join('');
     let edge='';
     if(window.JTTScoring){
-      const primary=p.position==='QB'?'passYds':p.position==='RB'?'rushYds':'recYds';
+      const primary=DEF_POS.has(p.position)?'tackles':p.position==='QB'?'passYds':p.position==='RB'?'rushYds':'recYds';
       const pLine=JTTScoring.drLine(p[primary]||0,primary)||Math.max(1,Math.round(p[primary]||0));
       const v=JTTScoring.verdict(p,primary,pLine,opp||undefined);
-      const mk=p.position==='QB'?[['passYds','PaYd'],['passTds','PaTD'],['passInt','INT'],['rushYds','RuYd']]
+      const mk=DEF_POS.has(p.position)?[['tackles','Tk+A'],['soloTk','Solo'],['defSacks','Sack'],['tfl','TFL']]
+        :p.position==='QB'?[['passYds','PaYd'],['passTds','PaTD'],['passInt','INT'],['rushYds','RuYd']]
         :p.position==='RB'?[['rushYds','RuYd'],['rushAtt','Car'],['receptions','Rec'],['rushTds','RuTD']]
         :[['receptions','Rec'],['recYds','ReYd'],['recTds','ReTD'],['targets','Tgt']];
       const strip=opp?mk.map(([k,l])=>{const pct=JTTScoring.getDVPPct(opp,JTTScoring.POS_TO_DVP[p.position]||p.position,k);const mi=JTTScoring.muInfo(pct);
@@ -1949,7 +1960,7 @@
       const bits=[];
       const gt=tdOddsTag(name);                                   // " · ATD $X (book)"
       if(gt) bits.push('<span class="pm-od"><i class="ti ti-ball-american-football"></i> '+gt.replace(/^ \u00b7 /,'')+'</span>');
-      const pmk=p.position==='QB'?'passYds':p.position==='RB'?'rushYds':'recYds';
+      const pmk=DEF_POS.has(p.position)?'tackles':p.position==='QB'?'passYds':p.position==='RB'?'rushYds':'recYds';
       const d=oddsFor(name,pmk);
       if(d&&d.over!=null) bits.push('<span class="pm-od"><i class="ti ti-coin"></i> '+(ODDS_MKTS.find(m=>m[0]===pmk)||[,pmk])[1]+' '+d.line+' O $'+d.over.toFixed(2)+(d.under!=null?' / U $'+d.under.toFixed(2):'')+(d.book?' ('+bookName(d.book)+')':'')+'</span>');
       if(bits.length) oddsHtml='<div class="section-title">Live odds <span style="font-weight:600;color:var(--text-3);font-size:9px">best price</span></div><div class="pm-odds">'+bits.join('')+'</div>';
@@ -2011,7 +2022,7 @@
   function lineupOut(team){ return !!_lineupKeyMap()[team]; }
   function hasAnyOdds(){ return state.idx.oddsMeta && state.idx.oddsMeta.count>0; }
   function _oddsLive(){ return hasAnyOdds() && !(state.idx.oddsMeta&&state.idx.oddsMeta.sample); }
-  const OU_MARKETS=[['passYds','Pass Yds'],['rushYds','Rush Yds'],['recYds','Rec Yds'],['receptions','Receptions'],['rushAtt','Rush Att'],['passAtt','Pass Att'],['rushRecYds','Rush+Rec Yds']];
+  const OU_MARKETS=[['passYds','Pass Yds'],['rushYds','Rush Yds'],['recYds','Rec Yds'],['receptions','Receptions'],['rushAtt','Rush Att'],['passAtt','Pass Att'],['rushRecYds','Rush+Rec Yds'],['tackles','Tackles+Ast']];
   function collectOU(teamList, kind){
     if(!window.JTTScoring || !hasAnyOdds()) return [];
     const side=kind==='over'?'over':'under';
@@ -2078,15 +2089,16 @@
     if(k==='receptions'){ if(avg<3.5)return null; const l=Math.floor(avg)-1; return l>=2?l:null; }
     if(k==='rushAtt'){ if(avg<10)return null; const l=Math.round(avg)-3; return l>=8?l:null; }
     if(k==='anytimeTd'){ return avg>=0.55?1:null; }               // scored a TD
+    if(k==='tackles'){ if(avg<6.5)return null; const l=Math.floor(avg)-1; return l>=5?l:null; }
     return null;
   }
   const ELITE_DEFS = [{k:'passYds',l:'Pass Yds'},{k:'rushYds',l:'Rush Yds'},{k:'recYds',l:'Rec Yds'},
-    {k:'receptions',l:'Receptions'},{k:'rushAtt',l:'Rush Att'},{k:'targets',l:'Targets'}];
+    {k:'receptions',l:'Receptions'},{k:'rushAtt',l:'Rush Att'},{k:'targets',l:'Targets'},{k:'tackles',l:'Tackles+Ast'}];
   const BUNNY_STATS = [{k:'recYds',l:'Rec Yds',min:30},{k:'receptions',l:'Receptions',min:3},
     {k:'rushYds',l:'Rush Yds',min:30},{k:'passYds',l:'Pass Yds',min:150}];
   const BOGEY_STATS = [{k:'recYds',l:'Rec Yds',min:30},{k:'rushYds',l:'Rush Yds',min:30},{k:'passYds',l:'Pass Yds',min:150}];
   const STREAK_STATS = [['passYds','Pass Yds'],['rushYds','Rush Yds'],['recYds','Rec Yds'],['receptions','Receptions'],
-    ['rushAtt','Rush Att'],['rushRecYds','Rush+Rec Yds'],['anytimeTd','Anytime TD']];
+    ['rushAtt','Rush Att'],['rushRecYds','Rush+Rec Yds'],['anytimeTd','Anytime TD'],['tackles','Tackles+Ast']];
   // divisional gate for Bunnies/Bogey — H2H only means something when they meet twice a year
   function sameDivision(a,b){ const ta=state.idx.teamMap[a], tb=state.idx.teamMap[b]; return !!(ta&&tb&&ta.division&&ta.division===tb.division); }
   const ALERT_THRESHOLD = 0.25, ALERT_MIN_L3 = 3;
@@ -2450,7 +2462,7 @@
   function formAlerts(dir){
     const teams=_fixtureSet(); const out=[];
     // [key,label,minimum L3 (spike) / season (drop) to qualify — kills low-volume noise]
-    const STATS=[['passYds','Pass Yds',150],['rushYds','Rush Yds',30],['recYds','Rec Yds',30],['receptions','Receptions',3],['rushAtt','Rush Att',8],['fanPts','Fan Pts',8]];
+    const STATS=[['passYds','Pass Yds',150],['rushYds','Rush Yds',30],['recYds','Rec Yds',30],['receptions','Receptions',3],['rushAtt','Rush Att',8],['fanPts','Fan Pts',8],['tackles','Tackles+Ast',5]];
     (state.idx.players||[]).filter(p=>teams.has(p.team)).forEach(p=>{
       const cur=[...curLogs(p.name)].sort((a,b)=>_roundNum(b.RoundName)-_roundNum(a.RoundName));
       if(cur.length<ALERT_MIN_L3) return;
@@ -2567,6 +2579,61 @@
       (chips.length?'<div class="lu-grid" style="gap:5px">'+chips.join(' ')+'</div>':'')+
     '</div>';
   }
+  // ===== Tackle Machines — combined tackles (tackles + assists) model =====
+  // Player leg: clearance rate at the posted line (market-typical gate pre-odds).
+  // Matchup leg: the tackle FUNNEL — what the opposing OFFENCE concedes to the
+  // position (run-heavy, high-play-volume offences feed LB/DL tackle counts) —
+  // plus opponent plays/g and rush att/g league ranks. Hard-excluded when the
+  // opponent starves the position of tackle chances.
+  const WRAP_HIT=0.65, WRAP_MIN_G=6, WRAP_STARVE=-15;
+  function _oppVolume(opp){
+    const arr=Object.values(state.idx.teamMap||{}).filter(t=>t.plays!=null);
+    if(!arr.length||!state.idx.teamMap[opp]) return null;
+    const t=state.idx.teamMap[opp];
+    const pr=[...arr].sort((a,b)=>(b.plays||0)-(a.plays||0)).findIndex(x=>x.team===opp)+1;
+    const rr=[...arr].sort((a,b)=>(b.rushAtt||0)-(a.rushAtt||0)).findIndex(x=>x.team===opp)+1;
+    return {plays:t.plays,playsRank:pr,rushAtt:t.rushAtt,rushRank:rr,n:arr.length};
+  }
+  function tackleMachines(){
+    const teams=_fixtureSet(); const out=[];
+    (state.idx.players||[]).filter(p=>teams.has(p.team)&&DEF_POS.has(p.position)&&(p.matches||0)>=4&&(p.snapPct||0)>=60).forEach(p=>{
+      const opp=nextOpp(p.team);
+      const vals=allLogs(p.name).map(r=>r.tackles).filter(v=>v!=null&&v>0||v===0).filter(v=>v!=null);
+      if(vals.length<WRAP_MIN_G) return;
+      const avg=_avg(vals); if(avg<4.5) return;
+      const posted=oddsFor(p.name,'tackles');
+      const line=(posted&&posted.line!=null)?posted.line:Math.max(4,Math.floor(avg)-1)-0.5;
+      const hits=vals.filter(v=>v>line).length, rate=hits/vals.length;
+      if(rate<WRAP_HIT) return;
+      const funnel=opp?JTTScoring.getDVPPct(opp,p.position,'tackles'):null;
+      if(funnel!=null&&funnel<=WRAP_STARVE) return;      // opp starves this position of tackles
+      const vol=opp?_oppVolume(opp):null;
+      const l5=vals.slice(-5).map(v=>Math.round(v)).join(', ');
+      const score=rate*100+(funnel||0)*0.7+(vol&&vol.playsRank<=8?6:0)+(vol&&vol.rushRank<=8&&p.position!=='DB'?6:0)+((p.snapPct||0)>=90?4:0);
+      out.push({p,opp,line,hits,n:vals.length,rate,avg,funnel,vol,l5,score,posted:!!(posted&&posted.line!=null)});
+    });
+    return out.sort((a,b)=>b.score-a.score);
+  }
+  function tackleCard(c){
+    const q=esc(c.p.name).replace(/\x27/g,"\\\x27");
+    const od=lineTag(c.p.name,'tackles');
+    const chips=[];
+    if(c.funnel!=null){
+      const col=c.funnel>=10?'#22c55e':c.funnel>=3?'#86efac':c.funnel<=-6?'#f97316':'var(--text-3)';
+      chips.push('<span class="lu-p" style="color:'+col+';border-color:'+col+'55">'+abbr(c.opp)+' offence feeds '+(c.funnel>=0?'+':'')+c.funnel.toFixed(0)+'% '+posShort(c.p.position)+' tackles</span>');
+    }
+    if(c.vol){
+      chips.push('<span class="lu-p">'+c.vol.plays.toFixed(0)+' plays/g (#'+c.vol.playsRank+'/'+c.vol.n+')</span>');
+      if(c.p.position!=='DB') chips.push('<span class="lu-p">'+c.vol.rushAtt.toFixed(0)+' rush att/g (#'+c.vol.rushRank+')</span>');
+    }
+    if((c.p.snapPct||0)>=90) chips.push('<span class="lu-p" style="color:#22c55e;border-color:#22c55e55">every-down · '+c.p.snapPct.toFixed(0)+'% snaps</span>');
+    return '<div class="lc-card" onclick="openPlayer(\''+q+'\')">'+
+      '<div class="lc-hd"><span class="lc-nm">'+esc(c.p.name)+'</span>'+_degBadges(c.p.name)+
+        '<span class="lc-meta">'+posShort(c.p.position)+' · '+abbr(c.p.team)+(c.opp?' v '+abbr(c.opp):'')+(od?' ·'+od:'')+'</span></div>'+
+      '<div class="tp-body-meta" style="border:0;padding:2px 0 6px"><b>Tackles+Ast '+c.line+'+</b>'+(c.posted?'':' (est line)')+' · hit '+c.hits+'/'+c.n+' ('+Math.round(c.rate*100)+'%) · avg '+c.avg.toFixed(1)+' · L5 '+c.l5+'</div>'+
+      (chips.length?'<div class="lu-grid" style="gap:5px">'+chips.join(' ')+'</div>':'')+
+    '</div>';
+  }
   // ===== Playoff Push — standings pressure plays =====
   // Conference standings from results.json; "in the hunt" = seeded 5–11 and within 2.5
   // games of the 7th seed. Pre-season (no current-season results yet) falls back to the
@@ -2631,8 +2698,9 @@
       starRows+'</div>';
   }
   // ===== Clamp Watch — shadow-CB coverage risk (pluggable feed) =====
-  // Arms when data/dbs.json exists: rows {team, player, role:'shadow'|'top', grade}.
-  // Alerts the slate's high-target-share WRs facing a team with a flagged shadow corner.
+  // Feed: data/dbs.json from PFR advanced defense (via nflverse) — CBs graded on
+  // passer rating allowed when targeted. role 'top' = elite corner (true shadow
+  // charting is paywalled). Alerts the slate's high-target-share WRs facing one.
   function clampWatch(){
     const dbs=state.data.dbs||[]; if(!dbs.length) return null;    // null => tile shows the "feed pending" state
     const byTeam={}; dbs.forEach(r=>{ if(r&&r.team)(byTeam[r.team]=byTeam[r.team]||[]).push(r); });
@@ -2649,7 +2717,7 @@
     return out;
   }
   // ===== Déjà Vu SGM — legs that hit the last 3 H2H meetings, all on one book =====
-  const DV_MARKETS=[['passYds','Pass Yds',150],['rushYds','Rush Yds',30],['recYds','Rec Yds',30],['receptions','Receptions',3],['rushAtt','Rush Att',8],['passAtt','Pass Att',24],['rushRecYds','Rush+Rec Yds',40]];
+  const DV_MARKETS=[['passYds','Pass Yds',150],['rushYds','Rush Yds',30],['recYds','Rec Yds',30],['receptions','Receptions',3],['rushAtt','Rush Att',8],['passAtt','Pass Att',24],['rushRecYds','Rush+Rec Yds',40],['tackles','Tackles+Ast',4]];
   const DV_MIN_DEFAULT=1.25;
   function _dvState(){ return state.view.dejaVu || (state.view.dejaVu={tier:3,minOdds:DV_MIN_DEFAULT,maxOdds:0,hail:false,sel:null,book:null,home:null,away:null,meets:2,markets:null}); }
   function _dvMktOn(k){ const m=_dvState().markets; return !Array.isArray(m)||m.indexOf(k)>=0; }
@@ -2803,8 +2871,8 @@
   window._dvMin=function(d){ const S=_dvState(); const cur=(S.minOdds==null?DV_MIN_DEFAULT:S.minOdds); S.minOdds=Math.max(1.01,Math.round((cur+d*0.05)*100)/100); S.sel=null; S.removed=[]; _renderApp(); };
   window._dvMax=function(d){ const S=_dvState(); let cur=S.maxOdds||0; if(cur<=0&&d>0) cur=2.00; else cur=Math.round((cur+d*0.25)*100)/100; if(cur<0)cur=0; if(cur>0&&cur<1.05)cur=0; S.maxOdds=cur; S.sel=null; S.removed=[]; _renderApp(); };
   // ---- Multi Builder: suggested best legs per game (mirrors old-tool SGM engine), priced with bookmaker odds ----
-  const LEG_DVP={passYds:'passYds',passAtt:'passAtt',passTds:'passTds',rushYds:'rushYds',rushAtt:'rushAtt',receptions:'receptions',recYds:'recYds',rushRecYds:'rushRecYds',anytimeTd:'anytimeTd'};
-  const LEG_COL={PASSYDS:'#ef4444',PASSATT:'#f87171',PASSTDS:'#fb923c',RUSHYDS:'#22c55e',RUSHATT:'#4ade80',RECEPTIONS:'#3b82f6',RECYDS:'#60a5fa',RRYDS:'#a78bfa',ATD:'#f59e0b'};
+  const LEG_DVP={passYds:'passYds',passAtt:'passAtt',passTds:'passTds',rushYds:'rushYds',rushAtt:'rushAtt',receptions:'receptions',recYds:'recYds',rushRecYds:'rushRecYds',anytimeTd:'anytimeTd',tackles:'tackles'};
+  const LEG_COL={PASSYDS:'#ef4444',PASSATT:'#f87171',PASSTDS:'#fb923c',RUSHYDS:'#22c55e',RUSHATT:'#4ade80',RECEPTIONS:'#3b82f6',RECYDS:'#60a5fa',RRYDS:'#a78bfa',ATD:'#f59e0b',TACKLES:'#a855f7'};
   function estimateHitProb(avg,line){ if(avg<=0) return 0; const sd=Math.max(1,avg*0.32); const z=(avg-line)/sd; return Math.min(0.97,Math.max(0.03,0.5+0.5*Math.tanh(z*0.9))); }
   // Snap a model target line to a real posted "X+" rung so the leg's line and odds always match
   // (the book has no 9+ kicks rung, so an un-snapped 9+ leg was being priced off the 10+ rung).
@@ -2838,6 +2906,7 @@
     const rc=p.receptions||0; if(rc>=3.5) add('receptions',Math.max(2,Math.floor(rc)-1),rc,'RECEPTIONS',null);
     const rey=p.recYds||0; if(rey>=40) add('recYds',Math.round(rey)-8,rey,'RECYDS',null);
     const rr=p.rushRecYds||0; if(rr>=55) add('rushRecYds',Math.round(rr)-10,rr,'RRYDS',null);
+    const tk=p.tackles||0; if(tk>=6.5) add('tackles',Math.max(4,Math.floor(tk)-1),tk,'TACKLES',null);
     // Anytime TD: avg is a per-game rate (0..1), so it can't pass the avg>line gate — special-cased
     const atd=p.anytimeTd||0;
     if(atd>=0.45 && (SETTINGS.multi.markets||[]).indexOf('anytimeTd')>=0){
@@ -2849,7 +2918,7 @@
       const _odds=priceForLine(p.name,'anytimeTd',1);
       c.push({id:p.name+'-anytimeTd',p,statKey:'anytimeTd',line:1,avg:atd+1,prob,probReal:!!hr,probN:hr?hr.n:0,score,opp,type:'ATD',betLabel:null,reasons,_odds});
     }
-    const NM={passYds:'Pass Yds',passAtt:'Pass Att',passTds:'Pass TDs',rushYds:'Rush Yds',rushAtt:'Rush Att',receptions:'Receptions',recYds:'Rec Yds',rushRecYds:'Rush+Rec Yds',anytimeTd:'Anytime TD'};
+    const NM={passYds:'Pass Yds',passAtt:'Pass Att',passTds:'Pass TDs',rushYds:'Rush Yds',rushAtt:'Rush Att',receptions:'Receptions',recYds:'Rec Yds',rushRecYds:'Rush+Rec Yds',anytimeTd:'Anytime TD',tackles:'Tackles+Ast'};
     c.forEach(x=>x.betLabel=x.statKey==='anytimeTd'?'Anytime TD':(x.line+'+ '+NM[x.statKey]));
     return c;
   }
@@ -2888,8 +2957,8 @@
     return sel;
   }
   // ===== Multi Builder modes — each builds a different leg pool; downstream selection/analysis shared =====
-  const _MKT_TYPE={passYds:'PASSYDS',passAtt:'PASSATT',passTds:'PASSTDS',rushYds:'RUSHYDS',rushAtt:'RUSHATT',receptions:'RECEPTIONS',recYds:'RECYDS',rushRecYds:'RRYDS',anytimeTd:'ATD'};
-  const _MKT_NM={passYds:'Pass Yds',passAtt:'Pass Att',passTds:'Pass TDs',rushYds:'Rush Yds',rushAtt:'Rush Att',receptions:'Receptions',recYds:'Rec Yds',rushRecYds:'Rush+Rec Yds',anytimeTd:'Anytime TD'};
+  const _MKT_TYPE={passYds:'PASSYDS',passAtt:'PASSATT',passTds:'PASSTDS',rushYds:'RUSHYDS',rushAtt:'RUSHATT',receptions:'RECEPTIONS',recYds:'RECYDS',rushRecYds:'RRYDS',anytimeTd:'ATD',tackles:'TACKLES'};
+  const _MKT_NM={passYds:'Pass Yds',passAtt:'Pass Att',passTds:'Pass TDs',rushYds:'Rush Yds',rushAtt:'Rush Att',receptions:'Receptions',recYds:'Rec Yds',rushRecYds:'Rush+Rec Yds',anytimeTd:'Anytime TD',tackles:'Tackles+Ast'};
   function _rungScan(name,statKey){
     let lines; if(statKey==='anytimeTd') lines=[1];
     else lines=[...new Set(altLines(name,statKey).map(r=>Math.round(r.line+0.5)))].filter(L=>L>=1);
@@ -3214,7 +3283,7 @@
     try{
       out+=ouSection(collectOU([home,away],'over'),'over','Green Lights','ti-traffic-lights','c-green');
       out+=ouSection(collectOU([home,away],'under'),'under','Death Riders','ti-skull','c-red');
-      ['paydirt','elite','bunnies','bogey','streak','chunk','push','form','clamp'].forEach(k=>{ out+=renderTile(k); });
+      ['paydirt','elite','bunnies','bogey','streak','chunk','wrap','push','form','clamp'].forEach(k=>{ out+=renderTile(k); });
     } finally { _degenScope=prevScope; _degenFocused=prevFocus; }
     return out || '<div class="empty"><div class="ico"><i class="ti ti-flame"></i></div>No Degen signals fired for this matchup.</div>';
   }
@@ -3290,6 +3359,10 @@
       const rows=_byGame(_fc(chunkPlays(),6,30), c=>c.p.team, chunkCard);
       return degWrap('ti-bolt','Chunk Plays',rows,'c-cyan');
     }
+    if(k==='wrap'){
+      const rows=_byGame(_fc(tackleMachines(),6,30), c=>c.p.team, tackleCard);
+      return degWrap('ti-hammer','Tackle Machines',rows,'c-purple');
+    }
     if(k==='form'){
       const up=_byGame(_fc(formAlerts('spike'),6,25), a=>a.p.team, a=>degRow(a.p.name,'#22c55e',{v1:'▲ +'+Math.round(a.swing*100)+'%',l1:'swing',v2:M(a.l3),l2:'L3'},a.stat+' · L3 '+M(a.l3)+' vs season '+M(a.seasonAvg)+formNote('spike',a.runDvp,a.thisDvp)));
       const dn=_byGame(_fc(formAlerts('drop'),6,25), a=>a.p.team, a=>degRow(a.p.name,'#ef4444',{v1:'▼ '+Math.round(a.swing*100)+'%',l1:'swing',v2:M(a.l3),l2:'L3'},a.stat+' · L3 '+M(a.l3)+' vs season '+M(a.seasonAvg)+formNote('drop',a.runDvp,a.thisDvp)));
@@ -3297,9 +3370,11 @@
     }
     if(k==='clamp'){
       const arr=clampWatch();
-      if(arr===null) return _degenFocused?'':emptyState('ti-lock','Clamp Watch is arming','Shadow-corner alerts fire once the DB coverage feed (data/dbs.json) lands — the engine is wired and waiting.');
+      if(arr===null) return _degenFocused?'':emptyState('ti-lock','Clamp Watch is arming','Corner coverage grades (PFR advanced defense) land with the next data build — the engine is wired and waiting.');
       const rows=_byGame(_fc(arr,8), t=>t.threat.team, t=>degRow(t.threat.name,'#a855f7',t.type==='shadow'?'SHADOW CB risk':'Top CB risk',
-        t.threat.position+' · '+abbr(t.threat.team)+' — likely '+t.db.player+' ('+abbr(t.oppTeam)+')'+(t.threat.tgtShare?' · '+t.threat.tgtShare.toFixed(0)+'% tgt share':''),t.threat.name));
+        t.threat.position+' · '+abbr(t.threat.team)+' — likely '+t.db.player+' ('+abbr(t.oppTeam)+')'+
+        (t.db.grade?' · '+t.db.grade+' rating allowed':'')+(t.db.cmpPct?' · '+t.db.cmpPct.toFixed(0)+'% cmp':'')+
+        (t.threat.tgtShare?' · '+t.threat.tgtShare.toFixed(0)+'% tgt share':''),t.threat.name));
       return degWrap('ti-lock','Clamp Watch',rows);
     }
     if(k==='push'){
@@ -3647,12 +3722,15 @@
     'longest reception':'longRec','long rec':'longRec','longest catch':'longRec',
     'longest rush':'longRush','long rush':'longRush','longest run':'longRush',
     'longest completion':'longComp','long comp':'longComp','longest pass':'longComp',
+    'tackles + assists':'tackles','tackles and assists':'tackles','combined tackles':'tackles',
+    'tackles':'tackles','tackle':'tackles','solo tackles':'soloTk','solo':'soloTk',
     'fantasy points':'fanPts','fantasy':'fanPts','fan pts':'fanPts','fp':'fanPts'
   };
   const CMP_STAT_LABELS={passYds:'Pass Yds',passTds:'Pass TDs',passAtt:'Pass Att',passComp:'Completions',
     passInt:'INTs',rushYds:'Rush Yds',rushAtt:'Carries',rushTds:'Rush TDs',recYds:'Rec Yds',
     receptions:'Receptions',recTds:'Rec TDs',rushRecYds:'Rush+Rec Yds',anytimeTd:'Anytime TD',
-    targets:'Targets',fanPts:'Fantasy Pts',longRec:'Longest Rec',longRush:'Longest Rush',longComp:'Longest Comp'};
+    targets:'Targets',fanPts:'Fantasy Pts',longRec:'Longest Rec',longRush:'Longest Rush',longComp:'Longest Comp',
+    tackles:'Tackles+Ast',soloTk:'Solo Tackles'};
   function cmpParse(query){
     const q=(query||'').trim(); let line=null,statKey=null,playerRaw='';
     const aliases=Object.keys(CMP_STAT_ALIASES).sort((a,b)=>b.length-a.length);
@@ -3685,9 +3763,10 @@
   }
   // ---- shared: recent-games bar chart (last n games vs a line) ----
   // ===== Player prop calculator (old-tool style, now with live odds) =====
-  const PC_STATS=[['passYds','PaYds'],['passAtt','PaAtt'],['passTds','PaTD'],['rushYds','RuYds'],['rushAtt','Car'],['receptions','Rec'],['recYds','ReYds'],['rushRecYds','R+R'],['anytimeTd','ATD'],['fanPts','FanPts'],['longRec','LngRec'],['longRush','LngRsh'],['longComp','LngCmp']];
+  const PC_STATS=[['passYds','PaYds'],['passAtt','PaAtt'],['passTds','PaTD'],['rushYds','RuYds'],['rushAtt','Car'],['receptions','Rec'],['recYds','ReYds'],['rushRecYds','R+R'],['anytimeTd','ATD'],['fanPts','FanPts'],['longRec','LngRec'],['longRush','LngRsh'],['longComp','LngCmp'],['tackles','Tk+A'],['soloTk','Solo']];
+  const DEF_POS=new Set(['LB','DL','DB']);
   function _pcInit(p,opp){
-    const stat=p.position==='QB'?'passYds':p.position==='RB'?'rushYds':'receptions';
+    const stat=DEF_POS.has(p.position)?'tackles':p.position==='QB'?'passYds':p.position==='RB'?'rushYds':'receptions';
     return {stat, line:_pcDefaultLine(p.name,stat), scope:'season'};
   }
   function _pcDefaultLine(name,stat){
