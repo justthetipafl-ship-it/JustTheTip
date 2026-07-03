@@ -18,6 +18,7 @@ nfl/data/*.json files the shell + scoring.js consume.
   weather.json     forecast for outdoor fixture games (Open-Meteo), domes flagged
   firsttd.json     first-TD log per team per game (+ gameFirst flag)   [pbp]
   redzone.json     Tuddy Targets season splits (rz/i10/i5 + team share %) [pbp]
+  dbs.json         Clamp Watch CB coverage grades (PFR adv defense via nflverse)
   odds.json        stub written ONLY if missing (worker owns the real file)
 
 Sources: nflreadpy (nflverse). Red-zone/goal-line usage + first-TD need pbp,
@@ -36,13 +37,19 @@ Self-test (no network; validates every transform on synthetic frames):
 import argparse, datetime as dt, hashlib, json, os, sys, time
 from collections import defaultdict
 
-POSITIONS = ["QB", "RB", "WR", "TE"]
+POSITIONS = ["QB", "RB", "WR", "TE"]          # offense (lineups/depth-chart scope)
+DEF_GROUP = {"LB": "LB", "ILB": "LB", "OLB": "LB", "MLB": "LB",
+             "DE": "DL", "DT": "DL", "NT": "DL", "DL": "DL", "EDGE": "DL",
+             "CB": "DB", "S": "DB", "FS": "DB", "SS": "DB", "DB": "DB", "SAF": "DB"}
+DEF_POS = ["LB", "DL", "DB"]
+KEEP_POS = POSITIONS + DEF_POS
 FORM_N = 5                      # teams_form window (games)
 SNAP_PCT_SCALE_CUTOFF = 1.01    # nflverse offense_pct is 0..1 in some releases
 
 STAT_KEYS = ["passYds","passAtt","passComp","passTds","passInt","sacks",
              "rushYds","rushAtt","rushTds","receptions","targets","recYds",
-             "recTds","rushRecYds","totalTds","fanPts"]
+             "recTds","rushRecYds","totalTds","fanPts",
+             "tackles","soloTk","astTk","tfl","defSacks"]
 
 # Team-level keys aggregated per game (offense; "_a" = allowed by defense).
 TEAM_KEYS = ["points","plays","passYds","passAtt","passComp","passTds","passInt",
@@ -121,7 +128,18 @@ def load_frames(seasons, pbp_seasons, current):
             pbp = nfl.load_pbp(seasons=pbp_seasons).to_pandas()
         except Exception as e:
             print(f"  (pbp unavailable — red-zone/first-TD skipped: {e})")
-    return ps, sc, sch, inj, dc, tm, pbp
+    adv = ros = None
+    try:
+        adv = nfl.load_pfr_advstats(seasons=[current], stat_type="def",
+                                    summary_level="week").to_pandas()
+        print("  advstats def cols:", list(adv.columns)[:16], "…")
+    except Exception as e:
+        print(f"  (pfr advstats unavailable — Clamp Watch feed skipped: {e})")
+    try:
+        ros = nfl.load_rosters(seasons=[current]).to_pandas()
+    except Exception as e:
+        print(f"  (rosters unavailable: {e})")
+    return ps, sc, sch, inj, dc, tm, pbp, adv, ros
 
 # ── schedules → game index, results, fixture ────────────────────────────────
 def build_game_index(sch):
@@ -186,12 +204,94 @@ def build_snap_idx(sc):
     nm = col(sc, "player", "player_name", "pfr_player_name")
     se = col(sc, "season"); wk = col(sc, "week")
     pct = col(sc, "offense_pct", "off_pct")
+    dpct = col(sc, "defense_pct", "def_pct")
     out = {}
     for _, r in sc.iterrows():
-        p = g(r, pct)
-        if p and p <= SNAP_PCT_SCALE_CUTOFF: p *= 100.0
-        out[(_norm(g(r, nm, "")), int(g(r, se)), int(g(r, wk)))] = r1(p)
+        p = g(r, pct); d = g(r, dpct)
+        vals = []
+        for v in (p, d):
+            if v is None: continue
+            try: v = float(v)
+            except (TypeError, ValueError): continue
+            if v <= SNAP_PCT_SCALE_CUTOFF: v *= 100.0
+            vals.append(v)
+        out[(_norm(g(r, nm, "")), int(g(r, se)), int(g(r, wk)))] = r1(max(vals)) if vals else None
     return out
+
+# ── PFR advanced defense → Clamp Watch CB feed (dbs.json) ───────────────────
+PFR_TEAM = {"GNB": "GB", "KAN": "KC", "NWE": "NE", "NOR": "NO", "SFO": "SF",
+            "TAM": "TB", "LVR": "LV", "SDG": "LAC", "STL": "LA", "OAK": "LV",
+            "CRD": "ARI", "RAV": "BAL", "HTX": "HOU", "CLT": "IND", "JAX": "JAX",
+            "OTI": "TEN", "RAI": "LV", "RAM": "LA"}
+def _nfl_team(t):
+    t = str(t or "").upper()
+    return PFR_TEAM.get(t, t)
+
+def _passer_rating(cmp_, att, yds, td, ints):
+    if not att: return None
+    a = max(0.0, min(2.375, (cmp_ / att - 0.3) * 5))
+    b = max(0.0, min(2.375, (yds / att - 3) * 0.25))
+    c = max(0.0, min(2.375, (td / att) * 20))
+    d = max(0.0, min(2.375, 2.375 - (ints / att) * 25))
+    return round((a + b + c + d) / 6 * 100, 1)
+
+def build_dbs(adv, ros, current):
+    """Clamp Watch feed: CBs graded on coverage — passer rating allowed when
+    targeted, recomputed from weekly component sums. role='top' (elite corner);
+    true shadow charting is paywalled, so this flags coverage QUALITY."""
+    if adv is None or getattr(adv, "empty", True):
+        return []
+    se = col(adv, "season"); tmv = col(adv, "team", "tm")
+    nm = col(adv, "pfr_player_name", "player", "player_name")
+    pid = col(adv, "pfr_player_id", "pfr_id")
+    tgt = col(adv, "def_targets", "tgt", "targets")
+    cmp_ = col(adv, "def_completions_allowed", "cmp", "completions_allowed")
+    yds = col(adv, "def_yards_allowed", "yds", "yards_allowed")
+    td = col(adv, "def_receiving_td_allowed", "td", "tds_allowed")
+    ints = col(adv, "def_ints", "int", "ints")
+    # position lookup: pfr_id first, name fallback
+    pos_by_id, pos_by_name = {}, {}
+    if ros is not None and not getattr(ros, "empty", True):
+        rp = col(ros, "position", "depth_chart_position")
+        rid = col(ros, "pfr_id", "pfr_player_id")
+        rnm = col(ros, "full_name", "player_name", "football_name")
+        for _, r in ros.iterrows():
+            p = str(g(r, rp, "") or "").upper()
+            i = g(r, rid); n = _norm(g(r, rnm, ""))
+            if i: pos_by_id[str(i)] = p
+            if n: pos_by_name[n] = p
+    agg = {}
+    for _, r in adv.iterrows():
+        try:
+            if int(g(r, se, 0)) != int(current): continue
+        except (TypeError, ValueError): continue
+        name = str(g(r, nm, "") or "").strip()
+        if not name: continue
+        key = str(g(r, pid) or _norm(name))
+        A = agg.setdefault(key, {"player": name, "team": None,
+                                 "tgt": 0.0, "cmp": 0.0, "yds": 0.0, "td": 0.0, "int": 0.0})
+        A["team"] = _nfl_team(g(r, tmv, A["team"]))     # latest team wins
+        for fld, ccol in (("tgt", tgt), ("cmp", cmp_), ("yds", yds), ("td", td), ("int", ints)):
+            v = g(r, ccol, 0)
+            try: A[fld] += float(v or 0)
+            except (TypeError, ValueError): pass
+    out = []
+    max_tgt = max((a["tgt"] for a in agg.values()), default=0)
+    min_tgt = 30 if max_tgt >= 60 else max(10, max_tgt * 0.4)    # early-season scaling
+    for key, a in agg.items():
+        pos = pos_by_id.get(key) or pos_by_name.get(_norm(a["player"])) or ""
+        if pos != "CB": continue
+        if a["tgt"] < min_tgt: continue
+        rat = _passer_rating(a["cmp"], a["tgt"], a["yds"], a["td"], a["int"])
+        if rat is None: continue
+        ypt = round(a["yds"] / a["tgt"], 1)
+        out.append({"team": a["team"], "player": a["player"], "role": "top",
+                    "grade": rat, "tgt": int(a["tgt"]), "cmpPct": round(a["cmp"] / a["tgt"] * 100, 1),
+                    "ypt": ypt})
+    # clamp corners: elite coverage — low rating allowed, capped at the best 16
+    out = [x for x in out if x["grade"] <= 80.0 and x["ypt"] <= 7.5]
+    out.sort(key=lambda x: x["grade"])
+    return out[:16]
 
 # ── pbp → Tuddy Targets red-zone splits (season totals, zone splits, team share %) ──
 def build_redzone(pbp, short_idx, current):
@@ -390,6 +490,10 @@ def build_players_gamelogs(ps, snap_idx, game_idx, current):
         "recYds":   col(ps, "receiving_yards"),
         "recTds":   col(ps, "receiving_tds"),
         "fanPts":   col(ps, "fantasy_points_ppr", "fantasy_points"),
+        "soloTk":   col(ps, "def_tackles_solo", "def_tackles"),
+        "astTk":    col(ps, "def_tackle_assists", "def_tackles_with_assist"),
+        "tfl":      col(ps, "def_tackles_for_loss"),
+        "defSacks": col(ps, "def_sacks"),
     }
     tgt_share_c = col(ps, "target_share")
     airyds_c = col(ps, "receiving_air_yards")
@@ -399,7 +503,8 @@ def build_players_gamelogs(ps, snap_idx, game_idx, current):
     short_idx = {}          # (TEAM, short_norm) -> full name; None = ambiguous
     for _, r in ps.iterrows():
         pos = str(g(r, pos_c, "")).strip().upper()
-        if pos not in POSITIONS:
+        pos = pos if pos in POSITIONS else DEF_GROUP.get(pos)
+        if pos not in KEEP_POS:
             continue
         if str(g(r, st_c, "REG")).upper() != "REG":
             continue
@@ -417,6 +522,10 @@ def build_players_gamelogs(ps, snap_idx, game_idx, current):
         for k, c in C.items():
             row[k] = r1(g(r, c))
         row["rushRecYds"] = r1(row["rushYds"] + row["recYds"])
+        # tackles + assists (the books' combined-tackles market)
+        row["tackles"] = r1(row["soloTk"] + row["astTk"])
+        if pos in POSITIONS:                      # offense: def keys stay 0, no false signal
+            row["soloTk"] = row["astTk"] = row["tfl"] = row["defSacks"] = row["tackles"] = 0.0
         # TD convention matches the books' "anytime TD": rushing + receiving only
         row["totalTds"] = r1(row["rushTds"] + row["recTds"])
         row["anytimeTd"] = 1 if (row["rushTds"] + row["recTds"]) > 0 else 0
@@ -521,7 +630,7 @@ def build_dvp(gamelogs, players, current):
         if r["Year"] != str(current):
             continue
         pos = pos_by_name.get(r["Player"])
-        if pos not in POSITIONS:
+        if pos not in KEEP_POS:
             continue
         key = (r["Opp"], pos)
         for k in STAT_KEYS:
@@ -681,7 +790,9 @@ def build_weather(fixture):
 
 # ── main build ──────────────────────────────────────────────────────────────
 def run_build(frames, out_dir, seasons, current, password, skip_weather=False):
-    ps, sc, sch, inj, dc, tm, pbp = frames
+    if len(frames) == 7:                      # selftest / older callers: no advstats
+        frames = tuple(frames) + (None, None)
+    ps, sc, sch, inj, dc, tm, pbp, adv, ros = frames
     os.makedirs(out_dir, exist_ok=True)
     game_idx = build_game_index(sch)
     results = build_results(sch)
@@ -690,6 +801,8 @@ def run_build(frames, out_dir, seasons, current, password, skip_weather=False):
     players, gamelogs, short_idx = build_players_gamelogs(ps, snap_idx, game_idx, current)
     rz_usage, firsttd, longest = build_pbp_derived(pbp, short_idx)
     redzone = build_redzone(pbp, short_idx, current)
+    dbs = build_dbs(adv, ros, current)
+    print(f"  clamp corners qualified: {len(dbs)}")
     for p in players:
         u = rz_usage.get(p["name"])
         if u:
@@ -731,7 +844,7 @@ def run_build(frames, out_dir, seasons, current, password, skip_weather=False):
             "summary": {"players": len(players), "teams": len(teams),
                         "dvp": len(dvp), "gamelogs": len(gamelogs),
                         "fixtures": len(fixture), "results": len(results),
-                        "firsttd": len(firsttd), "redzone": len(redzone)},
+                        "firsttd": len(firsttd), "redzone": len(redzone), "dbs": len(dbs)},
             "derivedNote": "players/teams/dvp derived from nflverse weekly stats; "
                            "red-zone usage, first-TD, longest rec/rush/comp from pbp; snapPct from snap counts."}
     if password:
@@ -750,6 +863,7 @@ def run_build(frames, out_dir, seasons, current, password, skip_weather=False):
     write_json(f"{out_dir}/weather.json", weather)
     write_json(f"{out_dir}/firsttd.json", firsttd)
     write_json(f"{out_dir}/redzone.json", redzone)
+    write_json(f"{out_dir}/dbs.json", dbs)
     odds_path = f"{out_dir}/odds.json"
     if not os.path.exists(odds_path):
         write_json(odds_path, {"_sample": True, "updated": meta["created"],
@@ -800,10 +914,21 @@ def selftest():
                       "receptions": 3, "targets": 4, "receiving_yards": 22,
                       "receiving_tds": 0, "fantasy_points_ppr": 19.1,
                       "target_share": 0.11, "receiving_air_yards": -2}
-                rows += [qb, wr, rb]
+                lb = {**qb, "player_display_name": f"{team} LB1", "position": "ILB",
+                      "passing_yards": 0, "attempts": 0, "completions": 0,
+                      "passing_tds": 0, "interceptions": 0, "sacks": 0,
+                      "carries": 0, "rushing_yards": 0, "rushing_tds": 0,
+                      "receptions": 0, "targets": 0, "receiving_yards": 0,
+                      "receiving_tds": 0, "fantasy_points_ppr": 0.0,
+                      "target_share": 0.0, "receiving_air_yards": 0,
+                      "def_tackles_solo": 6 + week, "def_tackle_assists": 3,
+                      "def_tackles_for_loss": 1, "def_sacks": 0.5}
+                rows += [qb, wr, rb, lb]
                 for nm in ("QB1", "WR1", "RB1"):
                     snaps.append({"player": f"{team} {nm}", "season": season,
                                   "week": week, "offense_pct": 0.87})
+                snaps.append({"player": f"{team} LB1", "season": season,
+                              "week": week, "offense_pct": 0.0, "defense_pct": 0.94})
     # one future unplayed game for fixture
     sched.append({"game_id": "2025_04_BUF_KC", "season": 2025, "week": 4,
                   "home_team": "KC", "away_team": "BUF", "home_score": None,
@@ -845,19 +970,29 @@ def selftest():
         J("players.json"), J("gamelogs.json"), J("dvp.json"), J("teams.json"),
         J("teams_form.json"), J("fixture.json"), J("results.json"),
         J("lineups.json"), J("firsttd.json"), J("injury.json"))
-    assert len(players) == 6 and all(p["matches"] == 3 for p in players)
+    assert len(players) == 8 and all(p["matches"] == 3 for p in players)
+    lbp = next(p for p in players if p["name"] == "KC LB1")
+    assert lbp["position"] == "LB"                                   # ILB normalised to group
+    assert lbp["tackles"] == r1((10 + 11 + 12) / 3)                  # solo(7,8,9)+ast(3) combined
+    assert lbp["soloTk"] == 8.0 and lbp["astTk"] == 3.0 and lbp["defSacks"] == 0.5
+    assert lbp["snapPct"] == 94.0                                    # defense_pct picked up
+    qbp = next(p for p in players if p["name"] == "KC QB1")
+    assert qbp["tackles"] == 0.0                                     # offense rows zeroed
     wr = next(p for p in players if p["name"] == "KC WR1")
     assert wr["recYds"] == r1((89 + 90 + 91) / 3) and wr["rushRecYds"] == r1(wr["recYds"] + wr["rushYds"])
     assert wr["snapPct"] == 87.0 and wr["tgtShare"] == 26.0
     assert wr["aDot"] == r1(102 * 3 / 27)                    # air yards / targets
     rb = next(p for p in players if p["name"] == "KC RB1")
     assert rb["glCarry"] == 1.0 and rb["rzCarry"] == 1.0     # 1 game of pbp
-    assert len(gl) == 36 and gl[0]["MatchId"].startswith("202")
+    assert len(gl) == 48 and gl[0]["MatchId"].startswith("202")
     assert all(x["Opp"] in teams and x["home"] in (0, 1) for x in gl)
     # dvp: BUF defense v WR must equal KC WR1's per-game line (only WR they face)
     dvp_buf_wr = next(d for d in dvp if d["team"] == "BUF" and d["pos"] == "WR")
     assert dvp_buf_wr["recYds"] == r3((89 + 90 + 91) / 3)
     assert dvp_buf_wr["anytimeTd"] == 1.0
+    # tackle funnel: KC's offence concedes BUF LB1's combined line per game
+    dvp_kc_lb = next(d for d in dvp if d["team"] == "KC" and d["pos"] == "LB")
+    assert dvp_kc_lb["tackles"] == r3((10 + 11 + 12) / 3)
     # teams: KC offense passYds/g = QB 281.. avg + WR/RB 0; allowed = BUF's same
     kc = next(t for t in teams_j if t["team"] == "KC")
     assert kc["passYds"] == r1((281 + 282 + 283) / 3)
@@ -894,6 +1029,30 @@ def selftest():
     assert ij[0]["Player"] == "KC WR1" and ij[0]["Status"] == "Questionable"
     m = J("meta.json")
     assert m["week"] == 4 and m["password_hash"] == hashlib.sha256(b"testpw").hexdigest()
+    # Clamp Watch feed: elite CB kept + graded, sieve drops torched CB, PFR code mapped
+    adv_rows = []
+    for wk_ in (1, 2, 3):
+        adv_rows.append({"season": 2025, "week": wk_, "team": "GNB",
+                         "pfr_player_name": "Elite Corner", "pfr_player_id": "CornEl00",
+                         "def_targets": 12, "def_completions_allowed": 5,
+                         "def_yards_allowed": 48, "def_receiving_td_allowed": 0, "def_ints": 1})
+        adv_rows.append({"season": 2025, "week": wk_, "team": "KC",
+                         "pfr_player_name": "Torched Corner", "pfr_player_id": "CornTo00",
+                         "def_targets": 12, "def_completions_allowed": 10,
+                         "def_yards_allowed": 150, "def_receiving_td_allowed": 2, "def_ints": 0})
+        adv_rows.append({"season": 2025, "week": wk_, "team": "BUF",
+                         "pfr_player_name": "Safety Guy", "pfr_player_id": "SafeGy00",
+                         "def_targets": 12, "def_completions_allowed": 4,
+                         "def_yards_allowed": 40, "def_receiving_td_allowed": 0, "def_ints": 1})
+    ros_rows = [
+        {"position": "CB", "pfr_id": "CornEl00", "full_name": "Elite Corner"},
+        {"position": "CB", "pfr_id": "CornTo00", "full_name": "Torched Corner"},
+        {"position": "S",  "pfr_id": "SafeGy00", "full_name": "Safety Guy"},
+    ]
+    dbs_t = build_dbs(pd.DataFrame(adv_rows), pd.DataFrame(ros_rows), 2025)
+    assert len(dbs_t) == 1 and dbs_t[0]["player"] == "Elite Corner"          # sieve + position filter
+    assert dbs_t[0]["team"] == "GB" and dbs_t[0]["role"] == "top"            # GNB -> GB mapping
+    assert dbs_t[0]["tgt"] == 36 and dbs_t[0]["grade"] < 60                  # components aggregated, elite rating
     print("SELFTEST PASSED — all schema + numeric assertions hold.")
 
 # ── cli ─────────────────────────────────────────────────────────────────────
