@@ -275,13 +275,15 @@ def build_redzone(pbp, short_idx, current):
 # ── pbp → red-zone / goal-line usage + first-TD log ─────────────────────────
 def build_pbp_derived(pbp, short_idx):
     """pbp names are short ('P.Nacua'); resolve to full names via short_idx
-    {(TEAM, short_norm): full_name}. Returns (usage: fullname->rates, firsttd)."""
+    {(TEAM, short_norm): full_name}. Returns (usage: fullname->rates, firsttd,
+    longest: (matchId, TEAM, fullname) -> {longRec, longRush, longComp})."""
     usage = defaultdict(lambda: {"rzTgt": 0, "rzCarry": 0, "glCarry": 0,
                                  "games": set()})
     firsttd = []
+    longest = {}
     unresolved = set()
     if pbp is None or getattr(pbp, "empty", True):
-        return {}, firsttd
+        return {}, firsttd, longest
     se = col(pbp, "season"); wk = col(pbp, "week"); gid = col(pbp, "game_id")
     yl = col(pbp, "yardline_100"); pt = col(pbp, "play_type")
     rusher = col(pbp, "rusher_player_name", "rusher")
@@ -289,6 +291,17 @@ def build_pbp_derived(pbp, short_idx):
     tdp = col(pbp, "td_player_name"); tdt = col(pbp, "td_team")
     istd = col(pbp, "touchdown"); qtr = col(pbp, "qtr")
     posteam = col(pbp, "posteam")
+    ygain = col(pbp, "yards_gained"); comp = col(pbp, "complete_pass")
+    passer = col(pbp, "passer_player_name", "passer")
+    def _bump(gidv, team, full, key, yards):
+        d = longest.setdefault((gidv, team, full),
+                               {"longRec": None, "longRush": None, "longComp": None,
+                                "expRec": 0, "expRush": 0})
+        if d[key] is None or yards > d[key]:
+            d[key] = yards
+        # explosive plays: 20+ yd catch / 10+ yd rush (standard NFL definitions)
+        if key == "longRec" and yards >= 20: d["expRec"] += 1
+        if key == "longRush" and yards >= 10: d["expRush"] += 1
     seen_first = {}          # game_id -> set(teams w/ first td logged) + '_game'
     for _, r in pbp.iterrows():
         gidv = str(g(r, gid, ""))
@@ -303,6 +316,22 @@ def build_pbp_derived(pbp, short_idx):
             if full is None:
                 unresolved.add((team_now, sn))
             return full
+        # longest reception / rush / completion per game (any field position)
+        try: yg = float(g(r, ygain))
+        except (TypeError, ValueError): yg = None
+        if yg is not None and yg == yg:
+            if ptv == "run":
+                nm = _resolve(g(r, rusher, ""))
+                if nm: _bump(gidv, team_now, nm, "longRush", yg)
+            elif ptv == "pass":
+                cv = g(r, comp, 0)
+                try: caught = int(float(cv or 0)) == 1
+                except (TypeError, ValueError): caught = False
+                if caught:
+                    nm = _resolve(g(r, recv, ""))
+                    if nm: _bump(gidv, team_now, nm, "longRec", yg)
+                    qb = _resolve(g(r, passer, ""))
+                    if qb: _bump(gidv, team_now, qb, "longComp", yg)
         if isinstance(y100, float) and y100 <= 20:
             if ptv == "run":
                 nm = _resolve(g(r, rusher, ""))
@@ -336,7 +365,7 @@ def build_pbp_derived(pbp, short_idx):
         n = max(len(u["games"]), 1)
         out[nm] = {"rzTgt": r3(u["rzTgt"] / n), "rzCarry": r3(u["rzCarry"] / n),
                    "glCarry": r3(u["glCarry"] / n)}
-    return out, firsttd
+    return out, firsttd, longest
 
 # ── players + gamelogs ──────────────────────────────────────────────────────
 def build_players_gamelogs(ps, snap_idx, game_idx, current):
@@ -499,12 +528,41 @@ def build_dvp(gamelogs, players, current):
             sums[key][k] += r[k]
         sums[key]["anytimeTd"] += r["anytimeTd"]
         games[key].add(r["MatchId"])
+    # longest-play allowed: max per game per (def, pos), averaged over games w/ data.
+    # explosive-plays allowed: SUM per game per (def, pos), averaged the same way.
+    LONG_KEYS = ("longRec", "longRush", "longComp")
+    EXP_KEYS = ("expRec", "expRush")
+    lmax = defaultdict(dict)                         # (def, pos, matchId) -> {k: max|sum}
+    for r in gamelogs:
+        if r["Year"] != str(current):
+            continue
+        pos = pos_by_name.get(r["Player"])
+        if pos not in POSITIONS:
+            continue
+        cell = lmax[(r["Opp"], pos, r["MatchId"])]
+        for k in LONG_KEYS:
+            v = r.get(k)
+            if v is not None and (k not in cell or v > cell[k]):
+                cell[k] = v
+        for k in EXP_KEYS:
+            v = r.get(k)
+            if v is not None:
+                cell[k] = cell.get(k, 0) + v
+    lagg = defaultdict(lambda: {k: [] for k in LONG_KEYS + EXP_KEYS})
+    for (team, pos, _mid), cell in lmax.items():
+        for k, v in cell.items():
+            lagg[(team, pos)][k].append(v)
     out = []
     for (team, pos), s in sorted(sums.items()):
         n = max(len(games[(team, pos)]), 1)
         rec = {"team": team, "pos": pos}
         for k in STAT_KEYS + ["anytimeTd"]:
             rec[k] = r3(s[k] / n)
+        la = lagg.get((team, pos))
+        for k in LONG_KEYS + EXP_KEYS:
+            vals = la[k] if la else []
+            if vals:
+                rec[k] = r3(sum(vals) / len(vals))
         out.append(rec)
     return out
 
@@ -630,12 +688,28 @@ def run_build(frames, out_dir, seasons, current, password, skip_weather=False):
     fixture, next_week = build_fixture(sch)
     snap_idx = build_snap_idx(sc)
     players, gamelogs, short_idx = build_players_gamelogs(ps, snap_idx, game_idx, current)
-    rz_usage, firsttd = build_pbp_derived(pbp, short_idx)
+    rz_usage, firsttd, longest = build_pbp_derived(pbp, short_idx)
     redzone = build_redzone(pbp, short_idx, current)
     for p in players:
         u = rz_usage.get(p["name"])
         if u:
             p["rzTgt"] = u["rzTgt"]; p["rzCarry"] = u["rzCarry"]; p["glCarry"] = u["glCarry"]
+    # longest reception / rush / completion: per-game values onto gamelogs (None when
+    # pbp doesn't cover that season), season averages onto players
+    LONG_KEYS = ("longRec", "longRush", "longComp", "expRec", "expRush")
+    lacc = defaultdict(lambda: {k: [] for k in LONG_KEYS})
+    for row in gamelogs:
+        d = longest.get((row["MatchId"], row["Team"], row["Player"]))
+        for k in LONG_KEYS:
+            v = d.get(k) if d else None
+            row[k] = r3(v) if v is not None else None
+            if row["Year"] == str(current) and v is not None:
+                lacc[row["Player"]][k].append(v)
+    for p in players:
+        a = lacc.get(p["name"])
+        for k in LONG_KEYS:
+            vals = a[k] if a else []
+            p[k] = r3(sum(vals) / len(vals)) if vals else 0.0
     divisions = build_divisions(tm)
     teams = build_teams(gamelogs, results, current, divisions)
     teams_form = build_teams(gamelogs, results, current, divisions, form_n=FORM_N)
@@ -659,7 +733,7 @@ def run_build(frames, out_dir, seasons, current, password, skip_weather=False):
                         "fixtures": len(fixture), "results": len(results),
                         "firsttd": len(firsttd), "redzone": len(redzone)},
             "derivedNote": "players/teams/dvp derived from nflverse weekly stats; "
-                           "red-zone usage + first-TD from pbp; snapPct joined from snap counts."}
+                           "red-zone usage, first-TD, longest rec/rush/comp from pbp; snapPct from snap counts."}
     if password:
         meta["password_hash"] = hashlib.sha256(password.encode()).hexdigest()
 
@@ -749,11 +823,18 @@ def selftest():
         {"season": 2025, "week": 1, "game_id": "2025_01_BUF_KC", "yardline_100": 4.0,
          "play_type": "run", "rusher_player_name": "K.RB1", "receiver_player_name": None,
          "td_player_name": "K.RB1", "td_team": "KC", "touchdown": 1, "qtr": 1,
-         "posteam": "KC", "complete_pass": 0, "pass_touchdown": 0, "rush_touchdown": 1},
+         "posteam": "KC", "complete_pass": 0, "pass_touchdown": 0, "rush_touchdown": 1,
+         "yards_gained": 4.0, "passer_player_name": None},
         {"season": 2025, "week": 1, "game_id": "2025_01_BUF_KC", "yardline_100": 12.0,
          "play_type": "pass", "rusher_player_name": None, "receiver_player_name": "B.WR1",
          "td_player_name": "B.WR1", "td_team": "BUF", "touchdown": 1, "qtr": 2,
-         "posteam": "BUF", "complete_pass": 1, "pass_touchdown": 1, "rush_touchdown": 0},
+         "posteam": "BUF", "complete_pass": 1, "pass_touchdown": 1, "rush_touchdown": 0,
+         "yards_gained": 12.0, "passer_player_name": "B.QB1"},
+        {"season": 2025, "week": 1, "game_id": "2025_01_BUF_KC", "yardline_100": 60.0,
+         "play_type": "pass", "rusher_player_name": None, "receiver_player_name": "K.WR1",
+         "td_player_name": None, "td_team": None, "touchdown": 0, "qtr": 3,
+         "posteam": "KC", "complete_pass": 1, "pass_touchdown": 0, "rush_touchdown": 0,
+         "yards_gained": 24.0, "passer_player_name": "K.QB1"},
     ])
     out = "/tmp/nfl_selftest"
     meta = run_build((ps, sc, sch, inj, dc, tm, pbp), out, [2024, 2025], 2025,
@@ -795,6 +876,21 @@ def selftest():
     assert rzrb["rzRushPct"] == 100.0 and rzrb["i5RushPct"] == 100.0
     assert rzwr["rzTgt"] == 1 and rzwr["rzRec"] == 1 and rzwr["rzRecTd"] == 1
     assert rzwr["i10Tgt"] == 0 and rzwr["rzTgtPct"] == 100.0        # 12-yd line: rz yes, i10 no
+    gl = J("gamelogs.json")
+    glrb = next(x for x in gl if x["Player"] == "KC RB1" and x["Year"] == "2025")
+    glwr = next(x for x in gl if x["Player"] == "BUF WR1" and x["Year"] == "2025")
+    glqb = next(x for x in gl if x["Player"] == "BUF QB1" and x["Year"] == "2025")
+    assert glrb["longRush"] == 4.0 and glrb["longRec"] is None
+    assert glwr["longRec"] == 12.0 and glqb["longComp"] == 12.0
+    prb = next(x for x in J("players.json") if x["name"] == "KC RB1")
+    assert prb["longRush"] == 4.0
+    dvp = J("dvp.json")
+    dwr = next(x for x in dvp if x["team"] == "KC" and x["pos"] == "WR")   # KC defended BUF WR1
+    assert dwr.get("longRec") == 12.0 and dwr.get("expRec") == 0.0
+    glkw = next(x for x in gl if x["Player"] == "KC WR1" and x["Year"] == "2025")
+    assert glkw["longRec"] == 24.0 and glkw["expRec"] == 1                 # 24-yd catch = 1 explosive
+    dbw = next(x for x in dvp if x["team"] == "BUF" and x["pos"] == "WR")  # BUF conceded it
+    assert dbw.get("expRec") == 1.0 and dbw.get("longRec") == 24.0
     assert ij[0]["Player"] == "KC WR1" and ij[0]["Status"] == "Questionable"
     m = J("meta.json")
     assert m["week"] == 4 and m["password_hash"] == hashlib.sha256(b"testpw").hexdigest()
