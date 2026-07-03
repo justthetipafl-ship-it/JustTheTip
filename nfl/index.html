@@ -2114,18 +2114,65 @@
     return {rank:sorted.indexOf(oppRow[stat]||0)+1, total:rows.length,
             pct:avg?((oppRow[stat]-avg)/avg*100):0, allowed:oppRow[stat]};
   }
+  // Hot Tuddies — top-5 at their position in ANY redzone board stat, facing a
+  // bottom-10 TD defence for that position. Cards mirror the graphic: L10 / H2H /
+  // season TD-game rates + the specific rank chips that qualified them.
+  const _TUDDY_STATS={
+    WR:[['rzTgt','RZ targets'],['rzTgtPct','RZ target %'],['rzRec','RZ receptions'],['rzRecTd','RZ TDs'],
+        ['i10Tgt','inside-10 targets'],['i10TgtPct','inside-10 target %'],['i10Rec','inside-10 receptions'],['i10RecTd','inside-10 TDs']],
+    RB:[['rzTgt','RZ targets'],['rzTgtPct','RZ target %'],['rzRec','RZ receptions'],['rzRecTd','RZ receiving TDs'],
+        ['rzAtt','RZ carries'],['rzRushPct','RZ rush %'],['rzRushTd','RZ rush TDs'],
+        ['i10Att','inside-10 carries'],['i10RushPct','inside-10 rush %'],['i10RushTd','inside-10 TDs'],
+        ['i5Att','inside-5 carries'],['i5RushPct','inside-5 rush %'],['i5RushTd','inside-5 TDs']],
+    QB:[['rzAtt','RZ carries'],['rzRushPct','RZ rush %'],['rzRushTd','RZ rush TDs']]
+  };
+  _TUDDY_STATS.TE=_TUDDY_STATS.WR;
+  function _tdRate(logs){ const n=logs.length; return {h:logs.filter(r=>(r.totalTds||0)>=1).length,n}; }
   function snags(){
-    // top 10 TD SCORERS in the LEAGUE (not slate); fire when one plays a bottom-5 TD defence this week
-    const pool=(state.idx.players||[]).filter(p=>(p.matches||0)>=4);
-    const top10=[...pool].sort((a,b)=>(b.totalTds||0)-(a.totalTds||0)).slice(0,10);
+    const rz=state.data.redzone||[]; if(!rz.length) return [];
+    // per position, per stat: who's top-5 in the league
+    const byPos={}; rz.forEach(r=>{ const p=state.idx.byName[r.player]; if(p&&_TUDDY_STATS[p.position])(byPos[p.position]=byPos[p.position]||[]).push(r); });
+    const qual={};   // player name -> {p, chips:[{rank,l}]}
+    Object.entries(byPos).forEach(([pos,rows])=>{
+      _TUDDY_STATS[pos].forEach(([k,l])=>{
+        rows.filter(r=>(r[k]||0)>0).sort((a,b)=>(b[k]||0)-(a[k]||0)).slice(0,5).forEach((r,i)=>{
+          const p=state.idx.byName[r.player]; if(!p) return;
+          const q=qual[r.player]=qual[r.player]||{p,chips:[]};
+          q.chips.push({rank:i+1,l:'#'+(i+1)+' '+pos+' '+l});
+        });
+      });
+    });
     const out=[];
-    top10.forEach((p,i)=>{
+    const cs=CUR_SEASON();
+    Object.values(qual).forEach(({p,chips})=>{
       const opp=nextOpp(p.team); if(!opp) return;
       const dr=dvpRank(opp,p.position,'anytimeTd'); if(!dr) return;
-      if(dr.rank>5) return;                      // gate: opponent is a bottom-5 (softest) TD defence for this position
-      out.push({p,opp,rank:i+1,val:p.totalTds||0,dvpRank:dr.rank,dvpPct:dr.pct,dvpTotal:dr.total});
+      if(dr.rank>10) return;                     // gate: bottom-10 (softest) TD defence for this position
+      const logs=allLogs(p.name);
+      const sorted=[...logs];                    // already chronological
+      const l10=_tdRate(sorted.slice(-10));
+      const h2hLogs=sorted.filter(r=>r.opponent===opp);
+      const h2h=h2hLogs.length?_tdRate(h2hLogs):null;
+      const ssn=_tdRate(sorted.filter(r=>String(r.Year)===String(cs)));
+      chips.sort((a,b)=>a.rank-b.rank);
+      out.push({p,opp,val:p.totalTds||0,dvpRank:dr.rank,dvpPct:dr.pct,dvpTotal:dr.total,
+        chips:chips.slice(0,4),l10,h2h,ssn,season:cs});
     });
-    return out.sort((a,b)=>a.dvpRank-b.dvpRank);
+    return out.sort((a,b)=>(a.dvpRank-b.dvpRank)||(b.chips.length-a.chips.length));
+  }
+  function tuddyCard(c){
+    const q=esc(c.p.name).replace(/\x27/g,"\\\x27");
+    const rate=(r,lab)=>r?('<span><b>'+lab+'</b> '+r.h+'/'+r.n+'</span>'):'';
+    const rates=[rate(c.l10,'L10'),rate(c.h2h,'H2H'),rate(c.ssn,c.season)].filter(Boolean).join(' · ');
+    const chips=['<span class="lu-p" style="color:#f59e0b;border-color:#f59e0b55">#'+c.dvpRank+' TDs allowed '+posShort(c.p.position)+'</span>']
+      .concat(c.chips.map(ch=>'<span class="lu-p">'+esc(ch.l)+'</span>')).join(' ');
+    const od=tdOddsTag(c.p.name);
+    return '<div class="lc-card" onclick="openPlayer(\''+q+'\')">'+
+      '<div class="lc-hd"><span class="lc-nm">'+esc(c.p.name)+'</span>'+_degBadges(c.p.name)+
+        '<span class="lc-meta">'+posShort(c.p.position)+' · '+abbr(c.p.team)+' v '+abbr(c.opp)+(od?' ·'+od:'')+'</span></div>'+
+      (rates?'<div class="tp-body-meta" style="border:0;padding:2px 0 6px">TD games: '+rates+'</div>':'')+
+      '<div class="lu-grid" style="gap:5px">'+chips+'</div>'+
+    '</div>';
   }
   // anytime-TD odds tag, first-TD milestone as the long alternative
   function tdOddsTag(name){
@@ -2197,24 +2244,19 @@
     }
     return h+'</tbody></table></div>';
   }
-  function snagsHot(posOk){
-    const pool=(state.idx.players||[]).filter(p=>(p.matches||0)>=4 && posOk(p));
-    const top10=[...pool].sort((a,b)=>(b.totalTds||0)-(a.totalTds||0)).slice(0,10);
-    const out=[];
-    top10.forEach(p=>{ const opp=nextOpp(p.team); if(!opp)return; const dr=dvpRank(opp,p.position,'anytimeTd'); if(!dr||dr.rank>5)return; out.push({p,opp,val:p.totalTds||0,dvpRank:dr.rank}); });
-    return out.sort((a,b)=>a.dvpRank-b.dvpRank);
-  }
+  function snagsHot(posOk){ return snags().filter(s=>posOk(s.p)); }
   function snagsBody(){
     const posF=state.view.snagPos||'All';
     const posOk=p=>posF==='All'||p.position===posF;
     const hot=snagsHot(posOk);
     let h='';
     if(hot.length){
-      h+='<div class="section-title">Hot Tuddies · top-10 TD scorer v bottom-5 defence</div>'+
-        _byGame(hot, s=>s.p.team, s=>degRow(s.p.name,'#f59e0b',{v1:fmt(s.val,2),l1:'td/g',v2:'#'+s.dvpRank,l2:posShort(s.p.position)},
-          posShort(s.p.position)+' \xb7 '+abbr(s.p.team)+' v '+abbr(s.opp)+' \xb7 '+fmt(s.val,2)+' TD/g'+tdOddsTag(s.p.name))).join('');
+      h+='<div class="section-title">Hot Tuddies · top-5 in a redzone stat v bottom-10 TD defence</div>'+
+        _byGame(hot, s=>s.p.team, tuddyCard).join('');
+    } else if(!(state.data.redzone||[]).length){
+      h+='<div class="tp-body-meta" style="border:0;margin:8px 0">Hot Tuddies arm once redzone.json lands with the next data build.</div>';
     } else {
-      h+='<div class="tp-body-meta" style="border:0;margin:8px 0">No top-10 TD scorer'+(posF!=='All'?' ('+posShort(posF)+')':'')+' faces a bottom-5 TD defence this week.</div>';
+      h+='<div class="tp-body-meta" style="border:0;margin:8px 0">No redzone top-5'+(posF!=='All'?' ('+posShort(posF)+')':'')+' faces a bottom-10 TD defence this week.</div>';
     }
     h+=mostTdsAllowed();
     h+=tuddyBoards(posF);
@@ -3112,8 +3154,7 @@
   function renderTile(k){
     const M=v=>fmt(v,1), abv=t=>abbr(t);
     if(k==='paydirt'){
-      const rows=_byGame(_fc(snags(),6), s=>s.p.team, s=>degRow(s.p.name,'#f59e0b',{v1:fmt(s.val,2),l1:'td/g',v2:'#'+s.dvpRank,l2:posShort(s.p.position)},
-        posShort(s.p.position)+' · '+abv(s.p.team)+' v '+abv(s.opp)+' · '+fmt(s.val,2)+' TD/g'+tdOddsTag(s.p.name)));
+      const rows=_byGame(_fc(snags(),6), s=>s.p.team, tuddyCard);
       return degWrap('ti-ball-american-football','Tuddy Targets',rows,'c-amber');
     }
     if(k==='elite'){
