@@ -648,6 +648,10 @@
     passyds:'passYds', passtds:'passTds', passatt:'passAtt', passcomp:'passComp', passint:'passInt',
     rushyds:'rushYds', rushatt:'rushAtt', rushtds:'rushTds', receptions:'receptions',
     recyds:'recYds', rectds:'recTds', rushrecyds:'rushRecYds', anytimetd:'anytimeTd', firsttd:'firstTd',
+    player_reception_longest:'longRec', player_rush_longest:'longRush',
+    player_pass_longest_completion:'longComp',
+    longrec:'longRec', longrush:'longRush', longcomp:'longComp',
+    'longest reception':'longRec', 'longest rush':'longRush', 'longest completion':'longComp',
     'anytime td':'anytimeTd', 'pass yards':'passYds', 'rush yards':'rushYds', 'receiving yards':'recYds'
   };
   // low-count TD/turnover markets: shown raw + Poisson-tailed in the sharp model
@@ -691,6 +695,7 @@
     {k:'death',    n:'Death Riders',       i:'ti-skull',        d:'Strong UNDER'},
     {k:'bogey',    n:'Divisional Bogey',   i:'ti-mood-sad',     d:'Struggles v rival'},
     {k:'streak',   n:'Streakers',          i:'ti-flame',        d:'Hot form'},
+    {k:'chunk',    n:'Chunk Plays',        i:'ti-bolt',         d:'Big-play streaks'},
     {k:'push',     n:'Playoff Push',       i:'ti-ladder',       d:'Standings pressure'},
     {k:'form',     n:'Form Alerts',        i:'ti-trending-up',  d:'Trend shifts'},
     {k:'clamp',    n:'Clamp Watch',        i:'ti-lock',         d:'Shadow CB risk'},
@@ -1738,12 +1743,13 @@
       const clampArr=clampWatch();
       const counts={ green:ov.length, death:un.length, paydirt:_fc(snags(),6).length,
         elite:_fc(elite(),8,40).length, bunnies:_fc(bunnies(),6).length, bogey:_fc(bogey(),6).length,
-        streak:_fc(streakers(),6).length, form:_fc(formAlerts('spike'),6,25).length+_fc(formAlerts('drop'),6,25).length,
+        streak:_fc(streakers(),6).length, chunk:_fc(chunkPlays(),6).length,
+        form:_fc(formAlerts('spike'),6,25).length+_fc(formAlerts('drop'),6,25).length,
         clamp:clampArr?_fc(clampArr,8).length:0, push:_fc(playoffPush(),6).length };
       total=Object.values(counts).reduce((a,b)=>a+b,0);
       html+=ouSection(ov,'over','Green Lights','ti-traffic-lights','c-green');
       html+=ouSection(un,'under','Death Riders','ti-skull','c-red');
-      ['paydirt','elite','bunnies','bogey','streak','push','form','clamp'].forEach(k=>{ html+=renderTile(k); });
+      ['paydirt','elite','bunnies','bogey','streak','chunk','push','form','clamp'].forEach(k=>{ html+=renderTile(k); });
     } finally { _degenScope=prevScope; _degenFocused=prevFocus; }
     const hdr='<div class="tp-sec"><div class="sec-title"><i class="ti ti-flame"></i> Degen Signals</div><div class="sec-meta">'+total+' fired</div></div>';
     return hdr+(html||'<div class="tp-body-meta" style="border:0">No signals fired.</div>');
@@ -2466,6 +2472,38 @@
     });
     return out.sort((a,b)=>Math.abs(b.swing)-Math.abs(a.swing));
   }
+  // ===== Chunk Plays — longest reception / rush / completion streaks =====
+  // Books post O/U lines on a player's LONGEST play of the game. Qualify when the
+  // player has cleared the line (posted line when live, else a market-typical gate)
+  // in >=70% of games with data, min 6 games. DVP shows the longest play the
+  // opponent typically concedes to the position.
+  const CHUNK_DEFS=[
+    {k:'longRec', l:'Longest Rec', thr:20, pos:['WR','TE','RB']},
+    {k:'longRush',l:'Longest Rush',thr:12, pos:['RB','QB']},
+    {k:'longComp',l:'Longest Comp',thr:35, pos:['QB']}
+  ];
+  const CHUNK_HIT=0.70, CHUNK_MIN_G=6;
+  function chunkPlays(){
+    const teams=_fixtureSet(); const out=[];
+    (state.idx.players||[]).filter(p=>teams.has(p.team)&&(p.matches||0)>=3).forEach(p=>{
+      const opp=nextOpp(p.team);
+      CHUNK_DEFS.forEach(def=>{
+        if(!def.pos.includes(p.position)) return;
+        const vals=allLogs(p.name).map(r=>r[def.k]).filter(v=>v!=null);
+        if(vals.length<CHUNK_MIN_G) return;
+        const posted=oddsFor(p.name,def.k);
+        const line=(posted&&posted.line!=null)?Math.ceil(posted.line):def.thr;
+        const hits=vals.filter(v=>v>=line).length, rate=hits/vals.length;
+        if(rate<CHUNK_HIT) return;
+        const avg=_avg(vals);
+        const pos=JTTScoring.POS_TO_DVP[p.position]||p.position;
+        const dvpPct=opp?JTTScoring.getDVPPct(opp,pos,def.k):null;
+        const l5=vals.slice(-5).map(v=>Math.round(v)).join(', ');
+        out.push({p,opp,def,line,hits,n:vals.length,rate,avg,dvpPct,l5,posted:!!(posted&&posted.line!=null)});
+      });
+    });
+    return out.sort((a,b)=>(b.rate-a.rate)||(b.avg-a.avg));
+  }
   // ===== Playoff Push — standings pressure plays =====
   // Conference standings from results.json; "in the hunt" = seeded 5–11 and within 2.5
   // games of the 7th seed. Pre-season (no current-season results yet) falls back to the
@@ -3113,7 +3151,7 @@
     try{
       out+=ouSection(collectOU([home,away],'over'),'over','Green Lights','ti-traffic-lights','c-green');
       out+=ouSection(collectOU([home,away],'under'),'under','Death Riders','ti-skull','c-red');
-      ['paydirt','elite','bunnies','bogey','streak','push','form','clamp'].forEach(k=>{ out+=renderTile(k); });
+      ['paydirt','elite','bunnies','bogey','streak','chunk','push','form','clamp'].forEach(k=>{ out+=renderTile(k); });
     } finally { _degenScope=prevScope; _degenFocused=prevFocus; }
     return out || '<div class="empty"><div class="ico"><i class="ti ti-flame"></i></div>No Degen signals fired for this matchup.</div>';
   }
@@ -3184,6 +3222,13 @@
       const rows=_byGame(_fc(streakers(),6), s=>s.p.team, s=>degRow(s.p.name,'#f97316',{v1:s.streak,l1:'straight',v2:Math.round(s.rate*100)+'%',l2:'hit'},
         s.stat+' '+s.line+'+ · '+abbr(s.p.team)+(s.opp?' v '+abbr(s.opp):'')+' · hit '+Math.round(s.rate*100)+'%'+(s.dvpPct!=null?' · '+muTag(s.dvpPct):'')+streakOdds(s)));
       return degWrap('ti-flame','Streakers',rows,'c-amber');
+    }
+    if(k==='chunk'){
+      const rows=_byGame(_fc(chunkPlays(),6,30), c=>c.p.team, c=>degRow(c.p.name,'#06b6d4',
+        {v1:Math.round(c.rate*100)+'%',l1:'hit '+c.line+'+',v2:fmt(c.avg,0),l2:'avg long'},
+        c.def.l+' '+c.line+'+'+(c.posted?'':' (est line)')+' · '+abbr(c.p.team)+(c.opp?' v '+abbr(c.opp):'')+' · '+c.hits+'/'+c.n+' hit · L5 '+c.l5+
+        (c.dvpPct!=null?' · '+muTag(c.dvpPct):'')+lineTag(c.p.name,c.def.k)));
+      return degWrap('ti-bolt','Chunk Plays',rows,'c-cyan');
     }
     if(k==='form'){
       const up=_byGame(_fc(formAlerts('spike'),6,25), a=>a.p.team, a=>degRow(a.p.name,'#22c55e',{v1:'▲ +'+Math.round(a.swing*100)+'%',l1:'swing',v2:M(a.l3),l2:'L3'},a.stat+' · L3 '+M(a.l3)+' vs season '+M(a.seasonAvg)+formNote('spike',a.runDvp,a.thisDvp)));
@@ -3539,12 +3584,15 @@
     'rush rec yards':'rushRecYds','rush+rec yards':'rushRecYds','rush+rec':'rushRecYds','rush rec':'rushRecYds','scrimmage yards':'rushRecYds',
     'anytime td':'anytimeTd','anytime touchdown':'anytimeTd','atd':'anytimeTd','touchdown':'anytimeTd','td':'anytimeTd',
     'targets':'targets','target':'targets',
+    'longest reception':'longRec','long rec':'longRec','longest catch':'longRec',
+    'longest rush':'longRush','long rush':'longRush','longest run':'longRush',
+    'longest completion':'longComp','long comp':'longComp','longest pass':'longComp',
     'fantasy points':'fanPts','fantasy':'fanPts','fan pts':'fanPts','fp':'fanPts'
   };
   const CMP_STAT_LABELS={passYds:'Pass Yds',passTds:'Pass TDs',passAtt:'Pass Att',passComp:'Completions',
     passInt:'INTs',rushYds:'Rush Yds',rushAtt:'Carries',rushTds:'Rush TDs',recYds:'Rec Yds',
     receptions:'Receptions',recTds:'Rec TDs',rushRecYds:'Rush+Rec Yds',anytimeTd:'Anytime TD',
-    targets:'Targets',fanPts:'Fantasy Pts'};
+    targets:'Targets',fanPts:'Fantasy Pts',longRec:'Longest Rec',longRush:'Longest Rush',longComp:'Longest Comp'};
   function cmpParse(query){
     const q=(query||'').trim(); let line=null,statKey=null,playerRaw='';
     const aliases=Object.keys(CMP_STAT_ALIASES).sort((a,b)=>b.length-a.length);
@@ -3577,7 +3625,7 @@
   }
   // ---- shared: recent-games bar chart (last n games vs a line) ----
   // ===== Player prop calculator (old-tool style, now with live odds) =====
-  const PC_STATS=[['passYds','PaYds'],['passAtt','PaAtt'],['passTds','PaTD'],['rushYds','RuYds'],['rushAtt','Car'],['receptions','Rec'],['recYds','ReYds'],['rushRecYds','R+R'],['anytimeTd','ATD'],['fanPts','FanPts']];
+  const PC_STATS=[['passYds','PaYds'],['passAtt','PaAtt'],['passTds','PaTD'],['rushYds','RuYds'],['rushAtt','Car'],['receptions','Rec'],['recYds','ReYds'],['rushRecYds','R+R'],['anytimeTd','ATD'],['fanPts','FanPts'],['longRec','LngRec'],['longRush','LngRsh'],['longComp','LngCmp']];
   function _pcInit(p,opp){
     const stat=p.position==='QB'?'passYds':p.position==='RB'?'rushYds':'receptions';
     return {stat, line:_pcDefaultLine(p.name,stat), scope:'season'};
