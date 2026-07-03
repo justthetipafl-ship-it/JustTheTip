@@ -17,6 +17,7 @@ nfl/data/*.json files the shell + scoring.js consume.
   lineups.json     depth charts   (team, player, position, depth, status)
   weather.json     forecast for outdoor fixture games (Open-Meteo), domes flagged
   firsttd.json     first-TD log per team per game (+ gameFirst flag)   [pbp]
+  redzone.json     Tuddy Targets season splits (rz/i10/i5 + team share %) [pbp]
   odds.json        stub written ONLY if missing (worker owns the real file)
 
 Sources: nflreadpy (nflverse). Red-zone/goal-line usage + first-TD need pbp,
@@ -190,6 +191,85 @@ def build_snap_idx(sc):
         p = g(r, pct)
         if p and p <= SNAP_PCT_SCALE_CUTOFF: p *= 100.0
         out[(_norm(g(r, nm, "")), int(g(r, se)), int(g(r, wk)))] = r1(p)
+    return out
+
+# ── pbp → Tuddy Targets red-zone splits (season totals, zone splits, team share %) ──
+def build_redzone(pbp, short_idx, current):
+    """Season totals for the Tuddy Targets boards. Zones: rz (<=20), i10 (<=10),
+    i5 (<=5, rushing only). Shares are the player's slice of his TEAM's zone volume."""
+    if pbp is None or getattr(pbp, "empty", True):
+        return []
+    se = col(pbp, "season"); yl = col(pbp, "yardline_100"); pt = col(pbp, "play_type")
+    rusher = col(pbp, "rusher_player_name", "rusher")
+    recv = col(pbp, "receiver_player_name", "receiver")
+    posteam = col(pbp, "posteam")
+    comp = col(pbp, "complete_pass"); ptd = col(pbp, "pass_touchdown"); rtd = col(pbp, "rush_touchdown")
+    P = {}          # full name -> zone counters
+    T = {}          # team -> zone volume {rzTgt, i10Tgt, rzAtt, i10Att, i5Att}
+    def pl(full, team):
+        return P.setdefault(full, {"player": full, "team": team,
+            "rzTgt": 0, "rzRec": 0, "rzRecTd": 0, "i10Tgt": 0, "i10Rec": 0, "i10RecTd": 0,
+            "rzAtt": 0, "rzRushTd": 0, "i10Att": 0, "i10RushTd": 0, "i5Att": 0, "i5RushTd": 0})
+    def tv(team):
+        return T.setdefault(team, {"rzTgt": 0, "i10Tgt": 0, "rzAtt": 0, "i10Att": 0, "i5Att": 0})
+    unresolved = set()
+    for _, r in pbp.iterrows():
+        try: season = int(g(r, se, 0))
+        except (TypeError, ValueError): continue
+        if season != int(current): continue
+        try: y = float(g(r, yl))
+        except (TypeError, ValueError): continue
+        if not (y == y) or y > 20: continue
+        ptv = str(g(r, pt, "") or "").lower()
+        team = str(g(r, posteam, "") or "").upper()
+        if not team or ptv not in ("run", "pass"): continue
+        tt = tv(team)
+        def onev(cname):
+            v = g(r, cname, 0)
+            try: return int(float(v or 0)) == 1
+            except (TypeError, ValueError): return False
+        if ptv == "pass":
+            sn = _norm(g(r, recv, ""))
+            if not sn: continue
+            full = short_idx.get((team, sn))
+            if full is None:
+                unresolved.add((team, sn)); continue
+            p = pl(full, team)
+            caught = onev(comp); scored = onev(ptd)
+            tt["rzTgt"] += 1
+            p["rzTgt"] += 1; p["rzRec"] += 1 if caught else 0; p["rzRecTd"] += 1 if scored else 0
+            if y <= 10:
+                tt["i10Tgt"] += 1
+                p["i10Tgt"] += 1; p["i10Rec"] += 1 if caught else 0; p["i10RecTd"] += 1 if scored else 0
+        else:
+            sn = _norm(g(r, rusher, ""))
+            if not sn: continue
+            full = short_idx.get((team, sn))
+            if full is None:
+                unresolved.add((team, sn)); continue
+            p = pl(full, team)
+            scored = onev(rtd)
+            tt["rzAtt"] += 1
+            p["rzAtt"] += 1; p["rzRushTd"] += 1 if scored else 0
+            if y <= 10:
+                tt["i10Att"] += 1
+                p["i10Att"] += 1; p["i10RushTd"] += 1 if scored else 0
+            if y <= 5:
+                tt["i5Att"] += 1
+                p["i5Att"] += 1; p["i5RushTd"] += 1 if scored else 0
+    if unresolved:
+        print(f"  (redzone: {len(unresolved)} short names unresolved — skipped)")
+    out = []
+    for p in P.values():
+        t = T.get(p["team"], {})
+        pct = lambda a, b: round(a / b * 100, 1) if b else 0.0
+        p["rzTgtPct"] = pct(p["rzTgt"], t.get("rzTgt", 0))
+        p["i10TgtPct"] = pct(p["i10Tgt"], t.get("i10Tgt", 0))
+        p["rzRushPct"] = pct(p["rzAtt"], t.get("rzAtt", 0))
+        p["i10RushPct"] = pct(p["i10Att"], t.get("i10Att", 0))
+        p["i5RushPct"] = pct(p["i5Att"], t.get("i5Att", 0))
+        out.append(p)
+    out.sort(key=lambda x: -(x["rzTgt"] + x["rzAtt"]))
     return out
 
 # ── pbp → red-zone / goal-line usage + first-TD log ─────────────────────────
@@ -551,6 +631,7 @@ def run_build(frames, out_dir, seasons, current, password, skip_weather=False):
     snap_idx = build_snap_idx(sc)
     players, gamelogs, short_idx = build_players_gamelogs(ps, snap_idx, game_idx, current)
     rz_usage, firsttd = build_pbp_derived(pbp, short_idx)
+    redzone = build_redzone(pbp, short_idx, current)
     for p in players:
         u = rz_usage.get(p["name"])
         if u:
@@ -576,7 +657,7 @@ def run_build(frames, out_dir, seasons, current, password, skip_weather=False):
             "summary": {"players": len(players), "teams": len(teams),
                         "dvp": len(dvp), "gamelogs": len(gamelogs),
                         "fixtures": len(fixture), "results": len(results),
-                        "firsttd": len(firsttd)},
+                        "firsttd": len(firsttd), "redzone": len(redzone)},
             "derivedNote": "players/teams/dvp derived from nflverse weekly stats; "
                            "red-zone usage + first-TD from pbp; snapPct joined from snap counts."}
     if password:
@@ -594,6 +675,7 @@ def run_build(frames, out_dir, seasons, current, password, skip_weather=False):
     write_json(f"{out_dir}/lineups.json", lineups)
     write_json(f"{out_dir}/weather.json", weather)
     write_json(f"{out_dir}/firsttd.json", firsttd)
+    write_json(f"{out_dir}/redzone.json", redzone)
     odds_path = f"{out_dir}/odds.json"
     if not os.path.exists(odds_path):
         write_json(odds_path, {"_sample": True, "updated": meta["created"],
@@ -667,11 +749,11 @@ def selftest():
         {"season": 2025, "week": 1, "game_id": "2025_01_BUF_KC", "yardline_100": 4.0,
          "play_type": "run", "rusher_player_name": "K.RB1", "receiver_player_name": None,
          "td_player_name": "K.RB1", "td_team": "KC", "touchdown": 1, "qtr": 1,
-         "posteam": "KC"},
+         "posteam": "KC", "complete_pass": 0, "pass_touchdown": 0, "rush_touchdown": 1},
         {"season": 2025, "week": 1, "game_id": "2025_01_BUF_KC", "yardline_100": 12.0,
          "play_type": "pass", "rusher_player_name": None, "receiver_player_name": "B.WR1",
          "td_player_name": "B.WR1", "td_team": "BUF", "touchdown": 1, "qtr": 2,
-         "posteam": "BUF"},
+         "posteam": "BUF", "complete_pass": 1, "pass_touchdown": 1, "rush_touchdown": 0},
     ])
     out = "/tmp/nfl_selftest"
     meta = run_build((ps, sc, sch, inj, dc, tm, pbp), out, [2024, 2025], 2025,
@@ -706,6 +788,13 @@ def selftest():
     assert len(lu) == 6 and all(x["status"] == "STARTER" for x in lu)
     assert len(itd) == 2 and itd[0]["gameFirst"] and not itd[1]["gameFirst"]
     assert itd[0]["player"] == "KC RB1" and itd[1]["player"] == "BUF WR1"  # short names resolved to full
+    rz = J("redzone.json")
+    rzrb = next(x for x in rz if x["player"] == "KC RB1")
+    rzwr = next(x for x in rz if x["player"] == "BUF WR1")
+    assert rzrb["rzAtt"] == 1 and rzrb["i10Att"] == 1 and rzrb["i5Att"] == 1 and rzrb["rzRushTd"] == 1
+    assert rzrb["rzRushPct"] == 100.0 and rzrb["i5RushPct"] == 100.0
+    assert rzwr["rzTgt"] == 1 and rzwr["rzRec"] == 1 and rzwr["rzRecTd"] == 1
+    assert rzwr["i10Tgt"] == 0 and rzwr["rzTgtPct"] == 100.0        # 12-yd line: rz yes, i10 no
     assert ij[0]["Player"] == "KC WR1" and ij[0]["Status"] == "Questionable"
     m = J("meta.json")
     assert m["week"] == 4 and m["password_hash"] == hashlib.sha256(b"testpw").hexdigest()
