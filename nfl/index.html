@@ -2478,11 +2478,43 @@
   // in >=70% of games with data, min 6 games. DVP shows the longest play the
   // opponent typically concedes to the position.
   const CHUNK_DEFS=[
-    {k:'longRec', l:'Longest Rec', thr:20, pos:['WR','TE','RB']},
-    {k:'longRush',l:'Longest Rush',thr:12, pos:['RB','QB']},
-    {k:'longComp',l:'Longest Comp',thr:35, pos:['QB']}
+    {k:'longRec', l:'Longest Rec', thr:20, pos:['WR','TE','RB'], exp:'expRec',  expL:'explosive catches', style:'aDot'},
+    {k:'longRush',l:'Longest Rush',thr:12, pos:['RB','QB'],      exp:'expRush', expL:'explosive runs',    style:'ypc'},
+    {k:'longComp',l:'Longest Comp',thr:35, pos:['QB'],           exp:'expRec',  expL:'explosive passes',  style:null}
   ];
-  const CHUNK_HIT=0.70, CHUNK_MIN_G=6;
+  const CHUNK_HIT=0.70, CHUNK_MIN_G=6, CHUNK_CLAMP=-12;
+  // similar players' longest plays vs THIS opponent: nearest same-position players by
+  // style metric (aDot for the air game, YPC for rushers, volume for QBs) — did they clear?
+  function _chunkSimilar(p,def,opp,line){
+    if(!opp) return null;
+    const metric=def.k==='longRush'?'ypc':(def.k==='longComp'?'passYds':'aDot');
+    const mine=p[metric]||0; if(!mine) return null;
+    const pool=(state.idx.players||[]).filter(q=>q.name!==p.name&&q.position===p.position&&(q.matches||0)>=3&&(q[metric]||0)>0)
+      .map(q=>({q,d:Math.abs((q[metric]||0)-mine)})).sort((a,b)=>a.d-b.d).slice(0,8);
+    let h=0,n=0,used=0;
+    pool.forEach(({q})=>{
+      const vs=(state.idx.logsByName[q.name]||[]).filter(r=>r.opponent===opp&&r[def.k]!=null);
+      if(!vs.length) return;
+      used++;
+      vs.forEach(r=>{ n++; if((r[def.k]||0)>=line) h++; });
+    });
+    return n>=3?{h,n,used}:null;
+  }
+  function _chunkStyle(p,def){
+    if(def.style==='aDot'){
+      const a=p.aDot||0; if(!a) return null;
+      if(a>=12) return {txt:'deep threat · aDot '+a.toFixed(1),pts:8,c:'#22c55e'};
+      if(a<=8)  return {txt:'short-area · aDot '+a.toFixed(1),pts:-8,c:'#f97316'};
+      return {txt:'aDot '+a.toFixed(1),pts:0,c:'var(--text-3)'};
+    }
+    if(def.style==='ypc'){
+      const y=p.ypc||0; if(!y) return null;
+      if(y>=4.8) return {txt:'explosive runner · '+y.toFixed(1)+' ypc',pts:6,c:'#22c55e'};
+      if(y<=3.6) return {txt:'grinder · '+y.toFixed(1)+' ypc',pts:-6,c:'#f97316'};
+      return {txt:y.toFixed(1)+' ypc',pts:0,c:'var(--text-3)'};
+    }
+    return null;
+  }
   function chunkPlays(){
     const teams=_fixtureSet(); const out=[];
     (state.idx.players||[]).filter(p=>teams.has(p.team)&&(p.matches||0)>=3).forEach(p=>{
@@ -2495,14 +2527,44 @@
         const line=(posted&&posted.line!=null)?Math.ceil(posted.line):def.thr;
         const hits=vals.filter(v=>v>=line).length, rate=hits/vals.length;
         if(rate<CHUNK_HIT) return;
-        const avg=_avg(vals);
         const pos=JTTScoring.POS_TO_DVP[p.position]||p.position;
-        const dvpPct=opp?JTTScoring.getDVPPct(opp,pos,def.k):null;
+        const expDvp=opp?JTTScoring.getDVPPct(opp,pos,def.exp):null;
+        if(expDvp!=null&&expDvp<=CHUNK_CLAMP) return;   // opp suppresses explosives — history means little
+        const longDvp=opp?JTTScoring.getDVPPct(opp,pos,def.k):null;
+        const style=_chunkStyle(p,def);
+        const sim=_chunkSimilar(p,def,opp,line);
+        const avg=_avg(vals);
         const l5=vals.slice(-5).map(v=>Math.round(v)).join(', ');
-        out.push({p,opp,def,line,hits,n:vals.length,rate,avg,dvpPct,l5,posted:!!(posted&&posted.line!=null)});
+        const score=rate*100+(expDvp||0)*0.6+(longDvp||0)*0.3+(style?style.pts:0)+(sim?((sim.h/sim.n)-0.5)*30:0);
+        out.push({p,opp,def,line,hits,n:vals.length,rate,avg,expDvp,longDvp,style,sim,l5,score,
+          posted:!!(posted&&posted.line!=null)});
       });
     });
-    return out.sort((a,b)=>(b.rate-a.rate)||(b.avg-a.avg));
+    return out.sort((a,b)=>b.score-a.score);
+  }
+  function chunkCard(c){
+    const q=esc(c.p.name).replace(/\x27/g,"\\\x27");
+    const od=lineTag(c.p.name,c.def.k);
+    const chips=[];
+    if(c.expDvp!=null){
+      const col=c.expDvp>=10?'#22c55e':c.expDvp>=3?'#86efac':c.expDvp<=-6?'#f97316':'var(--text-3)';
+      chips.push('<span class="lu-p" style="color:'+col+';border-color:'+col+'55">'+abbr(c.opp)+' '+(c.expDvp>=0?'allows +':'allows ')+c.expDvp.toFixed(0)+'% '+c.def.expL+' to '+posShort(c.p.position)+'s</span>');
+    }
+    if(c.longDvp!=null){
+      const col=c.longDvp>=8?'#22c55e':c.longDvp<=-8?'#f97316':'var(--text-3)';
+      chips.push('<span class="lu-p" style="color:'+col+';border-color:'+col+'55">longest allowed '+(c.longDvp>=0?'+':'')+c.longDvp.toFixed(0)+'% v league</span>');
+    }
+    if(c.style) chips.push('<span class="lu-p" style="color:'+c.style.c+';border-color:'+c.style.c+'55">'+esc(c.style.txt)+'</span>');
+    if(c.sim){
+      const sr=c.sim.h/c.sim.n, col=sr>=0.6?'#22c55e':sr>=0.4?'#eab308':'#ef4444';
+      chips.push('<span class="lu-p" style="color:'+col+';border-color:'+col+'55">similar '+posShort(c.p.position)+'s '+c.sim.h+'/'+c.sim.n+' cleared v '+abbr(c.opp)+' ('+c.sim.used+' players)</span>');
+    }
+    return '<div class="lc-card" onclick="openPlayer(\''+q+'\')">'+
+      '<div class="lc-hd"><span class="lc-nm">'+esc(c.p.name)+'</span>'+_degBadges(c.p.name)+
+        '<span class="lc-meta">'+posShort(c.p.position)+' · '+abbr(c.p.team)+(c.opp?' v '+abbr(c.opp):'')+(od?' ·'+od:'')+'</span></div>'+
+      '<div class="tp-body-meta" style="border:0;padding:2px 0 6px"><b>'+c.def.l+' '+c.line+'+</b>'+(c.posted?'':' (est line)')+' · hit '+c.hits+'/'+c.n+' ('+Math.round(c.rate*100)+'%) · avg '+c.avg.toFixed(0)+' · L5 '+c.l5+'</div>'+
+      (chips.length?'<div class="lu-grid" style="gap:5px">'+chips.join(' ')+'</div>':'')+
+    '</div>';
   }
   // ===== Playoff Push — standings pressure plays =====
   // Conference standings from results.json; "in the hunt" = seeded 5–11 and within 2.5
@@ -3224,10 +3286,7 @@
       return degWrap('ti-flame','Streakers',rows,'c-amber');
     }
     if(k==='chunk'){
-      const rows=_byGame(_fc(chunkPlays(),6,30), c=>c.p.team, c=>degRow(c.p.name,'#06b6d4',
-        {v1:Math.round(c.rate*100)+'%',l1:'hit '+c.line+'+',v2:fmt(c.avg,0),l2:'avg long'},
-        c.def.l+' '+c.line+'+'+(c.posted?'':' (est line)')+' · '+abbr(c.p.team)+(c.opp?' v '+abbr(c.opp):'')+' · '+c.hits+'/'+c.n+' hit · L5 '+c.l5+
-        (c.dvpPct!=null?' · '+muTag(c.dvpPct):'')+lineTag(c.p.name,c.def.k)));
+      const rows=_byGame(_fc(chunkPlays(),6,30), c=>c.p.team, chunkCard);
       return degWrap('ti-bolt','Chunk Plays',rows,'c-cyan');
     }
     if(k==='form'){
