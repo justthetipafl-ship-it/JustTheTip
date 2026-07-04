@@ -1,0 +1,44 @@
+name: AFL signal settle (grade frozen signals -> ledger)
+
+# Grades every frozen signal whose round now has box scores, and appends to
+# AFL/data/ledger.json. Runs after the post-round results land. Append-only:
+# already-settled records are never re-graded. Safe to run often — unplayed
+# rounds stay pending, settled rounds are skipped.
+
+on:
+  schedule:
+    - cron: "30 9 * * 0"   # ~7:30pm AEST Sun — after the round completes
+    - cron: "30 9 * * 1"   # ~7:30pm AEST Mon — catch Sun-night/Mon games
+  workflow_dispatch:
+  # Optional: chain after the data build that refreshes gamelogs, e.g.
+  # workflow_run:
+  #   workflows: ["AFL fixtures + results + lineups (fitzRoy)"]
+  #   types: [completed]
+
+jobs:
+  settle:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Settle frozen signals against box scores
+        run: node AFL/settle_signals.js --data AFL/data
+
+      - name: Commit ledger
+        run: |
+          git config user.name  "jtt-bot"
+          git config user.email "bot@justthetipaus.com"
+          git add AFL/data/ledger.json
+          if git diff --cached --quiet; then
+            echo "no new settlements"
+          else
+            git commit -m "AFL: settle signals into ledger"
+            git push
+          fi
