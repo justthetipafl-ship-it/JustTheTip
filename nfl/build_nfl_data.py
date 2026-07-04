@@ -235,7 +235,14 @@ def _passer_rating(cmp_, att, yds, td, ints):
     d = max(0.0, min(2.375, 2.375 - (ints / att) * 25))
     return round((a + b + c + d) / 6 * 100, 1)
 
-def build_dbs(adv, ros, current):
+def _pname(s):
+    """PFR<->nflverse name key: lowercase, alpha-only, suffixes stripped."""
+    import re as _re
+    toks = [t for t in _re.sub(r"[^a-z ]", "", str(s or "").lower()).split()
+            if t not in ("jr", "sr", "ii", "iii", "iv", "v")]
+    return " ".join(toks)
+
+def build_dbs(adv, ros, current, players=None):
     """Clamp Watch feed: CBs graded on coverage — passer rating allowed when
     targeted, recomputed from weekly component sums. role='top' (elite corner);
     true shadow charting is paywalled, so this flags coverage QUALITY."""
@@ -249,7 +256,8 @@ def build_dbs(adv, ros, current):
     yds = col(adv, "def_yards_allowed", "yds", "yards_allowed")
     td = col(adv, "def_receiving_td_allowed", "td", "tds_allowed")
     ints = col(adv, "def_ints", "int", "ints")
-    # position lookup: pfr_id first, name fallback
+    # position lookup chain: roster pfr_id -> roster name -> our own weekly-stats
+    # raw positions (players.json posDetail) via cleaned name
     pos_by_id, pos_by_name = {}, {}
     if ros is not None and not getattr(ros, "empty", True):
         rp = col(ros, "position", "depth_chart_position")
@@ -257,9 +265,13 @@ def build_dbs(adv, ros, current):
         rnm = col(ros, "full_name", "player_name", "football_name")
         for _, r in ros.iterrows():
             p = str(g(r, rp, "") or "").upper()
-            i = g(r, rid); n = _norm(g(r, rnm, ""))
-            if i: pos_by_id[str(i)] = p
+            i = g(r, rid); n = _pname(g(r, rnm, ""))
+            if i and str(i) != "nan": pos_by_id[str(i)] = p
             if n: pos_by_name[n] = p
+    for pl in (players or []):
+        k = _pname(pl.get("name"))
+        if k and k not in pos_by_name:
+            pos_by_name[k] = str(pl.get("posDetail") or pl.get("position") or "").upper()
     agg = {}
     for _, r in adv.iterrows():
         try:
@@ -278,19 +290,29 @@ def build_dbs(adv, ros, current):
     out = []
     max_tgt = max((a["tgt"] for a in agg.values()), default=0)
     min_tgt = 30 if max_tgt >= 60 else max(10, max_tgt * 0.4)    # early-season scaling
+    n_cb = n_vol = 0
+    unmatched = []
     for key, a in agg.items():
-        pos = pos_by_id.get(key) or pos_by_name.get(_norm(a["player"])) or ""
-        if pos != "CB": continue
+        pos = pos_by_id.get(key) or pos_by_name.get(_pname(a["player"])) or ""
+        if not pos and len(unmatched) < 5: unmatched.append(a["player"])
+        if pos not in ("CB", "DB"): continue
+        n_cb += 1
         if a["tgt"] < min_tgt: continue
+        n_vol += 1
         rat = _passer_rating(a["cmp"], a["tgt"], a["yds"], a["td"], a["int"])
         if rat is None: continue
         ypt = round(a["yds"] / a["tgt"], 1)
         out.append({"team": a["team"], "player": a["player"], "role": "top",
                     "grade": rat, "tgt": int(a["tgt"]), "cmpPct": round(a["cmp"] / a["tgt"] * 100, 1),
                     "ypt": ypt})
+    n_pool = len(out)
     # clamp corners: elite coverage — low rating allowed, capped at the best 16
     out = [x for x in out if x["grade"] <= 80.0 and x["ypt"] <= 7.5]
     out.sort(key=lambda x: x["grade"])
+    print(f"  dbs sieve: {len(agg)} defenders -> {n_cb} CBs -> {n_vol} vol-qualified "
+          f"-> {n_pool} rated -> {min(len(out),16)} clamp corners (min_tgt {min_tgt:.0f})")
+    if unmatched:
+        print(f"  dbs unmatched-position sample: {unmatched}")
     return out[:16]
 
 # ── pbp → Tuddy Targets red-zone splits (season totals, zone splits, team share %) ──
@@ -539,6 +561,7 @@ def build_players_gamelogs(ps, snap_idx, game_idx, current):
         P = agg.setdefault(_norm(name), {"name": name, "position": pos,
                                          "team": team, "rows": []})
         P["team"] = team; P["position"] = pos
+        P["rawPos"] = str(g(r, pos_c, "")).strip().upper()
         P["rows"].append(row)
         sk = (team, _short(name))
         prev = short_idx.get(sk, "__unset__")
@@ -553,7 +576,7 @@ def build_players_gamelogs(ps, snap_idx, game_idx, current):
         src = cur or [x for x in rows if x["Year"] == str(current - 1)] or rows
         n = len(src)
         p = {"name": P["name"], "team": P["team"], "position": P["position"],
-             "matches": n}
+             "posDetail": P.get("rawPos", P["position"]), "matches": n}
         for k in STAT_KEYS:
             p[k] = r1(sum(x[k] for x in src) / n)
         p["snapPct"] = r1(sum(x["snapPct"] for x in src) / n)
@@ -801,8 +824,7 @@ def run_build(frames, out_dir, seasons, current, password, skip_weather=False):
     players, gamelogs, short_idx = build_players_gamelogs(ps, snap_idx, game_idx, current)
     rz_usage, firsttd, longest = build_pbp_derived(pbp, short_idx)
     redzone = build_redzone(pbp, short_idx, current)
-    dbs = build_dbs(adv, ros, current)
-    print(f"  clamp corners qualified: {len(dbs)}")
+    dbs = build_dbs(adv, ros, current, players)
     for p in players:
         u = rz_usage.get(p["name"])
         if u:
@@ -1049,7 +1071,11 @@ def selftest():
         {"position": "CB", "pfr_id": "CornTo00", "full_name": "Torched Corner"},
         {"position": "S",  "pfr_id": "SafeGy00", "full_name": "Safety Guy"},
     ]
-    dbs_t = build_dbs(pd.DataFrame(adv_rows), pd.DataFrame(ros_rows), 2025)
+    dbs_t = build_dbs(pd.DataFrame(adv_rows), pd.DataFrame(ros_rows), 2025, [])
+    # posDetail fallback: no roster hit, resolved via our own players table
+    dbs_t2 = build_dbs(pd.DataFrame(adv_rows), None, 2025,
+                       [{"name": "Elite Corner", "posDetail": "CB", "position": "DB"}])
+    assert len(dbs_t2) == 1 and dbs_t2[0]["player"] == "Elite Corner"
     assert len(dbs_t) == 1 and dbs_t[0]["player"] == "Elite Corner"          # sieve + position filter
     assert dbs_t[0]["team"] == "GB" and dbs_t[0]["role"] == "top"            # GNB -> GB mapping
     assert dbs_t[0]["tgt"] == 36 and dbs_t[0]["grade"] < 60                  # components aggregated, elite rating
