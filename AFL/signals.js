@@ -209,6 +209,68 @@
     return { collectOU: collectOU, captureOU: captureOU };
   }
 
+  /* ============================================================================
+   * SHARED ODDS LAYER (for the Node capture job)
+   * ----------------------------------------------------------------------------
+   * The browser builds oddsFor() inside index.html's buildOddsIdx(). The capture
+   * job needs the SAME best-price selection AND — critically — the SAME odds-feed
+   * name → game-log name remap (the Lachie/Lachlan fix), or settle can't find the
+   * box score and everything voids. So the remap + a disposals-market oddsFor live
+   * here, and capture uses them. Validated to match the browser's oddsFor output.
+   * ========================================================================== */
+  var _NICK = { lachie:'lachlan',lochie:'lachlan',josh:'joshua',tom:'thomas',tommy:'thomas',nat:'nathan',nate:'nathan',
+    zac:'zachary',zach:'zachary',zak:'zachary',matt:'matthew',mitch:'mitchell',sam:'samuel',harry:'harrison',
+    charlie:'charles',nic:'nicholas',nick:'nicholas',gus:'angus',ollie:'oliver',jake:'jacob',ben:'benjamin',
+    alex:'alexander',will:'william',billy:'william',bill:'william',dan:'daniel',danny:'daniel',jimmy:'james',
+    jim:'james',joe:'joseph',joey:'joseph',max:'maxwell',ed:'edward',eddie:'edward',ted:'edward',toby:'tobias',
+    paddy:'patrick',pat:'patrick',steve:'stephen',cam:'cameron',fred:'frederick',freddy:'frederick',
+    brad:'bradley',lenny:'leonard',len:'leonard' };
+  function _onorm(x){ return (x||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-z ]/g,'').replace(/\s+/g,' ').trim(); }
+  function _ocanon(n){ var p=n.split(' '); if(p.length<2) return n; p[0]=_NICK[p[0]]||p[0]; return p.join(' '); }
+  // players: [{name}]  — the game-log player list to resolve feed names against
+  function oddsNameMap(oddsNames, players){
+    var map={}; if(!players || !players.length){ oddsNames.forEach(function(n){ map[n]=n; }); return map; }
+    var byExact={}, byCanon={}, bySur={};
+    players.forEach(function(p){ var n=_onorm(p.name); byExact[n]=p.name;
+      var c=_ocanon(n); if(!(c in byCanon)) byCanon[c]=p.name;
+      var parts=n.split(' '); if(parts.length>=2){ var sk=parts.slice(1).join(' '); (bySur[sk]=bySur[sk]||[]).push(p.name); } });
+    oddsNames.forEach(function(on){ var n=_onorm(on);
+      if(byExact[n]){ map[on]=byExact[n]; return; }
+      var c=_ocanon(n); if(byCanon[c]){ map[on]=byCanon[c]; return; }
+      var parts=n.split(' ');
+      if(parts.length>=2){ var sk=parts.slice(1).join(' '), cands=bySur[sk]||[];
+        if(cands.length===1 && _onorm(cands[0])[0]===n[0]){ map[on]=cands[0]; return; } }
+      map[on]=on; });
+    return map;
+  }
+
+  // Build an oddsFor(name, market) from an odds.json blob, name-mapped to log names.
+  // Mirrors index.html's oddsFor for two-way markets (disposals): best OVER across books
+  // at the main line, keeping the main UNDER. No book filter (capture the true best).
+  function buildOddsLookup(oddsJson, players){
+    var lines=(oddsJson && oddsJson.lines)||[], books=(oddsJson && oddsJson.books)||[];
+    var names=new Set();
+    lines.forEach(function(o){ if(o.player) names.add(o.player); });
+    books.forEach(function(b){ if(b.player) names.add(b.player); });
+    var nmap=oddsNameMap([].concat.apply([], [Array.from(names)]), players), RS=function(n){ return nmap[n]||n; };
+    var main={}, bookIdx={};
+    lines.forEach(function(o){ var n=RS(o.player); if(!n) return; (main[n]=main[n]||{})[o.market]={line:o.line,over:o.over,under:o.under,book:o.book}; });
+    books.forEach(function(b){ var n=RS(b.player); if(!n) return; var m=(bookIdx[n]=bookIdx[n]||{}); (m[b.market]=m[b.market]||[]).push({line:b.line,over:b.over,under:b.under,book:b.book}); });
+    function oddsFor(player, market){
+      var mn=(main[player]||{})[market];
+      var rows=((bookIdx[player]||{})[market]||[]).filter(function(r){ return r.over!=null; });
+      if(mn && mn.line!=null){
+        var atLine=rows.filter(function(r){ return r.line===mn.line; }).sort(function(x,y){ return y.over-x.over; });
+        var over=mn.over!=null?mn.over:null, book=mn.over!=null?mn.book:null;
+        if(atLine.length && (over==null || atLine[0].over>over)){ over=atLine[0].over; book=atLine[0].book; }
+        if(over==null) return null;
+        return { line:mn.line, over:over, under:(mn.under!=null?mn.under:null), book:book };
+      }
+      return null;   // OU signals only need the two-way main line; alt-only markets (goals) handled in phase 2
+    }
+    return { oddsFor: oddsFor, nameMap: nmap };
+  }
+
   return {
     create: create,
     SIGNAL_DEFS: SIGNAL_DEFS,
@@ -216,6 +278,8 @@
     toSettleable: toSettleable,
     grade: grade,
     pnl: pnl,
-    rollup: rollup
+    rollup: rollup,
+    oddsNameMap: oddsNameMap,
+    buildOddsLookup: buildOddsLookup
   };
 });
