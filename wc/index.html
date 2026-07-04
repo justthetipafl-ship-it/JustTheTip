@@ -713,6 +713,12 @@
   .section-title::before { content: ''; width: 3px; height: 14px; background: var(--accent); }
 
   /* === CREW TILE GRID === */
+  /* Small additions for Tackle Machines / Fouled Again cards (reuse li-card look) */
+  .li-card-hdr { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 2px; }
+  .li-pos { font-family: var(--font-mono); font-size: 10px; color: var(--text-3); padding: 1px 6px; background: var(--surface-2); border-radius: 3px; }
+  .li-team { font-size: 11px; color: var(--text-2); margin-bottom: 6px; }
+  .li-stat-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 4px 0; }
+  .li-hits { font-family: var(--font-mono); font-size: 12px; color: var(--accent); font-weight: 700; }
   .crew-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
   .crew-tile {
     background: var(--surface); border: 1px solid var(--border); border-radius: 6px;
@@ -5367,6 +5373,10 @@
     <i class="ti ti-ball-football" aria-hidden="true"></i>
     Focused Fixtures
   </button>
+  <button class="tab" data-tab="crew">
+    <i class="ti ti-users-group" aria-hidden="true"></i>
+    Degen Crew
+  </button>
   <button class="tab" data-tab="tournament">
     <i class="ti ti-trophy" aria-hidden="true"></i>
     Tournament
@@ -5465,6 +5475,18 @@
 </main>
 
 <!-- ============== PAGE: CREW ============== -->
+<!-- ============== PAGE: DEGEN CREW ============== -->
+<main id="page-crew" class="page" style="display: none;">
+  <div id="crew-tiles-view">
+    <div class="page-header">
+      <div class="page-title">Degen Crew</div>
+      <div class="page-sub">SLATE-WIDE SIGNALS — TAP A TILE</div>
+    </div>
+    <div class="crew-grid" id="crew-tiles-grid"><!-- tiles injected by renderCrewTiles() --></div>
+  </div>
+  <div id="crew-tab-view" style="display:none"></div>
+</main>
+
 <main id="page-tournament" class="page" style="display: none;">
   <div class="page-header">
     <div class="page-title">TOURNAMENT</div>
@@ -5779,6 +5801,8 @@ const CREW_TABS = {
   'corner-storm':  { name: 'CORNER STORM',  icon: 'ti-flag-3',              sub: 'Match corner totals' },
   'mismatch-alert':{ name: 'MISMATCH ALERT',icon: 'ti-bolt',                sub: 'Attacker vs leaky defence' },
   'brick-wall':    { name: 'BRICK WALL',    icon: 'ti-shield',              sub: 'Goalkeepers in line for saves' },
+  'tackle-machines': { name: 'TACKLE MACHINES', icon: 'ti-shield-half',     sub: 'Defensive volume — tackles O/U' },
+  'fouled-again':  { name: 'FOULED AGAIN',  icon: 'ti-hand-stop',           sub: 'Foul magnets — drawn fouls O/U' },
   'golden-boot':   { name: 'GOLDEN BOOT',   icon: 'ti-shoe',                sub: 'Live tournament scoring race' },
   'form-alerts':   { name: 'FORM ALERTS',   icon: 'ti-temperature-celsius', sub: 'Hot streaks and cold spells' },
 };
@@ -5985,11 +6009,29 @@ document.querySelectorAll('.tabnav .tab').forEach(btn => {
     state.view.tab = tab;
     document.querySelectorAll('.tabnav .tab').forEach(t => t.classList.toggle('active', t.dataset.tab === tab));
     document.getElementById('page-fixtures').style.display = (tab === 'fixtures') ? 'block' : 'none';
+    document.getElementById('page-crew').style.display = (tab === 'crew') ? 'block' : 'none';
     document.getElementById('page-tournament').style.display = (tab === 'tournament') ? 'block' : 'none';
     // Lazy-render Tournament content the first time it's opened (data is heavy)
     if (tab === 'tournament') renderTournamentPage();
+    if (tab === 'crew') renderCrewTiles();
   });
 });
+
+// Build the Degen Crew tile grid from CREW_TABS. Re-renders on each visit
+// (cheap — 15 tiles) so any new signals registered in CREW_TABS show up
+// without extra wiring.
+function renderCrewTiles() {
+  const grid = document.getElementById('crew-tiles-grid');
+  if (!grid) return;
+  grid.innerHTML = Object.keys(CREW_TABS).map(key => {
+    const t = CREW_TABS[key];
+    return '<div class="crew-tile" data-crew="' + key + '" onclick="openCrewTab(\'' + key + '\')">' +
+      '<div class="crew-tile-icon"><i class="ti ' + t.icon + '" aria-hidden="true"></i></div>' +
+      '<div class="crew-tile-name">' + t.name + '</div>' +
+      '<div class="crew-tile-sub">' + t.sub + '</div>' +
+    '</div>';
+  }).join('');
+}
 
 // ============================================================
 // FIXTURES VIEW — picker + selected detail
@@ -17924,6 +17966,8 @@ function renderCrewTab(crew) {
     'mismatch-alert': renderCrewMismatchAlert,
     'penalty-kings':  renderCrewPenaltyKings,
     'brick-wall':     renderCrewBrickWall,
+    'tackle-machines': renderCrewTackleMachines,
+    'fouled-again':   renderCrewFouledAgain,
     'golden-boot':    renderCrewGoldenBoot,
     'form-alerts':    renderCrewFormAlerts,
   };
@@ -17989,8 +18033,18 @@ function renderCrewGoalsGalore(scope) {
   const metaCount = projections.length + ' / ' + fixtures.length + ' projected';
   document.getElementById('crew-filter-meta') && (document.getElementById('crew-filter-meta').textContent = metaCount);
 
+  // Knockout context — elimination games trend tighter (cagey openings,
+  // teams protect against conceding first). Historical WC knockout goal
+  // averages run ~0.3 below group stage. Surface as a note rather than
+  // silently adjusting the projection.
+  const koGoalsBanner = fixtures.some(f => isKnockoutStage(f.round))
+    ? '<div style="font-family:var(--font-mono);font-size:10px;color:#ffc107;letter-spacing:0.5px;padding:8px 12px;background:rgba(255,193,7,.08);border:1px solid rgba(255,193,7,.3);border-radius:6px;margin-bottom:12px;">' +
+      '<i class="ti ti-alert-triangle" aria-hidden="true"></i> KNOCKOUT CONTEXT — elimination games historically average ~0.3 fewer goals than group stage (90-min markets exclude ET). Treat projections here as ceilings, not midpoints.' +
+      '</div>'
+    : '';
+
   // Build the split view
-  let html = '<div class="crew-split">';
+  let html = koGoalsBanner + '<div class="crew-split">';
 
   // === LEFT: Goals Galore ===
   html += '<div class="crew-split-col">' +
@@ -18592,14 +18646,57 @@ function findLockedInCandidates(scopeTeamIds, scopeFixtures) {
         stat: m.key, statName: m.name, line, hits,
         last5Vals, totalApps: p.rows.length, recentAvg: avg,
         nextOpponent,
+        wcForm: _wcTournamentForm(p.rows, r => statRow(r, m.key), line),
       });
     });
   });
 
-  // Sort: hits desc, then total apps desc, then line desc (higher line = more impressive)
-  results.sort((a, b) => (b.hits - a.hits) || (b.totalApps - a.totalApps) || (b.line - a.line));
+  // Sort: WC-tournament confirmation is the strongest tell mid-tournament —
+  // a 5/5 qualifier who's 0/3 at the WC is a trap; a 4/5 who's 3/3 at the WC
+  // is the real play. Composite score = recent hits + WC-form weight (−2..+2).
+  results.sort((a, b) => {
+    const sa = a.hits + _wcFormWeight(a.wcForm);
+    const sb = b.hits + _wcFormWeight(b.wcForm);
+    return (sb - sa) || (b.totalApps - a.totalApps) || (b.line - a.line);
+  });
 
   return _filterCandidatesByEligibility(results, scopeFixtures);
+}
+
+// ============================================================
+// WC TOURNAMENT FORM — confirmation layer for line-based signals
+// ============================================================
+// A player can qualify for Locked In / Tackle Machines / etc. on the back of
+// pre-tournament internationals while being ice-cold at the actual World Cup.
+// This helper measures form at THIS tournament only (all international rows
+// dated on/after the opening match are WC 2026 games) so finders can weight
+// tournament reality above warm-up form, and cards can badge it.
+const WC_2026_START = '2026-06-11';
+
+function _wcTournamentForm(rows, valFn, line) {
+  if (!rows || !rows.length || line == null) return null;
+  const wcRows = rows.filter(r => (r.date || '') >= WC_2026_START);
+  if (!wcRows.length) return null;
+  const hits = wcRows.filter(r => (valFn(r) || 0) >= line).length;
+  return { games: wcRows.length, hits, rate: hits / wcRows.length };
+}
+
+// Sort weight: rewards confirmed-at-WC candidates, punishes cold-at-WC traps.
+// Neutral (0) when fewer than 2 WC games — one match proves nothing.
+function _wcFormWeight(wcForm) {
+  if (!wcForm || wcForm.games < 2) return 0;
+  return (wcForm.rate - 0.5) * 4;   // range −2 .. +2 "hit-equivalents"
+}
+
+// Compact badge for candidate cards. Green = perfect at WC, amber = mixed,
+// red = 0-fer (trap warning).
+function _wcFormPill(wcForm) {
+  if (!wcForm) return '';
+  const cls = wcForm.hits === wcForm.games ? 'hit' : wcForm.hits === 0 ? 'miss' : '';
+  const col = wcForm.hits === wcForm.games ? 'var(--accent)' : wcForm.hits === 0 ? '#ff5252' : '#ffc107';
+  return '<span style="font-family:var(--font-mono);font-size:9px;font-weight:700;letter-spacing:0.5px;' +
+    'padding:2px 6px;border-radius:3px;border:1px solid ' + col + ';color:' + col + ';margin-left:6px;" ' +
+    'title="Hits at this line in WC 2026 tournament games">WC ' + wcForm.hits + '/' + wcForm.games + '</span>';
 }
 
 // Pick the highest line in the ladder that the avg comfortably clears
@@ -18625,7 +18722,8 @@ function renderLockedInCard(c) {
   const strength = c.hits >= 5 ? 'STRONG' : c.hits >= 4 ? 'MEDIUM' : 'LEAN';
   const lineLabel = c.stat === 'goals' ? 'ATG' : 'OVER ' + c.line + ' ' + c.statName;
   const strengthPill = '<span class="conf-pill ' + strength.toLowerCase() +
-    '" title="' + c.hits + '/5 hits at this line">' + strength + ' ' + lineLabel + '</span>';
+    '" title="' + c.hits + '/5 hits at this line">' + strength + ' ' + lineLabel + '</span>' +
+    _wcFormPill(c.wcForm);
 
   const oppContext = c.nextOpponent && ['F', 'M', 'D'].includes(c.position)
     ? getOppContextTag(c.nextOpponent.teamId, c.position)
@@ -18693,6 +18791,16 @@ function renderCrewSpamSquare(scope) {
     return '<div class="empty"><div class="ico"><i class="ti ti-calendar-off" aria-hidden="true"></i></div>No fixtures in this scope</div>';
   }
 
+  // Knockout context — WC knockout matches historically run ~20% more cards
+  // than group games (stakes + desperation + time-wasting). Surface the note
+  // so subscribers weight overs slightly up and unders slightly down.
+  const hasKnockout = fixtures.some(f => isKnockoutStage(f.round));
+  const koBanner = hasKnockout
+    ? '<div style="font-family:var(--font-mono);font-size:10px;color:#ffc107;letter-spacing:0.5px;padding:8px 12px;background:rgba(255,193,7,.08);border:1px solid rgba(255,193,7,.3);border-radius:6px;margin-bottom:12px;">' +
+      '<i class="ti ti-alert-triangle" aria-hidden="true"></i> KNOCKOUT CONTEXT — elimination games historically run ~20% more cards than group stage. Lean overs, fade unders at the margin.' +
+      '</div>'
+    : '';
+
   const projections = [];
   const noData = [];
   fixtures.forEach(f => {
@@ -18717,7 +18825,7 @@ function renderCrewSpamSquare(scope) {
   document.getElementById('crew-filter-meta') &&
     (document.getElementById('crew-filter-meta').textContent = projections.length + ' / ' + fixtures.length + ' projected');
 
-  let html = '<div class="crew-split">';
+  let html = koBanner + '<div class="crew-split">';
 
   // LEFT — Spam Square
   html += '<div class="crew-split-col">' +
@@ -21313,7 +21421,14 @@ function openFixtureFromCrew(matchId) {
   document.getElementById('page-fixtures').style.display = 'block';
   const tp = document.getElementById('page-tournament');
   if (tp) tp.style.display = 'none';
+  const cp = document.getElementById('page-crew');
+  if (cp) cp.style.display = 'none';
+  // Reset crew sub-view so returning to the Crew tab lands on the tiles
   state.view.crewSubTab = null;
+  const ctv = document.getElementById('crew-tab-view');
+  if (ctv) { ctv.style.display = 'none'; ctv.innerHTML = ''; }
+  const cti = document.getElementById('crew-tiles-view');
+  if (cti) cti.style.display = 'block';
   // Open the fixture
   openFixture(matchId);
 }
@@ -21323,6 +21438,203 @@ function closeCrewTab() {
   document.getElementById('crew-tab-view').style.display = 'none';
   document.getElementById('crew-tab-view').innerHTML = '';
   document.getElementById('crew-tiles-view').style.display = 'block';
+}
+
+// ============================================================
+// CREW TAB — TACKLE MACHINES (defensive volume: tackles + interceptions)
+// Markets: player tackles O/U — offered on most books for WC knockouts.
+// Qualification: line from ladder on tackle avg, 5/8 recent hits, and the
+// player must be a D or M (attackers rarely have a tackles market).
+// ============================================================
+function findTackleMachineCandidates(scopeTeamIds, scopeFixtures) {
+  const logs = state.data.logs;
+  if (!logs) return [];
+
+  const players = {};
+  applyDataFilter(logs.rows).forEach(r => {
+    if (!scopeTeamIds.has(r.teamId)) return;
+    if (!hasMeaningfulMinutes(r)) return;
+    if (r.position !== 'D' && r.position !== 'M') return;
+    if (!players[r.playerId]) {
+      players[r.playerId] = {
+        playerId: r.playerId, name: r.playerName, team: r.team, teamId: r.teamId,
+        position: r.position, rows: [],
+      };
+    }
+    players[r.playerId].rows.push(r);
+  });
+
+  const TACKLES_LADDER = [1.5, 2.5, 3.5, 4.5];
+  const MIN_APPS = _minAppsForFilter(8);
+  const results = [];
+
+  Object.values(players).forEach(p => {
+    if (p.rows.length < MIN_APPS) return;
+    p.rows.sort((a, b) => b.date.localeCompare(a.date));
+    const recent = p.rows.slice(0, 8);
+    const n = recent.length;
+
+    const tackleVals = recent.map(r => (r.tackles || 0));
+    const tacklesAvg = tackleVals.reduce((s, v) => s + v, 0) / n;
+    // Combined defensive actions (tackles + interceptions) as a secondary read
+    const defActionsAvg = recent.reduce((s, r) => s + (r.tackles || 0) + (r.interceptions || 0), 0) / n;
+
+    const line = roundLineFromLadder(tacklesAvg, TACKLES_LADDER);
+    if (line == null || line < 1.5) return;
+    const hits = recent.filter(r => (r.tackles || 0) >= line).length;
+    if (hits < 5) return;
+
+    let nextOpponent = null;
+    scopeFixtures.forEach(f => {
+      if (nextOpponent) return;
+      if (f.homeTeamId === p.teamId) nextOpponent = { name: f.awayTeam, side: 'vs', matchId: f.matchId };
+      else if (f.awayTeamId === p.teamId) nextOpponent = { name: f.homeTeam, side: 'at', matchId: f.matchId };
+    });
+    if (!nextOpponent) return;  // matchday tabs only care about slated players
+
+    results.push({
+      playerId: p.playerId, name: p.name, team: p.team, teamId: p.teamId, position: p.position,
+      line, hits, recentN: n, tacklesAvg, defActionsAvg,
+      last8Vals: tackleVals.slice().reverse(),
+      nextOpponent,
+      wcForm: _wcTournamentForm(p.rows, r => r.tackles || 0, line),
+    });
+  });
+
+  results.sort((a, b) => {
+    const sa = a.hits / a.recentN + _wcFormWeight(a.wcForm) / 8;
+    const sb = b.hits / b.recentN + _wcFormWeight(b.wcForm) / 8;
+    return (sb - sa) || (b.tacklesAvg - a.tacklesAvg);
+  });
+  return _filterCandidatesByEligibility(results, scopeFixtures);
+}
+
+function renderCrewTackleMachines(scope) {
+  const matchdayFixtures = filterFixturesByScope(scope);
+  const scopeTeamIds = new Set();
+  matchdayFixtures.forEach(f => { scopeTeamIds.add(f.homeTeamId); scopeTeamIds.add(f.awayTeamId); });
+
+  const candidates = findTackleMachineCandidates(scopeTeamIds, matchdayFixtures);
+  const meta = document.getElementById('crew-filter-meta');
+  if (meta) meta.textContent = candidates.length + ' player' + (candidates.length === 1 ? '' : 's') + ' qualified';
+
+  if (!candidates.length) {
+    return '<div class="empty"><div class="ico"><i class="ti ti-mood-empty" aria-hidden="true"></i></div>' +
+      'No tackle-volume plays for this scope</div>';
+  }
+  return '<div class="li-grid">' + candidates.map(c => {
+    const pct = Math.round(100 * c.hits / c.recentN);
+    return '<div class="li-card" onclick="openFixtureFromCrew(' + c.nextOpponent.matchId + ')">' +
+      '<div class="li-card-hdr">' +
+        '<span class="li-name">' + escapeHtml(c.name) + '</span>' +
+        '<span class="li-pos">' + escapeHtml(c.position) + '</span>' +
+      '</div>' +
+      '<div class="li-team">' + escapeHtml(c.team) + ' <span style="color:var(--text-3)">' +
+        c.nextOpponent.side + ' ' + escapeHtml(c.nextOpponent.name) + '</span></div>' +
+      '<div class="li-stat-row">' +
+        '<span class="li-line">' + c.line + '+ TACKLES' + _wcFormPill(c.wcForm) + '</span>' +
+        '<span class="li-hits">' + c.hits + '/' + c.recentN + ' <span style="color:var(--text-3)">(' + pct + '%)</span></span>' +
+      '</div>' +
+      '<div class="li-meta">avg ' + c.tacklesAvg.toFixed(1) + ' tkl · ' + c.defActionsAvg.toFixed(1) + ' tkl+int</div>' +
+    '</div>';
+  }).join('') + '</div>';
+}
+
+// ============================================================
+// CREW TAB — FOULED AGAIN (fouls-drawn magnets)
+// Markets: player fouls drawn/won O/U. Also a soft signal for opponent
+// cards markets — a foul magnet on the pitch inflates opponent card counts.
+// ============================================================
+function findFouledAgainCandidates(scopeTeamIds, scopeFixtures) {
+  const logs = state.data.logs;
+  if (!logs) return [];
+
+  const players = {};
+  applyDataFilter(logs.rows).forEach(r => {
+    if (!scopeTeamIds.has(r.teamId)) return;
+    if (!hasMeaningfulMinutes(r)) return;
+    if (!players[r.playerId]) {
+      players[r.playerId] = {
+        playerId: r.playerId, name: r.playerName, team: r.team, teamId: r.teamId,
+        position: r.position, rows: [],
+      };
+    }
+    players[r.playerId].rows.push(r);
+  });
+
+  const DRAWN_LADDER = [0.5, 1.5, 2.5, 3.5];
+  const MIN_APPS = _minAppsForFilter(8);
+  const results = [];
+
+  Object.values(players).forEach(p => {
+    if (p.rows.length < MIN_APPS) return;
+    p.rows.sort((a, b) => b.date.localeCompare(a.date));
+    const recent = p.rows.slice(0, 8);
+    const n = recent.length;
+
+    const drawnVals = recent.map(r => (r.foulsDrawn || 0));
+    const drawnAvg = drawnVals.reduce((s, v) => s + v, 0) / n;
+
+    const line = roundLineFromLadder(drawnAvg, DRAWN_LADDER);
+    // 1.5+ line minimum — the 0.5 line market is junk odds
+    if (line == null || line < 1.5) return;
+    const hits = recent.filter(r => (r.foulsDrawn || 0) >= line).length;
+    if (hits < 5) return;
+
+    let nextOpponent = null;
+    scopeFixtures.forEach(f => {
+      if (nextOpponent) return;
+      if (f.homeTeamId === p.teamId) nextOpponent = { name: f.awayTeam, side: 'vs', matchId: f.matchId };
+      else if (f.awayTeamId === p.teamId) nextOpponent = { name: f.homeTeam, side: 'at', matchId: f.matchId };
+    });
+    if (!nextOpponent) return;
+
+    results.push({
+      playerId: p.playerId, name: p.name, team: p.team, teamId: p.teamId, position: p.position,
+      line, hits, recentN: n, drawnAvg,
+      last8Vals: drawnVals.slice().reverse(),
+      nextOpponent,
+      wcForm: _wcTournamentForm(p.rows, r => r.foulsDrawn || 0, line),
+    });
+  });
+
+  results.sort((a, b) => {
+    const sa = a.hits / a.recentN + _wcFormWeight(a.wcForm) / 8;
+    const sb = b.hits / b.recentN + _wcFormWeight(b.wcForm) / 8;
+    return (sb - sa) || (b.drawnAvg - a.drawnAvg);
+  });
+  return _filterCandidatesByEligibility(results, scopeFixtures);
+}
+
+function renderCrewFouledAgain(scope) {
+  const matchdayFixtures = filterFixturesByScope(scope);
+  const scopeTeamIds = new Set();
+  matchdayFixtures.forEach(f => { scopeTeamIds.add(f.homeTeamId); scopeTeamIds.add(f.awayTeamId); });
+
+  const candidates = findFouledAgainCandidates(scopeTeamIds, matchdayFixtures);
+  const meta = document.getElementById('crew-filter-meta');
+  if (meta) meta.textContent = candidates.length + ' player' + (candidates.length === 1 ? '' : 's') + ' qualified';
+
+  if (!candidates.length) {
+    return '<div class="empty"><div class="ico"><i class="ti ti-mood-empty" aria-hidden="true"></i></div>' +
+      'No foul-magnet plays for this scope</div>';
+  }
+  return '<div class="li-grid">' + candidates.map(c => {
+    const pct = Math.round(100 * c.hits / c.recentN);
+    return '<div class="li-card" onclick="openFixtureFromCrew(' + c.nextOpponent.matchId + ')">' +
+      '<div class="li-card-hdr">' +
+        '<span class="li-name">' + escapeHtml(c.name) + '</span>' +
+        '<span class="li-pos">' + escapeHtml(c.position) + '</span>' +
+      '</div>' +
+      '<div class="li-team">' + escapeHtml(c.team) + ' <span style="color:var(--text-3)">' +
+        c.nextOpponent.side + ' ' + escapeHtml(c.nextOpponent.name) + '</span></div>' +
+      '<div class="li-stat-row">' +
+        '<span class="li-line">' + c.line + '+ FOULS DRAWN' + _wcFormPill(c.wcForm) + '</span>' +
+        '<span class="li-hits">' + c.hits + '/' + c.recentN + ' <span style="color:var(--text-3)">(' + pct + '%)</span></span>' +
+      '</div>' +
+      '<div class="li-meta">avg ' + c.drawnAvg.toFixed(1) + ' drawn/game · soft boost to opp cards O</div>' +
+    '</div>';
+  }).join('') + '</div>';
 }
 
 // ============================================================
