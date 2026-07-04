@@ -6041,33 +6041,11 @@ function renderFixturesView() {
   const picker = document.getElementById('fixture-picker');
   const fixtures = state.data.fixtures.fixtures || [];
 
-  // Sort by date
-  const sorted = fixtures.slice().sort((a, b) => a.timestamp - b.timestamp);
-
-  // Filter scope: matchday = today's matches; tournament = all
-  const now = Math.floor(Date.now() / 1000);
-  const dayStart = new Date(); dayStart.setHours(0,0,0,0);
-  const dayEnd = new Date(); dayEnd.setHours(23,59,59,999);
-  const startTs = Math.floor(dayStart.getTime() / 1000);
-  const endTs = Math.floor(dayEnd.getTime() / 1000);
-
-  let display;
-  if (state.view.scope === 'matchday') {
-    display = sorted.filter(f => f.timestamp >= startTs && f.timestamp <= endTs);
-    if (display.length === 0) {
-      // No matches today — find next match day
-      const next = sorted.find(f => f.timestamp > now);
-      if (next) {
-        const nextDay = new Date(next.timestamp * 1000);
-        nextDay.setHours(0,0,0,0);
-        const nextStart = Math.floor(nextDay.getTime() / 1000);
-        const nextEnd = nextStart + 86400;
-        display = sorted.filter(f => f.timestamp >= nextStart && f.timestamp < nextEnd);
-      }
-    }
-  } else {
-    display = sorted;
-  }
+  // Scope filtering is delegated to the shared filterFixturesByScope() —
+  // single source of truth for the "Upcoming" rolling 24h window and its
+  // fall-forward behaviour. (This block previously carried its own duplicate
+  // calendar-day logic, which is why scope changes here kept lagging.)
+  let display = filterFixturesByScope(state.view.scope);
 
   // Hide-completed filter — drops fixtures with a finished status flag.
   // Applied after the scope filter so the count reflects what the user sees.
