@@ -408,7 +408,8 @@ def build_lineups(logs, cfg, current):
             games=("MatchId","nunique"))
         g = g.sort_values(["starterPct","minAvg"], ascending=False)
         for depth, (_, r) in enumerate(g.iterrows(), 1):
-            if (r["minAvg"] or 0) < 5:           # deep bench noise
+            mv = r["minAvg"]
+            if mv != mv or (mv or 0) < 5:         # NaN (all-null minutes) or deep bench noise
                 continue
             rows.append(dict(team=team, player=r["Player"], playerId=str(r["PlayerId"]),
                              position=r["pos"], depth=depth,
@@ -442,10 +443,19 @@ def fetch_injuries(lg):
 # ============================================================================
 # Writing
 # ============================================================================
+def _clean(o):
+    """NaN/Inf -> None recursively; json.dump(allow_nan=False) then guarantees validity."""
+    if isinstance(o, float):
+        return o if o == o and abs(o) != float("inf") else None
+    if isinstance(o, dict):  return {k: _clean(v) for k, v in o.items()}
+    if isinstance(o, list):  return [_clean(v) for v in o]
+    return o
+
+
 def wjson(outdir, name, obj):
     p = os.path.join(outdir, name)
     with open(p, "w") as f:
-        json.dump(obj, f, separators=(",", ":"))
+        json.dump(_clean(obj), f, separators=(",", ":"), allow_nan=False)
     print(f"  wrote {name:16s} {os.path.getsize(p):>10,} bytes")
 
 
@@ -633,6 +643,10 @@ def selftest():
     assert any(l["player"] == "Alpha One" and l["starterPct"] == 1.0 for l in lineups)
     glogs = prune_gamelogs(logs)
     assert glogs[0]["home"] in (0, 1) and "pra" in glogs[0]
+    for name, obj in [("players", players), ("dvp", dvp), ("teams", teams),
+                      ("fixture", fixture), ("results", results),
+                      ("lineups", lineups), ("gamelogs", glogs)]:
+        json.loads(json.dumps(_clean(obj), allow_nan=False))   # raises on NaN leak
     print("selftest: ALL PASS ✔")
 
 
