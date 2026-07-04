@@ -672,7 +672,8 @@
   @media (max-width:560px){.rot-cols{grid-template-columns:1fr}}
   </style>
 
-  <!-- scoring.js + signals.js arrive in build C; the shell guards on window.JTTScoring -->
+  <script src="scoring.js"></script>
+  <!-- signals.js (ledger module) arrives in build F; the shell guards on window.JTTSignals -->
   <script>
   "use strict";
   /* ===================== CONSTANTS ===================== */
@@ -685,9 +686,11 @@
   /* League config — the ONLY place NBA and WNBA differ in the shell. */
   const LEAGUE_CFG = {
     nba:  { label:'NBA',  gameMin:48, perLabel:'per-48', sportKey:'basketball_nba',
-            dataDir:'data/nba/',  cdn:'https://a.espncdn.com/i/teamlogos/nba/500/'  },
+            dataDir:'data/nba/',  cdn:'https://a.espncdn.com/i/teamlogos/nba/500/',
+            minutesFloor:15, minGP:10 },
     wnba: { label:'WNBA', gameMin:40, perLabel:'per-40', sportKey:'basketball_wnba',
-            dataDir:'data/wnba/', cdn:'https://a.espncdn.com/i/teamlogos/wnba/500/' }
+            dataDir:'data/wnba/', cdn:'https://a.espncdn.com/i/teamlogos/wnba/500/',
+            minutesFloor:12, minGP:5 }
   };
   let LG = 'nba';
   const CFG = () => LEAGUE_CFG[LG];
@@ -888,7 +891,7 @@
         teamsForm:d.teams_form||d.teams||[], dvp:d.dvp||[],
         logsByName:state.idx.logsByName,
         currentSeason:(d.meta&&d.meta.currentSeason)||String(new Date().getFullYear()),
-        league:LG, gameMin:CFG().gameMin });
+        league:LG, gameMin:CFG().gameMin, minutesFloor:CFG().minutesFloor });
     }
   }
   function _normName(x){ return (x||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-z ]/g,'').replace(/\s+/g,' ').trim(); }
@@ -1198,14 +1201,31 @@
     _pmName=name;
     const modes=[['season','Season'],['l5','L5'],['l10','L10'],['h2h','vs Next']];
     const chips='<div class="pos-pills" style="margin:8px 0">'+modes.map(([k,l])=>'<button class="dfilt-chip'+(_pmMode===k?' active':'')+'" onclick="_pmMode=\''+k+'\';openPlayer(\''+esc(name).replace(/'/g,"\\'")+'\')">'+l+'</button>').join('')+'</div>';
+    const S=window.JTTScoring;
+    const opp=nextOpp(p.team);
     let grid='<div class="clash-col">';
     BET_STATS.forEach(([k,l])=>{
       const v=pmAvg(name,k,_pmMode), cv=_volCV(name,k);
-      grid+='<div class="rot-row"><span>'+l+(cv?' <span style="color:'+cv.col+';font-size:10px">'+cv.tag+'</span>':'')+'</span><span><b>'+fmt(v,1)+'</b></span></div>';
+      let chip='';
+      if(S&&opp){
+        const d=S.getDVPPct(opp,S.POS_TO_DVP[p.position]||p.position,k);
+        if(d!=null){ const mu=S.muInfo(d); chip=' <span style="color:'+mu.c+';font-size:10px">'+(d>=0?'+':'')+d.toFixed(0)+'% DVP</span>'; }
+      }
+      grid+='<div class="rot-row"><span>'+l+(cv?' <span style="color:'+cv.col+';font-size:10px">'+cv.tag+'</span>':'')+chip+'</span><span><b>'+fmt(v,1)+'</b></span></div>';
     });
     grid+='</div>';
+    let vsec='';
+    if(S&&opp&&(p.games||0)>=3){
+      const anchor=(p.position==='C'&&(p.rebounds||0)>(p.points||0))?'rebounds':'points';
+      const line=Math.max(0.5,Math.round((p[anchor]||0))-0.5);
+      const vd=S.verdict(p,anchor,line,opp);
+      const facs=S.cmpFactors(p,anchor,line,opp,(BET_STATS.find(x=>x[0]===anchor)||[,anchor])[1]);
+      const TONE={good:'#22c55e',lean:'#86efac',hot:'#22c55e',neutral:'var(--text-3)',warn:'#f97316',bad:'#ef4444',cold:'#ef4444'};
+      vsec='<div class="section-title" style="margin-top:12px">Engine read · '+anchor+' '+line+'+ vs '+esc(opp)+
+        ' <span style="color:'+vd.col+'">'+vd.label+' ('+vd.score.toFixed(1)+')</span></div>'+
+        facs.slice(0,7).map(f=>'<div class="rot-row"><span style="color:'+(TONE[f.tone]||'var(--text-2)')+'">'+esc(f.text)+'</span></div>').join('');
+    }
     const inj=state.idx.injuryByName[_normName(name)];
-    const opp=nextOpp(p.team);
     const bio=[p.pos5||p.position, p.age?p.age+'y':null, p.height||null, p.exp!=null?p.exp+'yr exp':null,
                'GP '+(p.games||0), 'Start '+Math.round((p.starterPct||0)*100)+'%', p.role||null].filter(Boolean);
     document.getElementById('pm-modal').innerHTML=
@@ -1215,7 +1235,7 @@
       (opp?' \u00b7 next: '+esc(opp):'')+'</div></div></div><button class="cmb-close" onclick="_pmClose()">&times;</button></div>'+
       '<div class="pm-bio">'+bio.map(esc).join(' \u00b7 ')+'</div>'+
       (inj?'<div class="pm-bio" style="color:var(--warn)"><i class="ti ti-bandage"></i> '+esc(inj.Status||'')+' \u2014 '+esc(inj.Injury||'')+'</div>':'')+
-      chips+grid+pmBoxScores(name,8);
+      chips+grid+vsec+pmBoxScores(name,8);
     document.getElementById('pm-overlay').classList.add('open');
   };
   window._pmClose=function(){document.getElementById('pm-overlay').classList.remove('open');_pmName=null;_pmMode='season';};
@@ -1228,11 +1248,277 @@
     h+='<div class="crew-grid">'+tiles.map(c=>'<div class="crew-tile" onclick="degenTile(\''+c.k+'\')"><div class="crew-tile-icon"><i class="ti '+c.i+'"></i></div><div class="crew-tile-name">'+c.n+'</div><div class="crew-tile-sub">'+c.d+'</div></div>').join('')+'</div>';
     return h;
   }
-  window.degenTile=function(k){
+  /* ---- engine plumbing ---- */
+  function crewHeader(k){
     const c=CREW.find(x=>x.k===k)||{};
+    return '<button class="back-btn" onclick="_renderApp()"><i class="ti ti-arrow-left"></i> Degen Crew</button>'+
+      '<div class="page-header"><div class="page-title"><i class="ti '+c.i+'"></i> '+c.n+'</div><div class="page-sub">'+c.d+'</div></div>';
+  }
+  function needFixture(k){
+    return crewHeader(k)+emptyState('ti-calendar-off','No upcoming games',
+      'This signal keys off the next slate. '+(LG==='nba'?'It lights up when the 2026-27 schedule lands (auto).':'Check back after the data refresh.'));
+  }
+  function sigCard(title,sub,rows,onclickName){
+    const oc=onclickName?' onclick="openPlayer(\''+esc(onclickName).replace(/'/g,"\\'")+'\')"':'';
+    return '<div class="game-sec"'+oc+' style="cursor:'+(onclickName?'pointer':'default')+'">'+
+      '<div class="gs-title">'+title+(sub?' <span style="color:var(--text-3);font-weight:400;font-size:11px">'+sub+'</span>':'')+'</div>'+
+      rows.map(r=>'<div class="rot-row"><span>'+r[0]+'</span><span>'+r[1]+'</span></div>').join('')+'</div>';
+  }
+  function eligible(){ return (state.idx.players||[]).filter(p=>(p.games||0)>=CFG().minGP&&nextOpp(p.team)); }
+  function pctChip(d){ if(d==null)return ''; const mu=JTTScoring.muInfo(d); return '<span style="color:'+mu.c+'">'+(d>=0?'+':'')+d.toFixed(0)+'%</span>'; }
+
+  /* ---- Slashers / Splashers / Dishers / Boarders:
+     top-10 player for the stat vs bottom-5 (softest) defence for the stat ---- */
+  function specialistEngine(k,statKey,lbl){
+    if(!(state.data.fixture||[]).length) return needFixture(k);
+    const S=JTTScoring;
+    const top=(state.idx.players||[]).filter(p=>(p.games||0)>=CFG().minGP)
+      .sort((a,b)=>(b[statKey]||0)-(a[statKey]||0)).slice(0,10);
+    const cards=[];
+    top.forEach((p,i)=>{
+      const opp=nextOpp(p.team); if(!opp) return;
+      const pos=S.POS_TO_DVP[p.position]||p.position;
+      const ranked=S.dvpRanked(pos,statKey);
+      const ri=ranked.findIndex(r=>r.team===opp);
+      if(ri<0||ri>=5) return;
+      const d=ranked[ri].pct, l5=lastN(p.name,statKey,5);
+      const vd=S.verdict(p,statKey,Math.max(0.5,Math.round(p[statKey]||0)-0.5),opp);
+      cards.push(sigCard(
+        '#'+(i+1)+' '+esc(p.name)+' <span style="color:var(--text-3)">'+esc(p.team)+' v '+esc(opp)+'</span>',
+        '#'+(ri+1)+' softest '+pos+' defence for '+lbl,
+        [['Season '+lbl,'<b>'+fmt(p[statKey],1)+'</b>'],
+         ['Last 5','<b>'+fmt(l5,1)+'</b>'],
+         ['Opp DVP',pctChip(d)],
+         ['Engine','<span style="color:'+vd.col+'">'+vd.label+' ('+vd.score.toFixed(1)+')</span>']],
+        p.name));
+    });
+    return crewHeader(k)+(cards.length?cards.join(''):emptyState('ti-zzz','No hits tonight','None of the top-10 '+lbl+' players face a bottom-5 defence on this slate.'));
+  }
+
+  /* ---- Bunnies / Bogey ---- */
+  function h2hEngine(k,dirUp){
+    if(!(state.data.fixture||[]).length) return needFixture(k);
+    const cards=[];
+    eligible().filter(p=>(p.points||0)>=8).forEach(p=>{
+      const opp=nextOpp(p.team);
+      const vs=(state.idx.logsByName[p.name]||[]).filter(r=>r.Opp===opp&&!r.dnp);
+      if(vs.length<3) return;
+      const h2h=vs.reduce((s2,r)=>s2+(r.points||0),0)/vs.length;
+      const ratio=h2h/(p.points||1);
+      if(dirUp?ratio>=1.15:ratio<=0.85){
+        cards.push({r:Math.abs(ratio-1),html:sigCard(esc(p.name)+' <span style="color:var(--text-3)">'+esc(p.team)+' v '+esc(opp)+'</span>',
+          vs.length+' career meetings',
+          [['Season pts','<b>'+fmt(p.points,1)+'</b>'],
+           ['vs '+esc(opp),'<b>'+fmt(h2h,1)+'</b> <span style="color:'+(dirUp?'#22c55e':'#ef4444')+'">'+(dirUp?'+':'')+((ratio-1)*100).toFixed(0)+'%</span>'],
+           ['Last meeting',fmt((vs[vs.length-1]||{}).points,0)+' pts ('+esc((vs[vs.length-1]||{}).Date||'')+')']],p.name)});
+      }
+    });
+    cards.sort((a,b)=>b.r-a.r);
+    return crewHeader(k)+(cards.length?cards.slice(0,20).map(c=>c.html).join(''):emptyState('ti-zzz','Nothing on this slate','No qualifying H2H histories (min 3 meetings, 15%+ swing).'));
+  }
+
+  /* ---- Streakers ---- */
+  function streakEngine(k){
+    const cards=[];
+    eligible().forEach(p=>{
+      [['points','pts'],['rebounds','reb'],['assists','ast'],['threes','3PM']].forEach(([sk,sl])=>{
+        const avg=p[sk]; if(!avg||avg<(sk==='threes'?1.5:5)) return;
+        const logs=(state.idx.logsByName[p.name]||[]).filter(r=>String(r.Year)===CUR_SEASON()&&!r.dnp);
+        let n=0; for(let i=logs.length-1;i>=0;i--){ if((logs[i][sk]||0)>=avg)n++; else break; }
+        if(n>=4) cards.push({n,html:sigCard(esc(p.name)+' <span style="color:var(--text-3)">'+esc(p.team)+' \u00b7 '+sl+'</span>',
+          'next: '+esc(nextOpp(p.team)||''),
+          [['Streak','<b>'+n+' straight</b> at/above season avg ('+fmt(avg,1)+')'],
+           ['Last 5','<b>'+fmt(lastN(p.name,sk,5),1)+'</b>']],p.name)});
+      });
+    });
+    cards.sort((a,b)=>b.n-a.n);
+    return crewHeader(k)+(cards.length?cards.slice(0,20).map(c=>c.html).join(''):emptyState('ti-zzz','No live streaks','Nobody eligible has 4+ straight above their season average.'));
+  }
+
+  /* ---- Form Alerts (merged rising/cooling, sorted by |swing|) ---- */
+  function formEngine(k){
+    const cards=[];
+    eligible().forEach(p=>{
+      BET_STATS.forEach(([sk,sl])=>{
+        const avg=p[sk]; if(!avg||avg<(sk==='threes'?1.5:(sk==='blocks'||sk==='steals')?1:6)) return;
+        const l5=lastN(p.name,sk,5); if(l5==null) return;
+        const sw=(l5-avg)/avg;
+        if(Math.abs(sw)>=0.2) cards.push({s:Math.abs(sw),html:sigCard(esc(p.name)+' <span style="color:var(--text-3)">'+esc(p.team)+' \u00b7 '+sl+'</span>',
+          sw>0?'RISING':'COOLING',
+          [['Season','<b>'+fmt(avg,1)+'</b>'],
+           ['Last 5','<b>'+fmt(l5,1)+'</b> <span style="color:'+(sw>0?'#22c55e':'#ef4444')+'">'+(sw>0?'+':'')+(sw*100).toFixed(0)+'%</span>']],p.name)});
+      });
+    });
+    cards.sort((a,b)=>b.s-a.s);
+    return crewHeader(k)+(cards.length?cards.slice(0,24).map(c=>c.html).join(''):emptyState('ti-zzz','No big swings','No eligible player is 20%+ off season average over their last 5.'));
+  }
+
+  /* ---- Double Trouble ---- */
+  function ddEngine(k){
+    const cards=[];
+    eligible().forEach(p=>{
+      const pair=[['points',p.points],['rebounds',p.rebounds],['assists',p.assists]]
+        .sort((a,b)=>(b[1]||0)-(a[1]||0)).slice(0,2);
+      if((pair[0][1]||0)<9.5||(pair[1][1]||0)<7.5) return;
+      const logs=(state.idx.logsByName[p.name]||[]).filter(r=>String(r.Year)===CUR_SEASON()&&!r.dnp);
+      if(logs.length<CFG().minGP) return;
+      const dd=logs.filter(r=>[r.points||0,r.rebounds||0,r.assists||0].filter(v=>v>=10).length>=2).length;
+      const rate=dd/logs.length;
+      if(rate<0.35) return;
+      cards.push({rate,html:sigCard(esc(p.name)+' <span style="color:var(--text-3)">'+esc(p.team)+' v '+esc(nextOpp(p.team)||'')+'</span>',
+        pair.map(x=>x[0]).join(' + '),
+        [['DD rate','<b>'+dd+'/'+logs.length+'</b> ('+Math.round(rate*100)+'%)'],
+         [pair[0][0],'<b>'+fmt(pair[0][1],1)+'</b>'],
+         [pair[1][0],'<b>'+fmt(pair[1][1],1)+'</b>']],p.name)});
+    });
+    cards.sort((a,b)=>b.rate-a.rate);
+    return crewHeader(k)+(cards.length?cards.slice(0,20).map(c=>c.html).join(''):emptyState('ti-zzz','No candidates','No eligible player pairs two strong averages with a 35%+ DD rate.'));
+  }
+
+  /* ---- Usage Trend ---- */
+  function usageEngine(k){
+    const cards=[];
+    (state.idx.players||[]).filter(p=>(p.games||0)>=CFG().minGP&&(p.minutes||0)>=CFG().gameMin*0.3).forEach(p=>{
+      const l5=lastN(p.name,'minutes',5); if(l5==null) return;
+      const sw=(l5-p.minutes)/p.minutes;
+      if(Math.abs(sw)>=0.12) cards.push({s:Math.abs(sw),html:sigCard(esc(p.name)+' <span style="color:var(--text-3)">'+esc(p.team)+'</span>',
+        sw>0?'ROLE UP':'ROLE DOWN',
+        [['Season min','<b>'+fmt(p.minutes,1)+'</b>'],
+         ['Last 5 min','<b>'+fmt(l5,1)+'</b> <span style="color:'+(sw>0?'#22c55e':'#ef4444')+'">'+(sw>0?'+':'')+(sw*100).toFixed(0)+'%</span>'],
+         ['FGA / Ast (L5)',fmt(lastN(p.name,'fga',5),1)+' / '+fmt(lastN(p.name,'assists',5),1)]],p.name)});
+    });
+    cards.sort((a,b)=>b.s-a.s);
+    return crewHeader(k)+(cards.length?cards.slice(0,20).map(c=>c.html).join(''):emptyState('ti-zzz','Roles stable','No 12%+ minutes swings among rotation players.'));
+  }
+
+  /* ---- Next Man Up ---- */
+  function nextManEngine(k){
+    const inj=(state.data.injury||[]).filter(r=>/out|doubtful|injur/i.test((r.Status||'')+(r.Injury||'')));
+    if(!inj.length) return crewHeader(k)+emptyState('ti-mood-happy','No flagged absences','Injury feed is clear (or lands with the next data run).');
+    const cards=[];
+    inj.forEach(r=>{
+      const star=state.idx.byName[r.Player]; if(!star||(star.starterPct||0)<0.5) return;
+      const mates=(state.idx.rotByTeam[star.team]||[]).filter(l=>l.player!==r.Player).slice(0,4);
+      cards.push(sigCard(esc(r.Player)+' <span style="color:var(--warn)">'+esc(r.Status||'OUT')+'</span> <span style="color:var(--text-3)">'+esc(star.team)+'</span>',
+        fmt(star.minutes,1)+' min to redistribute',
+        mates.map(m=>{ const l3=lastN(m.player,'minutes',3);
+          return [esc(m.player)+' ('+m.position+')', fmt(m.minAvg,1)+' \u2192 <b>'+fmt(l3,1)+'</b> min (L3)']; })));
+    });
+    return crewHeader(k)+(cards.length?cards.join(''):emptyState('ti-mood-happy','No starter-level absences','Flagged injuries are bench-depth only.'));
+  }
+
+  /* ---- Schedule Spots (B2B detection from results dates) ---- */
+  function lastGameDate(team){
+    const rs=(state.data.results||[]).filter(r=>r.home===team||r.away===team).map(r=>r.date).sort();
+    return rs[rs.length-1]||null;
+  }
+  function spotsEngine(k){
+    const fx=(state.data.fixture||[]).slice().sort((a,b)=>(a.utc<b.utc?-1:1)).slice(0,20);
+    if(!fx.length) return needFixture(k);
+    const cards=[];
+    fx.forEach(g=>{
+      const ts=gameStart(g); if(!ts) return;
+      const day=localDayKey(ts);
+      const b2b=[g.home,g.away].map(t=>{
+        const last=lastGameDate(t); if(!last) return null;
+        const diff=(Date.parse(day)-Date.parse(last))/864e5;
+        return diff<=1.05?t:null;
+      }).filter(Boolean);
+      if(!b2b.length) return;
+      cards.push(sigCard(esc(g.away)+' @ '+esc(g.home)+' <span style="color:var(--text-3)">'+_dayFmt.format(new Date(ts))+'</span>',
+        'back-to-back spot',
+        b2b.map(t=>['<span style="color:#f97316">'+esc(t)+' on a B2B</span>',
+          'fatigue leans: unders '+esc(t)+' \u00b7 pace/overs '+esc(t===g.home?g.away:g.home)])));
+    });
+    return crewHeader(k)+(cards.length?cards.join(''):emptyState('ti-zzz','No B2Bs on the slate','Every team on this slate had a rest day.'));
+  }
+
+  /* ---- Pace Race ---- */
+  function paceEngine(k){
+    const fx=(state.data.fixture||[]).slice().sort((a,b)=>(a.utc<b.utc?-1:1)).slice(0,20);
+    if(!fx.length) return needFixture(k);
+    const teams=(state.data.teams||[]).slice().sort((a,b)=>(b.pace||0)-(a.pace||0));
+    if(!teams.length) return crewHeader(k)+emptyState('ti-zzz','No team data','');
+    const q=Math.max(4,Math.round(teams.length*0.27));
+    const fast=new Set(teams.slice(0,q).map(t=>t.team)), slow=new Set(teams.slice(-q).map(t=>t.team));
+    const paceOf=t=>{const x=(state.data.teams||[]).find(y=>y.team===t);return x?x.pace:null;};
+    const cards=[];
+    fx.forEach(g=>{
+      const up=fast.has(g.home)&&fast.has(g.away), down=slow.has(g.home)&&slow.has(g.away);
+      if(!up&&!down) return;
+      cards.push(sigCard(esc(g.away)+' @ '+esc(g.home),
+        up?'<span style="color:#22c55e">PACE-UP \u00b7 overs environment</span>':'<span style="color:#ef4444">SLOG \u00b7 unders environment</span>',
+        [[esc(g.away)+' pace','<b>'+fmt(paceOf(g.away),1)+'</b>'],
+         [esc(g.home)+' pace','<b>'+fmt(paceOf(g.home),1)+'</b>']]));
+    });
+    return crewHeader(k)+(cards.length?cards.join(''):emptyState('ti-zzz','No pace extremes','No game pairs two top- or bottom-quartile pace teams.'));
+  }
+
+  /* ---- Garbage Time (net-rating proxy until live spreads land) ---- */
+  function blowoutEngine(k){
+    const fx=(state.data.fixture||[]).slice().sort((a,b)=>(a.utc<b.utc?-1:1)).slice(0,20);
+    if(!fx.length) return needFixture(k);
+    const net=t=>{const x=(state.data.teams||[]).find(y=>y.team===t);return x?(x.points||0)-(x.points_a||0):null;};
+    const cards=[];
+    fx.forEach(g=>{
+      const nh=net(g.home), na=net(g.away); if(nh==null||na==null) return;
+      const gap=Math.abs(nh-na);
+      if(gap<8) return;
+      const fav=nh>na?g.home:g.away;
+      cards.push({gap,html:sigCard(esc(g.away)+' @ '+esc(g.home),
+        'net-rating gap '+gap.toFixed(1),
+        [['Favourite','<b>'+esc(fav)+'</b> (net '+fmt(Math.max(nh,na),1)+' v '+fmt(Math.min(nh,na),1)+')'],
+         ['Angle','starter-minutes risk \u2014 lean unders on '+esc(fav)+' stars, bench overs']])});
+    });
+    cards.sort((a,b)=>b.gap-a.gap);
+    return crewHeader(k)+(cards.length?cards.map(c=>c.html).join(''):emptyState('ti-zzz','No mismatches','No 8+ net-rating gaps. (Sharpens to live spreads in build D.)'));
+  }
+
+  /* ---- Playoff Push ---- */
+  function pushEngine(k){
+    const cs=CUR_SEASON();
+    const rec={};
+    (state.data.results||[]).forEach(r=>{
+      if(String(r.season)!==cs||r.hs==null) return;
+      rec[r.home]=rec[r.home]||{w:0,l:0}; rec[r.away]=rec[r.away]||{w:0,l:0};
+      if(r.hs>r.as){rec[r.home].w++;rec[r.away].l++;} else if(r.as>r.hs){rec[r.away].w++;rec[r.home].l++;}
+    });
+    const confOf=t=>{const x=(state.data.teams||[]).find(y=>y.team===t);return x?x.conference:'?';};
+    const rows=Object.entries(rec).map(([t,r])=>({t,conf:confOf(t),w:r.w,l:r.l,pct:r.w/((r.w+r.l)||1)}));
+    if(!rows.length) return crewHeader(k)+emptyState('ti-zzz','No results yet','Standings build as the season plays.');
+    const CUT=LG==='wnba'?8:10;
+    let h='';
+    ['East','West'].forEach(conf=>{
+      const cr=rows.filter(x=>x.conf===conf).sort((a,b)=>b.pct-a.pct);
+      if(!cr.length) return;
+      h+='<div class="game-sec"><div class="gs-title">'+conf+'</div>'+cr.map((x,i)=>{
+        const seed=i+1, press=seed>=CUT-2&&seed<=CUT+2;
+        return '<div class="rot-row"><span>'+seed+'. '+teamLogo(x.t,18)+' '+esc(x.t)+(press?' <span style="color:#f97316">PRESSURE</span>':seed<=3?' <span style="color:#22c55e">cruising</span>':'')+'</span><span>'+x.w+'\u2013'+x.l+' ('+(x.pct*100).toFixed(0)+'%)</span></div>';}).join('')+'</div>';
+    });
+    return crewHeader(k)+'<div class="page-sub" style="margin-bottom:10px">Teams within two seeds of the line play desperate \u2014 pace up, stars carry heavy minutes. Cruising teams rest.</div>'+h;
+  }
+
+  window.degenTile=function(k){
     const p=document.getElementById('page-content');
-    p.innerHTML='<button class="back-btn" onclick="_renderApp()"><i class="ti ti-arrow-left"></i> Degen Crew</button>'+
-      emptyState(c.i||'ti-flame', c.n||'Signal', 'This engine ships in the scoring build. The tile is wired \u2014 the maths is next.');
+    let html;
+    if(k==='slash')      html=specialistEngine(k,'points','points');
+    else if(k==='splash')html=specialistEngine(k,'threes','threes');
+    else if(k==='dish')  html=specialistEngine(k,'assists','assists');
+    else if(k==='board') html=specialistEngine(k,'rebounds','rebounds');
+    else if(k==='bunnies')html=h2hEngine(k,true);
+    else if(k==='bogey') html=h2hEngine(k,false);
+    else if(k==='streak')html=streakEngine(k);
+    else if(k==='form')  html=formEngine(k);
+    else if(k==='dd')    html=ddEngine(k);
+    else if(k==='usage') html=usageEngine(k);
+    else if(k==='next')  html=nextManEngine(k);
+    else if(k==='spots') html=spotsEngine(k);
+    else if(k==='pace')  html=paceEngine(k);
+    else if(k==='blowout')html=blowoutEngine(k);
+    else if(k==='push')  html=pushEngine(k);
+    else if(k==='ledger')html=crewHeader(k)+emptyState('ti-notebook','Capture starts in build F','signals.js + the capture/settle crons wire the ledger next. Grading rules are locked: DNP\u2192void, captured line only, flat 1u.');
+    else html=crewHeader(k)+emptyState('ti-flame','Coming with the odds feed','This engine needs live prices (build D).');
+    p.innerHTML=html;
     window.scrollTo({top:0});
   };
 
