@@ -1,0 +1,57 @@
+name: AFL signal capture (pre-slate ledger freeze)
+
+# Freezes exactly which signals fired for the upcoming round, at what line/price,
+# BEFORE the games — the only honest moment to snapshot a live-recomputed model.
+# Runs a few hours before typical first-bounce windows on match days, and on demand.
+# Idempotent: re-running overwrites the same <season>-R<round>.json.
+
+on:
+  schedule:
+    # AEST first bounces are ~1:45pm (Sat) / ~7:40pm etc. These UTC times sit ~2-4h
+    # before the earliest games across Thu-Sun. Extra ticks are harmless (idempotent).
+    - cron: "0 1  * * 5,6,0"   # ~11:00am AEST Fri/Sat/Sun
+    - cron: "0 3  * * 5,6,0"   # ~1:00pm  AEST Fri/Sat/Sun
+    - cron: "0 6  * * 4,5,6,0" # ~4:00pm  AEST Thu-Sun (twilight/night games)
+  workflow_dispatch:
+    inputs:
+      round:
+        description: "Override round (defaults to meta.json)"
+        required: false
+      odds_url:
+        description: "Odds source URL (defaults to the live Worker)"
+        required: false
+
+jobs:
+  capture:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Capture fired signals (frozen pre-slate)
+        env:
+          # The live Worker is the freshest odds source; falls back to the committed snapshot.
+          ODDS_URL: ${{ github.event.inputs.odds_url || 'https://jtt-afl-odds.justthetipafl.workers.dev/odds.json' }}
+          ROUND: ${{ github.event.inputs.round }}
+        run: |
+          ARGS="--data AFL/data --out AFL/data/signals --odds \"$ODDS_URL\""
+          if [ -n "$ROUND" ]; then ARGS="$ARGS --round $ROUND"; fi
+          eval node AFL/capture_signals.js $ARGS
+
+      - name: Commit the frozen signal set
+        run: |
+          git config user.name  "jtt-bot"
+          git config user.email "bot@justthetipaus.com"
+          git add AFL/data/signals/*.json
+          if git diff --cached --quiet; then
+            echo "no signal changes to commit"
+          else
+            git commit -m "AFL: capture signals (pre-slate freeze)"
+            git push
+          fi
