@@ -642,6 +642,7 @@
   </div></footer>
 
   <script src="scoring.js"></script>
+  <script src="signals.js"></script>
   <script>
   "use strict";
   /* ===================== CONSTANTS ===================== */
@@ -2164,24 +2165,19 @@
   function lineupOut(team){ return !!_lineupKeyMap()[team]; }
   function hasAnyOdds(){ return state.idx.oddsMeta && state.idx.oddsMeta.count>0; }
   function _oddsLive(){ return hasAnyOdds() && !(state.idx.oddsMeta&&state.idx.oddsMeta.sample); }
+  // Green Lights / Death Riders now come from the SHARED signals.js module — the exact
+  // same code path the pre-slate capture job grades, so the ledger can't drift from what's
+  // shown here. Deps are the tool's own live helpers (oddsFor respects the book filter).
+  let _sigInst=null;
+  function _signals(){
+    return _sigInst||(_sigInst=window.JTTSignals&&JTTSignals.create({
+      JTTScoring:window.JTTScoring, oddsFor:oddsFor, nextOpp:nextOpp,
+      playersOnTeam:playersOnTeam, hasAnyOdds:hasAnyOdds, SIGNAL_MIN_ODDS:SIGNAL_MIN_ODDS
+    }));
+  }
   function collectOU(teamList, kind){
-    if(!window.JTTScoring || !hasAnyOdds()) return [];
-    const side=kind==='over'?'over':'under';
-    const minOdds=SIGNAL_MIN_ODDS[side];
-    const out=[];
-    teamList.forEach(team=>{
-      const opp=nextOpp(team); if(!opp) return;
-      playersOnTeam(team).forEach(p=>{
-        const od=oddsFor(p.name,'disposals');                 // line must exist…
-        if(!od || od.line==null) return;
-        const price=od[side];
-        if(price==null) return;                                // …and have a price this side
-        if(minOdds!=null && price<minOdds) return;             // …above the signal's floor
-        const r=kind==='over'?JTTScoring.scoreOverLine(p,opp,od.line):JTTScoring.scoreUnderLine(p,opp,od.line);
-        if(r){ r.team=team; r.oppName=opp; r.odds=price; r.book=od.book; out.push(r); }
-      });
-    });
-    return out.sort((a,b)=>kind==='over'?b.score-a.score:a.score-b.score);
+    const S=_signals(); if(!S) return [];
+    return S.collectOU(teamList, kind);
   }
   function _tierChip(sc,kind){
     if(typeof sc!=='number') return '';
