@@ -639,7 +639,7 @@
       <div class="brand-text">Just The Tip <span class="sub">AFL</span></div>
     </div>
     <div class="topbar-meta">
-      <div class="gsearch"><i class="ti ti-search"></i><input id="gs-input" placeholder="Search\u2026" autocomplete="off" oninput="_gsInput(this.value)" onfocus="_gsInput(this.value)" onblur="setTimeout(_gsHide,180)"><div class="gs-drop" id="gs-drop"></div></div>
+      <div class="gsearch"><i class="ti ti-search"></i><input id="gs-input" placeholder="Search…" autocomplete="off" oninput="_gsInput(this.value)" onfocus="_gsInput(this.value)" onblur="setTimeout(_gsHide,180)"><div class="gs-drop" id="gs-drop"></div></div>
       <button class="density-btn" id="density-btn" title="Compact mode" onclick="_toggleDensity()"><i class="ti ti-baseline-density-medium"></i></button>
       <a class="cross-link" href="../mlb/" title="JTT MLB"><span class="cross-link-label">MLB</span></a>
       <a class="cross-link" href="../wc/" title="JTT World Cup"><span class="cross-link-label">WC</span></a>
@@ -1130,7 +1130,7 @@
     const g=fx[gi];
     const title=esc(g.home)+' vs '+esc(g.away)+(g.time?' &middot; '+esc(g.time):'');
     const titleSec='<div class="tp-sec"><div class="sec-title"><i class="ti ti-coins"></i> '+title+'</div></div>';
-    const search='<div class="ob-filter ob-search-wrap"><span class="ob-fl">Player</span><input class="ob-search" id="ob-search" type="search" placeholder="Search player\u2026" value="'+esc(state.view.oddsSearch||'')+'" oninput="state.view.oddsSearch=this.value;rerenderOdds()"></div>';
+    const search='<div class="ob-filter ob-search-wrap"><span class="ob-fl">Player</span><input class="ob-search" id="ob-search" type="search" placeholder="Search player…" value="'+esc(state.view.oddsSearch||'')+'" oninput="state.view.oddsSearch=this.value;rerenderOdds()"></div>';
     return head+filters+titleSec+_oddsRefreshLine()+search+'<div id="ob-mount">'+_oddsBoardTable()+'</div>';
   }
   window.rerenderOdds=function(){ const m=document.getElementById('ob-mount'); if(m) m.innerHTML=_oddsBoardTable(); };
@@ -2951,7 +2951,7 @@
   // Matchup Multi legs now come from the shared signals.js module (same code path the
   // ledger's capture job grades). Deps carry the tool's own priceForLine/_snapToRung, so
   // the book filter still applies in-product.
-  function _matchupLegs(players,opp){ const S=_signals(); return S?S.matchupLegs(players,opp):[]; }
+  function _matchupLegs(players,opp){ const S=_signals(); return (S&&typeof S.matchupLegs==='function')?S.matchupLegs(players,opp):[]; }
   // pick the shortest multi that clears $1.75 (prefer 2 legs, cap 3)
   function _mmPick(legs){
     const pick=[]; let comb=1;
@@ -2962,6 +2962,8 @@
   let _mmBook=null;
   window._mmSetBook=function(v){ _mmBook=v||null; _renderApp(); };
   function matchupMultiFx(g){
+    try{
+    if(!g) return '';
     const home=(state.idx.players||[]).filter(p=>p.team===g.home);
     const away=(state.idx.players||[]).filter(p=>p.team===g.away);
     // book filter: price every leg at the chosen book (or best price when null) — the price
@@ -2979,6 +2981,7 @@
       '<div class="mm-lm">'+l.line+'+ disp</div><div class="mm-lw" title="Opponent concedes vs this position">'+abbr(l.opp)+' +'+l._dvp.toFixed(0)+'%</div>'+
       '<div class="mm-lo">$'+l._odds.price.toFixed(2)+(_mmBook?'':' <span class="mm-bk">'+_bookShort(l._odds.book)+'</span>')+'</div></div>').join('');
     return '<details class="tp-collapse c-green" open><summary class="tp-collapse-sum"><i class="ti ti-crosshair"></i><span class="tp-collapse-title">Matchup Multi</span><span class="tp-count">$'+comb.toFixed(2)+'</span><i class="ti ti-chevron-down tp-collapse-chev"></i></summary><div class="tp-collapse-body"><div class="tp-body-meta" style="display:flex;align-items:center;flex-wrap:wrap">'+pick.length+' disposals overs \u2014 opponent bleeds to each position and L5 already clears. Pays ~$'+comb.toFixed(2)+'.'+bookSel+'</div>'+rows+'</div></details>';
+    }catch(e){ console.error('matchupMultiFx',e); return ''; }
   }
   function _mmEmptyCard(bookSel){
     return '<details class="tp-collapse c-green"><summary class="tp-collapse-sum"><i class="ti ti-crosshair"></i><span class="tp-collapse-title">Matchup Multi</span><span class="tp-count">0</span><i class="ti ti-chevron-down tp-collapse-chev"></i></summary><div class="tp-collapse-body"><div class="tp-body-meta" style="display:flex;align-items:center;flex-wrap:wrap">No 2-leg matchup multi at this book. '+bookSel+'</div></div></details>';
