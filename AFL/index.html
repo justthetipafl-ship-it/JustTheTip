@@ -2606,11 +2606,20 @@
         if(!start) return;
         const N0=start.line, t1=N0+1, t2=N0+CLIMB_STEPS;
         const hr=(g,line)=> g.length ? g.filter(r=>(r[k]||0)>=line).length/g.length : null;
-        // qualification gate (player must hold a high hit rate as the line climbs)
-        let basis=null, rate1=null, rate2=null, gN=0;
-        if(h2h.length>=CLIMB_MIN_H2H){ const r1=hr(h2h,t1),r2=hr(h2h,t2); if(r1!=null&&r2!=null&&r1>=CLIMB_HIT&&r2>=CLIMB_CLIMB_MIN){ basis='h2h'; rate1=r1; rate2=r2; gN=h2h.length; } }
-        if(!basis&&last10.length>=CLIMB_MIN_L10){ const r1=hr(last10,t1),r2=hr(last10,t2); if(r1!=null&&r2!=null&&r1>=CLIMB_HIT&&r2>=CLIMB_CLIMB_MIN){ basis='l10'; rate1=r1; rate2=r2; gN=last10.length; } }
-        if(!basis) return;
+        // qualification gate. SEASON is the reliable qualifier — it must clear the standard
+        // on the base line and the 40% floor on the worst line. H2H can only CONFIRM: where we
+        // have meetings, neither H2H step may sit below the floor. This stops a tiny 3/3 H2H
+        // sample from carrying a player whose season rate is weak (e.g. 100% H2H but 13% season).
+        let basis=null, rate1=null, rate2=null, gN=0, h2hBase=null;
+        if(season.length<CLIMB_MIN_L10) return;                              // need a real season sample
+        const s1=hr(season,t1), s2=hr(season,t2);
+        if(s1==null||s2==null||s1<CLIMB_HIT||s2<CLIMB_CLIMB_MIN) return;     // season: base >=70%, worst >=40%
+        if(h2h.length>=CLIMB_MIN_H2H){                                       // H2H must confirm, not be weak
+          const h1=hr(h2h,t1), h2r=hr(h2h,t2);
+          if((h1!=null&&h1<CLIMB_CLIMB_MIN)||(h2r!=null&&h2r<CLIMB_CLIMB_MIN)) return;   // no low H2H side
+          h2hBase=h1;
+        }
+        basis='season'; rate1=s1; rate2=s2; gN=season.length;
         // display ladder: posted rungs from the start line up, each with H2H + season hit rate + odds
         const ladder=rungs.filter(r=>r.line>=N0).slice(0,6).map(r=>({
           line:r.line, over:r.over, book:r.book,
@@ -2619,7 +2628,7 @@
         }));
         const _cpos=(JTTScoring.POS_TO_DVP&&JTTScoring.POS_TO_DVP[p.position])||p.position;
         const _cdvp=opp?JTTScoring.getDVPPct(opp,_cpos,k):null;
-        out.push({ p, opp, stat:l, statKey:k, startN:N0, t1, t2, basis, rate1, rate2, games:gN, dvpPct:_cdvp,
+        out.push({ p, opp, stat:l, statKey:k, startN:N0, t1, t2, basis, rate1, rate2, games:gN, dvpPct:_cdvp, h2hBase:h2hBase,
           startOver:start.over, startBook:start.book, climbOver:(rungs.find(r=>r.line===t2)||{}).over||null, ladder });
       });
     });
@@ -2638,7 +2647,7 @@
       '</div>';
     return '<div class="lc-card" onclick="openPlayer(\''+q+'\')">'+
       '<div class="lc-hd"><span class="lc-nm">'+nm+'</span>'+_degBadges(c.p.name)+
-        '<span class="lc-meta">'+c.stat+' · '+abbr(c.p.team)+(c.opp?' v '+abbr(c.opp):'')+(c.dvpPct!=null&&isFinite(c.dvpPct)?' · '+muTag(c.dvpPct):'')+'</span></div>'+'<div class="lc-matchup">Climb '+c.startN+'+ \u2192 '+c.t2+'+ \u00b7 base hits '+Math.round(c.rate1*100)+'%, top rung '+Math.round(c.rate2*100)+'% ('+(c.basis==='h2h'?'vs '+abbr(c.opp):'last 10')+')</div>'+
+        '<span class="lc-meta">'+c.stat+' · '+abbr(c.p.team)+(c.opp?' v '+abbr(c.opp):'')+(c.dvpPct!=null&&isFinite(c.dvpPct)?' · '+muTag(c.dvpPct):'')+'</span></div>'+'<div class="lc-matchup">Climb '+c.startN+'+ \u2192 '+c.t2+'+ \u00b7 season '+Math.round(c.rate1*100)+'% \u2192 '+Math.round(c.rate2*100)+'%'+(c.h2hBase!=null?' \u00b7 '+abbr(c.opp)+' H2H '+Math.round(c.h2hBase*100)+'%':'')+'</div>'+
       '<div class="lc-rung lc-cols"><span>Line</span><span>H2H'+(h2hN?' ('+h2hN+'g)':'')+'</span><span>Season'+(szN?' ('+szN+'g)':'')+'</span><span class="lc-od">Best over</span></div>'+
       c.ladder.map(rung).join('')+
     '</div>';
