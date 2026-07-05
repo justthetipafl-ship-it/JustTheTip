@@ -66,9 +66,10 @@
   var SIGNAL_DEFS = {
     green_light: { label: 'Green Lights', market: 'disposals', side: 'over',  lineType: 'twoway',    priced: true },
     death_rider: { label: 'Death Riders', market: 'disposals', side: 'under', lineType: 'twoway',    priced: true },
-    snags:       { label: 'Snags',        market: 'goals',     side: 'over',  lineType: 'milestone', priced: true },
-    streakers:   { label: 'Streakers',    market: 'dynamic',   side: 'over',  lineType: 'milestone', priced: true }
-    // phase-2 generators register here as they move into this module.
+    snags:         { label: 'Snags',         market: 'goals',     side: 'over',  lineType: 'milestone', priced: true },
+    streakers:     { label: 'Streakers',     market: 'dynamic',   side: 'over',  lineType: 'milestone', priced: true },
+    matchup_multi: { label: 'Matchup Multi', market: 'disposals', side: 'over',  lineType: 'twoway',    priced: true }
+    // more generators register here as they move into this module.
   };
 
   function _round(x) { return x == null ? '' : ('R' + x); }
@@ -206,7 +207,54 @@
       return recs;
     }
 
-    return { collectOU: collectOU, captureOU: captureOU };
+    // ---- Matchup Multi legs (disposals over, DVP >= +8%, L5 already clears the line) ----
+    // Extra deps: priceForLine, snapToRung, logsFor(name)->rows, abbr, curSeason.
+    var priceForLine = deps.priceForLine, snapToRung = deps.snapToRung,
+        logsFor = deps.logsFor || function () { return []; },
+        abbr = deps.abbr || function (t) { return String(t || '').slice(0, 3).toUpperCase(); },
+        curSeason = deps.curSeason || function () { return ''; };
+    var _MM_DVP_MIN = 8;
+    function matchupLegs(players, opp) {
+      var out = [];
+      if (!opp || !JTTScoring || !priceForLine || !snapToRung) return out;
+      players.forEach(function (p) {
+        if ((p.matches || 0) < 4) return;
+        var pos = (JTTScoring.POS_TO_DVP && JTTScoring.POS_TO_DVP[p.position]) || p.position;
+        var dvp = JTTScoring.getDVPPct(opp, pos, 'disposals');
+        if (dvp == null || !isFinite(dvp) || dvp < _MM_DVP_MIN) return;    // opp must bleed disposals to this position
+        var d = p.disposals || 0; if (d < 15) return;
+        var line = snapToRung(p.name, 'disposals', Math.max(10, Math.round(d) - 1));
+        if (line < 10 || d <= line) return;                                // season avg clears the line
+        var logs = (logsFor(p.name) || []).filter(function (r) { return String(r.Year) === curSeason(); });
+        var l5arr = logs.slice(-5).map(function (r) { return +r.disposals; }).filter(function (x) { return isFinite(x); });
+        var l5 = l5arr.length ? l5arr.reduce(function (a, b) { return a + b; }, 0) / l5arr.length : null;
+        if (l5 == null || l5 < line) return;                               // L5 also clears -> DVP is genuine cushion
+        var pr = priceForLine(p.name, 'disposals', line);
+        if (!pr || !pr.price) return;
+        var hr = JTTScoring.getHitRate ? JTTScoring.getHitRate(p.name, 'disposals', line, true) : null;
+        out.push({ p: p, opp: opp, statKey: 'disposals', line: line, side: 'over',
+          prob: hr ? hr.rate : null, probN: hr ? hr.n : 0,
+          _odds: { price: pr.price, book: pr.book }, _dvp: dvp, score: dvp,
+          reasons: [{ label: abbr(opp) + ' bleed to ' + pos, pct: dvp }] });
+      });
+      return out.sort(function (a, b) { return (b._dvp - a._dvp) || (b._odds.price - a._odds.price); });
+    }
+    // Capture the qualifying legs (leg-level grading -> "Matchup Multi legs: X%").
+    function captureMatchup(fixtures, ctx) {
+      var recs = [], seen = {};
+      (fixtures || []).forEach(function (g) {
+        [[g.home, g.away], [g.away, g.home]].forEach(function (pair) {
+          matchupLegs(playersOnTeam(pair[0]), pair[1]).forEach(function (l) {
+            l.team = pair[0]; l.oppName = pair[1]; l.odds = l._odds.price; l.book = l._odds.book; l.lineType = 'twoway';
+            var s = toSettleable('matchup_multi', l, ctx);
+            if (s && !seen[s.id]) { seen[s.id] = 1; recs.push(s); }
+          });
+        });
+      });
+      return recs;
+    }
+
+    return { collectOU: collectOU, captureOU: captureOU, matchupLegs: matchupLegs, captureMatchup: captureMatchup };
   }
 
   /* ============================================================================
@@ -253,9 +301,35 @@
     lines.forEach(function(o){ if(o.player) names.add(o.player); });
     books.forEach(function(b){ if(b.player) names.add(b.player); });
     var nmap=oddsNameMap([].concat.apply([], [Array.from(names)]), players), RS=function(n){ return nmap[n]||n; };
-    var main={}, bookIdx={};
+    var alt=(oddsJson && oddsJson.alt)||[];
+    var main={}, bookIdx={}, altIdx={};
     lines.forEach(function(o){ var n=RS(o.player); if(!n) return; (main[n]=main[n]||{})[o.market]={line:o.line,over:o.over,under:o.under,book:o.book}; });
     books.forEach(function(b){ var n=RS(b.player); if(!n) return; var m=(bookIdx[n]=bookIdx[n]||{}); (m[b.market]=m[b.market]||[]).push({line:b.line,over:b.over,under:b.under,book:b.book}); });
+    alt.forEach(function(a){ var n=RS(a.player); if(!n) return; var m=(altIdx[n]=altIdx[n]||{}); (m[a.market]=m[a.market]||[]).push({line:a.line,over:a.over,book:a.book}); });
+    // Best OVER price per posted line (mirrors index.html altLines). Capture uses best price
+    // across books (no book filter) — the honest baseline the ledger grades at.
+    function altLines(name, market){
+      var rows=((bookIdx[name]||{})[market]||[]).filter(function(r){ return r.over!=null; });
+      if(rows.length){ var byL={}; rows.forEach(function(r){ if(!byL[r.line]||r.over>byL[r.line].over) byL[r.line]={line:r.line,over:r.over,book:r.book}; });
+        return Object.keys(byL).map(function(k){ return byL[k]; }).sort(function(x,y){ return x.line-y.line; }); }
+      return ((altIdx[name]||{})[market]||[]);
+    }
+    function snapToRung(name, market, target){
+      if(market==='goals'||market==='goalsx') return target;
+      var lad=Array.from(new Set(altLines(name,market).map(function(a){ return Math.ceil(a.line); }))).sort(function(a,b){ return a-b; });
+      if(!lad.length) return target;
+      var pick=null; lad.forEach(function(r){ if(r<=target) pick=r; });
+      return pick!=null?pick:lad[0];
+    }
+    function priceForLine(name, market, line){
+      var alts=altLines(name,market);
+      var hit=alts.filter(function(a){ return Math.round(a.line+0.5)===line; })[0];
+      if(!hit){ var ge=alts.filter(function(a){ return Math.round(a.line+0.5)>=line; }).sort(function(x,y){ return x.line-y.line; }); hit=ge[0]; }
+      if(hit&&hit.over!=null) return { price:hit.over, label:Math.round(hit.line+0.5)+'+', book:hit.book };
+      var od=oddsFor(name,market);
+      if(od&&od.over!=null&&od.line!=null) return { price:od.over, label:od.line+' O', book:od.book };
+      return null;
+    }
     function oddsFor(player, market){
       var mn=(main[player]||{})[market];
       var rows=((bookIdx[player]||{})[market]||[]).filter(function(r){ return r.over!=null; });
@@ -268,7 +342,7 @@
       }
       return null;   // OU signals only need the two-way main line; alt-only markets (goals) handled in phase 2
     }
-    return { oddsFor: oddsFor, nameMap: nmap };
+    return { oddsFor: oddsFor, nameMap: nmap, altLines: altLines, snapToRung: snapToRung, priceForLine: priceForLine };
   }
 
   return {
