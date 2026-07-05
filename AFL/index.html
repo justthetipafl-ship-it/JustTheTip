@@ -105,6 +105,13 @@
   .tr-lu{font-family:var(--font-mono);font-size:11px;width:52px;text-align:right;}
   .tr-note{font-size:10.5px;color:var(--text-3);line-height:1.55;margin-top:12px;padding:9px 11px;border:1px dashed var(--border);border-radius:8px;}
   .tr-note i{color:#22c55e;}
+  .mm-leg{display:flex;align-items:center;gap:8px;padding:7px 4px;border-bottom:1px solid var(--border);font-size:12px;}
+  .mm-leg:last-child{border-bottom:0;}
+  .mm-lp{flex:1;min-width:0;font-weight:600;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .mm-pos{color:var(--text-3);font-size:9px;font-weight:700;}
+  .mm-lm{font-family:var(--font-mono);font-size:11px;color:var(--text-2);width:64px;}
+  .mm-lw{font-size:10px;font-weight:700;color:#22c55e;width:78px;text-align:right;}
+  .mm-lo{font-family:var(--font-mono);font-size:12px;font-weight:700;color:var(--text);width:52px;text-align:right;}
   .gsearch{position:relative;display:flex;align-items:center;gap:5px;background:var(--surface-2);border:1px solid var(--border);border-radius:16px;padding:4px 10px;}
   .gsearch i{color:var(--text-3);font-size:13px;}
   .gsearch input{background:transparent;border:0;outline:0;color:var(--text);font-size:12px;width:90px;font-family:inherit;}
@@ -1747,6 +1754,7 @@
     if(fxMode==='nerd') h+=nerdFilterBar();
     h+='<div class="team-cols">'+teamSignals(g.home,g.away,true)+teamSignals(g.away,g.home,false)+'</div>';
     if(fxMode!=='nerd') h+=dejaVuSGM(g.home,g.away);
+    if(fxMode!=='nerd') h+=matchupMultiFx(g);
     if(fxMode!=='nerd') h+=focusedMulti(g);
     return h;
   }
@@ -2934,17 +2942,64 @@
     }));
     return Object.values(best).sort((a,b)=>(b._h2h-a._h2h)||(b._odds.price-a._odds.price));
   }
+  // Matchup Multi — disposals overs where the OPPONENT bleeds to this player's position
+  // (DVP edge >= +8%) AND the player's L5 already clears the line, so the matchup is
+  // cushion, not the whole thesis. Disposals only, over only. Sorted best-matchup first.
+  const _MM_DVP_MIN=8;
+  function _matchupLegs(players,opp){
+    const out=[]; if(!opp||!window.JTTScoring) return out;
+    players.forEach(p=>{
+      if((p.matches||0)<4) return;
+      const pos=(JTTScoring.POS_TO_DVP&&JTTScoring.POS_TO_DVP[p.position])||p.position;
+      const dvp=JTTScoring.getDVPPct(opp,pos,'disposals');
+      if(dvp==null||!isFinite(dvp)||dvp<_MM_DVP_MIN) return;        // opponent must bleed disposals to this position
+      const d=p.disposals||0; if(d<15) return;
+      const line=_snapToRung(p.name,'disposals',Math.max(10,Math.round(d)-1));
+      if(line<10||d<=line) return;                                  // season avg clears the line
+      const logs=(state.idx.logsByName[p.name]||[]).filter(r=>String(r.Year)===CUR_SEASON());
+      const l5arr=logs.slice(-5).map(r=>+r.disposals).filter(x=>isFinite(x));
+      const l5=l5arr.length?l5arr.reduce((a,b)=>a+b,0)/l5arr.length:null;
+      if(l5==null||l5<line) return;                                 // L5 also clears -> DVP is genuine cushion
+      const _odds=priceForLine(p.name,'disposals',line);
+      if(!_odds||!_odds.price) return;
+      const hr=JTTScoring.getHitRate(p.name,'disposals',line,true);
+      out.push(_mkLeg(p,opp,'disposals',line,hr?hr.rate:null,hr?hr.n:0,_odds.price,_odds.book,
+        [{label:abbr(opp)+' bleed to '+pos,pct:dvp}],{_dvp:dvp,score:dvp}));
+    });
+    return out.sort((a,b)=>(b._dvp-a._dvp)||(b._odds.price-a._odds.price));
+  }
+  // pick the shortest multi that clears $1.75 (prefer 2 legs, cap 3)
+  function _mmPick(legs){
+    const pick=[]; let comb=1;
+    for(const l of legs){ if((comb>=1.75&&pick.length>=2)||pick.length>=3) break; pick.push(l); comb*=l._odds.price; }
+    return {pick, comb};
+  }
+  // focused-fixture card: one matchup multi across BOTH teams of the game
+  function matchupMultiFx(g){
+    const home=(state.idx.players||[]).filter(p=>p.team===g.home);
+    const away=(state.idx.players||[]).filter(p=>p.team===g.away);
+    const legs=[..._matchupLegs(home,g.away),..._matchupLegs(away,g.home)].sort((a,b)=>(b._dvp-a._dvp)||(b._odds.price-a._odds.price));
+    if(legs.length<2) return '';
+    const {pick,comb}=_mmPick(legs);
+    if(pick.length<2||comb<1.55) return '';                         // need a real 2-leg+ multi with some price
+    const rows=pick.map(l=>'<div class="mm-leg"><div class="mm-lp">'+esc(l.p.name)+' <span class="mm-pos">'+posShort(l.p.position)+'</span></div>'+
+      '<div class="mm-lm">'+l.line+'+ disp</div><div class="mm-lw" title="Opponent concedes vs this position">'+abbr(l.opp)+' +'+l._dvp.toFixed(0)+'%</div>'+
+      '<div class="mm-lo">$'+l._odds.price.toFixed(2)+'</div></div>').join('');
+    return '<details class="tp-collapse c-green" open><summary class="tp-collapse-sum"><i class="ti ti-crosshair"></i><span class="tp-collapse-title">Matchup Multi</span><span class="tp-count">$'+comb.toFixed(2)+'</span><i class="ti ti-chevron-down tp-collapse-chev"></i></summary><div class="tp-collapse-body"><div class="tp-body-meta">'+pick.length+' disposals overs \u2014 opponent bleeds to each position and L5 already clears. Pays ~$'+comb.toFixed(2)+'.</div>'+rows+'</div></details>';
+  }
   function _modePool(players,opp){
     const m=SETTINGS.multi.mode||'smart';
     if(m==='safe') return _safeLegs(players,opp);
     if(m==='value') return _valueLegs(players,opp);
     if(m==='lotto') return _lottoLegs(players,opp);
     if(m==='h2h') return _h2hLegs(players,opp);
+    if(m==='matchup') return _matchupLegs(players,opp);
     return poolLegs(players,opp);   // 'smart' and 'team' use the signal-score pool
   }
   function _mbSortFn(){ const m=SETTINGS.multi.mode||'smart';
     if(m==='value') return (a,b)=>(b._edge||0)-(a._edge||0);
     if(m==='h2h') return (a,b)=>((b._h2h||0)-(a._h2h||0))||(b._odds.price-a._odds.price);
+    if(m==='matchup') return (a,b)=>((b._dvp||0)-(a._dvp||0))||(b._odds.price-a._odds.price);
     if(m==='lotto'||m==='safe') return (a,b)=>b._odds.price-a._odds.price;
     return (a,b)=>b.score-a.score;
   }
@@ -2988,10 +3043,11 @@
       s._key=key; s.manual=null; s.locked=s.locked.filter(n=>names.indexOf(n)>=0);
       const idx=s.locked.map(n=>names.indexOf(n)).filter(i=>i>=0);
       const order=_mbSeedOrder(pool,crossGame);
-      const tgt=(SETTINGS.multi.mode!=='lotto')?(SETTINGS.multi.target||null):null;
+      let tgt=(SETTINGS.multi.mode!=='lotto')?(SETTINGS.multi.target||null):null, capN=12;
+      if(SETTINGS.multi.mode==='matchup'){ tgt=1.75; capN=3; }     // shortest multi that clears $1.75
       if(tgt){   // target-odds build: add legs until the combined price reaches the target
         let comb=idx.reduce((a,i)=>a*((pool[i]._odds&&pool[i]._odds.price)||1),1);
-        for(const i of order){ if(comb>=tgt||idx.length>=12) break;
+        for(const i of order){ if((comb>=tgt&&idx.length>=(SETTINGS.multi.mode==='matchup'?2:1))||idx.length>=capN) break;
           if(idx.indexOf(i)<0){ idx.push(i); comb*=((pool[i]._odds&&pool[i]._odds.price)||1); } }
       } else {
         for(const i of order){ if(idx.length>=N) break; if(idx.indexOf(i)<0) idx.push(i); }
@@ -3585,14 +3641,14 @@
   function multiFilterBar(){
     const M=SETTINGS.multi;
     let h='<div style="'+_fbar+'"><div style="font-size:10px;color:var(--text-3);margin-bottom:4px;text-transform:uppercase;letter-spacing:.04em">Multi filters</div>';
-    const MODES=[['smart','Smart'],['safe','100% Hit Rater'],['team','Thats My Team'],['lotto','Lottery Legs'],['value','Value Hunter'],['h2h','History Repeats']];
+    const MODES=[['smart','Smart'],['safe','100% Hit Rater'],['team','Thats My Team'],['lotto','Lottery Legs'],['value','Value Hunter'],['h2h','History Repeats'],['matchup','Matchup Multi']];
     h+='<div style="margin-bottom:5px">'+MODES.map(([k,l])=>_fchip((M.mode||'smart')===k,l,"_mMode('"+k+"')")).join('')+'</div>';
     if((M.mode||'smart')==='team'){
       const teams=[...new Set((state.data.fixture||[]).filter(g=>g.home&&g.away).flatMap(g=>[g.home,g.away]))].sort();
       h+='<div style="margin-bottom:5px"><select onchange="_mTeam(this.value)" style="background:var(--surface-2);border:1px solid var(--border);color:var(--text);border-radius:8px;padding:5px 9px;font-size:12px;font-weight:600;max-width:220px">'+
         '<option value="">Pick your team\u2026</option>'+teams.map(t=>'<option value="'+esc(t)+'"'+(M.team===t?' selected':'')+'>'+esc(t)+'</option>').join('')+'</select></div>';
     }
-    h+='<div style="font-size:9.5px;color:var(--text-3);margin-bottom:6px">'+({smart:'Best-rated legs by our signal score.',safe:'Only legs cleared in every game this season \u2014 safe, short odds.',team:'Legs from your chosen team only \u2014 priced as a same-gamer.',lotto:'One longshot with a real shot \u2014 swap \u25c2\u25b8 to see others.',value:'Every leg +EV \u2014 our hit-rate beats the book price.',h2h:'Legs the player has landed against THIS opponent before \u2014 history repeats.'}[M.mode||'smart'])+'</div>';
+    h+='<div style="font-size:9.5px;color:var(--text-3);margin-bottom:6px">'+({smart:'Best-rated legs by our signal score.',safe:'Only legs cleared in every game this season \u2014 safe, short odds.',team:'Legs from your chosen team only \u2014 priced as a same-gamer.',lotto:'One longshot with a real shot \u2014 swap \u25c2\u25b8 to see others.',value:'Every leg +EV \u2014 our hit-rate beats the book price.',h2h:'Legs the player has landed against THIS opponent before \u2014 history repeats.',matchup:'2\u20133 disposals overs where the opponent bleeds to that position and L5 already clears \u2014 priced to $1.75+.'}[M.mode||'smart'])+'</div>';
     if((M.mode||'smart')!=='lotto'){
       const TGT=[[null,'Legs: '+(M.legs||6)],[5,'~$5'],[10,'~$10'],[25,'~$25'],[50,'~$50'],[100,'~$100']];
       h+='<div style="margin-bottom:5px"><span style="font-size:10px;color:var(--text-3);text-transform:uppercase;letter-spacing:.04em;margin-right:6px">Target</span>'+TGT.map(([v,l])=>_fchip((M.target||null)===v,l,"_mTarget("+(v==null?'null':v)+")")).join('')+'</div>';
