@@ -233,8 +233,9 @@
         if (!pr || !pr.price) return;
         var hr = JTTScoring.getHitRate ? JTTScoring.getHitRate(p.name, 'disposals', line, true) : null;
         out.push({ p: p, opp: opp, statKey: 'disposals', line: line, side: 'over',
-          prob: hr ? hr.rate : null, probN: hr ? hr.n : 0,
-          _odds: { price: pr.price, book: pr.book }, _dvp: dvp, score: dvp,
+          type: 'DISPOSALS', avg: (p.disposals || line), betLabel: line + '+ Disposals',
+          prob: hr ? hr.rate : null, probReal: !!hr, probN: hr ? hr.n : 0,
+          _odds: { price: pr.price, book: pr.book, label: line + '+' }, _dvp: dvp, score: dvp,
           reasons: [{ label: abbr(opp) + ' bleed to ' + pos, pct: dvp }] });
       });
       return out.sort(function (a, b) { return (b._dvp - a._dvp) || (b._odds.price - a._odds.price); });
