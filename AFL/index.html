@@ -2959,7 +2959,7 @@
     return {pick, comb};
   }
   // focused-fixture card: one matchup multi across BOTH teams of the game
-  let _mmBook=null;
+  let _mmBook=null, _mmLast=null;
   window._mmSetBook=function(v){ _mmBook=v||null; _renderApp(); };
   function matchupMultiFx(g){
     try{
@@ -2977,10 +2977,11 @@
     if(legs.length<2) return _mmBook?_mmEmptyCard(bookSel):'';
     const {pick,comb}=_mmPick(legs);
     if(pick.length<2||comb<1.55) return _mmBook?_mmEmptyCard(bookSel):'';
+    _mmLast={home:g.home,away:g.away,pick:pick,comb:comb};
     const rows=pick.map(l=>'<div class="mm-leg"><div class="mm-lp">'+esc(l.p.name)+' <span class="mm-pos">'+posShort(l.p.position)+'</span></div>'+
       '<div class="mm-lm">'+l.line+'+ disp</div><div class="mm-lw" title="Opponent concedes vs this position">'+abbr(l.opp)+' +'+l._dvp.toFixed(0)+'%</div>'+
       '<div class="mm-lo">$'+l._odds.price.toFixed(2)+(_mmBook?'':' <span class="mm-bk">'+_bookShort(l._odds.book)+'</span>')+'</div></div>').join('');
-    return '<details class="tp-collapse c-green" open><summary class="tp-collapse-sum"><i class="ti ti-crosshair"></i><span class="tp-collapse-title">Matchup Multi</span><span class="tp-count">$'+comb.toFixed(2)+'</span><i class="ti ti-chevron-down tp-collapse-chev"></i></summary><div class="tp-collapse-body"><div class="tp-body-meta" style="display:flex;align-items:center;flex-wrap:wrap">'+pick.length+' disposals overs \u2014 opponent bleeds to each position and L5 already clears. Pays ~$'+comb.toFixed(2)+'.'+bookSel+'</div>'+rows+'</div></details>';
+    return '<details class="tp-collapse c-green" open><summary class="tp-collapse-sum"><i class="ti ti-crosshair"></i><span class="tp-collapse-title">Matchup Multi</span><span class="tp-count">$'+comb.toFixed(2)+'</span><i class="ti ti-chevron-down tp-collapse-chev"></i></summary><div class="tp-collapse-body"><div class="tp-body-meta" style="display:flex;align-items:center;flex-wrap:wrap">'+pick.length+' disposals overs \u2014 opponent bleeds to each position and L5 already clears. Pays ~$'+comb.toFixed(2)+'.'+bookSel+'</div>'+rows+'<div style="margin-top:8px"><button class="slip-share-btn" onclick="_openSlipShare(\'matchup\')"><i class="ti ti-share"></i> Share card</button></div></div></details>';
     }catch(e){ console.error('matchupMultiFx',e); return ''; }
   }
   function _mmEmptyCard(bookSel){
@@ -4064,6 +4065,13 @@
         signal:(l.probReal?Math.round(l.prob*100)+'% hit':'~'+Math.round(l.prob*100)+'%')+(l.probReal&&l.probN?' ('+l.probN+'g)':'') })),
       comb:'$'+gm.comb.toFixed(2), legCount:gm.legs.length };
   }
+  function _buildMatchupSpec(){
+    if(!_mmLast||!_mmLast.pick||_mmLast.pick.length<2) return null;
+    const P=_mmLast, comb=P.comb;
+    return { badge:'MATCHUP', kindLabel:'matchup multi', title:abbr(P.home)+' v '+abbr(P.away)+' \u00b7 '+P.pick.length+'-leg matchup multi',
+      legs:P.pick.map(l=>({ name:l.p.name, line:l.line+'+ disposals', odds:'$'+l._odds.price.toFixed(2), signal:abbr(l.opp)+' +'+l._dvp.toFixed(0)+'% DVP' })),
+      comb:'$'+comb.toFixed(2), legCount:P.pick.length };
+  }
   function _buildDejaSpec(){
     const S=_dvState(); if(!S.home||!S.away||!S.sel) return null;
     const meets=S.meets||3;
@@ -4109,7 +4117,7 @@
     '</div>';
   }
   window._openSlipShare=function(kind,idx){
-    _shareSpec = kind==='multi' ? _buildMultiSpec(+idx) : kind==='fxmulti' ? _buildFxSpec() : _buildDejaSpec();
+    _shareSpec = kind==='multi' ? _buildMultiSpec(+idx) : kind==='fxmulti' ? _buildFxSpec() : kind==='matchup' ? _buildMatchupSpec() : _buildDejaSpec();
     if(!_shareSpec){ alert('Nothing to share yet — build a slip with at least 2 legs first.'); return; }
     _shareOdds=true;
     let ov=document.getElementById('share-overlay');
