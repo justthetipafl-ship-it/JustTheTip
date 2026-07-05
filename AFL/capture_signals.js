@@ -72,7 +72,9 @@ function roundNum(rn) {
   // odds: URL (live Worker, freshest) or local file
   const oddsJson = /^https?:\/\//.test(ODDS) ? await fetchJSON(ODDS) : readJSON(ODDS);
   if (oddsJson && oddsJson._sample) console.warn('WARNING: odds snapshot is flagged _sample — capture will be sparse.');
-  const { oddsFor } = JTTSignals.buildOddsLookup(oddsJson, players);
+  const oddsLk = JTTSignals.buildOddsLookup(oddsJson, players);
+  const { oddsFor, priceForLine, snapToRung } = oddsLk;
+  const logsFor = n => logsByName[n] || [];
 
   // deps for the generators
   const nextOppMap = {};
@@ -82,11 +84,13 @@ function roundNum(rn) {
 
   const deps = {
     JTTScoring,
-    oddsFor,
+    oddsFor, priceForLine, snapToRung, logsFor,
     nextOpp: t => nextOppMap[t] || null,
     playersOnTeam: t => byTeam[t] || [],
     hasAnyOdds: () => !!(oddsJson && ((oddsJson.lines || []).length)),
-    SIGNAL_MIN_ODDS: { over: 1.70, under: null }   // must match index.html's SIGNAL_MIN_ODDS
+    SIGNAL_MIN_ODDS: { over: 1.70, under: null },  // must match index.html's SIGNAL_MIN_ODDS
+    abbr: t => String(t || '').slice(0, 3).toUpperCase(),
+    curSeason: () => season
   };
   const sig = JTTSignals.create(deps);
 
@@ -95,7 +99,8 @@ function roundNum(rn) {
   fixture.forEach(g => { [g.home, g.away].forEach(t => { if (teamList.indexOf(t) < 0) teamList.push(t); }); });
 
   const ctx = { season, round, capturedAt: new Date().toISOString() };
-  const records = sig.captureOU(teamList, ctx);
+  const records = sig.captureOU(teamList, ctx)
+    .concat(sig.captureMatchup(fixture, ctx));   // Green Lights / Death Riders + Matchup Multi legs
 
   fs.mkdirSync(OUT, { recursive: true });
   const outFile = path.join(OUT, season + '-R' + round + '.json');
