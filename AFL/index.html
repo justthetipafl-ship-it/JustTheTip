@@ -113,6 +113,17 @@
   .mm-lw{font-size:10px;font-weight:700;color:#22c55e;width:78px;text-align:right;}
   .mm-lo{font-family:var(--font-mono);font-size:12px;font-weight:700;color:var(--text);min-width:52px;text-align:right;}
   .mm-bk{font-size:8px;font-weight:700;color:var(--text-3);text-transform:uppercase;}
+  .pf-team{display:flex;align-items:center;gap:6px;font-family:var(--font-display);font-weight:700;font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--text-2);padding:9px 4px 4px;margin-top:6px;border-bottom:1px solid var(--border);}
+  .pf-team:first-child{margin-top:0;}
+  .pf-team img{border-radius:3px;}
+  .pf-ct{margin-left:auto;color:var(--text-3);font-size:10px;font-weight:600;}
+  .pf-row{display:flex;align-items:center;gap:9px;padding:5px 4px;font-size:12px;cursor:pointer;border-bottom:1px solid rgba(255,255,255,.035);}
+  .pf-row:last-child{border-bottom:0;}
+  .pf-row:hover{background:var(--surface-2);}
+  .pf-sw{font-weight:700;font-size:11px;min-width:56px;font-variant-numeric:tabular-nums;}
+  .pf-nm{font-weight:600;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:0 1 auto;max-width:42%;}
+  .pf-info{color:var(--text-3);font-size:11px;margin-left:auto;text-align:right;font-family:var(--font-mono);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .lc-matchup{font-size:10.5px;color:var(--text-3);padding:2px 2px 0;line-height:1.5;}
   .gsearch{position:relative;display:flex;align-items:center;gap:5px;background:var(--surface-2);border:1px solid var(--border);border-radius:16px;padding:4px 10px;}
   .gsearch i{color:var(--text-3);font-size:13px;}
   .gsearch input{background:transparent;border:0;outline:0;color:var(--text);font-size:12px;width:90px;font-family:inherit;}
@@ -2570,7 +2581,7 @@
   // and the player still hits >=70% TWO numbers up from it — measured either vs
   // this round's opponent (needs >=3 H2H games) or over their last 10 games.
   const CLIMB_MARKETS=[['disposals','Disposals'],['kicks','Kicks'],['handballs','Handballs'],['marks','Marks'],['tackles','Tackles'],['clearances','Clearances'],['goals','Goals']];
-  const CLIMB_MIN_ODDS=1.70, CLIMB_HIT=0.70, CLIMB_MIN_H2H=3, CLIMB_MIN_L10=8, CLIMB_STEPS=2;
+  const CLIMB_MIN_ODDS=1.70, CLIMB_HIT=0.70, CLIMB_CLIMB_MIN=0.40, CLIMB_MIN_H2H=3, CLIMB_MIN_L10=8, CLIMB_STEPS=2;
   function _climbValidTog(r){ const t=r.tog; if(t==null) return true; const v=parseFloat(t); return isNaN(v)||v>=50; }
   function letsClimb(){
     const teams=_fixtureSet(); const out=[];
@@ -2597,8 +2608,8 @@
         const hr=(g,line)=> g.length ? g.filter(r=>(r[k]||0)>=line).length/g.length : null;
         // qualification gate (player must hold a high hit rate as the line climbs)
         let basis=null, rate1=null, rate2=null, gN=0;
-        if(h2h.length>=CLIMB_MIN_H2H){ const r1=hr(h2h,t1),r2=hr(h2h,t2); if(r1!=null&&r2!=null&&r1>=CLIMB_HIT&&r2>=CLIMB_HIT){ basis='h2h'; rate1=r1; rate2=r2; gN=h2h.length; } }
-        if(!basis&&last10.length>=CLIMB_MIN_L10){ const r1=hr(last10,t1),r2=hr(last10,t2); if(r1!=null&&r2!=null&&r1>=CLIMB_HIT&&r2>=CLIMB_HIT){ basis='l10'; rate1=r1; rate2=r2; gN=last10.length; } }
+        if(h2h.length>=CLIMB_MIN_H2H){ const r1=hr(h2h,t1),r2=hr(h2h,t2); if(r1!=null&&r2!=null&&r1>=CLIMB_HIT&&r2>=CLIMB_CLIMB_MIN){ basis='h2h'; rate1=r1; rate2=r2; gN=h2h.length; } }
+        if(!basis&&last10.length>=CLIMB_MIN_L10){ const r1=hr(last10,t1),r2=hr(last10,t2); if(r1!=null&&r2!=null&&r1>=CLIMB_HIT&&r2>=CLIMB_CLIMB_MIN){ basis='l10'; rate1=r1; rate2=r2; gN=last10.length; } }
         if(!basis) return;
         // display ladder: posted rungs from the start line up, each with H2H + season hit rate + odds
         const ladder=rungs.filter(r=>r.line>=N0).slice(0,6).map(r=>({
@@ -2606,7 +2617,9 @@
           h2hRate: h2h.length?hr(h2h,r.line):null, h2hN: h2h.length,
           seasonRate: season.length?hr(season,r.line):null, seasonN: season.length
         }));
-        out.push({ p, opp, stat:l, statKey:k, startN:N0, t1, t2, basis, rate1, rate2, games:gN,
+        const _cpos=(JTTScoring.POS_TO_DVP&&JTTScoring.POS_TO_DVP[p.position])||p.position;
+        const _cdvp=opp?JTTScoring.getDVPPct(opp,_cpos,k):null;
+        out.push({ p, opp, stat:l, statKey:k, startN:N0, t1, t2, basis, rate1, rate2, games:gN, dvpPct:_cdvp,
           startOver:start.over, startBook:start.book, climbOver:(rungs.find(r=>r.line===t2)||{}).over||null, ladder });
       });
     });
@@ -2625,7 +2638,7 @@
       '</div>';
     return '<div class="lc-card" onclick="openPlayer(\''+q+'\')">'+
       '<div class="lc-hd"><span class="lc-nm">'+nm+'</span>'+_degBadges(c.p.name)+
-        '<span class="lc-meta">'+c.stat+' · '+abbr(c.p.team)+(c.opp?' v '+abbr(c.opp):'')+'</span></div>'+
+        '<span class="lc-meta">'+c.stat+' · '+abbr(c.p.team)+(c.opp?' v '+abbr(c.opp):'')+(c.dvpPct!=null&&isFinite(c.dvpPct)?' · '+muTag(c.dvpPct):'')+'</span></div>'+'<div class="lc-matchup">Climb '+c.startN+'+ \u2192 '+c.t2+'+ \u00b7 base hits '+Math.round(c.rate1*100)+'%, top rung '+Math.round(c.rate2*100)+'% ('+(c.basis==='h2h'?'vs '+abbr(c.opp):'last 10')+')</div>'+
       '<div class="lc-rung lc-cols"><span>Line</span><span>H2H'+(h2hN?' ('+h2hN+'g)':'')+'</span><span>Season'+(szN?' ('+szN+'g)':'')+'</span><span class="lc-od">Best over</span></div>'+
       c.ladder.map(rung).join('')+
     '</div>';
@@ -3377,15 +3390,19 @@
       return degWrap('ti-flame','Streakers',rows,'c-amber');
     }
     if(k==='form'){
-      const rowOf=a=>degRow(a.p.name,a._dir==='spike'?'#22c55e':'#ef4444',{v1:(a._dir==='spike'?'▲ +':'▼ ')+Math.round(a.swing*100)+'%',l1:'swing',v2:M(a.l3),l2:'L3'},a.stat+' · L3 '+M(a.l3)+' vs season '+M(a.seasonAvg)+formNote(a._dir,a.runDvp,a.thisDvp));
-      if(_degenFocused){
-        const all=[..._fc(formAlerts('spike'),12,25).map(a=>({...a,_dir:'spike'})),..._fc(formAlerts('drop'),12,25).map(a=>({...a,_dir:'drop'}))]
-          .sort((x,y)=>Math.abs(y.swing)-Math.abs(x.swing));
-        return degWrap('ti-activity','Player Form',all.map(rowOf),'c-green');
-      }
-      const up=_byGame(_fc(formAlerts('spike'),6,25), a=>a.p.team, a=>rowOf({...a,_dir:'spike'}));
-      const dn=_byGame(_fc(formAlerts('drop'),6,25), a=>a.p.team, a=>rowOf({...a,_dir:'drop'}));
-      return degWrap('ti-trending-up','Spiking',up,'c-green')+degWrap('ti-trending-down','Cooling',dn,'c-red');
+      // one compact list per team (spiking + cooling merged), a line or two of text per player
+      const all=[..._fc(formAlerts('spike'),40,25).map(a=>({...a,_dir:'spike'})),..._fc(formAlerts('drop'),40,25).map(a=>({...a,_dir:'drop'}))];
+      if(!all.length) return degWrap('ti-activity','Player Form','','c-green');
+      const byTeam={}; all.forEach(a=>{ (byTeam[a.p.team]=byTeam[a.p.team]||[]).push(a); });
+      const teamOrder=Object.keys(byTeam).sort((x,y)=>byTeam[y].length-byTeam[x].length);
+      const pfRow=a=>{ const col=a._dir==='spike'?'#22c55e':'#ef4444', arr=a._dir==='spike'?'▲':'▼', sign=a._dir==='spike'?'+':'';
+        return '<div class="pf-row" onclick="openPlayer(\''+esc(a.p.name).replace(/\x27/g,"\\\x27")+'\')">'+
+          '<span class="pf-sw" style="color:'+col+'">'+arr+' '+sign+Math.round(a.swing*100)+'%</span>'+
+          '<span class="pf-nm">'+esc(a.p.name)+'</span>'+
+          '<span class="pf-info">'+a.stat+' · L3 '+M(a.l3)+' vs '+M(a.seasonAvg)+'</span></div>'; };
+      const items=teamOrder.map(t=>'<div class="pf-team">'+teamLogo(t,16)+'<span>'+esc(t)+'</span><span class="pf-ct">'+byTeam[t].length+'</span></div>'+
+        byTeam[t].sort((x,y)=>Math.abs(y.swing)-Math.abs(x.swing)).map(pfRow).join(''));
+      return degWrap('ti-activity','Player Form',items,'c-green');
     }
     if(k==='taggers'){
       const rows=_byGame(_fc(taggerAlerts(),8), t=>t.threat.team, t=>degRow(t.threat.name,'#a855f7',t.type==='hard'?'HARD TAG risk':'Def tag risk',
