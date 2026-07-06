@@ -114,6 +114,12 @@
   .mm-lo{font-family:var(--font-mono);font-size:12px;font-weight:700;color:var(--text);min-width:52px;text-align:right;}
   .mm-bk{font-size:8px;font-weight:700;color:var(--text-3);text-transform:uppercase;}
   .deg-cba{font-size:8.5px;font-weight:800;border:1px solid;border-radius:4px;padding:1px 4px;white-space:nowrap;line-height:1.4;}
+  .fx-mtool{margin-top:6px;}
+  .mb-filt-toggle{display:inline-flex;align-items:center;gap:5px;background:var(--surface-2);border:1px solid var(--border);color:var(--text-2);border-radius:8px;padding:5px 11px;font-size:11px;font-weight:600;cursor:pointer;}
+  .mb-filt-toggle:hover{border-color:var(--accent);color:var(--text);}
+  .mb-adv{animation:mbfade .12s ease;}
+  @keyframes mbfade{from{opacity:0}to{opacity:1}}
+  .fx-mtool .tp-collapse{margin-top:8px;}
   .pf-team{display:flex;align-items:center;gap:6px;font-family:var(--font-display);font-weight:700;font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--text-2);padding:9px 4px 4px;margin-top:6px;border-bottom:1px solid var(--border);}
   .pf-team:first-child{margin-top:0;}
   .pf-team img{border-radius:3px;}
@@ -1004,7 +1010,8 @@
       updated:(src&&src.updated)||null,
       sample:!!(src&&src._sample) };
   }
-  let _mbActiveBook=null;
+  let _mbActiveBook=null, _mbFocusGame=null, _mbFxFiltersOpen=false;
+  window._mbToggleFxFilters=function(){ _mbFxFiltersOpen=!_mbFxFiltersOpen; _reRenderMulti(); };
   function _bookOK(b){ if(_mbActiveBook) return b===_mbActiveBook; const mb=SETTINGS.books; return !mb||!mb.length||mb.indexOf(b)>=0; }
   function oddsFor(player, market){
     const main=(state.idx.oddsIdx[player]||{})[market];                                   // two-way main line (line + under live here)
@@ -1778,8 +1785,7 @@
     if(fxMode==='nerd') h+=nerdFilterBar();
     h+='<div class="team-cols">'+teamSignals(g.home,g.away,true)+teamSignals(g.away,g.home,false)+'</div>';
     if(fxMode!=='nerd') h+=dejaVuSGM(g.home,g.away);
-    if(fxMode!=='nerd') h+=matchupMultiFx(g);
-    if(fxMode!=='nerd') h+=focusedMulti(g);
+    if(fxMode!=='nerd') h+=focusedMultiTool(g);
     return h;
   }
 
@@ -3040,12 +3046,14 @@
     return (a,b)=>b.score-a.score;
   }
   function _mbPools(){
-    const M=SETTINGS.multi, mode=M.mode||'smart', scope=M.scope||'game';
+    const M=SETTINGS.multi; let mode=M.mode||'smart', scope=M.scope||'game';
+    if(_mbFocusGame){ scope='game'; if(mode==='team') mode='smart'; }   // focused fixture: this game only
     if(!_oddsLive()) return [];
     _mbActiveBook=M.book||null;                                   // constrain all leg pricing to the chosen book
     try{
       let fixtures=(state.data.fixture||[]).filter(g=>g.home&&g.away);
       if(M.today){ const t=_todayStr(); fixtures=fixtures.filter(g=>(g.date||'')===t); }
+      if(_mbFocusGame){ fixtures=fixtures.filter(g=>g.home===_mbFocusGame.home&&g.away===_mbFocusGame.away); }
       const banned=new Set(M.banned||[]);
       const pl=t=>(state.idx.players||[]).filter(p=>p.team===t&&(p.matches||0)>=3&&!banned.has(p.name));
       const sortFn=_mbSortFn();
@@ -3130,6 +3138,12 @@
     for(let i=0;i<b.pool.length;i++){ if(!used.has(i)){ s.idx.push(i); break; } }
     s.manual=null; _reRenderMulti();
   };
+  // Unified Multi Builder scoped to one fixture — same 7-mode interactive tool as Degen Crew.
+  function focusedMultiTool(g){
+    if(!g||!_oddsLive()) return '';
+    _mbFocusGame=g;                                            // scope _mbPools to this game
+    return '<div id="multi-wrap" class="fx-mtool">'+multiFilterBar()+'<div id="multi-results">'+multiResults()+'</div></div>';
+  }
   // Multi Builder scoped to a single fixture (focused-fixture page), with its own filters
   function focusedMulti(g){
     if(!g||!_oddsLive()) return '';                 // only when the live odds feed is on
@@ -3458,6 +3472,7 @@
       return degWrap('ti-stairs-up',"Let's Climb",rows,'c-green');
     }
     if(k==='multi'){
+      _mbFocusGame=null;
       return '<div id="multi-wrap">'+multiFilterBar()+'<div id="multi-results">'+multiResults()+'</div></div>';
     }
     return emptyState('ti-flame','Coming next','This tile ports next.');
@@ -3701,16 +3716,17 @@
   }
   function _mbBooksPresent(){ const s=new Set(), bi=state.idx.bookIdx||{}; for(const p in bi){ const mm=bi[p]; for(const mk in mm){ const rows=mm[mk]||[]; for(let i=0;i<rows.length;i++){ if(rows[i].book) s.add(rows[i].book); } } } return ALL_BOOKS.filter(bk=>s.has(bk[0])); }
   function multiFilterBar(){
-    const M=SETTINGS.multi;
-    let h='<div style="'+_fbar+'"><div style="font-size:10px;color:var(--text-3);margin-bottom:4px;text-transform:uppercase;letter-spacing:.04em">Multi filters</div>';
-    const MODES=[['smart','Smart'],['safe','100% Hit Rater'],['team','Thats My Team'],['lotto','Lottery Legs'],['value','Value Hunter'],['h2h','History Repeats'],['matchup','Matchup Multi']];
+    const M=SETTINGS.multi; const focused=!!_mbFocusGame;
+    let h='<div style="'+_fbar+'">'+(focused?'':'<div style="font-size:10px;color:var(--text-3);margin-bottom:4px;text-transform:uppercase;letter-spacing:.04em">Multi filters</div>');
+    const MODES=[['smart','Smart'],['safe','100% Hit Rater'],['team','Thats My Team'],['lotto','Lottery Legs'],['value','Value Hunter'],['h2h','History Repeats'],['matchup','Matchup Multi']].filter(m=>!focused||m[0]!=='team');
     h+='<div style="margin-bottom:5px">'+MODES.map(([k,l])=>_fchip((M.mode||'smart')===k,l,"_mMode('"+k+"')")).join('')+'</div>';
-    if((M.mode||'smart')==='team'){
+    if(!focused && (M.mode||'smart')==='team'){
       const teams=[...new Set((state.data.fixture||[]).filter(g=>g.home&&g.away).flatMap(g=>[g.home,g.away]))].sort();
       h+='<div style="margin-bottom:5px"><select onchange="_mTeam(this.value)" style="background:var(--surface-2);border:1px solid var(--border);color:var(--text);border-radius:8px;padding:5px 9px;font-size:12px;font-weight:600;max-width:220px">'+
         '<option value="">Pick your team\u2026</option>'+teams.map(t=>'<option value="'+esc(t)+'"'+(M.team===t?' selected':'')+'>'+esc(t)+'</option>').join('')+'</select></div>';
     }
     h+='<div style="font-size:9.5px;color:var(--text-3);margin-bottom:6px">'+({smart:'Best-rated legs by our signal score.',safe:'Only legs cleared in every game this season \u2014 safe, short odds.',team:'Legs from your chosen team only \u2014 priced as a same-gamer.',lotto:'One longshot with a real shot \u2014 swap \u25c2\u25b8 to see others.',value:'Every leg +EV \u2014 our hit-rate beats the book price.',h2h:'Legs the player has landed against THIS opponent before \u2014 history repeats.',matchup:'2\u20133 disposals overs where the opponent bleeds to that position and L5 already clears \u2014 priced to $1.75+.'}[M.mode||'smart'])+'</div>';
+    if(focused) h+='<button class="mb-filt-toggle" onclick="_mbToggleFxFilters()"><i class="ti ti-adjustments-horizontal"></i> Filters<i class="ti ti-chevron-'+(_mbFxFiltersOpen?'up':'down')+'" style="margin-left:5px;font-size:12px"></i></button><div class="mb-adv" style="display:'+(_mbFxFiltersOpen?'block':'none')+';margin-top:7px">';
     if((M.mode||'smart')!=='lotto'){
       const TGT=[[null,'Legs: '+(M.legs||6)],[5,'~$5'],[10,'~$10'],[25,'~$25'],[50,'~$50'],[100,'~$100']];
       h+='<div style="margin-bottom:5px"><span style="font-size:10px;color:var(--text-3);text-transform:uppercase;letter-spacing:.04em;margin-right:6px">Target</span>'+TGT.map(([v,l])=>_fchip((M.target||null)===v,l,"_mTarget("+(v==null?'null':v)+")")).join('')+'</div>';
@@ -3726,12 +3742,12 @@
         _books.map(bk=>'<option value="'+bk[0]+'"'+(M.book===bk[0]?' selected':'')+'>'+esc(bk[1])+'</option>').join('')+
         '</select></div>';
     }
-    h+='<div style="margin-bottom:4px">'+[['game','Per game'],['round','Across games']].map(([k,l])=>_fchip(M.scope===k,l,"_mScope('"+k+"')")).join('')+
+    if(!focused) h+='<div style="margin-bottom:4px">'+[['game','Per game'],['round','Across games']].map(([k,l])=>_fchip(M.scope===k,l,"_mScope('"+k+"')")).join('')+
       '<span style="display:inline-block;width:1px;height:16px;background:var(--border);margin:0 6px;vertical-align:middle"></span>'+
       _fchip(!!M.today,'Today only',"_mToday()")+'</div>';
     h+='<div style="display:flex;flex-wrap:wrap;align-items:center;margin-bottom:4px">'+
       _fnum('Legs',M.legs,"_mNum('legs',this.value)")+_fnum('Min prob%',M.minProb,"_mNum('minProb',this.value)")+_fnum('Min score',M.minScore,"_mNum('minScore',this.value)")+'</div>';
-    h+='<div>'+MULTI_MKTS.map(([k,l])=>_fchip(M.markets.indexOf(k)>=0,l,"_mMkt('"+k+"')")).join('')+'</div></div>';
+    h+='<div>'+MULTI_MKTS.map(([k,l])=>_fchip(M.markets.indexOf(k)>=0,l,"_mMkt('"+k+"')")).join('')+'</div>'+(focused?'</div>':'')+'</div>';
     return h;
   }
   window._mScope=function(s){ SETTINGS.multi.scope=s; saveSettings(); _reRenderMulti(); };
