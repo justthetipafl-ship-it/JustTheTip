@@ -113,6 +113,7 @@
   .mm-lw{font-size:10px;font-weight:700;color:#22c55e;width:78px;text-align:right;}
   .mm-lo{font-family:var(--font-mono);font-size:12px;font-weight:700;color:var(--text);min-width:52px;text-align:right;}
   .mm-bk{font-size:8px;font-weight:700;color:var(--text-3);text-transform:uppercase;}
+  .deg-cba{font-size:8.5px;font-weight:800;border:1px solid;border-radius:4px;padding:1px 4px;white-space:nowrap;line-height:1.4;}
   .pf-team{display:flex;align-items:center;gap:6px;font-family:var(--font-display);font-weight:700;font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--text-2);padding:9px 4px 4px;margin-top:6px;border-bottom:1px solid var(--border);}
   .pf-team:first-child{margin-top:0;}
   .pf-team img{border-radius:3px;}
@@ -2143,6 +2144,8 @@
       if(vol) ctxPills+='<span class="pm-od" title="Season variance (CV '+vol.cv.toFixed(2)+')" style="color:'+vol.col+'">'+(isFwd2?'Goals':'Disposals')+': '+vol.tag+'</span>';
       const tg=_togTrend(name);
       if(tg) ctxPills+='<span class="pm-od" style="color:'+(tg.diff>0?'#22c55e':'#ef4444')+'" title="Time-on-ground, last 3 vs season">Role '+(tg.diff>0?'↑':'↓')+' TOG '+tg.l3.toFixed(0)+'% vs '+tg.season.toFixed(0)+'%</span>';
+      const cbaS=_cbaShift(name);
+      if(cbaS) ctxPills+='<span class="pm-od" style="color:'+(cbaS.dir==='up'?'#22c55e':'#ef4444')+'" title="Centre-bounce attendance, last 3 vs season baseline \u2014 a big move signals a midfield role change">CBA '+(cbaS.dir==='up'?'\u2191':'\u2193')+' '+cbaS.recent+'% vs '+cbaS.base+'%</span>';
       const pc=opp?_teamPace(opp):null;
       if(pc&&Math.abs(pc.pct)>=3) ctxPills+='<span class="pm-od" style="color:'+(pc.pct>0?'#22c55e':'#ef4444')+'" title="Opponent disposals conceded vs league avg">'+abbr(opp)+' '+pc.tag+' '+(pc.pct>0?'+':'')+pc.pct.toFixed(0)+'%</span>';
       if(ctxPills) ctxPills='<div class="pm-odds" style="margin-top:6px">'+ctxPills+'</div>';
@@ -2245,7 +2248,7 @@
     let detail=(kind==='over'?'O':'U')+' '+r.line+priceTxt+' · L5 '+fmt(r.l5)+' · hit '+Math.round(r.hitRate*100)+'%'+(r.dvpPct!=null?' · dvp '+(r.dvpPct>0?'+':'')+r.dvpPct.toFixed(0)+'%':'');
     const _v=_volCV(r.p.name,'disposals'); if(_v&&_v.tag!=='mixed') detail+=' · '+_v.tag;
     return '<div class="fixture-row deg-row" style="cursor:pointer" onclick="openPlayer(\''+esc(r.p.name).replace(/\x27/g,"\\\x27")+'\')">'+
-      '<div class="deg-main"><div class="fxr-name deg-nm"><span>'+r.p.name+'</span>'+_tierChip(r.score,kind)+'</div>'+
+      '<div class="deg-main"><div class="fxr-name deg-nm"><span>'+r.p.name+'</span>'+_tierChip(r.score,kind)+_cbaBadge(r.p.name)+'</div>'+
       '<div class="deg-sub">'+(r.p.position||'')+' · '+abbr(r.team)+' v '+abbr(r.oppName)+' · '+r.games2026+' gm</div></div>'+
       '<div class="deg-val" style="color:'+col+'"><div>'+r.verdictLabel+'</div>'+
       '<div class="deg-sub" style="color:var(--text-2);margin-top:2px">'+detail+'</div></div></div>';
@@ -3266,6 +3269,26 @@
     for(let i=0;i<tm.length-1-missed;i++){ if(mine.has(tm[i])) return true; }
     return false;
   }
+  function _cbaShift(name){
+    const logs=((state.idx&&state.idx.logsByName)?state.idx.logsByName[name]:null)||[];
+    const seq=logs.filter(r=>String(r.Year)===CUR_SEASON())
+      .map(r=>({rd:_roundNum(r.RoundName),v:+r.cba}))
+      .filter(x=>isFinite(x.v)&&x.rd!=null).sort((a,b)=>a.rd-b.rd);
+    if(seq.length<6) return null;
+    const recent=seq.slice(-3), base=seq.slice(0,-3);
+    if(recent.length<2||base.length<3) return null;
+    const rAvg=recent.reduce((a,b)=>a+b.v,0)/recent.length;
+    const bAvg=base.reduce((a,b)=>a+b.v,0)/base.length;
+    const d=rAvg-bAvg;
+    if(Math.abs(d)<15) return null;
+    return {recent:Math.round(rAvg), base:Math.round(bAvg), delta:Math.round(d), dir:d>0?'up':'down'};
+  }
+  function _cbaBadge(name){
+    const c=_cbaShift(name); if(!c) return '';
+    const col=c.dir==='up'?'#22c55e':'#ef4444';
+    const tip='Centre-bounce attendance '+c.base+'% \u2192 '+c.recent+'% (last 3 vs season). '+(c.dir==='down'?'Reduced midfield role \u2014 a disposals signal may be stale.':'Increased midfield role.');
+    return '<span class="deg-cba" style="color:'+col+';border-color:'+col+'55;background:'+col+'1a" title="'+_attrEsc(tip)+'">'+(c.dir==='up'?'\u25b2':'\u25bc')+'CBA '+c.recent+'%</span>';
+  }
   function _degBadges(name){
     let h='';
     const p=state.idx&&state.idx.byName?state.idx.byName[name]:null;
@@ -3275,6 +3298,7 @@
     const ij=_injuryFor(name); if(ij) h+='<span class="deg-inj" title="'+esc((ij.Injury||'Injury')+(ij.Returning?' \u00b7 '+ij.Returning:''))+'">OUT</span>';
     else if(_justBack(name)) h+='<span class="deg-back" title="First game(s) back from a spell \u2014 role/TOG often capped">JUST BACK</span>';
     h+=_warnBadge(name);
+    h+=_cbaBadge(name);
     return h;
   }
   function degRow(name,col,right,sub,onclickName){
