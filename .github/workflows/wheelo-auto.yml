@@ -1,12 +1,13 @@
 name: AFL game logs (wheelo auto-fetch)
 # Pulls each completed round's player game logs straight from wheeloratings'
 # static match-stats JSON (…/src/match_stats/table_data/{YYYY}{RR}.json), writes
-# them into AFL/csv/, then runs the SAME ingest + build as the manual CSV path.
-# Replaces exporting + committing the wheelo CSV by hand each week.
+# them into AFL/csv/, then runs ingest -> DE-DUPE -> build -> commit.
 #
-# Self-contained: fetch -> ingest -> build -> commit all in one job, so it does
-# not rely on the push triggering afl-csv.yml (GITHUB_TOKEN commits don't fire
-# other workflows). The upsert (Year+MatchId+Player) makes every run idempotent.
+# The de-dupe step drops stale duplicate rows: older data used string MatchIds
+# (e.g. "2026-R14-Port Adelaide-v-Sydney") carrying CBA as a raw COUNT, while the
+# wheelo CSVs use numeric MatchIds ("20261405") carrying the real CBA%. The upsert
+# keys on Year+MatchId+Player, so the two never matched and every player-round kept
+# BOTH rows — dedup_bundle.py keeps the numeric-MatchId (real %) row. Idempotent.
 #
 # NOTE: GitHub crons are UTC. Monday morning AEST = Sunday night UTC, so the
 # Monday-morning run reads as day 0 (Sunday) below — it still fires Mon AM AEST.
@@ -55,6 +56,11 @@ jobs:
           TEAMFORM_DIR: AFL/csv_team_for
           TEAMDEF_DIR: AFL/csv_team_against
         run: python AFL/ingest_csv.py
+      # ---- drop stale string-MatchId count rows so the build keeps the real CBA% ----
+      - name: De-dupe bundle
+        env:
+          AFL_BUNDLE: AFL/bundle.json
+        run: python AFL/dedup_bundle.py
       # ---- split + derive players / teams / DVP / form from the logs ----
       - name: Build split data files
         run: |
