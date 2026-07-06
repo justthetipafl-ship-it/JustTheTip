@@ -1,5 +1,4 @@
 name: AFL game logs (wheelo auto-fetch)
-
 # Pulls each completed round's player game logs straight from wheeloratings'
 # static match-stats JSON (…/src/match_stats/table_data/{YYYY}{RR}.json), writes
 # them into AFL/csv/, then runs the SAME ingest + build as the manual CSV path.
@@ -8,11 +7,13 @@ name: AFL game logs (wheelo auto-fetch)
 # Self-contained: fetch -> ingest -> build -> commit all in one job, so it does
 # not rely on the push triggering afl-csv.yml (GITHUB_TOKEN commits don't fire
 # other workflows). The upsert (Year+MatchId+Player) makes every run idempotent.
-
+#
+# NOTE: GitHub crons are UTC. Monday morning AEST = Sunday night UTC, so the
+# Monday-morning run reads as day 0 (Sunday) below — it still fires Mon AM AEST.
 on:
   schedule:
-    - cron: "0 13 * * 1"   # Mon 13:00 UTC (~Mon 11pm AEST) — round wrapped
-    - cron: "0 13 * * 3"   # Wed 13:00 UTC — catch split rounds + stat corrections
+    - cron: "0 22 * * 0"   # Sun 22:00 UTC = Mon 8am AEST — round wrapped overnight
+    - cron: "0 13 * * 3"   # Wed 13:00 UTC (~Wed 11pm AEST) — split rounds + stat corrections
   workflow_dispatch:
     inputs:
       rounds:
@@ -24,7 +25,6 @@ on:
       password:
         description: "Weekly subscriber password (stored hashed, never in repo)"
         required: false
-
 jobs:
   fetch-ingest:
     runs-on: ubuntu-latest
@@ -34,12 +34,10 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-
       # ---- pull wheelo round JSON -> AFL/csv/*.csv ----
       - name: Fetch wheelo game logs
         env:
@@ -48,7 +46,6 @@ jobs:
           WHEELO_ROUNDS: ${{ github.event.inputs.rounds }}
           WHEELO_YEAR: ${{ github.event.inputs.year }}
         run: python AFL/fetch_wheelo.py
-
       # ---- ingest CSV game logs -> bundle.json (upsert by Year+MatchId+Player) ----
       - name: Ingest game-log CSVs
         env:
@@ -58,7 +55,6 @@ jobs:
           TEAMFORM_DIR: AFL/csv_team_for
           TEAMDEF_DIR: AFL/csv_team_against
         run: python AFL/ingest_csv.py
-
       # ---- split + derive players / teams / DVP / form from the logs ----
       - name: Build split data files
         run: |
@@ -70,7 +66,6 @@ jobs:
             python AFL/build_afl_data.py --src AFL/bundle.json --out AFL/data \
               --seasons 2023,2024,2025,2026 --current 2026
           fi
-
       - name: Commit refreshed data
         run: |
           git config user.name  "jtt-bot"
