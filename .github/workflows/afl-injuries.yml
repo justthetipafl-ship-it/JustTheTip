@@ -1,0 +1,52 @@
+name: AFL injuries (FootyWire refresh)
+
+# Auto-refreshes the AFL injury list so injury.json never goes stale.
+# fetch_injuries.py is self-contained: it fetches FootyWire's injury tables over
+# HTTP, maps team/player labels to the strings the tool already uses, and writes
+#   * AFL/bundle.json  -> ["injury"]   (survives future rebuilds' passthrough)
+#   * AFL/data/injury.json             (live mirror the tool reads)
+# It's NON-DESTRUCTIVE: a blocked fetch / layout change yields ~0 rows and aborts,
+# leaving the existing files untouched — so a bad run can never wipe the list.
+#
+# Cadence (AEST = UTC+10): Thursday night when teams/outs firm up, then each
+# game-day morning. Extra ticks are harmless — it just overwrites with the latest.
+
+on:
+  schedule:
+    - cron: "0 12 * * 4"     # Thu 22:00 AEST — after team news / lineups
+    - cron: "0 1  * * 5,6,0" # Fri/Sat/Sun 11:00 AEST — game-day morning refresh
+    - cron: "0 6  * * 6,0"   # Sat/Sun 16:00 AEST — late outs before evening games
+  workflow_dispatch:
+
+# Prevent overlapping runs from racing on the same commit.
+concurrency:
+  group: afl-injuries
+  cancel-in-progress: false
+
+jobs:
+  injuries:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Fetch FootyWire injury list
+        run: python AFL/fetch_injuries.py
+
+      - name: Commit refreshed injuries (only if changed)
+        run: |
+          git config user.name  "jtt-bot"
+          git config user.email "bot@justthetipaus.com"
+          git add AFL/data/injury.json AFL/bundle.json
+          if git diff --cached --quiet; then
+            echo "no injury changes"
+          else
+            git commit -m "AFL: refresh injury list (FootyWire)"
+            git push
+          fi
