@@ -509,7 +509,8 @@ window.JTTScoring = (function () {
       const cur = rows.filter(isCurWindow);
       if (!cur.length) return;                       // active in window only
       const team = rows[rows.length - 1].team;
-      const p = { name, team, games: new Set(rows.map(r => r.matchId)).size };
+      const teams = [...new Set(rows.map(r => r.team))];
+      const p = { name, team, teams, games: new Set(rows.map(r => r.matchId)).size };
       if (bR.length) {
         p.batRole = classifyBat(bR);
         const n = bR.length;
@@ -653,13 +654,14 @@ window.JTTScoring = (function () {
   }
 
   function players() { return _players; }
+  function playersForTeam(t) { return _players.filter(p => p.teams && p.teams.includes(t)); }
   function playerByName(n) { return _playerIdx[n] || null; }
   function scope() { return Object.assign({}, SCOPE); }
   function teamProfile(t) { return _teamProf[t] || null; }
   function venueProfile(v) { const vk = venueKey(v); return vk ? (_venues[vk] || null) : null; }
 
   return {
-    configure, setScope, scope, players, playerByName, teamProfile, venueProfile,
+    configure, setScope, scope, players, playersForTeam, playerByName, teamProfile, venueProfile,
     scoreCMP, cmpFactors, getContextSignals, scoreOverLine, scoreUnderLine,
     verdict, drLine, getDVPPct, getDVPRank, muPct: muPctFor, muInfo,
     getL5Avg, getRecentAvg, getHitRate, venuePct,
