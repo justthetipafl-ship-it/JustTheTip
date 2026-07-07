@@ -3048,7 +3048,8 @@
   // pick the shortest multi that clears $1.75 (prefer 2 legs, cap 3)
   function _mmPick(legs){
     const pick=[]; let comb=1;
-    for(const l of legs){ if((comb>=1.75&&pick.length>=2)||pick.length>=3) break; pick.push(l); comb*=l._odds.price; }
+    // stack the best-matchup legs until the combo clears $1.75 (min 2, max 3 legs)
+    for(const l of legs){ if(comb>=1.75&&pick.length>=2) break; if(pick.length>=3) break; pick.push(l); comb*=l._odds.price; }
     return {pick, comb};
   }
   // focused-fixture card: one matchup multi across BOTH teams of the game
@@ -3069,7 +3070,7 @@
     const bookSel='<select onchange="_mmSetBook(this.value)" style="background:var(--surface-2);border:1px solid var(--border);color:var(--text);border-radius:7px;padding:3px 7px;font-size:11px;font-weight:600;margin-left:6px"><option value=""'+(_mmBook?'':' selected')+'>Any (best price)</option>'+books.map(b=>'<option value="'+b[0]+'"'+(_mmBook===b[0]?' selected':'')+'>'+b[1]+'</option>').join('')+'</select>';
     if(legs.length<2) return _mmBook?_mmEmptyCard(bookSel):'';
     const {pick,comb}=_mmPick(legs);
-    if(pick.length<2||comb<1.55) return _mmBook?_mmEmptyCard(bookSel):'';
+    if(pick.length<2||comb<1.75) return _mmBook?_mmEmptyCard(bookSel):'';
     _mmLast={home:g.home,away:g.away,pick:pick,comb:comb};
     const rows=pick.map(l=>'<div class="mm-leg"><div class="mm-lp">'+esc(l.p.name)+' <span class="mm-pos">'+posShort(l.p.position)+'</span></div>'+
       '<div class="mm-lm">'+l.line+'+ disp</div><div class="mm-lw" title="Opponent concedes vs this position">'+abbr(l.opp)+' +'+l._dvp.toFixed(0)+'%</div>'+
@@ -3139,7 +3140,7 @@
       const idx=s.locked.map(n=>names.indexOf(n)).filter(i=>i>=0);
       const order=_mbSeedOrder(pool,crossGame);
       let tgt=(SETTINGS.multi.mode!=='lotto')?(SETTINGS.multi.target||null):null, capN=12;
-      if(SETTINGS.multi.mode==='matchup'){ tgt=1.75; capN=3; }     // shortest multi that clears $1.75
+      if(SETTINGS.multi.mode==='matchup'){ tgt=1.75; capN=3; }     // 2-3 legs, clear $1.75
       if(tgt){   // target-odds build: add legs until the combined price reaches the target
         let comb=idx.reduce((a,i)=>a*((pool[i]._odds&&pool[i]._odds.price)||1),1);
         for(const i of order){ if((comb>=tgt&&idx.length>=(SETTINGS.multi.mode==='matchup'?2:1))||idx.length>=capN) break;
