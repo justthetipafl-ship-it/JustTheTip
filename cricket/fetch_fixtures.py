@@ -12,6 +12,14 @@ cricket/data/cricket_fixtures.json in the JTT schema.
 - Quota: the free plan is request-limited (~100/day). This pulls a few pages
   every 6h, well inside that. info.hitsToday/hitsLimit is logged each run.
 
+SCOPE (Phase 2, July 2026) — mirrors fetch_cricket.py:
+  - Leagues: only IPL, BBL, The Hundred, CPL, SA20, PSL (LEAGUE_TOKENS).
+    The Hundred is tagged format "T100".
+  - Everything else is treated as INTL and kept ONLY when BOTH teams are
+    ICC full members (FULL_MEMBERS). Kills associate qualifiers/tri-series.
+  - Every dropped match is counted by reason and the tallies are logged, so
+    a "wrote 0 fixtures" run explains itself in the Actions log.
+
 Env:
   CRICKET_DATA_KEY   required (cricketdata.org API key)
   FIX_DAYS           look-ahead window in days (default 21)
@@ -19,6 +27,7 @@ Env:
 """
 import json, os, sys, urllib.request, urllib.parse, time
 from datetime import datetime, timezone, timedelta
+from collections import Counter
 
 OUT = os.path.join(os.path.dirname(__file__), "data")
 os.makedirs(OUT, exist_ok=True)
@@ -27,20 +36,42 @@ DAYS = int(os.environ.get("FIX_DAYS", "21"))
 PAGES = int(os.environ.get("FIX_PAGES", "6"))
 BASE = "https://api.cricapi.com/v1"
 
-# matchType -> format. Anything else (t10, 100-ball, etc.) is skipped.
+# matchType -> format. Anything else (t10, etc.) is skipped, EXCEPT that
+# matches identified as The Hundred are re-tagged T100 whatever their type.
 TYPE_FMT = {"t20": "T20", "odi": "ODI", "test": "TEST",
             "t20i": "T20", "it20": "T20", "odm": "ODI", "mdm": "TEST"}
 
-# League tokens -> LEAGUE; otherwise treated as INTL (national sides).
-LEAGUE_TOKENS = ("indian premier", "ipl", "big bash", "bbl", "psl", "pakistan super",
-                 "the hundred", "hundred", "caribbean premier", "cpl", "blast",
-                 "sa20", "ilt20", "super smash", "lpl", "lanka premier", "bpl",
-                 "bangladesh premier", "major league", "mlc", "county", "sheffield shield",
-                 "marsh cup", "vitality", "abu dhabi", "global", "t20 challenge")
+# ICC full members — INTL fixtures kept only when BOTH teams are in here.
+# CricAPI sometimes suffixes names ("India Women", "Australia A"); exact-match
+# after stripping a trailing bracket keeps those variants OUT, which is what
+# we want (no women's, no A-sides).
+FULL_MEMBERS = {
+    "Australia", "England", "India", "Pakistan", "South Africa",
+    "New Zealand", "West Indies", "Sri Lanka", "Bangladesh",
+    "Afghanistan", "Zimbabwe", "Ireland",
+}
 
-def is_league(name, series):
+# League whitelist tokens -> canonical comp name. Order matters: first hit wins.
+LEAGUES = [
+    (("indian premier", "ipl"),                 "Indian Premier League"),
+    (("big bash", "bbl"),                       "Big Bash League"),
+    (("the hundred",),                          "The Hundred"),
+    (("caribbean premier", "cpl"),              "Caribbean Premier League"),
+    (("sa20",),                                 "SA20"),
+    (("pakistan super", "psl"),                 "Pakistan Super League"),
+]
+
+def league_match(name, series):
     s = (name + " " + (series or "")).lower()
-    return any(tok in s for tok in LEAGUE_TOKENS)
+    if "women" in s:
+        return None
+    for tokens, canon in LEAGUES:
+        if any(tok in s for tok in tokens):
+            return canon
+    return None
+
+def clean_team(t):
+    return (t or "").split("(")[0].strip()
 
 def log(*a): print(*a, file=sys.stderr, flush=True)
 
@@ -66,6 +97,8 @@ def main():
     horizon = now + timedelta(days=DAYS)
 
     auto = []
+    seen_total = 0
+    drop = Counter()
     for page in range(PAGES):
         try:
             resp = get("matches", offset=page * 25)
@@ -79,29 +112,50 @@ def main():
             log(f"quota: {info.get('hitsToday','?')}/{info.get('hitsLimit','?')} today")
         if not data:
             break
+        seen_total += len(data)
         for m in data:
+            name = m.get("name", "")
+            series = m.get("series", "")
             mt = (m.get("matchType") or "").lower()
             fmt = TYPE_FMT.get(mt)
+            league_comp = league_match(name, series)
+            if league_comp == "The Hundred":
+                fmt = "T100"  # 100-ball, whatever CricAPI calls the matchType
             if not fmt:
+                drop["matchType"] += 1
                 continue
             ct = m.get("dateTimeGMT")
             try:
                 dt = datetime.fromisoformat(ct.replace("Z", "")).replace(tzinfo=timezone.utc)
             except Exception:
+                drop["badDate"] += 1
                 continue
-            if dt < now - timedelta(hours=6) or dt > horizon:
+            if dt < now - timedelta(hours=6):
+                drop["past"] += 1
                 continue
-            teams = m.get("teams") or []
+            if dt > horizon:
+                drop["beyondWindow"] += 1
+                continue
+            teams = [clean_team(t) for t in (m.get("teams") or [])]
             if len(teams) < 2 or any(t in ("", "Tbc", "TBC") for t in teams):
+                drop["tbcTeams"] += 1
                 continue
             if m.get("matchEnded"):
+                drop["ended"] += 1
                 continue
+            # ---- scope filter ----
+            if league_comp:
+                level, comp = "LEAGUE", league_comp
+            else:
+                if not all(t in FULL_MEMBERS for t in teams):
+                    drop["scope"] += 1
+                    continue
+                level = "INTL"
+                comp = (series or name.split(",")[0] or fmt)
             venue, city = split_venue(m.get("venue", ""))
-            name = m.get("name", "")
-            level = "LEAGUE" if is_league(name, m.get("series", "")) else "INTL"
             auto.append({
                 "matchId": m["id"], "format": fmt, "level": level,
-                "comp": (m.get("series") or name.split(",")[0] or fmt),
+                "comp": comp,
                 "date": dt.strftime("%Y-%m-%d"), "utc": dt.strftime("%Y-%m-%dT%H:%M:%SZ"),
                 "home": teams[0], "away": teams[1],
                 "venue": venue, "city": city, "status": "upcoming",
@@ -132,6 +186,8 @@ def main():
     ver = str(int(time.time() * 1000))
     json.dump({"fixtureCount": len(merged), "version": ver, "fixtures": merged},
               open(path, "w"), separators=(",", ":"))
+    log(f"scanned {seen_total} matches; drops: " +
+        (", ".join(f"{k}={v}" for k, v in sorted(drop.items())) or "none"))
     log(f"DONE wrote {len(merged)} fixtures ({len(auto)} auto, {len(manual)} manual)")
 
 if __name__ == "__main__":
