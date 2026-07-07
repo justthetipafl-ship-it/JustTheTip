@@ -100,6 +100,61 @@ def main():
     seen_total = 0
     drop = Counter()
     date_min = None; date_max = None
+
+    def consider(m):
+        nonlocal seen_total, date_min, date_max
+        seen_total += 1
+        name = m.get("name", "")
+        series = m.get("series", "")
+        mt = (m.get("matchType") or "").lower()
+        fmt = TYPE_FMT.get(mt)
+        league_comp = league_match(name, series)
+        if league_comp == "The Hundred":
+            fmt = "T100"  # 100-ball, whatever CricAPI calls the matchType
+        if not fmt:
+            drop["matchType"] += 1
+            return
+        ct = m.get("dateTimeGMT")
+        try:
+            dt = datetime.fromisoformat(ct.replace("Z", "")).replace(tzinfo=timezone.utc)
+        except Exception:
+            drop["badDate"] += 1
+            return
+        if date_min is None or dt < date_min: date_min = dt
+        if date_max is None or dt > date_max: date_max = dt
+        if dt < now - timedelta(hours=6):
+            drop["past"] += 1
+            return
+        if dt > horizon:
+            drop["beyondWindow"] += 1
+            return
+        teams = [clean_team(t) for t in (m.get("teams") or [])]
+        if len(teams) < 2 or any(t in ("", "Tbc", "TBC") for t in teams):
+            drop["tbcTeams"] += 1
+            return
+        if m.get("matchEnded"):
+            drop["ended"] += 1
+            return
+        # ---- scope filter ----
+        if league_comp:
+            level, comp = "LEAGUE", league_comp
+        else:
+            if not all(t in FULL_MEMBERS for t in teams):
+                drop["scope"] += 1
+                return
+            level = "INTL"
+            comp = (series or name.split(",")[0] or fmt)
+        venue, city = split_venue(m.get("venue", ""))
+        auto.append({
+            "matchId": m["id"], "format": fmt, "level": level,
+            "comp": comp,
+            "date": dt.strftime("%Y-%m-%d"), "utc": dt.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "home": teams[0], "away": teams[1],
+            "venue": venue, "city": city, "status": "upcoming",
+        })
+
+
+    # Pass 1: /matches — scheduled fixtures (free tier serves these weeks out).
     for page in range(PAGES):
         try:
             resp = get("matches", offset=page * 25)
@@ -113,56 +168,22 @@ def main():
             log(f"quota: {info.get('hitsToday','?')}/{info.get('hitsLimit','?')} today")
         if not data:
             break
-        seen_total += len(data)
         for m in data:
-            name = m.get("name", "")
-            series = m.get("series", "")
-            mt = (m.get("matchType") or "").lower()
-            fmt = TYPE_FMT.get(mt)
-            league_comp = league_match(name, series)
-            if league_comp == "The Hundred":
-                fmt = "T100"  # 100-ball, whatever CricAPI calls the matchType
-            if not fmt:
-                drop["matchType"] += 1
-                continue
-            ct = m.get("dateTimeGMT")
-            try:
-                dt = datetime.fromisoformat(ct.replace("Z", "")).replace(tzinfo=timezone.utc)
-            except Exception:
-                drop["badDate"] += 1
-                continue
-            if date_min is None or dt < date_min: date_min = dt
-            if date_max is None or dt > date_max: date_max = dt
-            if dt < now - timedelta(hours=6):
-                drop["past"] += 1
-                continue
-            if dt > horizon:
-                drop["beyondWindow"] += 1
-                continue
-            teams = [clean_team(t) for t in (m.get("teams") or [])]
-            if len(teams) < 2 or any(t in ("", "Tbc", "TBC") for t in teams):
-                drop["tbcTeams"] += 1
-                continue
-            if m.get("matchEnded"):
-                drop["ended"] += 1
-                continue
-            # ---- scope filter ----
-            if league_comp:
-                level, comp = "LEAGUE", league_comp
-            else:
-                if not all(t in FULL_MEMBERS for t in teams):
-                    drop["scope"] += 1
-                    continue
-                level = "INTL"
-                comp = (series or name.split(",")[0] or fmt)
-            venue, city = split_venue(m.get("venue", ""))
-            auto.append({
-                "matchId": m["id"], "format": fmt, "level": level,
-                "comp": comp,
-                "date": dt.strftime("%Y-%m-%d"), "utc": dt.strftime("%Y-%m-%dT%H:%M:%SZ"),
-                "home": teams[0], "away": teams[1],
-                "venue": venue, "city": city, "status": "upcoming",
-            })
+            consider(m)
+
+    # Pass 2: /currentMatches — the free /matches feed skips the next ~3 weeks
+    # (in-progress series live here). Not-yet-started games only; live-score
+    # handling is a UI-layer feature, not a fixtures concern.
+    try:
+        resp = get("currentMatches", offset=0)
+        if resp.get("status") == "success":
+            for m in resp.get("data", []):
+                if not m.get("matchStarted"):
+                    consider(m)
+        else:
+            log("currentMatches status:", resp.get("status"))
+    except Exception as e:
+        log("currentMatches failed", e)
 
     # de-dupe auto by id
     seen = {}
