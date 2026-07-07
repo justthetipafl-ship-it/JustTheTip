@@ -22,7 +22,7 @@ SCOPE (Phase 2, July 2026) — mirrors fetch_cricket.py:
 
 Env:
   CRICKET_DATA_KEY   required (cricketdata.org API key)
-  FIX_DAYS           look-ahead window in days (default 21)
+  FIX_DAYS           look-ahead window in days (default 45)
   FIX_PAGES          max pages to walk, 25 matches each (default 6)
 """
 import json, os, sys, urllib.request, urllib.parse, time
@@ -32,7 +32,7 @@ from collections import Counter
 OUT = os.path.join(os.path.dirname(__file__), "data")
 os.makedirs(OUT, exist_ok=True)
 KEY = os.environ.get("CRICKET_DATA_KEY", "").strip()
-DAYS = int(os.environ.get("FIX_DAYS", "21"))
+DAYS = int(os.environ.get("FIX_DAYS", "45"))
 PAGES = int(os.environ.get("FIX_PAGES", "6"))
 BASE = "https://api.cricapi.com/v1"
 
@@ -99,6 +99,7 @@ def main():
     auto = []
     seen_total = 0
     drop = Counter()
+    date_min = None; date_max = None
     for page in range(PAGES):
         try:
             resp = get("matches", offset=page * 25)
@@ -130,6 +131,8 @@ def main():
             except Exception:
                 drop["badDate"] += 1
                 continue
+            if date_min is None or dt < date_min: date_min = dt
+            if date_max is None or dt > date_max: date_max = dt
             if dt < now - timedelta(hours=6):
                 drop["past"] += 1
                 continue
@@ -186,6 +189,9 @@ def main():
     ver = str(int(time.time() * 1000))
     json.dump({"fixtureCount": len(merged), "version": ver, "fixtures": merged},
               open(path, "w"), separators=(",", ":"))
+    if date_min:
+        log(f"API date coverage: {date_min:%Y-%m-%d} -> {date_max:%Y-%m-%d} "
+            f"(window: now -> +{DAYS}d)")
     log(f"scanned {seen_total} matches; drops: " +
         (", ".join(f"{k}={v}" for k, v in sorted(drop.items())) or "none"))
     log(f"DONE wrote {len(merged)} fixtures ({len(auto)} auto, {len(manual)} manual)")
