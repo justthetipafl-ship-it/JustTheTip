@@ -118,6 +118,13 @@
   .mb-filt-toggle{display:inline-flex;align-items:center;gap:5px;background:var(--surface-2);border:1px solid var(--border);color:var(--text-2);border-radius:8px;padding:5px 11px;font-size:11px;font-weight:600;cursor:pointer;}
   .mb-filt-toggle:hover{border-color:var(--accent);color:var(--text);}
   .mb-adv{animation:mbfade .12s ease;}
+  .vs-note{font-size:11px;color:var(--text-2);margin-bottom:5px;font-family:var(--font-mono);}
+  .vs-row{display:flex;align-items:center;gap:8px;font-size:12px;padding:3px 0;border-bottom:1px solid rgba(255,255,255,.03);}
+  .vs-row:last-child{border-bottom:0;}
+  .vs-k{flex:1;color:var(--text-2);}
+  .vs-v{font-family:var(--font-mono);color:var(--text);min-width:38px;text-align:right;}
+  .vs-s{color:var(--text-3);font-size:10.5px;font-family:var(--font-mono);}
+  .vs-d{font-family:var(--font-mono);font-weight:700;min-width:40px;text-align:right;}
   @keyframes mbfade{from{opacity:0}to{opacity:1}}
   .fx-mtool .tp-collapse{margin-top:8px;}
   .pf-team{display:flex;align-items:center;gap:6px;font-family:var(--font-display);font-weight:700;font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--text-2);padding:9px 4px 4px;margin-top:6px;border-bottom:1px solid var(--border);}
@@ -757,6 +764,7 @@
     {k:'snags',    n:'Snags',         i:'ti-ball-american-football', d:'Goalscoring'},
     {k:'elite',    n:'Elite Matchups',i:'ti-trophy',       d:'Top v soft'},
     {k:'bunnies',  n:'Bunnies',       i:'ti-carrot',       d:'Loves this opp'},
+    {k:'hunting',  n:'Hunting Grounds',i:'ti-target-arrow', d:'Venue feasters'},
     {k:'death',    n:'Death Riders',  i:'ti-skull',        d:'Strong UNDER'},
     {k:'bogey',    n:'Bogey',         i:'ti-mood-sad',     d:'Struggles v opp'},
     {k:'streak',   n:'Streakers',     i:'ti-flame',        d:'Hot form'},
@@ -889,7 +897,7 @@
     d._dedupedMatches=drop.size;
   }
   function adaptData(){
-    const d=state.data;
+    const d=state.data; _venueMap=null;
     _dedupeGamelogs(d);
     state.idx.players=d.players||[];
     state.idx.byName={}; state.idx.players.forEach(p=>state.idx.byName[p.name]=p);
@@ -1839,7 +1847,7 @@
       const ov=collectOU([team],'over'), un=collectOU([team],'under');
       const counts={ green:ov.length, death:un.length, snags:_fc(snags(),6).length,
         elite:_fc(elite(),8,40).length, bunnies:_fc(bunnies(),6).length, bogey:_fc(bogey(),6).length,
-        streak:_fc(streakers(),6).length, form:_fc(formAlerts('spike'),6,25).length+_fc(formAlerts('drop'),6,25).length,
+        streak:_fc(streakers(),6).length, hunting:_fc(huntingGrounds(),8).length, form:_fc(formAlerts('spike'),6,25).length+_fc(formAlerts('drop'),6,25).length,
         taggers:_fc(taggerAlerts(),8).length, climb:_fc(letsClimb(),6).length };
       total=Object.values(counts).reduce((a,b)=>a+b,0);
       html+=ouSection(ov,'over','Green Lights','ti-traffic-lights','c-green');
@@ -2161,6 +2169,7 @@
       edge+oddsHtml+
       '<div class="section-title">Averages <span class="sub-tabs" style="float:right;display:inline-flex">'+seg+'</span></div><div class="statgrid">'+cells+'</div>'+
       _pmSec('Prop Calculator',propCalc(name),true)+
+      _pmSec('Venue \u2014 this week',_venueSplitHTML(name,p),false)+
       _pmSec('Game Log',pmBoxScores(name,6),false)+
       (opp?_pmSec('Similar Players',similarPlayers(p,_pcState?_pcState.stat:'disposals',opp,_pcState?_pcState.line:NaN,6),false):'');
   }
@@ -2471,6 +2480,48 @@
         '</div></details>';
     });
     return h;
+  }
+  // ---- Venue join: results/fixture carry venue; game logs join on year+round+team ----
+  let _venueMap=null;
+  function _venueOf(year, rd, team){
+    if(!_venueMap){ _venueMap={}; (state.data.results||[]).forEach(r=>{ [r.home,r.away].forEach(t=>{ _venueMap[String(r.year)+'|'+r.round+'|'+t]=r.venue; }); }); }
+    return _venueMap[String(year)+'|'+rd+'|'+team]||null;
+  }
+  function _nextVenue(team){ const g=(state.data.fixture||[]).find(x=>x.home===team||x.away===team); return g?g.venue:null; }
+  function _venueLogs(name, venue){ return allLogs(name).filter(r=>_venueOf(r.Year,_roundNum(r.RoundName),r.Team)===venue); }
+
+  // ---- Hunting Grounds: players facing a venue they feast at this week ----
+  const HG_STATS=[{k:'disposals',l:'disposals',min:15,edge:3},{k:'goals',l:'goals',min:1,edge:0.7},{k:'marks',l:'marks',min:4,edge:1.5},{k:'tackles',l:'tackles',min:3,edge:1.5}];
+  function huntingGrounds(){
+    const out=[];
+    (state.idx.players||[]).filter(p=>(p.matches||0)>=6).forEach(p=>{
+      const opp=nextOpp(p.team); if(!opp) return;
+      const venue=_nextVenue(p.team); if(!venue) return;
+      const vlogs=_venueLogs(p.name,venue);
+      if(vlogs.length<4) return;                               // need a real venue sample (n>=4)
+      HG_STATS.forEach(st=>{
+        const seasonAvg=+p[st.k]; if(!isFinite(seasonAvg)||seasonAvg<st.min) return;
+        const vAvg=_avg(vlogs.map(r=>+r[st.k]||0));
+        const delta=vAvg-seasonAvg;
+        if(delta<st.edge) return;                              // must OUTPERFORM their season line at the venue
+        const odds=st.k==='disposals'?oddsFor(p.name,'disposals'):null;
+        out.push({p,opp,venue,stat:st,statKey:st.k,vAvg,seasonAvg,delta,n:vlogs.length,odds});
+      });
+    });
+    return out.sort((a,b)=>(b.delta/b.seasonAvg)-(a.delta/a.seasonAvg));
+  }
+  // modal: this week's venue split vs season
+  function _venueSplitHTML(name,p){
+    const venue=_nextVenue(p.team); if(!venue) return '';
+    const vlogs=_venueLogs(name,venue); if(vlogs.length<3) return '';
+    let rows='';
+    [['disposals','Disposals'],['goals','Goals'],['marks','Marks'],['tackles','Tackles']].forEach(([k,l])=>{
+      const sa=+p[k]; if(!isFinite(sa)||sa<=0) return;
+      const va=_avg(vlogs.map(r=>+r[k]||0)); const d=va-sa; const col=d>=0?'#22c55e':'#ef4444';
+      rows+='<div class="vs-row"><span class="vs-k">'+l+'</span><b class="vs-v">'+va.toFixed(1)+'</b><span class="vs-s">vs '+sa.toFixed(1)+' season</span><span class="vs-d" style="color:'+col+'">'+(d>=0?'+':'')+d.toFixed(1)+'</span></div>';
+    });
+    if(!rows) return '';
+    return '<div class="vs-note">'+esc(venue)+' \u00b7 '+vlogs.length+' games here</div>'+rows;
   }
   function bunnies(){
     const out=[];
@@ -3423,6 +3474,13 @@
       const rows=_byGame(_fc(elite(),8,40), s=>s.p.team, s=>degRow(s.p.name,'#22c55e',{v1:M(s.val),l1:s.def.l,v2:'#'+s.dvpRank,l2:'softest'},
         posShort(s.p.position)+' · '+abv(s.p.team)+' v '+abv(s.opp)+' · '+M(s.val)+' '+s.def.l.toLowerCase()+multiLineTag(s.p.name,s.def.k)));
       return degWrap('ti-trophy','Elite Matchups',rows,'c-green');
+    }
+    if(k==='hunting'){
+      const rows=_byGame(_fc(huntingGrounds(),8), b=>b.p.team, b=>{
+        const sub=b.stat.l+' @ '+esc(b.venue)+' \u00b7 '+b.vAvg.toFixed(1)+' vs '+b.seasonAvg.toFixed(1)+' season \u00b7 '+b.n+' games'+lineTag(b.p.name,b.statKey);
+        return degRow(b.p.name,'#22c55e',{v1:b.vAvg.toFixed(1),l1:b.stat.l,v2:'+'+b.delta.toFixed(1),l2:'vs season'},sub);
+      });
+      return degWrap('ti-target-arrow','Hunting Grounds',rows,'c-green');
     }
     if(k==='bunnies'){
       const rows=_byGame(_fc(bunnies(),6), b=>b.p.team, b=>{
