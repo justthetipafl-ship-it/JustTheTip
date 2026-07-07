@@ -1,194 +1,274 @@
 #!/usr/bin/env python3
 """
-fetch_fixtures.py — JTT Cricket upcoming-fixtures feed (CricAPI / cricketdata.org).
+fetch_cricket.py — JTT Cricket data pipeline (runs in GitHub Actions).
 
-Cricsheet is historical-only, so upcoming matches come from CricAPI's
-/matches endpoint, which includes venue. Writes/merges
-cricket/data/cricket_fixtures.json in the JTT schema.
+Pulls Cricsheet ball-by-ball JSON bundles, derives per-innings batting +
+bowling rows, aggregates team rate profiles, and writes the JTT Cricket
+data bundle. Emits the SAME schema as make_sample.py.
 
-- Auto rows use the CricAPI match id as matchId.
-- Manual rows (matchId starting "FX") are always preserved.
-- Past auto rows are dropped each run.
-- Quota: the free plan is request-limited (~100/day). This pulls a few pages
-  every 6h, well inside that. info.hitsToday/hitsLimit is logged each run.
+Cricsheet has no upcoming fixtures (historical only). cricket_fixtures.json
+is therefore preserved if a hand-maintained file already exists; otherwise an
+empty scaffold is written. fetch_fixtures.py owns that file in Actions.
 
-SCOPE (Phase 2, July 2026) — mirrors fetch_cricket.py:
-  - Leagues: only IPL, BBL, The Hundred, CPL, SA20, PSL (LEAGUE_TOKENS).
-    The Hundred is tagged format "T100".
-  - Everything else is treated as INTL and kept ONLY when BOTH teams are
-    ICC full members (FULL_MEMBERS). Kills associate qualifiers/tri-series.
-  - Every dropped match is counted by reason and the tallies are logged, so
-    a "wrote 0 fixtures" run explains itself in the Actions log.
+SCOPE (Phase 2, July 2026):
+  - Men's cricket only (male-only Cricsheet zips; gender check kept as belt+braces).
+  - Internationals: kept ONLY when BOTH teams are ICC full members (FULL_MEMBERS).
+    This drops associate qualifiers/tri-series (was ~69% of INTL rows).
+  - Leagues: IPL, BBL, The Hundred, CPL, SA20, PSL.
+  - The Hundred is tagged format "T100" (100-ball) so it never pollutes T20
+    baselines. Phases: overs 0-4 = PP (first 25 balls), 15-19 = Death.
+  - NOTE: Cricsheet withholds Afghanistan matches, so AFG stays in scope for
+    fixtures but has no historical rows here.
 
 Env:
-  CRICKET_DATA_KEY   required (cricketdata.org API key)
-  FIX_DAYS           look-ahead window in days (default 21)
-  FIX_PAGES          max pages to walk, 25 matches each (default 6)
+  CRICKET_MONTHS   recency window in months (default 24)
 """
-import json, os, sys, urllib.request, urllib.parse, time
-from datetime import datetime, timezone, timedelta
-from collections import Counter
+import json, os, io, zipfile, urllib.request, time, sys
+from datetime import datetime, timezone
+from collections import defaultdict
 
 OUT = os.path.join(os.path.dirname(__file__), "data")
 os.makedirs(OUT, exist_ok=True)
-KEY = os.environ.get("CRICKET_DATA_KEY", "").strip()
-DAYS = int(os.environ.get("FIX_DAYS", "21"))
-PAGES = int(os.environ.get("FIX_PAGES", "6"))
-BASE = "https://api.cricapi.com/v1"
+MONTHS = int(os.environ.get("CRICKET_MONTHS", "24"))
 
-# matchType -> format. Anything else (t10, etc.) is skipped, EXCEPT that
-# matches identified as The Hundred are re-tagged T100 whatever their type.
-TYPE_FMT = {"t20": "T20", "odi": "ODI", "test": "TEST",
-            "t20i": "T20", "it20": "T20", "odm": "ODI", "mdm": "TEST"}
-
-# ICC full members — INTL fixtures kept only when BOTH teams are in here.
-# CricAPI sometimes suffixes names ("India Women", "Australia A"); exact-match
-# after stripping a trailing bracket keeps those variants OUT, which is what
-# we want (no women's, no A-sides).
+# ICC full members. INTL matches are kept only when BOTH sides are in this set.
 FULL_MEMBERS = {
     "Australia", "England", "India", "Pakistan", "South Africa",
     "New Zealand", "West Indies", "Sri Lanka", "Bangladesh",
     "Afghanistan", "Zimbabwe", "Ireland",
 }
 
-# League whitelist tokens -> canonical comp name. Order matters: first hit wins.
-LEAGUES = [
-    (("indian premier", "ipl"),                 "Indian Premier League"),
-    (("big bash", "bbl"),                       "Big Bash League"),
-    (("the hundred",),                          "The Hundred"),
-    (("caribbean premier", "cpl"),              "Caribbean Premier League"),
-    (("sa20",),                                 "SA20"),
-    (("pakistan super", "psl"),                 "Pakistan Super League"),
-]
+# Cricsheet competition zips → (level, comp display name, format override).
+# Male-only zips where Cricsheet provides them (t20s/odis/tests/hnd); the
+# league zips (ipl/bbl/cpl/psl/sat) are men-only competitions already.
+# format override of None = derive from match_type via MT.
+SOURCES = {
+    "https://cricsheet.org/downloads/t20s_male_json.zip":  ("INTL",   None,                        None),
+    "https://cricsheet.org/downloads/odis_male_json.zip":  ("INTL",   None,                        None),
+    "https://cricsheet.org/downloads/tests_male_json.zip": ("INTL",   None,                        None),
+    "https://cricsheet.org/downloads/ipl_json.zip":        ("LEAGUE", "Indian Premier League",     None),
+    "https://cricsheet.org/downloads/bbl_json.zip":        ("LEAGUE", "Big Bash League",           None),
+    "https://cricsheet.org/downloads/cpl_json.zip":        ("LEAGUE", "Caribbean Premier League",  None),
+    "https://cricsheet.org/downloads/psl_json.zip":        ("LEAGUE", "Pakistan Super League",     None),
+    "https://cricsheet.org/downloads/sat_json.zip":        ("LEAGUE", "SA20",                      None),
+    "https://cricsheet.org/downloads/hnd_male_json.zip":   ("LEAGUE", "The Hundred",               "T100"),
+}
 
-def league_match(name, series):
-    s = (name + " " + (series or "")).lower()
-    if "women" in s:
-        return None
-    for tokens, canon in LEAGUES:
-        if any(tok in s for tok in tokens):
-            return canon
-    return None
-
-def clean_team(t):
-    return (t or "").split("(")[0].strip()
+# match_type → (format, default level). League level overridden by SOURCES.
+MT = {"IT20": ("T20", "INTL"), "T20": ("T20", "LEAGUE"),
+      "ODI": ("ODI", "INTL"), "ODM": ("ODI", "LEAGUE"),
+      "Test": ("TEST", "INTL"), "MDM": ("TEST", "LEAGUE")}
 
 def log(*a): print(*a, file=sys.stderr, flush=True)
 
-def get(path, **params):
-    params["apikey"] = KEY
-    url = f"{BASE}/{path}?" + urllib.parse.urlencode(params)
+def fetch_zip(url):
+    log("downloading", url)
     req = urllib.request.Request(url, headers={"User-Agent": "jtt-cricket/1.0"})
-    with urllib.request.urlopen(req, timeout=60) as r:
-        return json.loads(r.read())
+    with urllib.request.urlopen(req, timeout=120) as r:
+        return zipfile.ZipFile(io.BytesIO(r.read()))
 
-def split_venue(v):
-    if not v:
-        return "TBC", ""
-    parts = [p.strip() for p in v.split(",")]
-    if len(parts) >= 2:
-        return ", ".join(parts[:-1]), parts[-1]
-    return v, ""
+def within_window(date_str, cutoff):
+    try:
+        return datetime.strptime(date_str, "%Y-%m-%d").replace(tzinfo=timezone.utc) >= cutoff
+    except Exception:
+        return False
+
+def in_scope(info, level):
+    """Scope filter: men only; INTL needs both sides to be full members."""
+    if info.get("gender", "male") != "male":
+        return False
+    if level == "INTL":
+        teams = info.get("teams", [])
+        if len(teams) < 2:
+            return False
+        if not all(t in FULL_MEMBERS for t in teams):
+            return False
+    return True
+
+def phase_of(ovn, fmt):
+    """Phase bucket per format. T20: 0-5 PP / 16+ Death. T100 (5-ball overs,
+    20 per innings): 0-4 PP (first 25 balls) / 15+ Death (last 25). Else Mid."""
+    if fmt == "T20":
+        return "PP" if ovn < 6 else ("Death" if ovn >= 16 else "Mid")
+    if fmt == "T100":
+        return "PP" if ovn < 5 else ("Death" if ovn >= 15 else "Mid")
+    return "Mid"
+
+def parse_match(info, innings, mid, src_level, src_comp, src_fmt):
+    mt = info.get("match_type", "")
+    if src_fmt:
+        fmt, lvl = src_fmt, src_level or "LEAGUE"
+    else:
+        if mt not in MT:
+            return []
+        fmt, lvl = MT[mt]
+    level = src_level or lvl
+    comp = src_comp or (info.get("event", {}) or {}).get("name") or f"{fmt} {level}"
+    dates = info.get("dates") or []
+    date = dates[0] if dates else ""
+    venue = info.get("venue", ""); city = info.get("city", "")
+    teams = info.get("teams", [])
+    out = []
+    for inn_i, inn in enumerate(innings, start=1):
+        bat_team = inn.get("team", "")
+        bowl_team = next((t for t in teams if t != bat_team), "")
+        # accumulators
+        bat = defaultdict(lambda: {"runs": 0, "balls": 0, "fours": 0, "sixes": 0,
+                                   "out": False, "dismissal": None, "order": None,
+                                   "runsPP": 0, "runsMid": 0, "runsDeath": 0})
+        bowl = defaultdict(lambda: {"runs": 0, "balls": 0, "wkts": 0, "dots": 0,
+                                    "maidens": 0, "wktsPP": 0, "wktsDeath": 0,
+                                    "overs_runs": defaultdict(int), "overs_balls": defaultdict(int)})
+        order_seen = []
+        for over in inn.get("overs", []):
+            ovn = over.get("over", 0)
+            phase = phase_of(ovn, fmt)
+            for d in over.get("deliveries", []):
+                bat_p = d.get("batter"); bowl_p = d.get("bowler")
+                if bat_p and bat_p not in order_seen:
+                    order_seen.append(bat_p)
+                ns = d.get("non_striker")
+                if ns and ns not in order_seen:
+                    order_seen.append(ns)
+                runs = d.get("runs", {})
+                br = runs.get("batter", 0); extras = runs.get("extras", 0); tot = runs.get("total", 0)
+                # batting
+                b = bat[bat_p]
+                b["runs"] += br
+                # ball faced unless wides
+                wides = (d.get("extras", {}) or {}).get("wides", 0)
+                if not wides:
+                    b["balls"] += 1
+                if br == 4: b["fours"] += 1
+                if br == 6: b["sixes"] += 1
+                if phase == "PP": b["runsPP"] += br
+                elif phase == "Death": b["runsDeath"] += br
+                else: b["runsMid"] += br
+                # bowling
+                w = bowl[bowl_p]
+                w["runs"] += (br + (d.get("extras", {}) or {}).get("wides", 0)
+                              + (d.get("extras", {}) or {}).get("noballs", 0))
+                if not wides:
+                    w["balls"] += 1
+                if tot == 0 and not extras:
+                    w["dots"] += 1
+                w["overs_runs"][ovn] += tot
+                w["overs_balls"][ovn] += (0 if wides else 1)
+                # wickets
+                for wk in d.get("wickets", []):
+                    po = wk.get("player_out")
+                    kind = wk.get("kind", "")
+                    if po in bat:
+                        bat[po]["out"] = True; bat[po]["dismissal"] = kind
+                    if kind not in ("run out", "retired hurt", "retired out", "obstructing the field"):
+                        w["wkts"] += 1
+                        if phase == "PP": w["wktsPP"] += 1
+                        elif phase == "Death": w["wktsDeath"] += 1
+        order_map = {nm: i + 1 for i, nm in enumerate(order_seen)}
+        # emit batting rows
+        for nm, b in bat.items():
+            if b["balls"] == 0 and b["runs"] == 0:
+                continue
+            out.append({
+                "matchId": mid, "date": date, "format": fmt, "comp": comp, "level": level,
+                "venue": venue, "city": city, "name": nm, "team": bat_team, "opp": bowl_team,
+                "innings": inn_i, "bat": True, "bowl": False,
+                "batOrder": order_map.get(nm), "runs": b["runs"], "balls": b["balls"],
+                "fours": b["fours"], "sixes": b["sixes"], "out": b["out"],
+                "dismissal": b["dismissal"],
+                "sr": round(b["runs"] / b["balls"] * 100, 1) if b["balls"] else 0,
+                "runsPP": b["runsPP"], "runsMid": b["runsMid"], "runsDeath": b["runsDeath"],
+            })
+        # emit bowling rows
+        for nm, w in bowl.items():
+            if w["balls"] == 0:
+                continue
+            balls_per_over = 5 if fmt == "T100" else 6
+            maidens = sum(1 for ov, rb in w["overs_balls"].items()
+                          if rb == balls_per_over and w["overs_runs"][ov] == 0)
+            out.append({
+                "matchId": mid, "date": date, "format": fmt, "comp": comp, "level": level,
+                "venue": venue, "city": city, "name": nm, "team": bowl_team, "opp": bat_team,
+                "innings": inn_i, "bat": False, "bowl": True,
+                "oversBowled": round(w["balls"] / balls_per_over, 1), "ballsBowled": w["balls"],
+                "runsConceded": w["runs"], "wickets": w["wkts"], "maidens": maidens,
+                "econ": round(w["runs"] / (w["balls"] / balls_per_over), 2) if w["balls"] else 0,
+                "dots": w["dots"], "wktsPP": w["wktsPP"], "wktsDeath": w["wktsDeath"],
+            })
+    return out
 
 def main():
-    if not KEY:
-        log("ERROR: CRICKET_DATA_KEY not set - skipping fixtures fetch"); return
-    now = datetime.now(timezone.utc)
-    horizon = now + timedelta(days=DAYS)
-
-    auto = []
-    seen_total = 0
-    drop = Counter()
-    for page in range(PAGES):
+    cutoff = datetime.now(timezone.utc).replace(microsecond=0)
+    cutoff = cutoff.replace(year=cutoff.year - (MONTHS // 12), month=((cutoff.month - 1 - MONTHS % 12) % 12) + 1)
+    rows = []
+    skipped_scope = 0
+    for url, (level, comp, fmt_override) in SOURCES.items():
         try:
-            resp = get("matches", offset=page * 25)
+            z = fetch_zip(url)
         except Exception as e:
-            log("matches failed", e); break
-        if resp.get("status") != "success":
-            log("API status:", resp.get("status"), resp.get("info")); break
-        data = resp.get("data", [])
-        info = resp.get("info", {})
-        if page == 0 and info:
-            log(f"quota: {info.get('hitsToday','?')}/{info.get('hitsLimit','?')} today")
-        if not data:
-            break
-        seen_total += len(data)
-        for m in data:
-            name = m.get("name", "")
-            series = m.get("series", "")
-            mt = (m.get("matchType") or "").lower()
-            fmt = TYPE_FMT.get(mt)
-            league_comp = league_match(name, series)
-            if league_comp == "The Hundred":
-                fmt = "T100"  # 100-ball, whatever CricAPI calls the matchType
-            if not fmt:
-                drop["matchType"] += 1
-                continue
-            ct = m.get("dateTimeGMT")
+            log("FAILED", url, e); continue
+        names = [n for n in z.namelist() if n.endswith(".json") and not n.startswith("README")]
+        kept = 0; scoped_out = 0
+        for n in names:
             try:
-                dt = datetime.fromisoformat(ct.replace("Z", "")).replace(tzinfo=timezone.utc)
+                m = json.loads(z.read(n))
             except Exception:
-                drop["badDate"] += 1
                 continue
-            if dt < now - timedelta(hours=6):
-                drop["past"] += 1
+            info = m.get("info", {})
+            dates = info.get("dates") or []
+            if not dates or not within_window(dates[0], cutoff):
                 continue
-            if dt > horizon:
-                drop["beyondWindow"] += 1
+            if not in_scope(info, level):
+                scoped_out += 1
                 continue
-            teams = [clean_team(t) for t in (m.get("teams") or [])]
-            if len(teams) < 2 or any(t in ("", "Tbc", "TBC") for t in teams):
-                drop["tbcTeams"] += 1
-                continue
-            if m.get("matchEnded"):
-                drop["ended"] += 1
-                continue
-            # ---- scope filter ----
-            if league_comp:
-                level, comp = "LEAGUE", league_comp
-            else:
-                if not all(t in FULL_MEMBERS for t in teams):
-                    drop["scope"] += 1
-                    continue
-                level = "INTL"
-                comp = (series or name.split(",")[0] or fmt)
-            venue, city = split_venue(m.get("venue", ""))
-            auto.append({
-                "matchId": m["id"], "format": fmt, "level": level,
-                "comp": comp,
-                "date": dt.strftime("%Y-%m-%d"), "utc": dt.strftime("%Y-%m-%dT%H:%M:%SZ"),
-                "home": teams[0], "away": teams[1],
-                "venue": venue, "city": city, "status": "upcoming",
-            })
+            mid = os.path.splitext(os.path.basename(n))[0]
+            rows.extend(parse_match(info, m.get("innings", []), mid, level, comp, fmt_override))
+            kept += 1
+        skipped_scope += scoped_out
+        log(f"  {url.split('/')[-1]}: {kept} matches in window ({scoped_out} dropped by scope)")
 
-    # de-dupe auto by id
-    seen = {}
-    for f in auto:
-        seen[f["matchId"]] = f
-    auto = list(seen.values())
-
-    # merge with existing: keep manual FX rows, carry hand-edited venue/city
-    path = os.path.join(OUT, "cricket_fixtures.json")
-    existing = []
-    if os.path.exists(path):
-        try: existing = json.load(open(path)).get("fixtures", [])
-        except Exception: pass
-    prev = {f["matchId"]: f for f in existing}
-    manual = [f for f in existing if str(f.get("matchId", "")).startswith("FX")]
-    for f in auto:
-        old = prev.get(f["matchId"])
-        if old:
-            if old.get("venue") and old["venue"] != "TBC": f["venue"] = old["venue"]
-            if old.get("city"): f["city"] = old["city"]
-    merged = manual + auto
-    merged.sort(key=lambda x: x.get("utc", x.get("date", "")))
+    # team aggregates
+    teams_stat = defaultdict(lambda: {"br": 0, "bb": 0, "f": 0, "s": 0, "wr": 0, "wb": 0, "wk": 0, "m": set()})
+    for r in rows:
+        s = teams_stat[(r["team"], r["format"], r["level"])]
+        s["m"].add(r["matchId"])
+        if r.get("bat"):
+            s["br"] += r["runs"]; s["bb"] += r["balls"]; s["f"] += r["fours"]; s["s"] += r["sixes"]
+        if r.get("bowl"):
+            s["wr"] += r["runsConceded"]; s["wb"] += r["ballsBowled"]; s["wk"] += r["wickets"]
+    teams_out = {}
+    for (team, fmt, level), s in teams_stat.items():
+        n = max(1, len(s["m"]))
+        bpo = 5 if fmt == "T100" else 6
+        teams_out.setdefault(team, {})[f"{fmt}/{level}"] = {
+            "matches": n,
+            "batSR": round(s["br"] / max(1, s["bb"]) * 100, 1),
+            "foursPM": round(s["f"] / n, 1), "sixesPM": round(s["s"] / n, 1),
+            "bowlEcon": round(s["wr"] / max(1, s["wb"]) * bpo, 2),
+            "wktsPM": round(s["wk"] / n, 1),
+        }
 
     ver = str(int(time.time() * 1000))
-    json.dump({"fixtureCount": len(merged), "version": ver, "fixtures": merged},
-              open(path, "w"), separators=(",", ":"))
-    log(f"scanned {seen_total} matches; drops: " +
-        (", ".join(f"{k}={v}" for k, v in sorted(drop.items())) or "none"))
-    log(f"DONE wrote {len(merged)} fixtures ({len(auto)} auto, {len(manual)} manual)")
+    def dump(name, obj):
+        with open(os.path.join(OUT, name), "w") as f:
+            json.dump(obj, f, separators=(",", ":"))
+    dump("cricket_logs.json", {"playerRows": len(rows), "version": ver, "rows": rows})
+    dump("cricket_stats.json", {"matchCount": len({r["matchId"] for r in rows}),
+                                "version": ver, "teams": teams_out})
+    # preserve hand-maintained fixtures if present
+    fx_path = os.path.join(OUT, "cricket_fixtures.json")
+    if not os.path.exists(fx_path):
+        dump("cricket_fixtures.json", {"fixtureCount": 0, "version": ver, "fixtures": []})
+    # ratings: preserve hand-maintained bowlType/tiers if present, else scaffold
+    rt_path = os.path.join(OUT, "cricket_ratings.json")
+    if os.path.exists(rt_path):
+        log("preserving existing cricket_ratings.json")
+    else:
+        dump("cricket_ratings.json", {"byName": {}, "bowlType": {}, "tiers": {}})
+    with open(os.path.join(OUT, "version.txt"), "w") as f:
+        f.write(ver)
+    log(f"DONE rows={len(rows)} matches={len({r['matchId'] for r in rows})} "
+        f"teams={len(teams_out)} scope-dropped={skipped_scope}")
 
 if __name__ == "__main__":
     main()
