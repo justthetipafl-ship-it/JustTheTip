@@ -13,6 +13,12 @@
   <link rel="stylesheet" href="jtt-core.css">
   <style>
   /* ===== Cricket-specific styles — built on jtt-core tokens, mirrors the AFL/WC/MLB component vocabulary ===== */
+  /* logo image sizing — jtt-core.css sizes the containers, each tool sizes the imgs (AFL parity) */
+  .brand-img{width:28px;height:28px;border-radius:50%;display:block;}
+  .auth-img{width:34px;height:34px;border-radius:50%;display:block;}
+  .boot-img{width:64px;height:64px;border-radius:50%;display:block;}
+  .cmb-fab-logo{height:19px;width:auto;display:block;}
+  .cmb-hdr-logo{height:22px;width:auto;flex-shrink:0;}
   .filterbar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:14px;}
   .filter-meta{font-family:var(--font-mono);font-size:10px;color:var(--text-3);letter-spacing:.5px;}
   .team-chip{display:inline-grid;place-items:center;min-width:44px;height:30px;padding:0 8px;border-radius:7px;
@@ -115,6 +121,14 @@
   .mode-toggle button.active{background:var(--accent);color:#0a0a0a;border-color:var(--accent);}
   .sec-h{font-family:var(--font-mono);font-size:10px;letter-spacing:1px;color:var(--text-3);text-transform:uppercase;margin:16px 0 8px;display:flex;align-items:center;gap:6px;}
   .crew-detail-head{display:flex;align-items:center;gap:10px;margin-bottom:12px;}
+  .crew-card{align-items:flex-start;}
+  .crew-name{cursor:pointer;text-decoration:underline dotted transparent;transition:text-decoration-color .15s;}
+  .crew-name:hover{text-decoration-color:var(--accent);}
+  .crew-chev{color:var(--text-3);font-size:14px;}
+  .crew-why{margin-top:10px;}
+  .crew-spark{display:flex;align-items:center;gap:10px;margin-bottom:8px;}
+  .crew-spark-lbl{font-family:var(--font-mono);font-size:9px;color:var(--text-3);letter-spacing:.5px;}
+  .spark{display:block;}
   .empty{padding:34px 16px;text-align:center;color:var(--text-3);font-size:13px;}
   @media(max-width:640px){ .fixture-row{grid-template-columns:1fr;text-align:center;} .fxr-team,.fxr-team.away{justify-content:center;text-align:center;} }
   </style>
@@ -637,12 +651,19 @@ function _pmClose(){ const o=document.getElementById('pm-overlay'); o.classList.
 
 /* ---------- DEGEN CREW (6 Phase-1 signals, engine-driven) ---------- */
 const CREW_TABS={
-  'locked-in':   {name:'LOCKED IN',       icon:'ti-lock-square-rounded', sub:'Cleared their line in 4 of last 5'},
-  'form-alerts': {name:'FORM ALERTS',     icon:'ti-temperature-sun',     sub:'Hot streaks and cold spells'},
-  'cap-race':    {name:'CAP RACE',        icon:'ti-crown',               sub:'Most runs · most wickets in the window'},
-  'mismatch':    {name:'MISMATCH ALERT',  icon:'ti-bolt',                sub:'In-form vs a leaky opponent'},
-  'boundary':    {name:'BOUNDARY BULLIES',icon:'ti-arrows-up-down',      sub:'Fours + sixes merchants'},
-  'wicket-hauls':{name:'WICKET HAULS',    icon:'ti-bowling',             sub:'Multi-wicket strike threats'},
+  'locked-in':   {name:'LOCKED IN',        icon:'ti-lock-square-rounded', sub:'Cleared their line in 4 of last 5'},
+  'form-alerts': {name:'FORM ALERTS',      icon:'ti-temperature-sun',     sub:'Hot streaks and cold spells'},
+  'cap-race':    {name:'CAP RACE',         icon:'ti-crown',               sub:'Most runs · most wickets in the window'},
+  'mismatch':    {name:'MISMATCH ALERT',   icon:'ti-bolt',                sub:'In-form vs a leaky opponent'},
+  'boundary':    {name:'BOUNDARY BULLIES', icon:'ti-arrows-up-down',      sub:'Fours + sixes merchants'},
+  'wicket-hauls':{name:'WICKET HAULS',     icon:'ti-bowling',             sub:'Multi-wicket strike threats'},
+  'bunnies':     {name:'BUNNIES',          icon:'ti-carrot',              sub:'Batters owned by one bowler'},
+  'elite':       {name:'ELITE MATCHUPS',   icon:'ti-diamond',             sub:'Elite-tier bats vs leaky attacks'},
+  'death-squad': {name:'DEATH SQUAD',      icon:'ti-hourglass-high',      sub:'Death-overs wicket threats'},
+  'six-appeal':  {name:'SIX APPEAL',       icon:'ti-rocket',              sub:'Maximum merchants for 6s markets'},
+  'pp-punish':   {name:'POWERPLAY PUNISHERS',icon:'ti-wind',              sub:'Openers who cash in the first six'},
+  'streakers':   {name:'STREAKERS',        icon:'ti-flame',               sub:'Live scoring / wicket streaks'},
+  'bogey-venue': {name:'BOGEY VENUES',     icon:'ti-map-pin-off',         sub:'Ground loves and ground hates on the slate'},
 };
 function renderCrewPage(){
   let h='<div class="page-header"><div class="page-title">Degen Crew</div><div class="page-sub">Engine-driven angles for the current scope</div></div>';
@@ -670,7 +691,10 @@ function computeCrew(id){
           const rows=lastN(p.name,'runs',5);
           if(rows.length===5){
             const hits=rows.filter(v=>v>=line).length;
-            if(hits>=4) out.push({p,head:hits+'/5 over '+line+' runs',sub:'L5: '+rows.join(', '),score:hits+(p.runs/100)});
+            if(hits>=4) out.push({p,head:hits+'/5 over '+line+' runs',sub:'L5: '+rows.join(', '),score:hits+(p.runs/100),
+              spark:{vals:lastN(p.name,'runs',10),line,lbl:'runs, last 10 · line '+line},
+              why:[{tone:'good',text:'Cleared '+line+'+ in '+hits+' of the last 5 — book-style line off his window average'},
+                   {tone:'neutral',text:'Window average '+fmt(p.runs,1)+' · check the matchup grid for the opponent'}]});
           }
         }
       }
@@ -678,7 +702,9 @@ function computeCrew(id){
         const rows=lastN(p.name,'wickets',5);
         if(rows.length===5){
           const hits=rows.filter(v=>v>=1.5).length;
-          if(hits>=4) out.push({p,head:hits+'/5 over 1.5 wkts',sub:'L5: '+rows.join(', '),score:hits+((p.wickets||0)/10)});
+          if(hits>=4) out.push({p,head:hits+'/5 over 1.5 wkts',sub:'L5: '+rows.join(', '),score:hits+((p.wickets||0)/10),
+            spark:{vals:lastN(p.name,'wickets',10),line:2,lbl:'wickets, last 10'},
+            why:[{tone:'good',text:'2+ wickets in '+hits+' of the last 5 innings'}]});
         }
       }
     });
@@ -689,8 +715,14 @@ function computeCrew(id){
         const l5=S.getL5Avg(p.name,'runs');
         if(l5!=null&&p.runs>8){
           const t=((l5-p.runs)/p.runs)*100;
-          if(t>=25) out.push({p,head:'🔥 +'+t.toFixed(0)+'% runs form',sub:'L5 '+l5.toFixed(1)+' vs avg '+p.runs.toFixed(1),score:t});
-          else if(t<=-25) out.push({p,head:'🧊 '+t.toFixed(0)+'% runs form',sub:'L5 '+l5.toFixed(1)+' vs avg '+p.runs.toFixed(1),score:-t/2});
+          if(t>=25) out.push({p,head:'🔥 +'+t.toFixed(0)+'% runs form',sub:'L5 '+l5.toFixed(1)+' vs avg '+p.runs.toFixed(1),score:t,
+            spark:{vals:lastN(p.name,'runs',10),line:S.drLine(p.runs),lbl:'runs, last 10'},
+            why:[{tone:'good',text:'L5 average '+l5.toFixed(1)+' vs 12-month '+p.runs.toFixed(1)+' — running '+t.toFixed(0)+'% hot'},
+                 {tone:'neutral',text:'Overs get shorter prices in form — shop the line'}]});
+          else if(t<=-25) out.push({p,head:'🧊 '+t.toFixed(0)+'% runs form',sub:'L5 '+l5.toFixed(1)+' vs avg '+p.runs.toFixed(1),score:-t/2,
+            spark:{vals:lastN(p.name,'runs',10),line:S.drLine(p.runs),lbl:'runs, last 10'},
+            why:[{tone:'bad',text:'L5 average '+l5.toFixed(1)+' vs 12-month '+p.runs.toFixed(1)+' — ice cold'},
+                 {tone:'neutral',text:'Unders angle, or wait for the book to drop his line'}]});
         }
       }
     });
@@ -710,7 +742,10 @@ function computeCrew(id){
           if(d!=null&&d>=10){
             const l5=S.getL5Avg(p.name,'runs');
             if(l5!=null&&l5>=p.runs)
-              out.push({p,head:pctS(d)+' vs '+abbr(opp)+' ('+(S.ROLE_LABEL[p.batRole]||p.batRole)+'s)',sub:esc(g.date)+' · in form (L5 '+l5.toFixed(1)+')',score:d+l5/10});
+              out.push({p,head:pctS(d)+' vs '+abbr(opp)+' ('+(S.ROLE_LABEL[p.batRole]||p.batRole)+'s)',sub:esc(g.date)+' · in form (L5 '+l5.toFixed(1)+')',score:d+l5/10,
+                spark:{vals:lastN(p.name,'runs',10),line:S.drLine(p.runs),lbl:'runs, last 10'},
+                why:[{tone:'good',text:esc(opp)+' concede '+pctS(d)+' to '+(S.ROLE_LABEL[p.batRole]||p.batRole)+'s vs league average'},
+                     {tone:'good',text:'In form: L5 '+l5.toFixed(1)+' at or above his 12-month '+fmt(p.runs,1)}]});
           }
         });
       });
@@ -722,7 +757,10 @@ function computeCrew(id){
       const b=(p.fours||0)+(p.sixes||0);
       if(b>=3.2){
         const hr=S.getHitRate(p.name,'sixes',1,false);
-        out.push({p,head:b.toFixed(1)+' boundaries /inn',sub:(hr?Math.round(hr.rate*100)+'% land 1+ six':'')+' · '+fmt(p.fours,1)+'×4  '+fmt(p.sixes,1)+'×6',score:b});
+        out.push({p,head:b.toFixed(1)+' boundaries /inn',sub:(hr?Math.round(hr.rate*100)+'% land 1+ six':'')+' · '+fmt(p.fours,1)+'×4  '+fmt(p.sixes,1)+'×6',score:b,
+          spark:{vals:rowsScoped(p.name,'bat').slice(-10).map(r=>(r.fours||0)+(r.sixes||0)),line:3,lbl:'boundaries, last 10'},
+          why:[{tone:'good',text:b.toFixed(1)+' boundaries per innings ('+fmt(p.fours,1)+' fours, '+fmt(p.sixes,1)+' sixes)'},
+               {tone:'neutral',text:'Angles: player fours O/U, sixes O/U, most boundaries head-to-heads'}]});
       }
     });
   }
@@ -730,11 +768,140 @@ function computeCrew(id){
     P.filter(p=>p.bowlInnings>=8).forEach(p=>{
       const hr=S.getHitRate(p.name,'wickets',2,false);
       if(hr&&hr.rate>=0.4)
-        out.push({p,head:Math.round(hr.rate*100)+'% take 2+ wkts',sub:fmt(p.wickets,1)+' wkts /inn · econ '+fmt(p.econ,2),score:hr.rate*100+(p.wickets||0)});
+        out.push({p,head:Math.round(hr.rate*100)+'% take 2+ wkts',sub:fmt(p.wickets,1)+' wkts /inn · econ '+fmt(p.econ,2),score:hr.rate*100+(p.wickets||0),
+          spark:{vals:lastN(p.name,'wickets',10),line:2,lbl:'wickets, last 10 · line 2'},
+          why:[{tone:'good',text:hr.n+' innings sample — '+Math.round(hr.rate*100)+'% land the 2+ wicket haul'},
+               {tone:(p.econ<8?'good':'neutral'),text:'Economy '+fmt(p.econ,2)+' — '+(p.econ<8?'attacks without leaking':'buys wickets with runs')}]});
+    });
+  }
+  if(id==='bunnies'){
+    let anyField=false;
+    P.filter(p=>p.batInnings>=6).forEach(p=>{
+      const bi=S.bunnyInfo(p.name);
+      if(bi===null) return;
+      anyField=true;
+      if(bi.top&&bi.top.n>=3){
+        out.push({p,head:bi.top.n+'× by '+abbr(bi.top.bowler)+'',sub:esc(bi.top.bowler)+' has him '+bi.top.n+' times in '+bi.inns+' innings',score:bi.top.n*10+bi.top.n/bi.inns*10,
+          spark:{vals:lastN(p.name,'runs',10),line:S.drLine(p.runs),lbl:'runs, last 10'},
+          why:[{tone:'bad',text:'Dismissed by '+bi.top.bowler+' in '+bi.top.n+' of his last '+bi.inns+' innings — a genuine bunny'},
+               {tone:'neutral',text:'Fade angle when '+bi.top.bowler+' has the new ball or bowls his phase'}]});
+      }
+    });
+    if(!anyField) return {items:[],note:'Needs the v3 data bundle (dismissedBy) — run the pipeline and this tile lights up.'};
+  }
+  if(id==='elite'){
+    const fx=fixtures();
+    if(!fx.length) return {items:[],note:'Needs upcoming fixtures — the slate is empty for this scope.'};
+    fx.slice(0,10).forEach(g=>{
+      [[g.home,g.away],[g.away,g.home]].forEach(([team,opp])=>{
+        S.playersForTeam(team).filter(p=>p.batInnings>=8&&S.tierOf(p.name,'bat')==='ELITE').forEach(p=>{
+          const role=p.batRole||'MID';
+          const d=S.getDVPPct(opp,role,'runs');
+          const rk=S.getDVPRank(opp,role,'runs');
+          const leaky=(d!=null&&d>=8)||(rk&&rk.rank<=5);
+          if(leaky){
+            out.push({p,head:'ELITE vs '+abbr(opp),sub:esc(g.date)+' · '+(rk?('#'+rk.rank+'/'+rk.total+' softest vs '+(S.ROLE_LABEL[role]||role)+'s'):pctS(d)),score:(d||0)+50,
+              spark:{vals:lastN(p.name,'runs',10),line:S.drLine(p.runs),lbl:'runs, last 10'},
+              why:[{tone:'good',text:'Top-decile '+state.view.filt.format+' batter over the 12-month window (pipeline tiers)'},
+                   {tone:'good',text:esc(opp)+' concede '+pctS(d)+' runs vs league average to '+(S.ROLE_LABEL[role]||role)+'s'+(rk?' — #'+rk.rank+' softest of '+rk.total:'')}]});
+          }
+        });
+      });
+    });
+    if(!out.length&&!Object.keys((S.tierOf('__probe__','bat'),{})).length){
+      // tiers may be absent (pre-v3 ratings)
+      const anyTier=S.players().some(p=>S.tierOf(p.name,'bat'));
+      if(!anyTier) return {items:[],note:'Needs the v3 ratings bundle — run the pipeline and this tile lights up.'};
+    }
+  }
+  if(id==='death-squad'){
+    P.filter(p=>p.bowlInnings>=8&&p.bowlRole==='DEATH').forEach(p=>{
+      const rows=rowsScoped(p.name,'bowl');
+      const dW=rows.reduce((s,r)=>s+(r.wktsDeath||0),0);
+      const dB=rows.reduce((s,r)=>s+(r.ballsDeath||0),0);
+      const dC=rows.reduce((s,r)=>s+(r.concDeath||0),0);
+      const perInn=dW/rows.length;
+      if(perInn>=0.6){
+        const econ=dB?((dC/dB)*(state.view.filt.format==='T100'?5:6)):null;
+        out.push({p,head:fmt(perInn,1)+' death wkts /inn',sub:(econ!=null?'death econ '+fmt(econ,2)+' · ':'')+fmt(p.wickets,1)+' total wkts /inn',score:perInn*100+(econ!=null?Math.max(0,12-econ):0),
+          spark:{vals:rows.slice(-10).map(r=>r.wktsDeath||0),line:1,lbl:'death wickets, last 10'},
+          why:[{tone:'good',text:'Classified DEATH by phase usage — he bowls the overs where wickets fall'},
+               {tone:'good',text:fmt(perInn,1)+' death-overs wickets per innings across '+rows.length+' bowls'}]});
+      }
+    });
+  }
+  if(id==='six-appeal'){
+    P.filter(p=>p.batInnings>=8&&(p.sixes||0)>=1.2).forEach(p=>{
+      const hr1=S.getHitRate(p.name,'sixes',1,false), hr2=S.getHitRate(p.name,'sixes',2,false);
+      if(hr1&&hr1.rate>=0.6){
+        out.push({p,head:Math.round(hr1.rate*100)+'% land 1+ six',sub:fmt(p.sixes,1)+' sixes /inn'+(hr2?' · '+Math.round(hr2.rate*100)+'% land 2+':''),score:hr1.rate*100+(p.sixes||0)*10,
+          spark:{vals:lastN(p.name,'sixes',10),line:1,lbl:'sixes, last 10'},
+          why:[{tone:'good',text:hr1.n+' innings — clears the 1+ six line in '+Math.round(hr1.rate*100)+'%'},
+               {tone:(hr2&&hr2.rate>=0.4?'good':'neutral'),text:hr2?('2+ sixes lands '+Math.round(hr2.rate*100)+'% — '+(hr2.rate>=0.4?'multi-six value':'the 2+ price needs juice')):'thin 2+ sample'}]});
+      }
+    });
+  }
+  if(id==='pp-punish'){
+    P.filter(p=>p.batInnings>=8&&(p.batRole==='OP'||p.batRole==='TOP')).forEach(p=>{
+      const rows=rowsScoped(p.name,'bat');
+      const pp=rows.reduce((s,r)=>s+(r.runsPP||0),0)/rows.length;
+      if(pp>=12){
+        out.push({p,head:fmt(pp,1)+' PP runs /inn',sub:(S.ROLE_LABEL[p.batRole]||'')+' · '+fmt(p.sr,0)+' SR overall',score:pp,
+          spark:{vals:rows.slice(-10).map(r=>r.runsPP||0),line:10,lbl:'powerplay runs, last 10'},
+          why:[{tone:'good',text:fmt(pp,1)+' powerplay runs per innings — front-loads before the field spreads'},
+               {tone:'neutral',text:'Angle: first-over/first-6-overs runs markets and early boundary props'}]});
+      }
+    });
+  }
+  if(id==='streakers'){
+    P.forEach(p=>{
+      if(p.batInnings>=5){
+        const vals=lastN(p.name,'runs',12); let st=0;
+        for(let i=vals.length-1;i>=0&&vals[i]>=25;i--) st++;
+        if(st>=3) out.push({p,head:st+' straight 25+',sub:'Live streak: '+vals.slice(-st).join(', ')+' runs',score:st*10+(p.runs||0)/10,
+          spark:{vals,line:25,lbl:'runs, last '+vals.length+' · line 25'},
+          why:[{tone:'good',text:st+' consecutive innings of 25+ — riding it until it breaks'},
+               {tone:'neutral',text:'Streaks end: check the matchup grid before tailing'}]});
+      }
+      if(p.bowlInnings>=5){
+        const vals=lastN(p.name,'wickets',12); let st=0;
+        for(let i=vals.length-1;i>=0&&vals[i]>=2;i--) st++;
+        if(st>=3) out.push({p,head:st+' straight 2+ wkts',sub:'Live streak: '+vals.slice(-st).join(', ')+' wickets',score:st*10+(p.wickets||0),
+          spark:{vals,line:2,lbl:'wickets, last '+vals.length+' · line 2'},
+          why:[{tone:'good',text:st+' consecutive innings with a multi-wicket haul'}]});
+      }
+    });
+  }
+  if(id==='bogey-venue'){
+    const fx=fixtures();
+    if(!fx.length) return {items:[],note:'Needs upcoming fixtures — the slate is empty for this scope.'};
+    fx.slice(0,10).forEach(g=>{
+      if(!g.venue) return;
+      [[g.home],[g.away]].forEach(([team])=>{
+        S.playersForTeam(team).filter(p=>p.batInnings>=8&&p.runs>=15).forEach(p=>{
+          const rows=rowsScoped(p.name,'bat');
+          const vk=rows.filter(r=>r.venue&&r.venue.toLowerCase().split(',')[0]===String(g.venue).toLowerCase().split(',')[0]);
+          if(vk.length>=4){
+            const va=vk.reduce((s,r)=>s+(r.runs||0),0)/vk.length;
+            const d=((va-p.runs)/p.runs)*100;
+            if(d<=-25) out.push({p,head:pctS(d)+' at this ground',sub:esc(g.date)+' at '+esc(g.venue)+' · '+fmt(va,1)+' avg there vs '+fmt(p.runs,1),score:-d,
+              spark:{vals:vk.slice(-8).map(r=>r.runs||0),line:S.drLine(p.runs),lbl:'runs at '+g.venue},
+              why:[{tone:'bad',text:'Averages '+fmt(va,1)+' here vs '+fmt(p.runs,1)+' overall across '+vk.length+' innings — bogey ground'},
+                   {tone:'neutral',text:'Angle: unders, or fade in same-game multis'}]});
+            else if(d>=25) out.push({p,head:'+'+d.toFixed(0)+'% at this ground',sub:esc(g.date)+' at '+esc(g.venue)+' · '+fmt(va,1)+' avg there vs '+fmt(p.runs,1),score:d,
+              spark:{vals:vk.slice(-8).map(r=>r.runs||0),line:S.drLine(p.runs),lbl:'runs at '+g.venue},
+              why:[{tone:'good',text:'Averages '+fmt(va,1)+' here vs '+fmt(p.runs,1)+' overall across '+vk.length+' innings — happy hunting ground'}]});
+          }
+        });
+      });
     });
   }
   out.sort((a,b)=>b.score-a.score);
   return {items:out.slice(0,24),note:null};
+}
+function rowsScoped(name,kind){
+  return (state.data.logs.rows||[]).filter(r=>r.name===name&&(kind==='bowl'?r.bowl:r.bat)
+    &&r.format===state.view.filt.format&&(!state.view.filt.level||r.level===state.view.filt.level));
 }
 function lastN(name,key,n){
   const S=window.JTTScoring;
@@ -749,6 +916,15 @@ function sumWin(name,key){
     &&r.format===state.view.filt.format&&(!state.view.filt.level||r.level===state.view.filt.level))
     .reduce((s,r)=>s+(r[key]||0),0);
 }
+function sparkline(vals,line){
+  if(!vals||vals.length<2) return '';
+  const w=120,hh=30,mx=Math.max.apply(null,vals.concat([line||0,1]));
+  const pts=vals.map((v,i)=>((i/(vals.length-1))*w).toFixed(1)+','+((hh-4)-(v/mx)*(hh-8)+2).toFixed(1)).join(' ');
+  let ln='';
+  if(line!=null&&line<=mx){ const y=((hh-4)-(line/mx)*(hh-8)+2).toFixed(1); ln='<line x1="0" y1="'+y+'" x2="'+w+'" y2="'+y+'" stroke="#f97316" stroke-width="1" stroke-dasharray="3,2"/>'; }
+  return '<svg class="spark" width="'+w+'" height="'+hh+'" viewBox="0 0 '+w+' '+hh+'">'+ln+
+    '<polyline points="'+pts+'" fill="none" stroke="var(--accent)" stroke-width="1.5"/></svg>';
+}
 function renderCrewDetail(){
   const id=state.view.crew, t=CREW_TABS[id];
   if(!t) return renderCrewPage();
@@ -758,11 +934,19 @@ function renderCrewDetail(){
      '<div><div class="page-title" style="font-size:20px">'+t.name+'</div><div class="page-sub">'+t.sub+' · '+esc(state.view.filt.format)+'</div></div></div>';
   if(note) return h+'<div class="empty">'+esc(note)+'</div>';
   if(!items.length) return h+'<div class="empty">Nothing clears the gate in this scope right now.</div>';
-  items.forEach(it=>{
-    h+='<div class="edge-card" data-player="'+esc(it.p.name)+'">'+
-      '<div><b>'+esc(it.p.name)+'</b> <span style="color:var(--text-3);font-size:11px">'+esc(abbr(it.p.team))+'</span>'+
-      '<div class="pc-sub">'+it.sub+'</div></div>'+
-      '<span class="edge-verdict" style="color:var(--accent)">'+it.head+'</span></div>';
+  items.forEach((it,i)=>{
+    const open=state.view.crewOpen===i;
+    h+='<div class="edge-card crew-card'+(open?' open':'')+'" data-cidx="'+i+'">'+
+      '<div style="flex:1;min-width:0"><b class="crew-name" data-player="'+esc(it.p.name)+'">'+esc(it.p.name)+'</b> <span style="color:var(--text-3);font-size:11px">'+esc(abbr(it.p.team))+'</span>'+
+      '<div class="pc-sub">'+it.sub+'</div>'+
+      (open?'<div class="crew-why">'+
+        (it.spark?'<div class="crew-spark">'+sparkline(it.spark.vals,it.spark.line)+'<span class="crew-spark-lbl">'+esc(it.spark.lbl||'last '+it.spark.vals.length)+'</span></div>':'')+
+        (it.why||[]).map(w=>'<div class="factor '+(w.tone||'neutral')+'"><span class="dot"></span><span>'+esc(w.text)+'</span></div>').join('')+
+      '</div>':'')+
+      '</div>'+
+      '<div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px">'+
+      '<span class="edge-verdict" style="color:var(--accent)">'+it.head+'</span>'+
+      '<span class="crew-chev"><i class="ti ti-chevron-'+(open?'up':'down')+'"></i></span></div></div>';
   });
   return h;
 }
@@ -889,7 +1073,13 @@ function wirePage(){
     _renderApp();
   }));
   p.querySelectorAll('[data-crew]').forEach(t=>t.addEventListener('click',()=>{
-    state.view.crew=t.dataset.crew; _renderApp(); window.scrollTo({top:0});
+    state.view.crew=t.dataset.crew; state.view.crewOpen=null; _renderApp(); window.scrollTo({top:0});
+  }));
+  p.querySelectorAll('[data-cidx]').forEach(c=>c.addEventListener('click',e=>{
+    if(e.target.closest('[data-player]')) return;   // name click -> modal
+    const i=parseInt(c.dataset.cidx,10);
+    state.view.crewOpen=state.view.crewOpen===i?null:i;
+    _renderApp();
   }));
   p.querySelectorAll('[data-player]').forEach(c=>c.addEventListener('click',()=>openPlayerModal(c.dataset.player)));
   const s=document.getElementById('player-search');
