@@ -490,8 +490,16 @@ window.JTTScoring = (function () {
     return roleOfOrder(med);
   }
   function classifyBowl(rows) {
-    // Pipeline TODO: ballsPP/ballsDeath would make this true usage; until
-    // then phase WICKET shares proxy the role. Needs a sample to mean much.
+    // True phase usage when the pipeline provides ballsPP/ballsDeath (v3+);
+    // falls back to phase wicket shares on older bundles.
+    const balls = rows.reduce((s, r) => s + (r.ballsBowled || 0), 0);
+    const bpp = rows.reduce((s, r) => s + (r.ballsPP || 0), 0);
+    const bdth = rows.reduce((s, r) => s + (r.ballsDeath || 0), 0);
+    if (balls >= 60 && (bpp + bdth) > 0) {
+      if (bpp / balls >= 0.35) return "NEW";
+      if (bdth / balls >= 0.35) return "DEATH";
+      return "MID";
+    }
     const w = rows.reduce((s, r) => s + (r.wickets || 0), 0);
     if (w < 8) return "GEN";
     const pp = rows.reduce((s, r) => s + (r.wktsPP || 0), 0);
@@ -569,7 +577,7 @@ window.JTTScoring = (function () {
         a.runs += r.runs || 0; a.fours += r.fours || 0; a.sixes += r.sixes || 0; a.inns += 1;
         const vk = venueKey(r.venue);
         if (vk) {
-          const v = (V[vk] = V[vk] || { runs: 0, fours: 0, sixes: 0, wkts: 0, inns: new Set() });
+          const v = (V[vk] = V[vk] || { name: r.venue, runs: 0, fours: 0, sixes: 0, wkts: 0, inns: new Set() });
           v.runs += r.runs || 0; v.fours += r.fours || 0; v.sixes += r.sixes || 0;
           if (r.out) v.wkts += 1;
           v.inns.add(r.matchId + "|" + r.innings);
@@ -621,7 +629,7 @@ window.JTTScoring = (function () {
     Object.entries(V).forEach(([vk, v]) => {
       const n = v.inns.size;
       if (n < 8) return;
-      _venues[vk] = { runsPI: v.runs / n, foursPI: v.fours / n, sixesPI: v.sixes / n, wktsPI: v.wkts / n, inns: n };
+      _venues[vk] = { name: v.name, runsPI: v.runs / n, foursPI: v.fours / n, sixesPI: v.sixes / n, wktsPI: v.wkts / n, inns: n };
     });
     ["runsPI", "foursPI", "sixesPI", "wktsPI"].forEach(k => {
       const v = Object.values(_venues).map(x => x[k]).filter(x => x != null);
@@ -653,6 +661,40 @@ window.JTTScoring = (function () {
     buildPlayers();
   }
 
+  // Attack-vs-role grid rows: every team with data, pct vs league avg per role.
+  function attackEntries(statKey) {
+    return Object.keys(_attack).map(team => {
+      const e = { team };
+      ["OP", "TOP", "MID", "LOW"].forEach(role => { e[role] = getDVPPct(team, role, statKey); });
+      e.inns = Object.values(_attack[team]).reduce((s, a) => s + (a.inns || 0), 0);
+      return e;
+    }).filter(e => ["OP","TOP","MID","LOW"].some(r => e[r] != null));
+  }
+  // Venue board rows, vs-average pcts included.
+  function venueEntries() {
+    return Object.values(_venues).map(v => ({
+      name: v.name, inns: v.inns,
+      runsPI: v.runsPI, foursPI: v.foursPI, sixesPI: v.sixesPI, wktsPI: v.wktsPI,
+      runsPct: _venueAvgs.runsPI ? ((v.runsPI - _venueAvgs.runsPI) / _venueAvgs.runsPI) * 100 : null,
+      sixesPct: _venueAvgs.sixesPI ? ((v.sixesPI - _venueAvgs.sixesPI) / _venueAvgs.sixesPI) * 100 : null,
+      wktsPct: _venueAvgs.wktsPI ? ((v.wktsPI - _venueAvgs.wktsPI) / _venueAvgs.wktsPI) * 100 : null,
+    }));
+  }
+  // Pipeline-built quality tier (ELITE/STRONG/MID) for the active format.
+  function tierOf(name, kind) {
+    const t = ((RATINGS.tiers || {})[SCOPE.format] || {})[kind === "bowl" ? "bowl" : "bat"];
+    return t ? (t[name] || null) : null;
+  }
+  // Bunny check: who owns this batter? Needs dismissedBy (pipeline v3 logs).
+  function bunnyInfo(batterName, opp) {
+    const games = batRows(batterName).filter(r => !opp || r.opp === opp);
+    if (!games.length || games[0].dismissedBy === undefined) return null;
+    const by = {};
+    games.forEach(r => { if (r.dismissedBy) by[r.dismissedBy] = (by[r.dismissedBy] || 0) + 1; });
+    const top = Object.entries(by).sort((a, b) => b[1] - a[1])[0];
+    if (!top) return { top: null, inns: games.length };
+    return { top: { bowler: top[0], n: top[1] }, inns: games.length };
+  }
   function players() { return _players; }
   function playersForTeam(t) { return _players.filter(p => p.teams && p.teams.includes(t)); }
   function playerByName(n) { return _playerIdx[n] || null; }
@@ -665,6 +707,7 @@ window.JTTScoring = (function () {
     scoreCMP, cmpFactors, getContextSignals, scoreOverLine, scoreUnderLine,
     verdict, drLine, getDVPPct, getDVPRank, muPct: muPctFor, muInfo,
     getL5Avg, getRecentAvg, getHitRate, venuePct,
+    attackEntries, venueEntries, tierOf, bunnyInfo,
     POS_TO_DVP, ROLE_LABEL,
   };
 })();
