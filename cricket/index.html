@@ -121,6 +121,19 @@
   .mode-toggle button.active{background:var(--accent);color:#0a0a0a;border-color:var(--accent);}
   .sec-h{font-family:var(--font-mono);font-size:10px;letter-spacing:1px;color:var(--text-3);text-transform:uppercase;margin:16px 0 8px;display:flex;align-items:center;gap:6px;}
   .crew-detail-head{display:flex;align-items:center;gap:10px;margin-bottom:12px;}
+  .leg-row{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:9px 0;border-bottom:1px solid var(--border);}
+  .leg-row:last-of-type{border-bottom:none;}
+  .leg-btn{background:var(--surface-2);border:1px solid var(--border);color:var(--text);border-radius:8px;padding:6px 10px;
+    font-family:var(--font-mono);font-size:10px;font-weight:700;letter-spacing:.5px;cursor:pointer;white-space:nowrap;}
+  .leg-btn:hover{border-color:var(--accent);}
+  .multi-foot{font-family:var(--font-mono);font-size:11px;color:var(--text-2);margin-top:10px;padding-top:10px;border-top:1px solid var(--border);}
+  .cmb-recent{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px;}
+  .cmb-recent button{background:var(--surface-2);border:1px solid var(--border);border-radius:16px;color:var(--text-2);
+    padding:5px 11px;font-size:11px;cursor:pointer;}
+  .cmb-recent button:hover{border-color:var(--accent);color:var(--text);}
+  .ev-flag{display:inline-block;margin-left:8px;padding:2px 8px;border-radius:6px;font-family:var(--font-mono);font-size:10px;font-weight:700;border:1px solid currentColor;}
+  .h2h-bt{background:var(--surface);border:1px solid var(--border);border-radius:12px;overflow:hidden;margin-top:10px;}
+  .sgm-leg{display:grid;grid-template-columns:2fr 1.2fr .8fr auto;gap:8px;margin-bottom:8px;align-items:center;}
   .crew-card{align-items:flex-start;}
   .crew-name{cursor:pointer;text-decoration:underline dotted transparent;transition:text-decoration-color .15s;}
   .crew-name:hover{text-decoration-color:var(--accent);}
@@ -199,6 +212,7 @@
       <button class="cmb-close" id="cmb-close" aria-label="Close">&times;</button></div>
     <div class="cmb-tabs">
       <button class="cmb-tab active" data-cmb="player">Player Prop</button>
+      <button class="cmb-tab" data-cmb="sgm">SGM</button>
       <button class="cmb-tab" data-cmb="match">Match</button>
     </div>
     <div id="cmb-body"></div>
@@ -651,6 +665,7 @@ function _pmClose(){ const o=document.getElementById('pm-overlay'); o.classList.
 
 /* ---------- DEGEN CREW (6 Phase-1 signals, engine-driven) ---------- */
 const CREW_TABS={
+  'multi-builder':{name:'MULTI BUILDER',    icon:'ti-stack-2',             sub:'Smart · Hit Rater · My Team · Lottery · Value · Déjà Vu'},
   'locked-in':   {name:'LOCKED IN',        icon:'ti-lock-square-rounded', sub:'Cleared their line in 4 of last 5'},
   'form-alerts': {name:'FORM ALERTS',      icon:'ti-temperature-sun',     sub:'Hot streaks and cold spells'},
   'cap-race':    {name:'CAP RACE',         icon:'ti-crown',               sub:'Most runs · most wickets in the window'},
@@ -928,6 +943,7 @@ function sparkline(vals,line){
 function renderCrewDetail(){
   const id=state.view.crew, t=CREW_TABS[id];
   if(!t) return renderCrewPage();
+  if(id==='multi-builder') return renderMultiBuilder();
   const {items,note}=computeCrew(id);
   let h='<button class="back-btn" data-back="crew"><i class="ti ti-arrow-left"></i> Degen Crew</button>';
   h+='<div class="crew-detail-head"><div class="crew-tile-icon"><i class="ti '+t.icon+'"></i></div>'+
@@ -951,6 +967,162 @@ function renderCrewDetail(){
   return h;
 }
 
+/* ---------- MULTI BUILDER ---------- */
+const MULTI_MODES=[
+  ['smart','Smart'],['hit100','100% Hit Rater'],['myteam',"That's My Team"],
+  ['lottery','Lottery Legs'],['value','Value Hunter'],['dejavu','Déjà Vu'],
+];
+function myMulti(){ try{ return JSON.parse(localStorage.getItem('jtt_cricket_multi'))||[]; }catch{ return []; } }
+function saveMyMulti(l){ try{ localStorage.setItem('jtt_cricket_multi',JSON.stringify(l)); }catch{} }
+function legKey(l){ return l.name+'|'+l.market+'|'+l.line+'|'+(l.fx||''); }
+function candidateLegs(g){
+  const S=window.JTTScoring, legs=[];
+  [[g.home,g.away],[g.away,g.home]].forEach(([team,opp])=>{
+    S.playersForTeam(team).forEach(p=>{
+      if(p.batInnings>=6&&p.runs>=12){
+        const line=S.drLine(p.runs);
+        if(line){
+          const hr=S.getHitRate(p.name,'runs',line,false);
+          if(hr) legs.push({name:p.name,team,opp,fx:g.matchId,date:g.date,venue:g.venue,market:'runs',line,
+            hr:hr.rate,n:hr.n,score:S.scoreCMP(p,'runs',line,opp,g.venue),dvp:S.getDVPPct(opp,p.batRole||'MID','runs'),p});
+        }
+        if((p.sixes||0)>=0.8){
+          const hr6=S.getHitRate(p.name,'sixes',1,false);
+          if(hr6) legs.push({name:p.name,team,opp,fx:g.matchId,date:g.date,venue:g.venue,market:'sixes',line:0.5,
+            hr:hr6.rate,n:hr6.n,score:S.scoreCMP(p,'sixes',0.5,opp,g.venue),dvp:S.getDVPPct(opp,p.batRole||'MID','sixes'),p});
+        }
+      }
+      if(p.bowlInnings>=6&&(p.wickets||0)>=0.8){
+        const hrw=S.getHitRate(p.name,'wickets',1.5,false);
+        if(hrw) legs.push({name:p.name,team,opp,fx:g.matchId,date:g.date,venue:g.venue,market:'wickets',line:1.5,
+          hr:hrw.rate,n:hrw.n,score:S.scoreCMP(p,'wickets',1.5,opp,g.venue),dvp:S.getDVPPct(opp,'BOWL','wickets'),p});
+      }
+    });
+  });
+  return legs;
+}
+function slateLegs(){
+  const fx=fixtures(); const all=[];
+  fx.slice(0,12).forEach(g=>{ all.push.apply(all,candidateLegs(g)); });
+  return all;
+}
+function dedupeByPlayer(legs,max){
+  const seen=new Set(), out=[];
+  for(const l of legs){ if(seen.has(l.name)) continue; seen.add(l.name); out.push(l); if(out.length>=max) break; }
+  return out;
+}
+function computeMultis(mode,team){
+  const S=window.JTTScoring;
+  const fx=fixtures();
+  if(!fx.length) return {multis:[],note:'Needs upcoming fixtures — the slate is empty for this scope.'};
+  if(mode==='dejavu'){
+    const multis=[];
+    fx.slice(0,10).forEach(g=>{
+      const rows=(state.data.logs.rows||[]).filter(r=>r.format===state.view.filt.format
+        &&((r.team===g.home&&r.opp===g.away)||(r.team===g.away&&r.opp===g.home)));
+      const mids=[...new Set(rows.map(r=>r.matchId))];
+      const byDate={}; rows.forEach(r=>{ byDate[r.matchId]=r.date; });
+      mids.sort((a,b)=>byDate[a]<byDate[b]?-1:1);
+      const recent=mids.slice(-3);
+      if(recent.length<2) return;
+      const legs=[];
+      S.players().forEach(p=>{
+        if(!(p.batInnings>=6&&p.runs>=12)) return;
+        if(!(p.teams&&(p.teams.includes(g.home)||p.teams.includes(g.away)))) return;
+        const line=S.drLine(p.runs); if(!line) return;
+        const app=rows.filter(r=>r.name===p.name&&r.bat&&recent.includes(r.matchId));
+        if(app.length>=2&&app.every(r=>(r.runs||0)>=line))
+          legs.push({name:p.name,team:app[app.length-1].team,opp:app[app.length-1].opp,fx:g.matchId,date:g.date,
+            market:'runs',line,hr:1,n:app.length,score:app.length,p,deja:app.map(r=>r.runs)});
+      });
+      if(legs.length>=2) multis.push({title:g.home+' vs '+g.away+' · '+g.date,
+        sub:'Cleared their line in every one of the last '+recent.length+' meetings of these two',
+        legs:dedupeByPlayer(legs.sort((a,b)=>b.score-a.score),4)});
+    });
+    return {multis,note:multis.length?null:'No repeat-offender legs across recent meetings on this slate.'};
+  }
+  let legs=slateLegs();
+  if(mode==='myteam'){
+    if(!team) return {multis:[],note:'PICK_TEAM'};
+    legs=legs.filter(l=>l.team===team);
+  }
+  if(mode==='hit100') legs=legs.filter(l=>l.hr===1&&l.n>=5).sort((a,b)=>b.n-a.n);
+  else if(mode==='lottery'){
+    legs=legs.filter(l=>l.market==='runs'&&l.p.batInnings>=8).map(l=>{
+      const line=Math.round(l.line*1.6)+0.5;
+      const hr=window.JTTScoring.getHitRate(l.name,'runs',line,false);
+      return hr&&hr.rate>=0.12&&hr.rate<=0.38?Object.assign({},l,{line,hr:hr.rate,n:hr.n,boost:(l.dvp||0)}):null;
+    }).filter(Boolean).filter(l=>(l.boost||0)>=8).sort((a,b)=>b.boost-a.boost);
+  }
+  else if(mode==='value'){
+    legs=legs.map(l=>{
+      const cur=window.JTTScoring.getHitRate(l.name,l.market,l.line,true);
+      return cur&&cur.n>=5&&cur.rate-l.hr>=0.12&&cur.rate>=0.6?Object.assign({},l,{curHr:cur.rate,curN:cur.n}):null;
+    }).filter(Boolean).sort((a,b)=>(b.curHr-b.hr)-(a.curHr-a.hr));
+  }
+  else legs=legs.filter(l=>l.score>=3.5).sort((a,b)=>b.score-a.score);   // smart
+  const pool=dedupeByPlayer(legs, mode==='lottery'?6:(mode==='hit100'?8:8));
+  if(!pool.length) return {multis:[],note:'Nothing clears the '+mode+' gate on this slate.'};
+  const size=mode==='lottery'?Math.min(5,pool.length):Math.min(3,pool.length);
+  const multis=[{title:{smart:'Smart Multi',hit100:'100% Hit Rater',myteam:"That's My Team — "+(team||''),
+    lottery:'Lottery Legs',value:'Value Hunter'}[mode],
+    sub:{smart:'Highest engine scores on the slate, one leg per player',
+      hit100:'Only legs with a perfect hit rate (5+ innings)',
+      myteam:'Best engine legs from your mob',
+      lottery:'Boosted lines, soft matchups, long odds — degen territory',
+      value:'12-month form running well ahead of the long-run rate — value proxy until the odds feed lands'}[mode],
+    legs:pool.slice(0,size), extra:pool.slice(size)}];
+  return {multis,note:null};
+}
+function multiProb(legs){ return legs.reduce((p,l)=>p*(l.curHr!=null?l.curHr:l.hr),1); }
+function legRow(l,inTray){
+  const hrPct=Math.round((l.curHr!=null?l.curHr:l.hr)*100);
+  const mkt=l.market==='runs'?l.line+'+ runs':l.market==='sixes'?'1+ six':l.line+'+ wkts';
+  return '<div class="leg-row">'+
+    '<div><b class="crew-name" data-player="'+esc(l.name)+'">'+esc(l.name)+'</b> <span style="color:var(--text-3);font-size:11px">'+esc(abbr(l.team))+' v '+esc(abbr(l.opp))+'</span>'+
+    '<div class="pc-sub">'+mkt+' · '+hrPct+'%/'+ (l.curN!=null?l.curN:l.n)+(l.dvp!=null?' · DVP '+pctS(l.dvp):'')+(l.deja?' · H2H: '+l.deja.join(', '):'')+'</div></div>'+
+    '<button class="leg-btn" data-leg=\''+esc(JSON.stringify({name:l.name,team:l.team,opp:l.opp,market:l.market,line:l.line,hr:l.curHr!=null?l.curHr:l.hr,fx:l.fx||''}))+'\'>'+(inTray?'<i class="ti ti-x"></i>':'<i class="ti ti-plus"></i> ADD')+'</button></div>';
+}
+function renderMultiBuilder(){
+  const mode=state.view.multiMode||'smart';
+  const team=state.view.multiTeam||'';
+  let h='<button class="back-btn" data-back="crew"><i class="ti ti-arrow-left"></i> Degen Crew</button>';
+  h+='<div class="crew-detail-head"><div class="crew-tile-icon"><i class="ti ti-stack-2"></i></div>'+
+     '<div><div class="page-title" style="font-size:20px">MULTI BUILDER</div><div class="page-sub">Engine-built multis for the '+esc(state.view.filt.format)+' slate</div></div></div>';
+  h+='<div class="dfilt-row" style="margin-bottom:12px"><span class="dfilt-lbl">Mode</span><div class="dfilt-chips">'+
+    MULTI_MODES.map(([v,l])=>'<button class="dfilt-chip'+(mode===v?' active':'')+'" data-mmode="'+v+'">'+l+'</button>').join('')+'</div></div>';
+  const {multis,note}=computeMultis(mode,team);
+  if(note==='PICK_TEAM'||mode==='myteam'){
+    const teams=[...new Set(fixtures().flatMap(g=>[g.home,g.away]))].sort();
+    h+='<div class="dfilt-row" style="margin-bottom:12px"><span class="dfilt-lbl">Team</span><div class="dfilt-chips">'+
+      teams.map(t=>'<button class="dfilt-chip'+(team===t?' active':'')+'" data-mteam="'+esc(t)+'">'+esc(abbr(t))+'</button>').join('')+'</div></div>';
+  }
+  if(note&&note!=='PICK_TEAM') h+='<div class="empty">'+esc(note)+'</div>';
+  else if(note==='PICK_TEAM') h+='<div class="empty">Pick a team above.</div>';
+  multis.forEach(m=>{
+    const prob=multiProb(m.legs);
+    h+='<div class="venue-card"><div class="vc-name"><i class="ti ti-stack-2"></i>'+esc(m.title)+'</div>'+
+      '<div class="pc-sub" style="margin:4px 0 10px">'+esc(m.sub)+'</div>'+
+      m.legs.map(l=>legRow(l,false)).join('')+
+      '<div class="multi-foot">Naive combined: <b>'+(prob*100).toFixed(1)+'%</b> · fair odds ≈ <b>$'+(prob>0?(1/prob).toFixed(2):'–')+'</b> — legs correlate, treat as a ceiling</div>'+
+      (m.extra&&m.extra.length?'<details><summary class="pc-sub" style="cursor:pointer">'+m.extra.length+' more legs cleared the gate</summary>'+m.extra.map(l=>legRow(l,false)).join('')+'</details>':'')+
+    '</div>';
+  });
+  // My Multi tray
+  const tray=myMulti();
+  h+='<div class="sec-h"><i class="ti ti-clipboard-list"></i> My Multi ('+tray.length+' legs)</div>';
+  if(!tray.length) h+='<div class="empty">Tap ADD on any leg to build your own.</div>';
+  else{
+    const prob=multiProb(tray);
+    h+='<div class="venue-card">'+tray.map(l=>legRow(l,true)).join('')+
+      '<div class="multi-foot">Naive combined: <b>'+(prob*100).toFixed(1)+'%</b> · fair odds ≈ <b>$'+(1/prob).toFixed(2)+'</b></div>'+
+      '<div style="display:flex;gap:8px;margin-top:10px">'+
+      '<button class="cmb-run" id="multi-copy" style="flex:1"><i class="ti ti-copy"></i> COPY</button>'+
+      '<button class="cmb-run" id="multi-clear" style="flex:1;background:var(--surface-2);color:var(--text)">CLEAR</button></div></div>';
+  }
+  return h;
+}
+
 /* ---------- CHECK MY BET ---------- */
 let _cmbTab='player';
 function _cmbOpen(){ const o=document.getElementById('cmb-overlay'); o.classList.add('open'); o.style.display='flex'; renderCMB(); }
@@ -958,14 +1130,23 @@ function _cmbClose(){ const o=document.getElementById('cmb-overlay'); o.classLis
 function renderCMB(){
   document.querySelectorAll('.cmb-tab').forEach(b=>b.classList.toggle('active',b.dataset.cmb===_cmbTab));
   const el=document.getElementById('cmb-body');
-  el.innerHTML=_cmbTab==='player'?cmbPlayerForm():cmbMatchForm();
+  el.innerHTML=_cmbTab==='player'?cmbPlayerForm():_cmbTab==='sgm'?cmbSgmForm():cmbMatchForm();
   wireCMB();
+}
+function cmbRecent(){ try{ return JSON.parse(localStorage.getItem('jtt_cricket_cmb_recent'))||[]; }catch{ return []; } }
+function cmbRemember(r){
+  let rec=cmbRecent().filter(x=>!(x.player===r.player&&x.market===r.market&&x.line===r.line&&x.opp===r.opp));
+  rec.unshift(r); rec=rec.slice(0,6);
+  try{ localStorage.setItem('jtt_cricket_cmb_recent',JSON.stringify(rec)); }catch{}
 }
 function cmbPlayerForm(){
   const S=window.JTTScoring;
   const teams=[...new Set(S.players().map(p=>p.team))].sort();
   const fx=fixtures();
-  return '<div class="cmb-form">'+
+  const rec=cmbRecent();
+  const chips=rec.length?'<div class="cmb-recent">'+rec.map((r,i)=>
+    '<button data-recent="'+i+'">'+esc(r.player.split(' ').slice(-1)[0])+' '+r.line+'+ '+esc(r.market)+(r.opp?' v '+esc(abbr(r.opp)):'')+'</button>').join('')+'</div>':'';
+  return chips+'<div class="cmb-form">'+
     '<div class="cmb-ac"><label>Player</label><input id="cmb-player" autocomplete="off" placeholder="Start typing a name…"><div class="cmb-ac-list" id="cmb-ac"></div></div>'+
     '<div><label>Market</label><select id="cmb-market">'+
       '<option value="runs">Runs</option><option value="fours">Fours</option><option value="sixes">Sixes</option>'+
@@ -976,8 +1157,60 @@ function cmbPlayerForm(){
       teams.map(t=>'<option>'+esc(t)+'</option>').join('')+'</select></div>'+
     '<div><label>Venue (optional)</label><input id="cmb-venue" placeholder="e.g. Melbourne Cricket Ground" list="cmb-venues">'+
       '<datalist id="cmb-venues">'+[...new Set(fx.map(g=>g.venue).filter(Boolean))].map(v=>'<option>'+esc(v)+'</option>').join('')+'</datalist></div>'+
+    '<div><label>Book odds — decimal (optional, unlocks the EV flag)</label><input id="cmb-odds" type="number" step="0.01" min="1.01" placeholder="e.g. 1.90"></div>'+
     '<button class="cmb-run" id="cmb-go"><i class="ti ti-scan"></i> RUN THE CHECK</button>'+
   '</div><div id="cmb-result"></div>';
+}
+let _sgmLegs=[{},{}];
+function cmbSgmForm(){
+  const rows=_sgmLegs.map((l,i)=>
+    '<div class="sgm-leg">'+
+    '<input class="sgm-p" data-i="'+i+'" placeholder="Player" list="sgm-players" value="'+esc(l.player||'')+'">'+
+    '<select class="sgm-m" data-i="'+i+'">'+['runs','fours','sixes','wickets'].map(m=>'<option'+(l.market===m?' selected':'')+'>'+m+'</option>').join('')+'</select>'+
+    '<input class="sgm-l" data-i="'+i+'" type="number" step="0.5" placeholder="Line" value="'+(l.line!=null?l.line:'')+'">'+
+    '<button class="leg-btn sgm-x" data-i="'+i+'"><i class="ti ti-x"></i></button>'+
+    '</div>').join('');
+  return '<div class="cmb-form">'+
+    '<datalist id="sgm-players">'+window.JTTScoring.players().slice(0,300).map(p=>'<option>'+esc(p.name)+'</option>').join('')+'</datalist>'+
+    rows+
+    '<button class="leg-btn" id="sgm-add" style="justify-self:start"><i class="ti ti-plus"></i> ADD LEG</button>'+
+    '<div><label>Opponent applies to all legs? Pick per-leg opponents by using Player Prop instead. Combined book odds — decimal (optional)</label>'+
+    '<input id="sgm-odds" type="number" step="0.01" min="1.01" placeholder="e.g. 4.50"></div>'+
+    '<button class="cmb-run" id="sgm-go"><i class="ti ti-scan"></i> CHECK THE SGM</button>'+
+  '</div><div id="cmb-result"></div>';
+}
+function runSgm(){
+  const S=window.JTTScoring;
+  const out=document.getElementById('cmb-result');
+  const legs=_sgmLegs.filter(l=>l.player&&l.line!=null&&l.line!=='');
+  if(legs.length<2){ out.innerHTML='<div class="empty">An SGM needs at least 2 filled legs.</div>'; return; }
+  let prob=1, h='', bad=false;
+  legs.forEach(l=>{
+    const p=S.playerByName(l.player);
+    if(!p){ h+='<div class="factor bad"><span class="dot"></span><span>'+esc(l.player)+' — not found in this scope</span></div>'; bad=true; return; }
+    const line=parseFloat(l.line);
+    const hrA=S.getHitRate(p.name,l.market||'runs',line,false), hrC=S.getHitRate(p.name,l.market||'runs',line,true);
+    if(!hrA){ h+='<div class="factor warn"><span class="dot"></span><span>'+esc(p.name)+' — not enough innings to rate</span></div>'; bad=true; return; }
+    const n=hrC?hrC.n:0, w=n/(n+8);
+    const pr=hrC?w*hrC.rate+(1-w)*hrA.rate:hrA.rate;
+    prob*=pr;
+    const v=S.verdict(p,l.market||'runs',line,null,null);
+    h+='<div class="factor '+(pr>=0.6?'good':pr>=0.45?'neutral':'warn')+'"><span class="dot"></span><span>'+
+      esc(p.name)+' '+line+'+ '+esc(l.market||'runs')+': '+(pr*100).toFixed(0)+'% blended ('+hrA.n+' inns) · '+esc(v.label)+'</span></div>';
+  });
+  if(!bad){
+    const odds=parseFloat((document.getElementById('sgm-odds')||{}).value)||null;
+    let evLine='';
+    if(odds&&odds>1){
+      const ev=prob*odds-1;
+      const col=ev>0.03?'#22c55e':ev<-0.03?'#ef4444':'#9ca3af';
+      evLine=' · at $'+odds.toFixed(2)+' <span class="ev-flag" style="color:'+col+'">'+(ev>0.03?'+EV':ev<-0.03?'-EV':'FAIR')+' '+(ev>=0?'+':'')+(ev*100).toFixed(1)+'%</span>';
+    }
+    h='<div class="verdict-banner" style="color:'+(prob>=0.4?'#22c55e':prob>=0.25?'#86efac':'#f97316')+'">'+
+      '<div class="vl">'+(prob*100).toFixed(1)+'% combined</div>'+
+      '<div class="vs">Naive product of blended hit rates — same-game legs correlate, treat as a ceiling · fair odds ≈ $'+(1/prob).toFixed(2)+evLine+'</div></div>'+h;
+  }
+  out.innerHTML=h;
 }
 function cmbMatchForm(){
   const fx=fixtures();
@@ -997,13 +1230,45 @@ function runCheckMyBet(){
   const out=document.getElementById('cmb-result');
   if(!p){ out.innerHTML='<div class="empty">Player not found in the current scope — check the format chips.</div>'; return; }
   if(!line&&line!==0){ out.innerHTML='<div class="empty">Enter a line.</div>'; return; }
+  const odds=parseFloat((document.getElementById('cmb-odds')||{}).value)||null;
   const v=S.verdict(p,market,line,opp,venue);
   const F=S.cmpFactors(p,market,line,opp,market,venue);
+  cmbRemember({player:p.name,market,line,opp:opp||''});
+  let evHtml='';
+  if(odds&&odds>1){
+    const hrAll=S.getHitRate(p.name,market,line,false), hrCur=S.getHitRate(p.name,market,line,true);
+    let prob=null;
+    if(hrAll){ const n=hrCur?hrCur.n:0, w=n/(n+8); prob=hrCur?w*hrCur.rate+(1-w)*hrAll.rate:hrAll.rate; }
+    if(prob!=null){
+      const ev=prob*odds-1, imp=1/odds;
+      const col=ev>0.03?'#22c55e':ev<-0.03?'#ef4444':'#9ca3af';
+      const tag=ev>0.03?'+EV':ev<-0.03?'-EV':'FAIR';
+      evHtml='<div class="factor '+(ev>0.03?'good':ev<-0.03?'bad':'neutral')+'"><span class="dot"></span><span>'+
+        'At $'+odds.toFixed(2)+' the book implies '+(imp*100).toFixed(0)+'% — engine blend says '+(prob*100).toFixed(0)+'% '+
+        '<span class="ev-flag" style="color:'+col+'">'+tag+' '+(ev>=0?'+':'')+(ev*100).toFixed(1)+'%</span></span></div>';
+    }
+  }
   let h='<div class="verdict-banner" style="color:'+v.col+'"><div class="vl">'+esc(v.label)+'</div>'+
     '<div class="vs">'+esc(p.name)+' · '+market+' '+line+'+'+(opp?' vs '+esc(opp):'')+' · engine score '+v.score.toFixed(2)+'</div></div>';
+  h+=evHtml;
   F.forEach(f=>{ h+='<div class="factor '+f.tone+'"><span class="dot"></span><span>'+esc(f.text)+'</span></div>'; });
+  // H2H back-test block
+  if(opp){
+    const vs=rowsScoped(p.name,BOWL_KEYS_UI.has(market)?'bowl':'bat').filter(r=>r.opp===opp).slice(-6).reverse();
+    if(vs.length){
+      h+='<div class="sec-h"><i class="ti ti-swords"></i> H2H back-test vs '+esc(abbr(opp))+'</div><div class="h2h-bt">';
+      vs.forEach(r=>{
+        const val=r[market]!=null?r[market]:0;
+        const hit=val>=line;
+        h+='<div class="hitline"><span class="lbl">'+esc(r.date)+' · '+esc(r.comp||'')+'</span>'+
+          '<span class="pct" style="color:'+(hit?'#22c55e':'#ef4444')+'">'+val+' '+(hit?'✓':'✗')+'</span></div>';
+      });
+      h+='</div>';
+    }
+  }
   out.innerHTML=h;
 }
+const BOWL_KEYS_UI=new Set(['wickets','dots','maidens','runsConceded','econ']);
 function cmbMatchResult(){
   const S=window.JTTScoring;
   const fx=fixtures(); const g=fx[parseInt(document.getElementById('cmb-fx').value,10)];
@@ -1025,6 +1290,27 @@ function cmbMatchResult(){
 }
 function wireCMB(){
   const go=document.getElementById('cmb-go'); if(go) go.addEventListener('click',runCheckMyBet);
+  document.querySelectorAll('[data-recent]').forEach(b=>b.addEventListener('click',()=>{
+    const r=cmbRecent()[parseInt(b.dataset.recent,10)]; if(!r) return;
+    document.getElementById('cmb-player').value=r.player;
+    document.getElementById('cmb-market').value=r.market;
+    document.getElementById('cmb-line').value=r.line;
+    document.getElementById('cmb-opp').value=r.opp||'';
+    runCheckMyBet();
+  }));
+  const sadd=document.getElementById('sgm-add');
+  if(sadd) sadd.addEventListener('click',()=>{ _sgmLegs.push({}); renderCMB(); });
+  document.querySelectorAll('.sgm-x').forEach(b=>b.addEventListener('click',()=>{
+    _sgmLegs.splice(parseInt(b.dataset.i,10),1); if(!_sgmLegs.length) _sgmLegs=[{}]; renderCMB();
+  }));
+  document.querySelectorAll('.sgm-p,.sgm-m,.sgm-l').forEach(el=>el.addEventListener('change',()=>{
+    const i=parseInt(el.dataset.i,10);
+    _sgmLegs[i]=_sgmLegs[i]||{};
+    if(el.classList.contains('sgm-p')) _sgmLegs[i].player=el.value;
+    if(el.classList.contains('sgm-m')) _sgmLegs[i].market=el.value;
+    if(el.classList.contains('sgm-l')) _sgmLegs[i].line=el.value;
+  }));
+  const sgo=document.getElementById('sgm-go'); if(sgo) sgo.addEventListener('click',runSgm);
   const fxgo=document.getElementById('cmb-fx-go'); if(fxgo) fxgo.addEventListener('click',cmbMatchResult);
   const pi=document.getElementById('cmb-player');
   if(pi){
@@ -1075,6 +1361,29 @@ function wirePage(){
   p.querySelectorAll('[data-crew]').forEach(t=>t.addEventListener('click',()=>{
     state.view.crew=t.dataset.crew; state.view.crewOpen=null; _renderApp(); window.scrollTo({top:0});
   }));
+  p.querySelectorAll('[data-mmode]').forEach(b=>b.addEventListener('click',()=>{
+    state.view.multiMode=b.dataset.mmode; _renderApp();
+  }));
+  p.querySelectorAll('[data-mteam]').forEach(b=>b.addEventListener('click',()=>{
+    state.view.multiTeam=b.dataset.mteam; _renderApp();
+  }));
+  p.querySelectorAll('[data-leg]').forEach(b=>b.addEventListener('click',()=>{
+    const leg=JSON.parse(b.dataset.leg);
+    let tray=myMulti();
+    const k=legKey(leg);
+    if(tray.some(l=>legKey(l)===k)) tray=tray.filter(l=>legKey(l)!==k);
+    else tray.push(leg);
+    saveMyMulti(tray); _renderApp();
+  }));
+  const mc=document.getElementById('multi-copy');
+  if(mc) mc.addEventListener('click',()=>{
+    const tray=myMulti();
+    const txt=tray.map(l=>l.name+' '+(l.market==='runs'?l.line+'+ runs':l.market==='sixes'?'1+ six':l.line+'+ wkts')+' ('+abbr(l.team)+' v '+abbr(l.opp)+')').join('\n')
+      +'\nNaive '+(multiProb(tray)*100).toFixed(1)+'% · fair ~$'+(1/multiProb(tray)).toFixed(2)+' — via JTT Cricket';
+    try{ navigator.clipboard.writeText(txt); mc.innerHTML='<i class="ti ti-check"></i> COPIED'; setTimeout(()=>{mc.innerHTML='<i class="ti ti-copy"></i> COPY';},1200); }catch{}
+  });
+  const mcl=document.getElementById('multi-clear');
+  if(mcl) mcl.addEventListener('click',()=>{ saveMyMulti([]); _renderApp(); });
   p.querySelectorAll('[data-cidx]').forEach(c=>c.addEventListener('click',e=>{
     if(e.target.closest('[data-player]')) return;   // name click -> modal
     const i=parseInt(c.dataset.cidx,10);
