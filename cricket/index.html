@@ -376,6 +376,7 @@ function renderFilterStrip(){
 /* ---------- tab nav ---------- */
 const TABS=[
   {name:'fixtures', label:'Fixtures', icon:'ti-calendar-event'},
+  {name:'matchups', label:'Matchups', icon:'ti-swords'},
   {name:'players',  label:'Players',  icon:'ti-users'},
   {name:'crew',     label:'Degen Crew', icon:'ti-flame'},
 ];
@@ -475,6 +476,49 @@ function renderFixtureDetail(){
       '<span class="edge-verdict" style="color:'+col+'">'+esc(e.res.verdictLabel||'Edge')+' · '+e.res.score.toFixed(1)+'</span>'+
     '</div>';
   });
+  return h;
+}
+
+/* ---------- MATCHUPS (attack-vs-role grid + venue boards) ---------- */
+function renderMatchupsPage(){
+  const S=window.JTTScoring;
+  const stat=state.view.muStat||'runs';
+  let h='<div class="page-header"><div class="page-title">Matchups</div><div class="page-sub">What every attack concedes to each batting role — and how venues play</div></div>';
+  h+=renderFilterStrip();
+  h+='<div class="dfilt-row" style="margin-bottom:10px"><span class="dfilt-lbl">Stat</span><div class="dfilt-chips">'+
+    [['runs','Runs'],['fours','Fours'],['sixes','Sixes']].map(([v,l])=>'<button class="dfilt-chip'+(stat===v?' active':'')+'" data-mustat="'+v+'">'+l+'</button>').join('')+'</div></div>';
+  const rows=S.attackEntries(stat).sort((a,b)=>(b.OP==null?-999:b.OP)-(a.OP==null?-999:a.OP));
+  if(!rows.length) h+='<div class="empty">Not enough innings in this scope to build the grid.</div>';
+  else{
+    h+='<div class="sec-h"><i class="ti ti-swords"></i> Attack vs role — % '+esc(stat)+' conceded vs league average (green = soft, red = tough)</div>';
+    h+='<div style="overflow-x:auto"><table class="log-table mu-grid"><thead><tr><th>Bowling side</th><th>Openers</th><th>Top (3-4)</th><th>Middle (5-7)</th><th>Lower (8+)</th><th>Inns</th></tr></thead><tbody>';
+    rows.forEach(r=>{
+      const cell=v=>{
+        if(v==null) return '<td style="color:var(--text-3)">–</td>';
+        const mi=S.muInfo(v);
+        return '<td style="color:'+mi.c+';font-weight:700" title="'+mi.t+'">'+pctS(v)+'</td>';
+      };
+      h+='<tr><td class="opp"><b>'+esc(r.team)+'</b></td>'+cell(r.OP)+cell(r.TOP)+cell(r.MID)+cell(r.LOW)+'<td style="color:var(--text-3)">'+r.inns+'</td></tr>';
+    });
+    h+='</tbody></table></div>';
+  }
+  const vs=S.venueEntries().sort((a,b)=>b.runsPct-a.runsPct);
+  if(vs.length){
+    const board=(list,title,icon)=>{
+      let b='<div class="sec-h"><i class="ti '+icon+'"></i> '+title+'</div>';
+      list.forEach(v=>{
+        b+='<div class="venue-card"><div class="vc-name"><i class="ti ti-building-stadium"></i>'+esc(v.name)+'</div><div class="vc-rows">'+
+          '<div class="vc-stat"><div class="v">'+fmt(v.runsPI,1)+' <span style="color:var(--text-3);font-size:10px">('+pctS(v.runsPct)+')</span></div><div class="k">Runs / inns</div></div>'+
+          '<div class="vc-stat"><div class="v">'+fmt(v.sixesPI,2)+' <span style="color:var(--text-3);font-size:10px">('+pctS(v.sixesPct)+')</span></div><div class="k">Sixes / inns</div></div>'+
+          '<div class="vc-stat"><div class="v">'+fmt(v.wktsPI,2)+' <span style="color:var(--text-3);font-size:10px">('+pctS(v.wktsPct)+')</span></div><div class="k">Wkts / inns</div></div>'+
+          '<div class="vc-stat"><div class="v">'+v.inns+'</div><div class="k">Sample</div></div>'+
+        '</div></div>';
+      });
+      return b;
+    };
+    h+=board(vs.slice(0,6),'Scoring grounds — bat-friendly venues','ti-flame');
+    h+=board(vs.slice(-6).reverse(),'Graveyards — bowler-friendly venues','ti-skull');
+  }
   return h;
 }
 
@@ -814,6 +858,7 @@ function wireCMB(){
 /* ---------- render root ---------- */
 function renderTab(tab){
   if(tab==='fixtures') return state.view.fixtureId!=null?renderFixtureDetail():renderFixturesView();
+  if(tab==='matchups') return renderMatchupsPage();
   if(tab==='players') return renderPlayersPage();
   if(tab==='crew') return state.view.crew?renderCrewDetail():renderCrewPage();
   return '';
@@ -829,6 +874,9 @@ function _renderAll(){ _renderTabnav(); _renderApp(); }
 /* ---------- event wiring (delegated, CSP-friendly: no inline handlers) ---------- */
 function wirePage(){
   const p=document.getElementById('page-content');
+  p.querySelectorAll('[data-mustat]').forEach(b=>b.addEventListener('click',()=>{
+    state.view.muStat=b.dataset.mustat; _renderApp();
+  }));
   p.querySelectorAll('[data-filt]').forEach(b=>b.addEventListener('click',()=>{
     const k=b.dataset.filt, v=b.dataset.val===''?null:b.dataset.val; setFilt(k,v);
   }));
