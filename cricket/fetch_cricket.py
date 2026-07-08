@@ -114,10 +114,11 @@ def parse_match(info, innings, mid, src_level, src_comp, src_fmt):
         bowl_team = next((t for t in teams if t != bat_team), "")
         # accumulators
         bat = defaultdict(lambda: {"runs": 0, "balls": 0, "fours": 0, "sixes": 0,
-                                   "out": False, "dismissal": None, "order": None,
+                                   "out": False, "dismissal": None, "dismissedBy": None, "order": None,
                                    "runsPP": 0, "runsMid": 0, "runsDeath": 0})
         bowl = defaultdict(lambda: {"runs": 0, "balls": 0, "wkts": 0, "dots": 0,
                                     "maidens": 0, "wktsPP": 0, "wktsDeath": 0,
+                                    "ballsPP": 0, "ballsDeath": 0, "concPP": 0, "concDeath": 0,
                                     "overs_runs": defaultdict(int), "overs_balls": defaultdict(int)})
         order_seen = []
         for over in inn.get("overs", []):
@@ -154,12 +155,20 @@ def parse_match(info, innings, mid, src_level, src_comp, src_fmt):
                     w["dots"] += 1
                 w["overs_runs"][ovn] += tot
                 w["overs_balls"][ovn] += (0 if wides else 1)
+                if phase == "PP":
+                    w["concPP"] += tot
+                    if not wides: w["ballsPP"] += 1
+                elif phase == "Death":
+                    w["concDeath"] += tot
+                    if not wides: w["ballsDeath"] += 1
                 # wickets
                 for wk in d.get("wickets", []):
                     po = wk.get("player_out")
                     kind = wk.get("kind", "")
                     if po in bat:
                         bat[po]["out"] = True; bat[po]["dismissal"] = kind
+                        if kind not in ("run out", "retired hurt", "retired out", "obstructing the field"):
+                            bat[po]["dismissedBy"] = bowl_p
                     if kind not in ("run out", "retired hurt", "retired out", "obstructing the field"):
                         w["wkts"] += 1
                         if phase == "PP": w["wktsPP"] += 1
@@ -175,7 +184,7 @@ def parse_match(info, innings, mid, src_level, src_comp, src_fmt):
                 "innings": inn_i, "bat": True, "bowl": False,
                 "batOrder": order_map.get(nm), "runs": b["runs"], "balls": b["balls"],
                 "fours": b["fours"], "sixes": b["sixes"], "out": b["out"],
-                "dismissal": b["dismissal"],
+                "dismissal": b["dismissal"], "dismissedBy": b["dismissedBy"],
                 "sr": round(b["runs"] / b["balls"] * 100, 1) if b["balls"] else 0,
                 "runsPP": b["runsPP"], "runsMid": b["runsMid"], "runsDeath": b["runsDeath"],
             })
@@ -194,6 +203,8 @@ def parse_match(info, innings, mid, src_level, src_comp, src_fmt):
                 "runsConceded": w["runs"], "wickets": w["wkts"], "maidens": maidens,
                 "econ": round(w["runs"] / (w["balls"] / balls_per_over), 2) if w["balls"] else 0,
                 "dots": w["dots"], "wktsPP": w["wktsPP"], "wktsDeath": w["wktsDeath"],
+                "ballsPP": w["ballsPP"], "ballsDeath": w["ballsDeath"],
+                "concPP": w["concPP"], "concDeath": w["concDeath"],
             })
     return out
 
@@ -259,12 +270,34 @@ def main():
     fx_path = os.path.join(OUT, "cricket_fixtures.json")
     if not os.path.exists(fx_path):
         dump("cricket_fixtures.json", {"fixtureCount": 0, "version": ver, "fixtures": []})
-    # ratings: preserve hand-maintained bowlType/tiers if present, else scaffold
-    rt_path = os.path.join(OUT, "cricket_ratings.json")
-    if os.path.exists(rt_path):
-        log("preserving existing cricket_ratings.json")
-    else:
-        dump("cricket_ratings.json", {"byName": {}, "bowlType": {}, "tiers": {}})
+    # ratings: pipeline-owned tiers (per format, 12-month window, min 8 innings).
+    # Percentile-tiered so tiers stay meaningful as the sample shifts:
+    #   ELITE = top decile, STRONG = next 15%, everyone else MID.
+    win_cut = datetime.now(timezone.utc)
+    win_cut = f"{win_cut.year-1:04d}-{win_cut.month:02d}-{win_cut.day:02d}"
+    per = defaultdict(lambda: defaultdict(lambda: {"bat": [0, 0], "bowl": [0, 0]}))
+    for r in rows:
+        if r["date"] < win_cut:
+            continue
+        e = per[r["format"]][r["name"]]
+        if r.get("bat"):
+            e["bat"][0] += r.get("runs", 0); e["bat"][1] += 1
+        if r.get("bowl"):
+            e["bowl"][0] += r.get("wickets", 0); e["bowl"][1] += 1
+    tiers = {}
+    for fmt, names in per.items():
+        for kind in ("bat", "bowl"):
+            vals = sorted(((v[kind][0] / v[kind][1], n) for n, v in names.items()
+                           if v[kind][1] >= 8), reverse=True)
+            if len(vals) < 10:
+                continue
+            n = len(vals)
+            cut_e, cut_s = max(1, n // 10), max(2, n // 4)
+            d = tiers.setdefault(fmt, {}).setdefault(kind, {})
+            for i, (_, nm) in enumerate(vals):
+                d[nm] = "ELITE" if i < cut_e else ("STRONG" if i < cut_s else "MID")
+    dump("cricket_ratings.json", {"version": ver, "tiers": tiers})
+    log("ratings: " + ", ".join(f"{f}:{sum(len(k) for k in t.values())}" for f, t in tiers.items()))
     with open(os.path.join(OUT, "version.txt"), "w") as f:
         f.write(ver)
     log(f"DONE rows={len(rows)} matches={len({r['matchId'] for r in rows})} "
