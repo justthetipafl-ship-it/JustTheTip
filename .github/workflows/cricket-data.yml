@@ -23,18 +23,20 @@ jobs:
           python-version: '3.12'
 
       # Pull Cricsheet ball-by-ball, build the bundle into cricket/data/.
-      # Preserves hand-maintained cricket_fixtures.json + cricket_ratings.json.
+      # Scope: full-member INTL + six-league whitelist. Owns cricket_ratings.json.
       - name: Fetch + build data bundle
         env:
           CRICKET_MONTHS: '24'
         run: python cricket/fetch_cricket.py
 
-      # Upcoming fixtures (with venue) from CricAPI /matches. Free-tier keyed.
+      # Upcoming fixtures (with venue) from CricAPI /matches + /currentMatches.
       # Owns cricket_fixtures.json; preserves manual (FX*) rows. Skips if no key.
+      # Look-ahead window: script default is 45 days (the free /matches feed
+      # serves nothing nearer than ~3 weeks out, so shorter windows go empty).
+      # Only set FIX_DAYS here if you deliberately want to override that.
       - name: Fetch fixtures
         env:
           CRICKET_DATA_KEY: ${{ secrets.CRICKET_DATA_KEY }}
-          FIX_DAYS: '21'
         run: python cricket/fetch_fixtures.py
 
       # Write the subscriber auth gate file from the repo secret.
