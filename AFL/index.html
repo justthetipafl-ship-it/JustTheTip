@@ -733,9 +733,9 @@
   .card-tot .ct-c b{font-family:var(--font-mono);font-weight:800;font-size:18px;color:#22c55e;}
   .fxhide-chips{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:4px;}
   .fxchip{font-size:11px;font-weight:600;padding:5px 10px;border-radius:14px;border:1px solid var(--accent);background:rgba(34,197,94,.12);color:var(--accent);cursor:pointer;transition:all .1s;display:inline-flex;align-items:center;gap:4px;}
-  .fxchip::before{content:'\\2713';font-size:10px;}
+  .fxchip::before{content:'✓';font-size:10px;}
   .fxchip.off{border-color:var(--border);background:var(--surface-2);color:var(--text-3);text-decoration:line-through;}
-  .fxchip.off::before{content:'\\2715';text-decoration:none;}
+  .fxchip.off::before{content:'✕';text-decoration:none;}
   .card-toast{position:fixed;left:50%;bottom:74px;transform:translateX(-50%) translateY(10px);background:var(--surface-3,#1a1f1a);border:1px solid var(--accent);color:var(--text);font-size:12.5px;font-weight:700;padding:9px 15px;border-radius:22px;z-index:9600;opacity:0;pointer-events:none;transition:opacity .18s,transform .18s;box-shadow:0 8px 24px rgba(0,0,0,.5);}
   .card-toast.show{opacity:1;transform:translateX(-50%) translateY(0);}
   </style>
@@ -903,7 +903,7 @@
     nerd:{ arbs:true, middles:true, model:true, lineout:true, implied:true, market:true, minEv:2, maxEv:0, maxOdds:0, minArb:0.5, minGap:1, maxCost:12, minSamp:6 },
     density:'cozy',
     multi:{ legs:6, scope:'game', today:false, book:null, target:null, banned:[], minProb:55, minScore:3, markets:MULTI_MKTS.map(m=>m[0]) },
-    fxHide:{ sig:{}, sec:{} }   // hide Degen signals / sections on focused fixtures
+    fxHide:{ sig:{}, sec:{}, mkt:{} }   // hide Degen signals / sections / markets on focused fixtures
   };
   let SETTINGS=(function(){
     try{ const s=JSON.parse(localStorage.getItem(SETTINGS_KEY)||'null'); if(!s) return JSON.parse(JSON.stringify(DEFAULT_SETTINGS));
@@ -911,7 +911,7 @@
         hideCompleted:!!s.hideCompleted,
         nerd:Object.assign({},DEFAULT_SETTINGS.nerd,s.nerd||{}),
         multi:Object.assign({},DEFAULT_SETTINGS.multi,s.multi||{}),
-        fxHide:{ sig:(s.fxHide&&s.fxHide.sig)||{}, sec:(s.fxHide&&s.fxHide.sec)||{} } };
+        fxHide:{ sig:(s.fxHide&&s.fxHide.sig)||{}, sec:(s.fxHide&&s.fxHide.sec)||{}, mkt:(s.fxHide&&s.fxHide.mkt)||{} } };
     }catch(e){ return JSON.parse(JSON.stringify(DEFAULT_SETTINGS)); }
   })();
   if(SETTINGS.multi.scope==='day') SETTINGS.multi.scope='game';   // per-day retired in favour of the Today filter
@@ -1705,7 +1705,7 @@
   const NERD_MARKETS=[['disposals','Disposals'],['dreamteam','Fantasy'],['kicks','Kicks'],['handballs','Handballs'],['marks','Marks'],['tackles','Tackles'],['clearances','Clearances']];  // model EV fires on all; arbs/middles/de-vig auto-gate to two-way O/U markets (disposals, fantasy)
   const NM_LBL=Object.fromEntries(NERD_MARKETS);
   // market filter: an undefined/absent list means "all on" (covers existing saved settings + new users)
-  function _nerdMktOn(k){ const m=SETTINGS.nerd.markets; return !Array.isArray(m) || m.indexOf(k)>=0; }
+  function _nerdMktOn(k){ if(_fxHid('mkt',k)) return false; const m=SETTINGS.nerd.markets; return !Array.isArray(m) || m.indexOf(k)>=0; }
   function bookLines(name,market){ return (((state.idx.bookIdx||{})[name]||{})[market]||[]).filter(r=>_bookOK(r.book)); }
   function _noVigOver(over,under){ const io=1/over, iu=1/under; return io/(io+iu); }   // fair P(over), proportional
   // Power-method devig (Clarke et al. 2017): find exponent k with (1/over)^k+(1/under)^k=1, then fair P=(1/over)^k.
@@ -1931,7 +1931,7 @@
     // form pips
     h+='<div style="margin-bottom:6px">'+pips(team)+'</div>';
     // Stat Leaders (top of team by a few markets)
-    const leaders=[['disposals','Disposals'],['goals','Goals'],['tackles','Tackles'],['marks','Marks']].map(([k,l])=>{
+    const leaders=[['disposals','Disposals'],['goals','Goals'],['tackles','Tackles'],['marks','Marks']].filter(([k])=>!_fxHid('mkt',k)).map(([k,l])=>{
       const top=playersOnTeam(team).filter(p=>(p.matches||0)>=3 && isPlaying(p.name,team)).sort((a,b)=>(b[k]||0)-(a[k]||0))[0];
       if(!top) return '';
       return '<div class="tp-lead" onclick="openPlayer(\''+esc(top.name).replace(/\x27/g,"\\\x27")+'\')"><span class="nm">'+l+' · '+top.name+'</span><span class="vv">'+fmt(top[k],k==='goals'?2:1)+'</span></div>';
@@ -1942,7 +1942,7 @@
       let mt='<div class="tp-sec"><div class="sec-title"><i class="ti ti-shield-half"></i> Matchup vs '+abbr(opp)+'</div></div>';
       mt+='<div class="stbl-wrap"><table class="stbl bx"><thead><tr><th>Stat</th><th>'+abbr(team)+' For</th><th>'+abbr(opp)+' Allows</th></tr></thead><tbody>';
       const ta=state.idx.teamMap[opp];
-      BET_STATS.forEach(([k,l])=>{ mt+='<tr><td class="name">'+l+'</td><td>'+fmt(t[k])+'</td><td>'+fmt(ta?ta[k+'_a']:null)+'</td></tr>'; });
+      BET_STATS.filter(([k])=>!_fxHid('mkt',k)).forEach(([k,l])=>{ mt+='<tr><td class="name">'+l+'</td><td>'+fmt(t[k])+'</td><td>'+fmt(ta?ta[k+'_a']:null)+'</td></tr>'; });
       mt+='</tbody></table></div>'; h+=mt;
     }
     // Defence vs Play Style (how the opponent concedes vs this team's playstyles)
@@ -1985,7 +1985,7 @@
   function teamContextPanel(home,away){
     const th=state.idx.teamMap[home], ta=state.idx.teamMap[away];
     if(!th||!ta) return '<div class="tp-body-meta" style="border:0">Team averages derive once the season data builds.</div>';
-    const rows=[['disposals','Disposals'],['inside50s','Inside 50s'],['clearances','Clearances'],['marks','Marks'],['tackles','Tackles'],['goals','Goals']];
+    const rows=[['disposals','Disposals'],['inside50s','Inside 50s'],['clearances','Clearances'],['marks','Marks'],['tackles','Tackles'],['goals','Goals']].filter(([k])=>!_fxHid('mkt',k));
     let h='<details class="tp-collapse c-green" open><summary class="tp-collapse-sum"><i class="ti ti-shield-half"></i><span class="tp-collapse-title">Team Matchup — per game (for vs allowed)</span><i class="ti ti-chevron-down tp-collapse-chev"></i></summary><div class="tp-collapse-body">';
     h+='<div class="tp-body-meta">'+home+' & '+away+' · season averages derived from game logs</div>';
     h+='<div class="stbl-wrap"><table class="stbl" style="min-width:0"><thead><tr><th>Stat</th><th>'+abbr(home)+' For</th><th>Allowed</th><th>'+abbr(away)+' For</th><th>Allowed</th></tr></thead><tbody>';
@@ -4225,6 +4225,8 @@
     h+='<div class="data-status"><div style="font-size:11px;color:var(--text-3);margin-bottom:8px;line-height:1.5">Tap to hide a signal or section from the focused fixture view. Green = showing, grey = hidden.</div>';
     h+='<div style="font-weight:700;font-size:12px;margin:6px 0 5px;color:var(--text-2)">Degen Signals</div><div class="fxhide-chips">'+_SIGL.map(function(x){return _fxChip('sig',x);}).join('')+'</div>';
     h+='<div style="font-weight:700;font-size:12px;margin:12px 0 5px;color:var(--text-2)">Sections</div><div class="fxhide-chips">'+_SECL.map(function(x){return _fxChip('sec',x);}).join('')+'</div>';
+    var _MKTL=[['disposals','Disposals'],['goals','Goals'],['marks','Marks'],['tackles','Tackles'],['kicks','Kicks'],['handballs','Handballs'],['clearances','Clearances'],['inside50s','Inside 50s']];
+    h+='<div style="font-weight:700;font-size:12px;margin:12px 0 5px;color:var(--text-2)">Markets <span style="font-weight:500;color:var(--text-3)">(stat tables + Nerd Mode)</span></div><div class="fxhide-chips">'+_MKTL.map(function(x){return _fxChip('mkt',x);}).join('')+'</div>';
     h+='</div>';
 
     h+='<div class="data-status">'+
