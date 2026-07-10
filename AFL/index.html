@@ -3012,7 +3012,7 @@
       '<div class="dv-ctrls">'+tierBtns+hailBtn+'</div>'+steppers+mktChips+bookChips+
       '<div class="dv-legs">'+slip+'</div>'+
       '<div class="dv-comb">'+legN+'-leg combined <b>$'+comb.toFixed(2)+'</b>'+restore+'<span class="dv-est">est · straight multi; a true SGM (esp. same-player) pays less</span></div>'+
-      (legN>=2?'<button class="slip-share-btn" onclick="_openSlipShare(\'deja\')"><i class="ti ti-share"></i> Share card</button>':'');
+      (legN>=2?'<button class="slip-share-btn" onclick="_openSlipShare(\'deja\')"><i class="ti ti-share"></i> Share card</button><button class="mb-addcard" onclick="_cardAddFromDeja()"><i class="ti ti-receipt"></i> Add all to card</button>':'');
   }
   window._dvRemove=function(pi){
     const S=_dvState(); if(!S.hail||!S.sel) return;
@@ -3538,6 +3538,7 @@
   function _rungCardIt(name,team,opp,mkt,line,lbl,src){ const r=priceForLine(name,mkt,line); return (r&&r.price!=null)?{name:name,team:team,opp:opp,mkt:mkt,line:line,side:'over',odds:r.price,book:r.book,label:line+'+ '+(lbl||mkt),src:src||''}:null; }
   window._cardAddFromMulti=function(bi){ const gm=multiBuilder()[bi]; if(!gm||!gm.legs.length)return; _cardAddMultiEntry({ title:gm.legs.length+'-leg multi'+(gm.label?' \u00b7 '+gm.label:''), legs:gm.legs.map(l=>({name:l.p.name,label:l.betLabel,odds:l._odds&&l._odds.price})), odds:gm.comb, book:(SETTINGS.multi.book||''), src:'Multi Builder' }); };
   window._cardAddFromFx=function(){ const g=_fxmG(); if(!g)return; const S=state.view.fxMulti; if(!S||!S.sel)return; const pool=_fxmPool(g); const legs=S.sel.idx.map(i=>pool[i]).filter(Boolean); if(!legs.length)return; const comb=legs.reduce((a,l)=>a*l._odds.price,1); _cardAddMultiEntry({ title:legs.length+'-leg multi \u00b7 '+abbr(g.home)+' v '+abbr(g.away), legs:legs.map(l=>({name:l.p.name,label:l.betLabel,odds:l._odds.price})), odds:comb, book:(S.book||''), src:'Multi Builder' }); };
+  window._cardAddFromDeja=function(){ const S=_dvState(); if(!S.home||!S.away||!S.sel) return; const pp=_dvPool(S); const pool=pp&&pp.pool; if(!pool||!pool.length) return; const removed=new Set(S.hail?(S.removed||[]):[]); const active=S.sel.idx.map(i=>pool[i]).filter(l=>l&&!removed.has(l.name)); if(active.length<2){ _cardToast('Need at least 2 legs'); return; } _cardAddMultiEntry({ title:active.length+'-leg d\u00e9j\u00e0 vu \u00b7 '+abbr(S.home)+' v '+abbr(S.away), legs:active.map(l=>({name:l.name,label:l.betLine+'+ '+l.marketLabel,odds:l.over})), odds:_dvProduct(active), book:(S.book||''), src:'D\u00e9j\u00e0 Vu' }); };
   function degRow(name,col,right,sub,onclickName,card){
     const hl=s=>(''+s).replace(/(\$\d+(?:\.\d+)?)/g,'<b class="deg-odds">$1</b>');
     return '<div class="fixture-row deg-row" style="cursor:pointer" onclick="openPlayer(\''+esc(onclickName||name).replace(/\x27/g,"\\\x27")+'\')">'+
@@ -4536,9 +4537,9 @@
   function _buildCardSpec(){
     if(!_CARD.length) return null;
     const items=_CARD.map(e=>{
-      if(e.type==='multi') return {name:e.title,line:(e.legs||[]).map(l=>l.name).slice(0,4).join(', ')+((e.legs||[]).length>4?'\u2026':''),odds:(+e.odds>1?'$'+(+e.odds).toFixed(2):null),stake:e.stake,book:bookName(e.book),src:e.src||''};
+      if(e.type==='multi') return {type:'multi',name:e.title,legs:(e.legs||[]).map(l=>({name:l.name,label:l.label||'',odds:(+l.odds>1?'$'+(+l.odds).toFixed(2):null)})),odds:(+e.odds>1?'$'+(+e.odds).toFixed(2):null),stake:e.stake,book:bookName(e.book),src:e.src||''};
       const lbl=(e.label||((e.side==='under'?'U':'')+(e.line!=null?e.line:'')+(e.mkt?' '+e.mkt:'')));
-      return {name:e.name,line:lbl,odds:(+e.odds>1?'$'+(+e.odds).toFixed(2):null),stake:e.stake,book:bookName(e.book),src:e.src||''};
+      return {type:'single',name:e.name,line:lbl,odds:(+e.odds>1?'$'+(+e.odds).toFixed(2):null),stake:e.stake,book:bookName(e.book),src:e.src||''};
     });
     return {mode:'card',badge:'MY CARD',kindLabel:'card',title:_CARD.length+' bet'+(_CARD.length!==1?'s':'')+' \u00b7 '+_niceDate(_todayStr()),items:items,total:_cardTotals(),legCount:_CARD.length};
   }
@@ -4548,6 +4549,14 @@
         ? '<span style="font-family:ui-monospace,Menlo,monospace;font-weight:800;color:#22c55e;font-size:13px;white-space:nowrap">'+it.odds+(it.stake?' <span style="color:#8fa39a;font-weight:600;font-size:10px">'+_fmtU(it.stake)+'u</span>':'')+'</span>'
         : '';
       const pill=it.src?'<span style="display:inline-block;font-size:8px;font-weight:800;letter-spacing:.03em;color:#8fd6a0;background:rgba(34,197,94,.14);border-radius:4px;padding:1px 5px;margin-right:5px;vertical-align:1px">'+esc(it.src)+'</span>':'';
+      if(it.type==='multi'){
+        const legRows=(it.legs||[]).map(l=>'<div style="display:flex;align-items:baseline;gap:7px;padding:2px 0;font-size:10.5px;line-height:1.35"><span style="color:#5f6f5f;flex-shrink:0">\u2013</span><span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#d3ded3;font-weight:600">'+esc(l.name)+'</span><span style="color:#8fa39a;white-space:nowrap">'+esc(l.label||'')+'</span>'+((showOdds&&l.odds)?'<span style="color:#22c55e;font-weight:700;white-space:nowrap;font-family:ui-monospace,Menlo,monospace">'+l.odds+'</span>':'')+'</div>').join('');
+        return '<div style="padding:9px 11px;border:1px solid #1e2a1e;border-radius:9px;background:rgba(255,255,255,.025)">'+
+          '<div style="display:flex;align-items:center;gap:10px">'+
+            '<div style="flex:1;min-width:0"><div style="font-weight:800;font-size:13px;color:#eaf2ea;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+pill+esc(it.name)+'</div>'+(it.book?'<div style="font-size:10px;color:#8fa39a;margin-top:2px">'+esc(it.book)+'</div>':'')+'</div>'+right+'</div>'+
+          '<div style="margin-top:7px;padding-top:6px;border-top:1px solid #17211f;display:flex;flex-direction:column;gap:1px">'+legRows+'</div>'+
+        '</div>';
+      }
       const detail=[it.line,it.book].filter(Boolean).join(' \u00b7 ');
       return '<div style="display:flex;align-items:center;gap:10px;padding:8px 11px;border:1px solid #1e2a1e;border-radius:9px;background:rgba(255,255,255,.025)">'+
         '<div style="flex:1;min-width:0">'+
