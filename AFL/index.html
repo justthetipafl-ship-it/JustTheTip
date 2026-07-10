@@ -824,7 +824,8 @@
                        teams_form:'data/teams_form.json', dvp:'data/dvp.json',
                        gamelogs:'data/gamelogs.json', fixture:'data/fixture.json',
                        injury:'data/injury.json', odds:'data/odds.json',
-                       results:'data/results.json', lineups:'data/lineups.json', weather:'data/weather.json' };
+                       results:'data/results.json', lineups:'data/lineups.json', weather:'data/weather.json',
+                       kickins:'data/kickins.json' };
 
   // Live odds from the Cloudflare Worker (proximity-gated poller). Leave '' to use the
   // committed data/odds.json. Set to your Worker, e.g.:
@@ -874,6 +875,7 @@
     {k:'bunnies',  n:'Bunnies',       i:'ti-carrot',       d:'Loves this opp'},
     {k:'hunting',  n:'Hunting Grounds',i:'ti-target-arrow', d:'Venue feasters'},
     {k:'nmu',      n:'Next Man Up',   i:'ti-arrow-up-right',d:'Beneficiaries of outs'},
+    {k:'kickins',  n:'Kick In Merchants',i:'ti-arrow-back-up',d:'Rebound / kick-in role'},
     {k:'death',    n:'Death Riders',  i:'ti-skull',        d:'Strong UNDER'},
     {k:'bogey',    n:'Bogey',         i:'ti-mood-sad',     d:'Struggles v opp'},
     {k:'streak',   n:'Streakers',     i:'ti-flame',        d:'Hot form'},
@@ -1043,6 +1045,12 @@
     // next-opponent per team from the fixture
     state.idx.nextOpp={};
     (d.fixture||[]).forEach(g=>{ state.idx.nextOpp[g.home]=g.away; state.idx.nextOpp[g.away]=g.home; });
+    state.idx.kickins=d.kickins||{};
+    (function(){ const cs=(d.meta&&d.meta.currentSeason)||'2026'; const agg={};
+      (d.gamelogs||[]).forEach(r=>{ if(String(r.Year)!==String(cs))return; const t=r.Team; if(!t)return; const a=agg[t]||(agg[t]={s:0,g:new Set()}); a.s+=(+r.behinds||0); a.g.add(r.MatchId); });
+      const rows=Object.keys(agg).map(t=>({t:t,pg:agg[t].s/Math.max(1,agg[t].g.size),n:agg[t].g.size})); rows.sort((x,y)=>y.pg-x.pg);
+      const tb={}; rows.forEach((r,i)=>{ tb[r.t]={pg:r.pg,rank:i+1,n:r.n,total:rows.length}; }); state.idx.teamBehinds=tb;
+    })();
     // chronological order (finals included) so every .slice(-n) recency view — box scores,
     // recent bars, prop calculator, L5/L10, and the engine (shares these arrays) — shows the latest games
     Object.values(state.idx.logsByName).forEach(a=>a.sort((x,y)=>((+x.Year||0)-(+y.Year||0))||(_roundNum(x.RoundName)-_roundNum(y.RoundName))));
@@ -1957,11 +1965,11 @@
       const counts={ green:ov.length, death:un.length, snags:_fc(snags(),6).length,
         elite:_fc(elite(),8,40).length, bunnies:_fc(bunnies(),6).length, bogey:_fc(bogey(),6).length,
         streak:_fc(streakers(),6).length, hunting:_fc(huntingGrounds(),8).length, nmu:_fc(nextManUp(),8).length, form:_fc(formAlerts('spike'),6,25).length+_fc(formAlerts('drop'),6,25).length,
-        taggers:_fc(taggerAlerts(),8).length, climb:_fc(letsClimb(),6).length };
+        taggers:_fc(taggerAlerts(),8).length, climb:_fc(letsClimb(),6).length, kickins:_fc(kickInMerchants(),8).length };
       total=Object.values(counts).reduce((a,b)=>a+b,0);
       html+=ouSection(ov,'over','Green Lights','ti-traffic-lights','c-green');
       html+=ouSection(un,'under','Death Riders','ti-skull','c-red');
-      ['snags','elite','bunnies','hunting','nmu','bogey','streak','climb','form','taggers'].forEach(k=>{ html+=renderTile(k); });
+      ['snags','elite','bunnies','hunting','nmu','kickins','bogey','streak','climb','form','taggers'].forEach(k=>{ html+=renderTile(k); });
     } finally { _degenScope=prevScope; _degenFocused=prevFocus; }
     const hdr='<div class="tp-sec"><div class="sec-title"><i class="ti ti-flame"></i> Degen Signals</div><div class="sec-meta">'+total+' fired</div></div>';
     return hdr+(html||'<div class="tp-body-meta" style="border:0">No signals fired.</div>');
@@ -2271,6 +2279,8 @@
       if(cbaS) ctxPills+='<span class="pm-od" style="color:'+(cbaS.dir==='up'?'#22c55e':'#ef4444')+'" title="Centre-bounce attendance, last 3 vs season baseline \u2014 a big move signals a midfield role change">CBA '+(cbaS.dir==='up'?'\u2191':'\u2193')+' '+cbaS.recent+'% vs '+cbaS.base+'%</span>';
       const pc=opp?_teamPace(opp):null;
       if(pc&&Math.abs(pc.pct)>=3) ctxPills+='<span class="pm-od" style="color:'+(pc.pct>0?'#22c55e':'#ef4444')+'" title="Opponent disposals conceded vs league avg">'+abbr(opp)+' '+pc.tag+' '+(pc.pct>0?'+':'')+pc.pct.toFixed(0)+'%</span>';
+      const _ki=(state.idx.kickins||{})[name];
+      if(_ki&&_ki.ki>=1){ const _ob=opp?(state.idx.teamBehinds||{})[opp]:null; ctxPills+='<span class="pm-od" style="color:#22d3ee" title="Kick-ins per game, share of team\u2019s kick-ins, and play-on rate">Kick-ins '+_ki.ki.toFixed(1)+'/gm \u00b7 '+_ki.kiPct.toFixed(0)+'% of team'+(_ob?' \u00b7 '+abbr(opp)+' '+_ob.pg.toFixed(1)+' beh/gm':'')+'</span>'; }
       if(ctxPills) ctxPills='<div class="pm-odds" style="margin-top:6px">'+ctxPills+'</div>';
     }
     document.getElementById('pm-modal').innerHTML=
@@ -3588,6 +3598,25 @@
   }
   // price for the exact streak line (e.g. 25+ disposals from the alt ladder; anytime/2+ for goals)
   function streakOdds(s){ const r=priceForLine(s.p.name,s.statKey,s.line); return (r&&r.book)?' · '+r.label+' $'+r.price.toFixed(2)+' ('+bookName(r.book)+')':''; }
+  const KI_MIN_RATE=2.5;   // ~2.5 kick-ins/gm to count as a designated kicker-in
+  function kickInMerchants(){
+    const KI=state.idx.kickins||{}; if(!Object.keys(KI).length) return [];
+    const bf=state.idx.teamBehinds||{}; const out=[]; const seen=new Set();
+    (state.data.fixture||[]).forEach(g=>{
+      [[g.home,g.away],[g.away,g.home]].forEach(pair=>{
+        const team=pair[0], opp=pair[1], ob=bf[opp]; if(!ob) return;
+        Object.keys(KI).forEach(name=>{
+          const k=KI[name]; if(!k||k.team!==team||k.ki<KI_MIN_RATE) return;
+          if(_injuryFor(name)) return; if(!isPlaying(name,team)) return;
+          if(seen.has(name)) return; seen.add(name);
+          const p=state.idx.byName[name]||{name:name,team:team};
+          out.push({p:p,team:team,opp:opp,ki:k.ki,kiPct:k.kiPct,playOn:k.playOn,m:k.m,oppBeh:ob.pg,oppRank:ob.rank,oppTotal:ob.total,proj:(k.kiPct/100)*ob.pg});
+        });
+      });
+    });
+    out.sort((a,b)=>b.proj-a.proj);
+    return out;
+  }
   function degWrap(icon,title,items,colorClass){
     if(!items) return _degenFocused?'':emptyState(icon,title+' — no data','Needs game logs + this round\u2019s fixture.');
     if(!items.length) return _degenFocused?'':emptyState(icon,'No '+title.toLowerCase()+' this round','Nothing cleared the gate on the current slate.');
@@ -3602,7 +3631,7 @@
     try{
       out+=ouSection(collectOU([home,away],'over'),'over','Green Lights','ti-traffic-lights','c-green');
       out+=ouSection(collectOU([home,away],'under'),'under','Death Riders','ti-skull','c-red');
-      ['snags','elite','bunnies','hunting','nmu','bogey','streak','climb','form','taggers'].forEach(k=>{ out+=renderTile(k); });
+      ['snags','elite','bunnies','hunting','nmu','kickins','bogey','streak','climb','form','taggers'].forEach(k=>{ out+=renderTile(k); });
     } finally { _degenScope=prevScope; _degenFocused=prevFocus; }
     return out || '<div class="empty"><div class="ico"><i class="ti ti-flame"></i></div>No Degen signals fired for this matchup.</div>';
   }
@@ -3655,6 +3684,13 @@
     if(k==='nmu'){
       const rows=_byGame(_fc(nextManUp(),8), b=>b.p.team, b=>degRow(b.p.name,'#22c55e',{v1:b.woAvg.toFixed(1),l1:'without',v2:'+'+b.delta.toFixed(1),l2:'vs '+b.wAvg.toFixed(1)},esc(b.outName)+' OUT \u00b7 disposals '+b.woAvg.toFixed(1)+' vs '+b.wAvg.toFixed(1)+' \u00b7 '+b.woN+' games without'+lineTag(b.p.name,'disposals'),b.p.name,_dispCard(b.p.name,b.p.team,b.opp,'Next Man Up')));
       return degWrap('ti-arrow-up-right','Next Man Up',rows,'c-green');
+    }
+    if(k==='kickins'){
+      const rows=_byGame(_fc(kickInMerchants(),8), b=>b.p.team, b=>{
+        const sub='takes '+b.kiPct.toFixed(0)+'% of '+abv(b.team)+' kick-ins \u00b7 '+b.ki.toFixed(1)+'/gm \u00b7 play-on '+b.playOn.toFixed(0)+'% \u00b7 '+abv(b.opp)+' kick '+b.oppBeh.toFixed(1)+' beh/gm (#'+b.oppRank+'/'+b.oppTotal+' most)'+lineTag(b.p.name,'disposals');
+        return degRow(b.p.name,'#22d3ee',{v1:b.proj.toFixed(1),l1:'proj KIs',v2:b.kiPct.toFixed(0)+'%',l2:'team share'},sub,b.p.name,_dispCard(b.p.name,b.p.team,b.opp,'Kick In Merchants'));
+      });
+      return degWrap('ti-arrow-back-up','Kick In Merchants',rows,'c-cyan');
     }
     if(k==='hunting'){
       const rows=_byGame(_fc(huntingGrounds(),8), b=>b.p.team, b=>{
