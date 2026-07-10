@@ -66,6 +66,12 @@ function roundNum(rn) {
   // logsByName (group gamelogs by Player) — same shape configure() expects
   const logsByName = {};
   gamelogs.forEach(r => { const n = r.Player; if (!n) return; (logsByName[n] = logsByName[n] || []).push(r); });
+  // derive opponent onto each log row (the match's other team) — H2H signals (bunnies/bogey/climb) need it
+  (() => {
+    const mt = {};
+    gamelogs.forEach(r => { const m = r.MatchId, t = r.Team; if (!m || !t) return; (mt[m] = mt[m] || new Set()).add(t); });
+    gamelogs.forEach(r => { const set = mt[r.MatchId]; if (!set || set.size !== 2) return; set.forEach(t => { if (t !== r.Team) r.opponent = t; }); });
+  })();
 
   JTTScoring.configure({ players, teams, teamsForm, dvp, logsByName, currentSeason: season });
 
@@ -90,7 +96,8 @@ function roundNum(rn) {
     hasAnyOdds: () => !!(oddsJson && ((oddsJson.lines || []).length)),
     SIGNAL_MIN_ODDS: { over: 1.70, under: null },  // must match index.html's SIGNAL_MIN_ODDS
     abbr: t => String(t || '').slice(0, 3).toUpperCase(),
-    curSeason: () => season
+    curSeason: () => season,
+    players, dvp, altLines: oddsLk.altLines
   };
   const sig = JTTSignals.create(deps);
 
@@ -100,7 +107,11 @@ function roundNum(rn) {
 
   const ctx = { season, round, capturedAt: new Date().toISOString() };
   const records = sig.captureOU(teamList, ctx)
-    .concat(sig.captureMatchup(fixture, ctx));   // Green Lights / Death Riders + Matchup Multi legs
+    .concat(sig.captureMatchup(fixture, ctx))   // Green Lights / Death Riders + Matchup Multi legs
+    .concat(sig.captureElite(ctx))              // Elite Matchups (top-10 v bottom-5 D)
+    .concat(sig.captureBunnies(ctx))            // Bunnies (H2H over)
+    .concat(sig.captureBogey(ctx))              // Bogey (H2H under)
+    .concat(sig.captureClimb(ctx));             // Let's Climb (first tier / start rung)
 
   fs.mkdirSync(OUT, { recursive: true });
   const outFile = path.join(OUT, season + '-R' + round + '.json');
