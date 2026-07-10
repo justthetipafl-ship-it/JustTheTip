@@ -68,7 +68,11 @@
     death_rider: { label: 'Death Riders', market: 'disposals', side: 'under', lineType: 'twoway',    priced: true },
     snags:         { label: 'Snags',         market: 'goals',     side: 'over',  lineType: 'milestone', priced: true },
     streakers:     { label: 'Streakers',     market: 'dynamic',   side: 'over',  lineType: 'milestone', priced: true },
-    matchup_multi: { label: 'Matchup Multi', market: 'disposals', side: 'over',  lineType: 'twoway',    priced: true }
+    matchup_multi: { label: 'Matchup Multi', market: 'disposals', side: 'over',  lineType: 'twoway',    priced: true },
+    elite:         { label: 'Elite Matchups', market: 'dynamic',   side: 'over',  lineType: 'twoway',    priced: true },
+    bunnies:       { label: 'Bunnies',        market: 'disposals', side: 'over',  lineType: 'twoway',    priced: true },
+    bogey:         { label: 'Bogey',          market: 'disposals', side: 'under', lineType: 'twoway',    priced: true },
+    climb:         { label: "Let's Climb",    market: 'dynamic',   side: 'over',  lineType: 'milestone', priced: true }
     // more generators register here as they move into this module.
   };
 
@@ -255,8 +259,163 @@
       return recs;
     }
 
-    return { collectOU: collectOU, captureOU: captureOU, matchupLegs: matchupLegs, captureMatchup: captureMatchup };
+
+    // ============================================================
+    //  Elite Matchups / Bunnies / Bogey / Let's Climb (first tier)
+    //  Ported from index.html so the pre-slate capture matches what
+    //  the tool displayed. Bettable line = the main posted line
+    //  (over for elite/bunnies/climb-start-rung, under for bogey).
+    // ============================================================
+    var _players  = deps.players || [];
+    var _dvp      = deps.dvp || [];
+    var _altLines = deps.altLines || function () { return []; };
+    var _cur      = curSeason;
+    function _avg(a){ return a.length ? a.reduce(function(x,y){return x+y;},0)/a.length : 0; }
+    var ELITE_DEFS = [{k:'disposals',l:'Disposals'},{k:'marks',l:'Marks'},{k:'tackles',l:'Tackles'},{k:'goals',l:'Goals'},{k:'clearances',l:'Clearances'}];
+    var BUNNY_STATS = [{k:'disposals',l:'Disposals',min:15},{k:'dreamteam',l:'Fantasy',min:60}];
+    var BOGEY_STATS = [{k:'disposals',l:'Disposals',min:15}];
+    var CLIMB_MARKETS = [['disposals','Disposals'],['kicks','Kicks'],['handballs','Handballs'],['marks','Marks'],['tackles','Tackles'],['clearances','Clearances'],['goals','Goals']];
+    var CLIMB_MIN_ODDS=1.70, CLIMB_HIT=0.70, CLIMB_CLIMB_MIN=0.40, CLIMB_MIN_H2H=3, CLIMB_MIN_L10=8, CLIMB_STEPS=2;
+
+    function dvpRank(opp, position, stat){
+      var rows=(_dvp||[]).filter(function(r){return r.pos===position;});
+      if(!rows.length||rows[0][stat]==null) return null;
+      var oppRow=null; for(var i=0;i<rows.length;i++){ if(rows[i].team===opp){oppRow=rows[i];break;} }
+      if(!oppRow) return null;
+      var vals=rows.map(function(r){return r[stat]||0;});
+      var avg=vals.reduce(function(a,b){return a+b;},0)/vals.length;
+      var sorted=vals.slice().sort(function(a,b){return b-a;});
+      return {rank:sorted.indexOf(oppRow[stat]||0)+1, total:rows.length, pct:avg?((oppRow[stat]-avg)/avg*100):0};
+    }
+    function _h2hByOpp(name){ var byOpp={}; (logsFor(name)||[]).forEach(function(r){ if(r.opponent){(byOpp[r.opponent]=byOpp[r.opponent]||[]).push(r);} }); return byOpp; }
+
+    function _elite(){
+      var out=[];
+      ELITE_DEFS.forEach(function(def){
+        var pool=_players.filter(function(p){return (p.matches||0)>=4;});
+        pool.sort(function(a,b){return (b[def.k]||0)-(a[def.k]||0);});
+        pool.slice(0,10).forEach(function(p){
+          var opp=nextOpp(p.team); if(!opp) return;
+          var dr=dvpRank(opp,p.position,def.k); if(!dr) return;
+          if(dr.rank>5) return;
+          out.push({p:p,def:def,opp:opp,dvpRank:dr.rank,dvpPct:dr.pct});
+        });
+      });
+      return out.sort(function(a,b){return a.dvpRank-b.dvpRank;});
+    }
+    function _bunnies(){
+      var out=[];
+      _players.filter(function(p){return (p.matches||0)>=3;}).forEach(function(p){
+        var opp=nextOpp(p.team); if(!opp) return;
+        var byOpp=_h2hByOpp(p.name); var vt=byOpp[opp]; if(!vt||vt.length<3) return;
+        BUNNY_STATS.forEach(function(sdef){
+          if((p[sdef.k]||0)<sdef.min) return;
+          var thisAvg=_avg(vt.map(function(r){return r[sdef.k]||0;}));
+          var best=null; Object.keys(byOpp).forEach(function(o){ if(o===opp)return; var rs=byOpp[o]; if(rs.length<2)return; var a=_avg(rs.map(function(r){return r[sdef.k]||0;})); if(best==null||a>best)best=a; });
+          var avgBunny=(best!=null)&&(thisAvg>best);
+          var diffPct=(best!=null&&best>0)?((thisAvg-best)/best)*100:null;
+          var mkt=sdef.k==='disposals'?'disposals':null;
+          var posted=mkt?oddsFor(p.name,mkt):null;
+          var line=(posted&&posted.line!=null)?posted.line:null;
+          var lineBunny=line!=null&&vt.every(function(r){return (r[sdef.k]||0)>=line;});
+          if(!avgBunny&&!lineBunny) return;
+          out.push({p:p,opp:opp,stat:sdef,diffPct:diffPct,lineBunny:lineBunny});
+        });
+      });
+      return out.sort(function(a,b){return (b.lineBunny-a.lineBunny)||((b.diffPct||0)-(a.diffPct||0));});
+    }
+    function _bogey(){
+      var out=[];
+      _players.filter(function(p){return (p.matches||0)>=3;}).forEach(function(p){
+        var opp=nextOpp(p.team); if(!opp) return;
+        var byOpp=_h2hByOpp(p.name); var vt=byOpp[opp]; if(!vt||vt.length<2) return;
+        BOGEY_STATS.forEach(function(sdef){
+          if((p[sdef.k]||0)<sdef.min) return;
+          var thisAvg=_avg(vt.map(function(r){return r[sdef.k]||0;}));
+          var worst=null; Object.keys(byOpp).forEach(function(o){ if(o===opp)return; var rs=byOpp[o]; if(rs.length<2)return; var a=_avg(rs.map(function(r){return r[sdef.k]||0;})); if(worst==null||a<worst)worst=a; });
+          var avgBogey=(worst==null)||(thisAvg<worst);
+          var diffPct=(worst!=null&&worst>0)?((worst-thisAvg)/worst)*100:null;
+          var mkt=sdef.k==='disposals'?'disposals':null;
+          var posted=mkt?oddsFor(p.name,mkt):null;
+          var line=(posted&&posted.line!=null)?posted.line:null;
+          var lineBogey=line!=null&&vt.every(function(r){return (r[sdef.k]||0)<line;});
+          if(!avgBogey&&!lineBogey) return;
+          out.push({p:p,opp:opp,stat:sdef,diffPct:diffPct,lineBogey:lineBogey});
+        });
+      });
+      return out.sort(function(a,b){return (b.lineBogey-a.lineBogey)||((b.diffPct||0)-(a.diffPct||0));});
+    }
+    function _climb(){
+      var out=[];
+      _players.forEach(function(p){
+        var opp=nextOpp(p.team);
+        var logs=(logsFor(p.name)||[]);
+        if(!logs.length) return;
+        var h2h=opp?logs.filter(function(r){return r.opponent===opp;}):[];
+        var season=logs.filter(function(r){return String(r.Year)===_cur();});
+        CLIMB_MARKETS.forEach(function(mk){
+          var k=mk[0];
+          var rungMap={};
+          var main=oddsFor(p.name,k); if(main&&main.line!=null&&main.over!=null){ var L=Math.ceil(main.line); rungMap[L]={line:L,over:main.over,book:main.book}; }
+          _altLines(p.name,k).forEach(function(a){ if(a.line!=null&&a.over!=null){ var L2=Math.ceil(a.line); if(!rungMap[L2]||a.over>rungMap[L2].over) rungMap[L2]={line:L2,over:a.over,book:a.book}; } });
+          var rungs=Object.keys(rungMap).map(function(kk){return rungMap[kk];}).sort(function(x,y){return x.line-y.line;});
+          if(!rungs.length) return;
+          var start=null; for(var i=0;i<rungs.length;i++){ if(rungs[i].over>=CLIMB_MIN_ODDS){start=rungs[i];break;} }
+          if(!start) return;
+          var N0=start.line, t1=N0+1, t2=N0+CLIMB_STEPS;
+          var hr=function(g,line){ return g.length ? g.filter(function(r){return (r[k]||0)>=line;}).length/g.length : null; };
+          if(season.length<CLIMB_MIN_L10) return;
+          var s1=hr(season,t1), s2=hr(season,t2);
+          if(s1==null||s2==null||s1<CLIMB_HIT||s2<CLIMB_CLIMB_MIN) return;
+          if(h2h.length>=CLIMB_MIN_H2H){ var h1=hr(h2h,t1), h2r=hr(h2h,t2); if((h1!=null&&h1<CLIMB_CLIMB_MIN)||(h2r!=null&&h2r<CLIMB_CLIMB_MIN)) return; }
+          out.push({p:p,opp:opp,statKey:k,startN:N0,startOver:start.over,startBook:start.book,rate2:s2});
+        });
+      });
+      return out.sort(function(a,b){return (b.rate2-a.rate2);});
+    }
+
+    function captureElite(ctx){
+      var recs=[];
+      _elite().forEach(function(e){
+        var posted=oddsFor(e.p.name,e.def.k); if(!posted||posted.line==null||posted.over==null) return;
+        var s=toSettleable('elite',{p:e.p,opp:e.opp,team:e.p.team,market:e.def.k,line:posted.line,side:'over',odds:posted.over,book:posted.book,lineType:'twoway',score:e.dvpPct},ctx);
+        if(s) recs.push(s);
+      });
+      return recs;
+    }
+    function captureBunnies(ctx){
+      var recs=[];
+      _bunnies().forEach(function(b){
+        if(b.stat.k!=='disposals') return;
+        var posted=oddsFor(b.p.name,'disposals'); if(!posted||posted.line==null||posted.over==null) return;
+        var s=toSettleable('bunnies',{p:b.p,opp:b.opp,team:b.p.team,market:'disposals',line:posted.line,side:'over',odds:posted.over,book:posted.book,lineType:'twoway',score:b.diffPct||0},ctx);
+        if(s) recs.push(s);
+      });
+      return recs;
+    }
+    function captureBogey(ctx){
+      var recs=[];
+      _bogey().forEach(function(b){
+        if(b.stat.k!=='disposals') return;
+        var posted=oddsFor(b.p.name,'disposals'); if(!posted||posted.line==null) return;
+        var s=toSettleable('bogey',{p:b.p,opp:b.opp,team:b.p.team,market:'disposals',line:posted.line,side:'under',odds:(posted.under!=null?posted.under:null),book:posted.book,lineType:'twoway',score:b.diffPct||0},ctx);
+        if(s) recs.push(s);
+      });
+      return recs;
+    }
+    function captureClimb(ctx){
+      var recs=[];
+      _climb().forEach(function(c){
+        var s=toSettleable('climb',{p:c.p,opp:c.opp,team:c.p.team,market:c.statKey,line:c.startN,side:'over',odds:c.startOver,book:c.startBook,lineType:'milestone',score:c.rate2},ctx);
+        if(s) recs.push(s);
+      });
+      return recs;
+    }
+
+    return { collectOU: collectOU, captureOU: captureOU, matchupLegs: matchupLegs, captureMatchup: captureMatchup,
+             captureElite: captureElite, captureBunnies: captureBunnies, captureBogey: captureBogey, captureClimb: captureClimb };
   }
+
 
   /* ============================================================================
    * SHARED ODDS LAYER (for the Node capture job)
