@@ -732,7 +732,10 @@
   .card-tot .ct-c span{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:#8fbf9c;}
   .card-tot .ct-c b{font-family:var(--font-mono);font-weight:800;font-size:18px;color:#22c55e;}
   .mb-boost.on{color:#f59e0b !important;border-color:#f59e0b !important;background:rgba(245,158,11,.14) !important;}
-  .mb-boost-tag{display:inline-block;margin-left:6px;font-size:9px;font-weight:800;color:#f59e0b;background:rgba(245,158,11,.14);padding:1px 5px;border-radius:6px;vertical-align:middle;letter-spacing:.02em;}
+  .mb-ease.on{color:#3b82f6 !important;border-color:#3b82f6 !important;background:rgba(59,130,246,.14) !important;}
+  .mb-move-tag{display:inline-block;margin-left:6px;font-size:9px;font-weight:800;padding:1px 5px;border-radius:6px;vertical-align:middle;letter-spacing:.02em;}
+  .mb-move-tag.up{color:#f59e0b;background:rgba(245,158,11,.14);}
+  .mb-move-tag.down{color:#3b82f6;background:rgba(59,130,246,.14);}
   .fxhide-chips{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:4px;}
   .fxchip{font-size:11px;font-weight:600;padding:5px 10px;border-radius:14px;border:1px solid var(--accent);background:rgba(34,197,94,.12);color:var(--accent);cursor:pointer;transition:all .1s;display:inline-flex;align-items:center;gap:4px;}
   .fxchip::before{content:'✓';font-size:10px;}
@@ -3390,17 +3393,19 @@
     for(let i=0;i<b.pool.length;i++){ if(!used.has(i)){ s.idx.push(i); break; } }
     s.manual=null; _reRenderMulti();
   };
-  window._mbBoost=function(bi,slot){                          // cycle a leg up the alt-line ladder (wraps back to base)
+  window._mbBoost=function(bi,slot,dir){                      // move a leg up (+1 longer odds) or down (-1 safer) the alt-line ladder
     const b=_mbBlockPool(bi); if(!b)return; const sel=(state.view.multiSel||{})[b.label]; if(!sel)return;
     const cur=sel.idx[slot]; if(cur==null||!b.pool[cur])return;
-    const leg=b.pool[cur], nm=leg.p.name;
-    const up=altLines(nm,leg.statKey).filter(r=>r.line>leg.line+1e-6&&r.over!=null).sort((a,b)=>a.line-b.line);
-    if(!up.length) return;                                     // nothing higher to boost to
+    const leg=b.pool[cur], nm=leg.p.name, base=leg.line;
+    const rungs=altLines(nm,leg.statKey).filter(r=>r.over!=null).sort((a,b)=>a.line-b.line);
+    if(!rungs.length) return;
+    const eff=(sel.boost&&sel.boost[nm]!=null)?sel.boost[nm]:base;
+    let ci=rungs.findIndex(r=>Math.abs(r.line-eff)<1e-6);
+    if(ci<0) ci=rungs.reduce((bx,r,i)=>Math.abs(r.line-eff)<Math.abs(rungs[bx].line-eff)?i:bx,0);
+    const ni=ci+dir; if(ni<0||ni>=rungs.length) return;        // at the top / bottom of the posted ladder
+    const target=rungs[ni].line;
     sel.boost=sel.boost||{};
-    const curT=sel.boost[nm]; let next;
-    if(curT==null) next=up[0].line;
-    else { const i=up.findIndex(r=>Math.abs(r.line-curT)<1e-6); next=(i<0||i+1>=up.length)?null:up[i+1].line; }
-    if(next==null) delete sel.boost[nm]; else sel.boost[nm]=next;   // wrap past top rung -> back to base
+    if(Math.abs(target-base)<1e-6) delete sel.boost[nm]; else sel.boost[nm]=target;   // snapping back to base clears the override
     sel.manual=null; _reRenderMulti();
   };
   // Unified Multi Builder scoped to one fixture — same 7-mode interactive tool as Degen Crew.
@@ -3799,16 +3804,17 @@
     const why=(l.reasons&&l.reasons.length)?'<div class="deg-why"><i class="ti ti-bulb"></i> '+l.reasons.map(r=>esc(r.label)+' '+(r.pct>0?'+':'')+r.pct.toFixed(0)+'%').join(' · ')+'</div>':'';
     const gtag=tag?'<span class="mb-game">'+esc(tag)+'</span>':'';
     return '<div class="mb-leg'+(locked?' mb-locked':'')+'">'+
-      '<div class="mb-leg-main"><div class="mb-leg-nm" onclick="openPlayer(\''+esc(l.p.name).replace(/\x27/g,"\\\x27")+'\')">'+esc(l.p.name)+gtag+(l.boosted?'<span class="mb-boost-tag" title="Boosted from '+l.baseLine+'+">\u25B2 '+l.baseLine+'\u2192'+l.line+'</span>':'')+'</div>'+
+      '<div class="mb-leg-main"><div class="mb-leg-nm" onclick="openPlayer(\''+esc(l.p.name).replace(/\x27/g,"\\\x27")+'\')">'+esc(l.p.name)+gtag+(l.boosted?'<span class="mb-move-tag '+(l.line>l.baseLine?'up':'down')+'" title="'+(l.line>l.baseLine?'Boosted':'Eased')+' from '+l.baseLine+'+">'+(l.line>l.baseLine?'\u25B2':'\u25BC')+' '+l.baseLine+'\u2192'+l.line+'</span>':'')+'</div>'+
       '<div class="mb-leg-sub">'+esc(sub)+'</div>'+why+'</div>'+
       '<div class="mb-leg-px" style="color:'+col+'">'+price+'</div>'+ctrls+'</div>';
   }
-  function _mbCtrls(swapPrefix,lockCall,removeCall,locked,boostCall,boosted){
+  function _mbCtrls(swapPrefix,lockCall,removeCall,locked,upCall,downCall,dir){
     return '<div class="mb-ctrls">'+
       '<button class="mb-c mb-lock'+(locked?' on':'')+'" onclick="'+lockCall+'" title="'+(locked?'Unlock':'Lock')+' leg"><i class="ti ti-'+(locked?'lock':'lock-open-2')+'"></i></button>'+
       '<button class="mb-c" onclick="'+swapPrefix+',-1)" title="Previous option">\u25C2</button>'+
       '<button class="mb-c" onclick="'+swapPrefix+',1)" title="Next option">\u25B8</button>'+
-      (boostCall?'<button class="mb-c mb-boost'+(boosted?' on':'')+'" onclick="'+boostCall+'" title="Boost to next line up (longer odds)"><i class="ti ti-arrow-big-up-lines"></i></button>':'')+
+      (downCall?'<button class="mb-c mb-ease'+(dir<0?' on':'')+'" onclick="'+downCall+'" title="Ease to next line down (safer, shorter odds)"><i class="ti ti-arrow-big-down-lines"></i></button>':'')+
+      (upCall?'<button class="mb-c mb-boost'+(dir>0?' on':'')+'" onclick="'+upCall+'" title="Boost to next line up (longer odds)"><i class="ti ti-arrow-big-up-lines"></i></button>':'')+
       '<button class="mb-c mb-rm" onclick="'+removeCall+'" title="Remove leg">\u00D7</button></div>';
   }
   // ---- whole-multi analysis: EV / edge, correlation honesty, best-book shopping (shared by both builders) ----
@@ -3914,8 +3920,10 @@
         ? gm.legs.map((l,slot)=>{
             const locked=gm.lockedNames.indexOf(l.p.name)>=0;
             const base=(l.baseLine!=null?l.baseLine:l.line);
-            const canBoost=altLines(l.p.name,l.statKey).some(r=>r.line>base+1e-6&&r.over!=null);
-            const ctrls=_mbCtrls('_mbSwap('+gm.bi+','+slot,'_mbLock('+gm.bi+','+slot+')','_mbRemove('+gm.bi+','+slot+')',locked,canBoost?'_mbBoost('+gm.bi+','+slot+')':'',!!l.boosted)+'<button class="mb-c" title="Never suggest this player" onclick="_mbBanN('+gm.bi+','+slot+')"><i class="ti ti-ban"></i></button>';
+            const _rg=altLines(l.p.name,l.statKey).filter(r=>r.over!=null);
+            const canUp=_rg.some(r=>r.line>l.line+1e-6), canDown=_rg.some(r=>r.line<l.line-1e-6);
+            const dir=l.boosted?(l.line>base?1:-1):0;
+            const ctrls=_mbCtrls('_mbSwap('+gm.bi+','+slot,'_mbLock('+gm.bi+','+slot+')','_mbRemove('+gm.bi+','+slot+')',locked,canUp?'_mbBoost('+gm.bi+','+slot+',1)':'',canDown?'_mbBoost('+gm.bi+','+slot+',-1)':'',dir)+'<button class="mb-c" title="Never suggest this player" onclick="_mbBanN('+gm.bi+','+slot+')"><i class="ti ti-ban"></i></button>';
             return _mbLegRow(l,locked,ctrls,showTag?abbr(l.p.team)+' v '+abbr(l.opp):'');
           }).join('')
         : '<div class="tp-body-meta" style="border:0;opacity:.7">Removed every leg — tap Add leg to rebuild.</div>';
