@@ -560,6 +560,31 @@ def derive_dvp(logs, demo, current_season):
     return out
 
 
+def build_kickins(legacy_player):
+    """Season kick-in role stats per player, from the wheelo/Champion Data player blob.
+    Keyed by player name -> {team, ki (per game), kiPct (% of team's kick-ins),
+    playOn (% played on), m (matches)}. Only players with kick-ins are kept.
+    Feeds the 'Kick In Merchants' degen signal + the player modal kick-in pill."""
+    def _num(x, d=0.0):
+        try:
+            return float(x)
+        except (TypeError, ValueError):
+            return d
+    out = {}
+    for p in legacy_player or []:
+        ki = _num(p.get("KickIns"))
+        if ki <= 0:
+            continue
+        out[p.get("Player", "")] = {
+            "team":   p.get("Team", ""),
+            "ki":     round(ki, 2),
+            "kiPct":  round(_num(p.get("KickInPercentage")), 1),
+            "playOn": round(_num(p.get("KickInsPlayOnPercentage")), 1),
+            "m":      int(_num(p.get("Matches"))),
+        }
+    return dict(sorted(out.items(), key=lambda kv: -kv[1]["ki"]))
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--src", default="bundle.json")
@@ -639,6 +664,7 @@ def main():
         "results.json":  w("results.json", extra.get("results") or []),
         "lineups.json":  w("lineups.json", extra.get("lineups") or []),
         "weather.json":  w("weather.json", weather),
+        "kickins.json":  w("kickins.json", build_kickins(legacy_player)),
     }
     open(os.path.join(args.out, "version.txt"), "w").write(version)
 
