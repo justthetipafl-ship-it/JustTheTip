@@ -4651,16 +4651,36 @@
       '<button class="card-btn danger" onclick="_cardClear()"><i class="ti ti-trash"></i> Clear</button></div>';
     _cardRenderSelBar();
   }
+  // Season / L10 / H2H clear-rate for one single-leg bet (self-contained; opp may be full name or abbrev)
+  function _legHitRates(name,mkt,line,side,opp){
+    if(!name||!mkt||line==null) return null;
+    const all=(state.idx.logsByName[name]||[]); if(!all.length) return null;
+    const cs=(state.data.meta&&state.data.meta.currentSeason)||'2026';
+    const clr=g=>{ const v=g[mkt]; if(v==null) return null; return side==='under'? v<line : v>=line; };
+    const rate=gs=>{ let h=0,n=0; gs.forEach(g=>{ const c=clr(g); if(c!=null){ n++; if(c)h++; } }); return n?{rate:h/n,h:h,n:n}:{rate:null,h:0,n:0}; };
+    const season=all.filter(r=>(''+(r.Year||''))===(''+cs)); const seasonGs=season.length?season:all.slice(-15);
+    const out=[Object.assign({label:'Season'},rate(seasonGs)),Object.assign({label:'L10'},rate(all.slice(-10)))];
+    if(opp){ const h2h=all.filter(r=>r.opponent===opp||(r.opponent&&abbr(r.opponent)===abbr(opp))); const hr=rate(h2h); if(hr.n>0) out.push(Object.assign({label:'H2H'},hr)); }
+    return out;
+  }
+  function _cardHitStrip(hits){
+    const col=r=>r==null?'#6a7a6a':(r>=0.6?'#22c55e':r>=0.45?'#eab308':'#ef4444');
+    const cells=hits.map(h=>'<div style="flex:1;text-align:center;padding:3px 4px;background:rgba(255,255,255,.03);border:1px solid #17211f;border-radius:5px">'+
+      '<div style="font-size:7.5px;font-weight:800;color:#8fa39a;letter-spacing:.05em;text-transform:uppercase">'+esc(h.label)+'</div>'+
+      '<div style="font-size:12px;font-weight:800;color:'+col(h.rate)+';line-height:1.25">'+(h.rate==null?'\u2014':Math.round(h.rate*100)+'%')+'</div>'+
+      '<div style="font-size:7.5px;color:#5f6f5f">'+(h.n?h.h+'/'+h.n:'no data')+'</div></div>').join('');
+    return '<div style="margin-top:7px;display:flex;gap:5px">'+cells+'</div>';
+  }
   function _buildCardSpec(){
     if(!_CARD.length) return null;
     const items=_CARD.map(e=>{
       if(e.type==='multi') return {type:'multi',name:e.title,legs:(e.legs||[]).map(l=>({name:l.name,label:l.label||'',odds:(+l.odds>1?'$'+(+l.odds).toFixed(2):null)})),odds:(+e.odds>1?'$'+(+e.odds).toFixed(2):null),stake:e.stake,book:bookName(e.book),src:e.src||''};
       const lbl=(e.label||((e.side==='under'?'U':'')+(e.line!=null?e.line:'')+(e.mkt?' '+e.mkt:'')));
-      return {type:'single',name:e.name,line:lbl,odds:(+e.odds>1?'$'+(+e.odds).toFixed(2):null),stake:e.stake,book:bookName(e.book),src:e.src||''};
+      return {type:'single',name:e.name,line:lbl,odds:(+e.odds>1?'$'+(+e.odds).toFixed(2):null),stake:e.stake,book:bookName(e.book),src:e.src||'',hits:_legHitRates(e.name,e.mkt,e.line,e.side,e.opp)};
     });
     return {mode:'card',badge:'MY CARD',kindLabel:'card',title:_CARD.length+' bet'+(_CARD.length!==1?'s':'')+' \u00b7 '+_niceDate(_todayStr()),items:items,total:_cardTotals(),legCount:_CARD.length};
   }
-  function _cardShareHTML(spec,showOdds){
+  function _cardShareHTML(spec,showOdds,adv){
     const rows=spec.items.map(it=>{
       const right=(showOdds&&it.odds)
         ? '<span style="font-family:ui-monospace,Menlo,monospace;font-weight:800;color:#22c55e;font-size:13px;white-space:nowrap">'+it.odds+(it.stake?' <span style="color:#8fa39a;font-weight:600;font-size:10px">'+_fmtU(it.stake)+'u</span>':'')+'</span>'
@@ -4675,11 +4695,13 @@
         '</div>';
       }
       const detail=[it.line,it.book].filter(Boolean).join(' \u00b7 ');
-      return '<div style="display:flex;align-items:center;gap:10px;padding:8px 11px;border:1px solid #1e2a1e;border-radius:9px;background:rgba(255,255,255,.025)">'+
-        '<div style="flex:1;min-width:0">'+
-          '<div style="font-weight:700;font-size:13px;color:#eaf2ea;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(it.name)+'</div>'+
-          ((pill||detail)?'<div style="font-size:10px;color:#8fa39a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-top:2px">'+pill+esc(detail)+'</div>':'')+
-        '</div>'+right+'</div>';
+      const strip=(adv&&it.hits&&it.hits.length)?_cardHitStrip(it.hits):'';
+      return '<div style="padding:8px 11px;border:1px solid #1e2a1e;border-radius:9px;background:rgba(255,255,255,.025)">'+
+        '<div style="display:flex;align-items:center;gap:10px">'+
+          '<div style="flex:1;min-width:0">'+
+            '<div style="font-weight:700;font-size:13px;color:#eaf2ea;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(it.name)+'</div>'+
+            ((pill||detail)?'<div style="font-size:10px;color:#8fa39a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-top:2px">'+pill+esc(detail)+'</div>':'')+
+          '</div>'+right+'</div>'+strip+'</div>';
     }).join('');
     const foot=(showOdds&&spec.total&&spec.total.stake>0)
       ? '<div style="margin-top:13px;padding:11px 14px;border-radius:10px;background:rgba(34,197,94,.10);border:1px solid rgba(34,197,94,.32);text-align:center;font-family:ui-monospace,Menlo,monospace;font-weight:800;font-size:15px;color:#22c55e">'+_fmtU(spec.total.stake)+'u staked</div>'
@@ -4696,7 +4718,7 @@
     '</div>';
   }
   // ===== Branded share cards (slips: Multi Builder + Déjà Vu) =====
-  let _shareSpec=null, _shareOdds=true;
+  let _shareSpec=null, _shareOdds=true, _shareAdv=false;
   function _buildMultiSpec(i){
     const games=multiBuilder(); const gm=games[i]; if(!gm||!gm.legs.length) return null;
     const scope=SETTINGS.multi.scope==='round'?(SETTINGS.multi.today?'today multi':'round multi'):'same-game multi';
@@ -4723,8 +4745,8 @@
       legs:active.map(l=>({ name:l.name, line:l.betLine+'+ '+l.marketLabel, odds:'$'+l.over.toFixed(2), signal:meets+'/'+meets+' meets' })),
       comb:'$'+_dvProduct(active).toFixed(2), legCount:active.length };
   }
-  function _shareCardHTML(spec,showOdds){
-    if(spec&&spec.mode==='card') return _cardShareHTML(spec,showOdds);
+  function _shareCardHTML(spec,showOdds,adv){
+    if(spec&&spec.mode==='card') return _cardShareHTML(spec,showOdds,adv);
     const legs=spec.legs.map(l=>{
       const right=(showOdds&&l.odds)
         ? '<span style="font-family:ui-monospace,Menlo,monospace;font-weight:800;color:#22c55e;font-size:13px;white-space:nowrap">'+l.odds+'</span>'
@@ -4750,8 +4772,9 @@
   function _shareOverlayHTML(spec){
     return '<div class="share-modal">'+
       '<div class="share-modal-hd"><span>Share slip</span><button class="share-x" onclick="_shareClose()">&times;</button></div>'+
-      '<div id="share-card-mount">'+_shareCardHTML(spec,_shareOdds)+'</div>'+
+      '<div id="share-card-mount">'+_shareCardHTML(spec,_shareOdds,_shareAdv)+'</div>'+
       '<div class="share-toggle-row"><span>Include odds &amp; price</span><button id="share-odds-toggle" class="share-toggle'+(_shareOdds?' on':'')+'" onclick="_shareToggleOdds()"><span class="share-knob"></span></button></div>'+
+      (spec.mode==='card'?'<div class="share-toggle-row"><span>Advanced &middot; hit rates (Season / L10 / H2H)</span><button id="share-adv-toggle" class="share-toggle'+(_shareAdv?' on':'')+'" onclick="_shareToggleAdv()"><span class="share-knob"></span></button></div>':'')+
       '<div class="share-actions"><button id="share-native" class="share-btn primary" onclick="_shareNative()"><i class="ti ti-share"></i> Share</button>'+
       '<button id="share-save" class="share-btn" onclick="_shareSave()"><i class="ti ti-download"></i> Save</button>'+
       '<button id="share-copy" class="share-btn" onclick="_shareCopy()"><i class="ti ti-copy"></i> Copy</button></div>'+
@@ -4760,13 +4783,14 @@
   window._openSlipShare=function(kind,idx){
     _shareSpec = kind==='multi' ? _buildMultiSpec(+idx) : kind==='fxmulti' ? _buildFxSpec() : kind==='matchup' ? _buildMatchupSpec() : kind==='card' ? _buildCardSpec() : _buildDejaSpec();
     if(!_shareSpec){ alert('Nothing to share yet — build a slip with at least 2 legs first.'); return; }
-    _shareOdds=true;
+    _shareOdds=true; _shareAdv=false;
     let ov=document.getElementById('share-overlay');
     if(!ov){ ov=document.createElement('div'); ov.id='share-overlay'; ov.className='share-overlay'; ov.onclick=function(e){ if(e.target===ov)_shareClose(); }; document.body.appendChild(ov); }
     ov.innerHTML=_shareOverlayHTML(_shareSpec); ov.classList.add('open');
   };
   window._shareClose=function(){ const ov=document.getElementById('share-overlay'); if(ov)ov.classList.remove('open'); };
-  window._shareToggleOdds=function(){ _shareOdds=!_shareOdds; const m=document.getElementById('share-card-mount'); if(m&&_shareSpec)m.innerHTML=_shareCardHTML(_shareSpec,_shareOdds); const t=document.getElementById('share-odds-toggle'); if(t)t.className='share-toggle'+(_shareOdds?' on':''); };
+  window._shareToggleOdds=function(){ _shareOdds=!_shareOdds; const m=document.getElementById('share-card-mount'); if(m&&_shareSpec)m.innerHTML=_shareCardHTML(_shareSpec,_shareOdds,_shareAdv); const t=document.getElementById('share-odds-toggle'); if(t)t.className='share-toggle'+(_shareOdds?' on':''); };
+  window._shareToggleAdv=function(){ _shareAdv=!_shareAdv; const m=document.getElementById('share-card-mount'); if(m&&_shareSpec)m.innerHTML=_shareCardHTML(_shareSpec,_shareOdds,_shareAdv); const t=document.getElementById('share-adv-toggle'); if(t)t.className='share-toggle'+(_shareAdv?' on':''); };
   function _shareRasterize(){
     return new Promise((resolve,reject)=>{
       const card=document.getElementById('share-card'); if(!card){reject(new Error('no card'));return;}
