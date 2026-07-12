@@ -23,9 +23,24 @@ import os, sys, json, re, urllib.request, urllib.error
 URL    = "https://www.footywire.com/afl/footy/injury_list"
 BUNDLE = os.environ.get("AFL_BUNDLE", "AFL/bundle.json")
 OUT    = os.environ.get("INJURY_OUT", "AFL/data/injury.json")
-UA     = "JTT-AFL-bot/1.0 (+https://justthetipaus.com; weekly injury refresh)"
+# A real browser UA + headers. A bot UA is the first thing FootyWire's edge blocks;
+# this makes a plain HTTP request look like Chrome. (If the block is IP-based rather
+# than UA-based, this won't help — the diagnostics below will say so.)
+UA     = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+          "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36")
+HEADERS = {
+    "User-Agent": UA,
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+    "Accept-Language": "en-AU,en;q=0.9",
+    "Referer": "https://www.footywire.com/",
+    "Connection": "close",
+}
 TIMEOUT = 30
+RETRIES = 3                       # transient 403/timeout/5xx get a couple of retries
 MIN_PLAYERS, MIN_TEAMS = 30, 8   # below this == almost certainly a broken parse
+# substrings that betray a block / challenge page rather than the real injury list
+BLOCK_SIGNS = ("just a moment", "cloudflare", "captcha", "access denied",
+               "attention required", "enable javascript", "unusual traffic", "cf-chl")
 
 # (needle, canonical) — LONGEST/most-specific needles first so "north melbourne"
 # beats "melbourne" and "port adelaide" beats "adelaide". Output strings match
@@ -66,10 +81,31 @@ def team_from_text(txt):
 
 
 def fetch_html():
-    req = urllib.request.Request(URL, headers={"User-Agent": UA, "Accept": "text/html"})
-    with urllib.request.urlopen(req, timeout=TIMEOUT) as r:
-        raw = r.read()
-    return raw.decode("iso-8859-1", "replace")  # FootyWire is ISO-8859-1
+    """Fetch the injury list, retrying transient failures. Returns decoded HTML.
+    Raises the last error if every attempt fails."""
+    import time
+    last = None
+    for attempt in range(1, RETRIES + 1):
+        try:
+            req = urllib.request.Request(URL, headers=HEADERS)
+            with urllib.request.urlopen(req, timeout=TIMEOUT) as r:
+                raw = r.read()
+            return raw.decode("iso-8859-1", "replace")  # FootyWire is ISO-8859-1
+        except urllib.error.HTTPError as e:
+            last = e
+            print(f"::warning::attempt {attempt}/{RETRIES}: FootyWire HTTP {e.code}")
+            if e.code in (403, 429, 500, 502, 503) and attempt < RETRIES:
+                time.sleep(3 * attempt); continue
+            raise
+        except Exception as e:
+            last = e
+            print(f"::warning::attempt {attempt}/{RETRIES}: fetch error ({e})")
+            if attempt < RETRIES:
+                time.sleep(3 * attempt); continue
+            raise
+    if last:
+        raise last
+    raise RuntimeError("fetch failed")
 
 
 def parse(html):
@@ -109,9 +145,12 @@ def main():
     try:
         html = fetch_html()
     except urllib.error.HTTPError as e:
-        print(f"::warning::FootyWire HTTP {e.code} — keeping existing injuries"); return 0
+        print(f"::warning::FootyWire HTTP {e.code} after {RETRIES} tries — keeping existing injuries.")
+        print("::warning::A 403/429 from a GitHub-Actions IP usually means FootyWire is blocking the "
+              "datacenter address. A browser UA won't fix an IP block — you'd need an AU residential "
+              "proxy or a different injury source."); return 0
     except Exception as e:
-        print(f"::warning::FootyWire fetch failed ({e}) — keeping existing injuries"); return 0
+        print(f"::warning::FootyWire fetch failed after {RETRIES} tries ({e}) — keeping existing injuries"); return 0
 
     try:
         rows = parse(html)
@@ -131,6 +170,20 @@ def main():
     if len(rows) < MIN_PLAYERS or len(teams) < MIN_TEAMS:
         print(f"::warning::parse looks wrong ({len(rows)} players / {len(teams)} teams "
               f"< {MIN_PLAYERS}/{MIN_TEAMS}) — NOT writing, existing data preserved")
+        # Diagnostics so the Actions log reveals *why* (block page vs. layout change).
+        low = html.lower()
+        hit = [w for w in BLOCK_SIGNS if w in low]
+        print(f"::warning::response was {len(html)} chars; "
+              f"tables seen: {low.count('<table')}, rows seen: {low.count('<tr')}")
+        if hit:
+            print(f"::warning::looks like a BLOCK/CHALLENGE page (matched: {', '.join(hit)}). "
+                  "FootyWire is refusing the request — most likely an IP block on GitHub's runners. "
+                  "Options: run the fetch from an AU host/proxy, or switch to another injury source.")
+        else:
+            print("::warning::no block signature found — this looks like a LAYOUT CHANGE on FootyWire. "
+                  "The table structure the parser anchors on has moved.")
+        # first 400 chars help identify the served page at a glance
+        print("::group::response head\n" + html[:400].replace("\n", " ") + "\n::endgroup::")
         return 0
 
     # update bundle["injury"] (survives future rebuild passthrough)
