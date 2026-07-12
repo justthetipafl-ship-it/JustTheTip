@@ -3251,9 +3251,9 @@
   function _matchupLegs(players,opp){ const S=_signals(); return (S&&typeof S.matchupLegs==='function')?S.matchupLegs(players,opp):[]; }
   // pick the shortest multi that clears $1.75 (prefer 2 legs, cap 3)
   function _mmPick(legs){
-    const pick=[]; let comb=1;
-    // take the two best-matchup legs (must clear $1.75 to show)
-    for(const l of legs){ if(pick.length>=2) break; pick.push(l); comb*=l._odds.price; }
+    const pick=[], seen=new Set(); let comb=1;
+    // two best-matchup legs, one per player (must clear $1.75 to show)
+    for(const l of legs){ if(pick.length>=2) break; if(seen.has(l.p.name)) continue; seen.add(l.p.name); pick.push(l); comb*=l._odds.price; }
     return {pick, comb};
   }
   // focused-fixture card: one matchup multi across BOTH teams of the game
@@ -3277,9 +3277,9 @@
     if(pick.length<2||comb<1.75) return _mmBook?_mmEmptyCard(bookSel):'';
     _mmLast={home:g.home,away:g.away,pick:pick,comb:comb};
     const rows=pick.map(l=>'<div class="mm-leg"><div class="mm-lp">'+esc(l.p.name)+' <span class="mm-pos">'+posShort(l.p.position)+'</span></div>'+
-      '<div class="mm-lm">'+l.line+'+ disp</div><div class="mm-lw" title="Opponent concedes vs this position">'+abbr(l.opp)+' +'+l._dvp.toFixed(0)+'%</div>'+
+      '<div class="mm-lm">'+esc(l.betLabel)+'</div><div class="mm-lw" title="Opponent concedes vs this position/playstyle">'+abbr(l.opp)+' +'+l._dvp.toFixed(0)+'%</div>'+
       '<div class="mm-lo">$'+l._odds.price.toFixed(2)+(_mmBook?'':' <span class="mm-bk">'+_bookShort(l._odds.book)+'</span>')+'</div></div>').join('');
-    return '<details class="tp-collapse c-green" open><summary class="tp-collapse-sum"><i class="ti ti-crosshair"></i><span class="tp-collapse-title">Matchup Multi</span><span class="tp-count">$'+comb.toFixed(2)+'</span><i class="ti ti-chevron-down tp-collapse-chev"></i></summary><div class="tp-collapse-body"><div class="tp-body-meta" style="display:flex;align-items:center;flex-wrap:wrap">'+pick.length+' disposals overs \u2014 opponent bleeds to each position and L5 already clears. Pays ~$'+comb.toFixed(2)+'.'+bookSel+'</div>'+rows+'<div style="margin-top:8px"><button class="slip-share-btn" onclick="_openSlipShare(\'matchup\')"><i class="ti ti-share"></i> Share card</button></div></div></details>';
+    return '<details class="tp-collapse c-green" open><summary class="tp-collapse-sum"><i class="ti ti-crosshair"></i><span class="tp-collapse-title">Matchup Multi</span><span class="tp-count">$'+comb.toFixed(2)+'</span><i class="ti ti-chevron-down tp-collapse-chev"></i></summary><div class="tp-collapse-body"><div class="tp-body-meta" style="display:flex;align-items:center;flex-wrap:wrap">'+pick.length+' matchup overs \u2014 opponent bleeds to each player\'s position or playstyle. Pays ~$'+comb.toFixed(2)+'.'+bookSel+'</div>'+rows+'<div style="margin-top:8px"><button class="slip-share-btn" onclick="_openSlipShare(\'matchup\')"><i class="ti ti-share"></i> Share card</button></div></div></details>';
     }catch(e){ console.error('matchupMultiFx',e); return ''; }
   }
   function _mmEmptyCard(bookSel){
@@ -4057,7 +4057,7 @@
     // Snags — anytime goal price
     try{ (snags()||[]).filter(r=>dayTeams.has(r.p.team)).forEach(r=>{ const od=oddsFor(r.p.name,'goals'); if(od&&od.over!=null) push({p:r.p,team:r.p.team,opp:r.opp,game:_gkey(r.p.team,r.opp),sig:'Snag',card:{name:r.p.name,team:r.p.team,opp:r.opp,mkt:'goals',line:1,side:'over',odds:od.over,book:od.book,label:'Anytime goal',src:'Snags'},col:'#f59e0b',ic:'ti-ball-american-football',bet:'Anytime goal',odds:od.over,rank:Math.round(58+Math.min(18,(r.dvpPct||0)/2)),why:'#'+r.dvpRank+' softest goals D'}); }); }catch(e){}
     // Matchup legs — leg line + leg price
-    try{ dayGames.forEach(g=>{ [[g.home,g.away],[g.away,g.home]].forEach(pr=>{ (_matchupLegs((state.idx.players||[]).filter(p=>p.team===pr[0]),pr[1])||[]).forEach(l=>push({p:l.p,team:l.p.team,opp:l.opp,game:_gkey(l.p.team,l.opp),sig:'Matchup',card:{name:l.p.name,team:l.p.team,opp:l.opp,mkt:'disposals',line:l.line,side:'over',odds:l._odds&&l._odds.price,book:l._odds&&l._odds.book,label:l.line+'+ disp',src:'Matchup'},col:'#22c55e',ic:'ti-crosshair',bet:l.line+'+ disp',odds:l._odds&&l._odds.price,rank:Math.round(60+Math.min(22,(l._dvp||0))),why:abbr(l.opp)+' +'+(l._dvp||0).toFixed(0)+'% DVP'})); }); }); }catch(e){}
+    try{ dayGames.forEach(g=>{ [[g.home,g.away],[g.away,g.home]].forEach(pr=>{ (_matchupLegs((state.idx.players||[]).filter(p=>p.team===pr[0]),pr[1])||[]).forEach(l=>push({p:l.p,team:l.p.team,opp:l.opp,game:_gkey(l.p.team,l.opp),sig:'Matchup',card:{name:l.p.name,team:l.p.team,opp:l.opp,mkt:l.statKey,line:l.line,side:'over',odds:l._odds&&l._odds.price,book:l._odds&&l._odds.book,label:l.betLabel,src:'Matchup'},col:'#22c55e',ic:'ti-crosshair',bet:l.betLabel,odds:l._odds&&l._odds.price,rank:Math.round(60+Math.min(22,(l._dvp||0))),why:abbr(l.opp)+' +'+(l._dvp||0).toFixed(0)+'% edge'})); }); }); }catch(e){}
     // Best +EV and best LineOut EV per game (needs multi-book odds; silently skipped if sparse)
     dayGames.forEach(g=>{
       const hp=(state.idx.players||[]).filter(p=>p.team===g.home), ap=(state.idx.players||[]).filter(p=>p.team===g.away);
