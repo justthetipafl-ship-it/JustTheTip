@@ -18,7 +18,7 @@
 # A blocked fetch / login wall / layout change yields ~0 rows -> we abort and
 # leave the existing injury data untouched. The first run should be eyeballed.
 # ============================================================
-import os, sys, json, re, urllib.request, urllib.error
+import os, sys, json, re, urllib.request, urllib.error, urllib.parse
 
 URL    = "https://www.footywire.com/afl/footy/injury_list"
 BUNDLE = os.environ.get("AFL_BUNDLE", "AFL/bundle.json")
@@ -36,11 +36,19 @@ HEADERS = {
     "Connection": "close",
 }
 TIMEOUT = 30
-RETRIES = 3                       # transient 403/timeout/5xx get a couple of retries
+RETRIES = 3                       # (kept for reference; multi-source fetch below supersedes it)
 MIN_PLAYERS, MIN_TEAMS = 30, 8   # below this == almost certainly a broken parse
 # substrings that betray a block / challenge page rather than the real injury list
 BLOCK_SIGNS = ("just a moment", "cloudflare", "captcha", "access denied",
                "attention required", "enable javascript", "unusual traffic", "cf-chl")
+# FootyWire blocks GitHub's datacenter IPs, so we also try public relays that fetch the
+# page from THEIR servers and return the raw HTML (parser stays the same). Best-effort:
+# if a relay is down/rate-limited we fall through; if all fail we keep the existing data.
+RELAYS = [
+    lambda u: "https://api.allorigins.win/raw?url=" + urllib.parse.quote(u, safe=""),
+    lambda u: "https://corsproxy.io/?url="        + urllib.parse.quote(u, safe=""),
+    lambda u: "https://thingproxy.freeboard.io/fetch/" + u,
+]
 
 # (needle, canonical) — LONGEST/most-specific needles first so "north melbourne"
 # beats "melbourne" and "port adelaide" beats "adelaide". Output strings match
@@ -80,32 +88,44 @@ def team_from_text(txt):
     return None
 
 
+def _get(u):
+    req = urllib.request.Request(u, headers=HEADERS)
+    with urllib.request.urlopen(req, timeout=TIMEOUT) as r:
+        return r.read().decode("iso-8859-1", "replace")  # FootyWire is ISO-8859-1
+
+
+def _looks_ok(html):
+    low = html.lower()
+    hit = [w for w in BLOCK_SIGNS if w in low]
+    if hit:
+        return False, "block/challenge page (" + ", ".join(hit) + ")"
+    if "<table" not in low:
+        return False, f"no <table> in response ({len(html)} chars)"
+    return True, ""
+
+
 def fetch_html():
-    """Fetch the injury list, retrying transient failures. Returns decoded HTML.
-    Raises the last error if every attempt fails."""
-    import time
+    """Try FootyWire directly, then via public relays that fetch it server-side.
+    Returns raw HTML from the first source that yields a real injury page.
+    Raises the last error if every source fails."""
+    sources = [("footywire direct", URL)]
+    sources += [(f"relay {i+1}", mk(URL)) for i, mk in enumerate(RELAYS)]
     last = None
-    for attempt in range(1, RETRIES + 1):
+    for label, u in sources:
         try:
-            req = urllib.request.Request(URL, headers=HEADERS)
-            with urllib.request.urlopen(req, timeout=TIMEOUT) as r:
-                raw = r.read()
-            return raw.decode("iso-8859-1", "replace")  # FootyWire is ISO-8859-1
+            html = _get(u)
         except urllib.error.HTTPError as e:
-            last = e
-            print(f"::warning::attempt {attempt}/{RETRIES}: FootyWire HTTP {e.code}")
-            if e.code in (403, 429, 500, 502, 503) and attempt < RETRIES:
-                time.sleep(3 * attempt); continue
-            raise
+            print(f"::warning::{label}: HTTP {e.code}"); last = e; continue
         except Exception as e:
-            last = e
-            print(f"::warning::attempt {attempt}/{RETRIES}: fetch error ({e})")
-            if attempt < RETRIES:
-                time.sleep(3 * attempt); continue
-            raise
+            print(f"::warning::{label}: {e}"); last = e; continue
+        ok, why = _looks_ok(html)
+        if not ok:
+            print(f"::warning::{label}: {why}"); last = RuntimeError(why); continue
+        print(f"fetched injuries via {label} ({len(html)} chars)")
+        return html
     if last:
         raise last
-    raise RuntimeError("fetch failed")
+    raise RuntimeError("all injury sources failed")
 
 
 def parse(html):
@@ -145,12 +165,11 @@ def main():
     try:
         html = fetch_html()
     except urllib.error.HTTPError as e:
-        print(f"::warning::FootyWire HTTP {e.code} after {RETRIES} tries — keeping existing injuries.")
-        print("::warning::A 403/429 from a GitHub-Actions IP usually means FootyWire is blocking the "
-              "datacenter address. A browser UA won't fix an IP block — you'd need an AU residential "
-              "proxy or a different injury source."); return 0
+        print(f"::warning::all sources failed (last HTTP {e.code}) — keeping existing injuries.")
+        print("::warning::FootyWire blocks GitHub's datacenter IPs and every relay also failed this run. "
+              "If this persists, the durable fix is an AU residential proxy/host or a different injury source."); return 0
     except Exception as e:
-        print(f"::warning::FootyWire fetch failed after {RETRIES} tries ({e}) — keeping existing injuries"); return 0
+        print(f"::warning::all sources failed ({e}) — keeping existing injuries"); return 0
 
     try:
         rows = parse(html)
