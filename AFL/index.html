@@ -905,7 +905,7 @@
   const DEFAULT_SETTINGS={
     books:[],   // [] = use all books; otherwise restrict arbs/EV/best-price to these
     hideCompleted:false,   // hide games that have already finished
-    nerd:{ arbs:true, middles:true, model:true, lineout:true, implied:true, market:true, minEv:2, maxEv:0, maxOdds:0, minArb:0.5, minGap:1, maxCost:12, minSamp:6 },
+    nerd:{ arbs:true, middles:true, model:true, lineout:true, implied:true, market:true, minEv:2, maxEv:0, minOdds:0, maxOdds:0, minArb:0.5, minGap:1, maxCost:12, minSamp:6 },
     density:'cozy',
     multi:{ legs:6, scope:'game', today:false, book:null, target:null, banned:[], minProb:55, minScore:3, markets:MULTI_MKTS.map(m=>m[0]) },
     fxHide:{ sig:{}, sec:{}, mkt:{} },   // hide Degen signals / sections / markets on focused fixtures
@@ -1830,6 +1830,7 @@
         const evp=ev*100;
         if(evp<(SETTINGS.nerd.minEv||0)) return;
         if(SETTINGS.nerd.maxEv>0&&evp>SETTINGS.nerd.maxEv) return;
+        if(SETTINGS.nerd.minOdds>0&&bo.over<SETTINGS.nerd.minOdds) return;
         if(SETTINGS.nerd.maxOdds>0&&bo.over>SETTINGS.nerd.maxOdds) return;
         out.push({p,k,line:L,bo,prob,ev:evp,real,n,ref,proj,mode,avg,nb});
       });
@@ -1859,6 +1860,7 @@
         const ev=(fair*a.over-1)*100;
         if(ev<(SETTINGS.nerd.minEv||0)) return;
         if(SETTINGS.nerd.maxEv>0&&ev>SETTINGS.nerd.maxEv) return;
+        if(SETTINGS.nerd.minOdds>0&&a.over<SETTINGS.nerd.minOdds) return;
         if(SETTINGS.nerd.maxOdds>0&&a.over>SETTINGS.nerd.maxOdds) return;
         out.push({p,k,line:a.line,over:a.over,book:a.book,fair,ev,cons:main.line,diff:a.line-main.line});
       });
@@ -3602,6 +3604,17 @@
   function _dispCard(name,team,opp,src){ const o=oddsFor(name,'disposals'); return (o&&o.over!=null)?{name:name,team:team,opp:opp,mkt:'disposals',line:o.line,side:'over',odds:o.over,book:o.book,label:o.line+'+ disp',src:src||''}:null; }
   function _statCardIt(name,team,opp,mkt,lbl,src){ const o=oddsFor(name,mkt); return (o&&o.over!=null)?{name:name,team:team,opp:opp,mkt:mkt,line:o.line,side:'over',odds:o.over,book:o.book,label:o.line+'+ '+(lbl||mkt),src:src||''}:null; }
   function _goalCardIt(name,team,opp,src){ const o=oddsFor(name,'goals'); return (o&&o.over!=null)?{name:name,team:team,opp:opp,mkt:'goals',line:1,side:'over',odds:o.over,book:o.book,label:'Anytime goal',src:src||''}:null; }
+  // suggested bet that STARTS at a rung paying >= minOdds, as long as the rung's line doesn't exceed the player's average.
+  // Climbs the posted alt-line ladder: lowest rung clearing minOdds while staying <= avg; else longest-priced rung <= avg; else main line.
+  function _minOddsCard(name,team,opp,mkt,lbl,avg,minOdds,src){
+    const rungs=altLines(name,mkt).filter(r=>r.over!=null).sort((a,b)=>a.line-b.line);
+    const cap=(avg!=null&&isFinite(avg))?avg:Infinity;
+    const within=rungs.filter(r=>Math.ceil(r.line)<=cap+1e-9);           // don't suggest a line above their average
+    let pick=within.find(r=>r.over>=minOdds);                            // lowest rung that already pays the floor
+    if(!pick&&within.length) pick=within[within.length-1];               // can't reach the floor under avg -> longest odds still <= avg
+    if(pick){ const L=Math.ceil(pick.line); return {name:name,team:team,opp:opp,mkt:mkt,line:L,side:'over',odds:pick.over,book:pick.book,label:L+'+ '+(lbl||mkt),src:src||''}; }
+    const o=oddsFor(name,mkt); return (o&&o.over!=null)?{name:name,team:team,opp:opp,mkt:mkt,line:o.line,side:'over',odds:o.over,book:o.book,label:o.line+'+ '+(lbl||mkt),src:src||''}:null;
+  }
   function _rungCardIt(name,team,opp,mkt,line,lbl,src){ const r=priceForLine(name,mkt,line); return (r&&r.price!=null)?{name:name,team:team,opp:opp,mkt:mkt,line:line,side:'over',odds:r.price,book:r.book,label:line+'+ '+(lbl||mkt),src:src||''}:null; }
   window._cardAddFromMulti=function(bi){ const gm=multiBuilder()[bi]; if(!gm||!gm.legs.length)return; _cardAddMultiEntry({ title:gm.legs.length+'-leg multi'+(gm.label?' \u00b7 '+gm.label:''), legs:gm.legs.map(l=>({name:l.p.name,label:l.betLabel,odds:l._odds&&l._odds.price})), odds:gm.comb, book:(SETTINGS.multi.book||''), src:'Multi Builder' }); };
   window._cardAddFromFx=function(){ const g=_fxmG(); if(!g)return; const S=state.view.fxMulti; if(!S||!S.sel)return; const pool=_fxmPool(g); const legs=S.sel.idx.map(i=>pool[i]).filter(Boolean); if(!legs.length)return; const comb=legs.reduce((a,l)=>a*l._odds.price,1); _cardAddMultiEntry({ title:legs.length+'-leg multi \u00b7 '+abbr(g.home)+' v '+abbr(g.away), legs:legs.map(l=>({name:l.p.name,label:l.betLabel,odds:l._odds.price})), odds:comb, book:(S.book||''), src:'Multi Builder' }); };
@@ -3757,7 +3770,7 @@
         const head=b.lineBunny?(b.games+'/'+b.games+' cleared '+b.line)
           :(b.diffPct!=null?'+'+b.diffPct.toFixed(0)+'% v field':'best matchup');
         const sub=b.stat.l+' · vs '+abv(b.opp)+' '+M(b.thisAvg)+(b.best!=null?' (next best '+M(b.best)+')':'')+' · '+b.games+' H2H'+lineTag(b.p.name,b.stat.k);
-        const _bc=b.stat.k==='disposals'?_dispCard(b.p.name,b.p.team,b.opp,'Bunnies'):_statCardIt(b.p.name,b.p.team,b.opp,b.stat.k,b.stat.l,'Bunnies');
+        const _bc=_minOddsCard(b.p.name,b.p.team,b.opp,b.stat.k,b.stat.l,(b.p[b.stat.k]!=null?b.p[b.stat.k]:b.thisAvg),1.65,'Bunnies');
         return degRow(b.p.name,'#3b82f6',{v1:M(b.thisAvg),l1:b.stat.l,v2:(b.lineBunny?b.games+'/'+b.games:(b.diffPct!=null?'+'+b.diffPct.toFixed(0)+'%':'—')),l2:(b.lineBunny?'cleared':'v field')},sub,b.p.name,_bc);
       });
       return degWrap('ti-carrot','Bunnies',rows,'c-blue');
@@ -4129,10 +4142,10 @@
     h+='<div style="margin-bottom:4px">'+NERD_MARKETS.map(([k,l])=>_fchip(_nerdMktOn(k),l,"_sNerdMkt('"+k+"')")).join('')+'</div>';
     h+='<div style="display:flex;flex-wrap:wrap;align-items:center">'+
       _fnum('Min EV%',N.minEv,"_sNerdNum('minEv',this.value)")+_fnum('Max EV%',N.maxEv,"_sNerdNum('maxEv',this.value)")+
-      _fnum('Max odds',N.maxOdds,"_sNerdNum('maxOdds',this.value)")+_fnum('Min arb%',N.minArb,"_sNerdNum('minArb',this.value)")+
+      _fnum('Min odds',N.minOdds,"_sNerdNum('minOdds',this.value)")+_fnum('Max odds',N.maxOdds,"_sNerdNum('maxOdds',this.value)")+_fnum('Min arb%',N.minArb,"_sNerdNum('minArb',this.value)")+
       _fnum('Min gap',N.minGap,"_sNerdNum('minGap',this.value)")+_fnum('Max cost%',N.maxCost,"_sNerdNum('maxCost',this.value)")+
       _fnum('Min samp',N.minSamp,"_sNerdNum('minSamp',this.value)")+'</div>';
-    h+='<div style="font-size:9px;color:var(--text-3);margin-top:3px">Max EV% / Max odds = 0 means no cap.</div></div>';
+    h+='<div style="font-size:9px;color:var(--text-3);margin-top:3px">Max EV% / Min odds / Max odds = 0 means no cap.</div></div>';
     return h;
   }
   function _mbBooksPresent(){ const s=new Set(), bi=state.idx.bookIdx||{}; for(const p in bi){ const mm=bi[p]; for(const mk in mm){ const rows=mm[mk]||[]; for(let i=0;i<rows.length;i++){ if(rows[i].book) s.add(rows[i].book); } } } return ALL_BOOKS.filter(bk=>s.has(bk[0])); }
