@@ -41,14 +41,20 @@ MIN_PLAYERS, MIN_TEAMS = 30, 8   # below this == almost certainly a broken parse
 # substrings that betray a block / challenge page rather than the real injury list
 BLOCK_SIGNS = ("just a moment", "cloudflare", "captcha", "access denied",
                "attention required", "enable javascript", "unusual traffic", "cf-chl")
-# FootyWire blocks GitHub's datacenter IPs, so we also try public relays that fetch the
-# page from THEIR servers and return the raw HTML (parser stays the same). Best-effort:
-# if a relay is down/rate-limited we fall through; if all fail we keep the existing data.
-RELAYS = [
-    lambda u: "https://api.allorigins.win/raw?url=" + urllib.parse.quote(u, safe=""),
-    lambda u: "https://corsproxy.io/?url="        + urllib.parse.quote(u, safe=""),
-    lambda u: "https://thingproxy.freeboard.io/fetch/" + u,
-]
+# FootyWire blocks GitHub's datacenter IPs, so besides a direct hit we route through
+# services that fetch the page from THEIR servers and return HTML (parser unchanged).
+# Ordered by reliability. Best-effort + NON-DESTRUCTIVE: if all fail we keep old data.
+def _sources():
+    enc = urllib.parse.quote(URL, safe="")
+    return [
+        # (label, url, extra-headers)
+        ("footywire direct", URL, None),
+        # Jina Reader fetches + returns the page HTML from its own infra — very reliable,
+        # rarely blocked. X-Return-Format:html gives us HTML (not markdown) so parse() works.
+        ("jina reader", "https://r.jina.ai/" + URL, {"X-Return-Format": "html"}),
+        ("codetabs", "https://api.codetabs.com/v1/proxy/?quest=" + enc, None),
+        ("allorigins", "https://api.allorigins.win/raw?url=" + enc, None),
+    ]
 
 # (needle, canonical) — LONGEST/most-specific needles first so "north melbourne"
 # beats "melbourne" and "port adelaide" beats "adelaide". Output strings match
@@ -88,10 +94,17 @@ def team_from_text(txt):
     return None
 
 
-def _get(u):
-    req = urllib.request.Request(u, headers=HEADERS)
+def _get(u, extra=None):
+    h = dict(HEADERS)
+    if extra:
+        h.update(extra)
+    req = urllib.request.Request(u, headers=h)
     with urllib.request.urlopen(req, timeout=TIMEOUT) as r:
-        return r.read().decode("iso-8859-1", "replace")  # FootyWire is ISO-8859-1
+        raw = r.read()
+    try:
+        return raw.decode("utf-8")             # relays return UTF-8
+    except UnicodeDecodeError:
+        return raw.decode("iso-8859-1", "replace")   # FootyWire direct is ISO-8859-1
 
 
 def _looks_ok(html):
@@ -105,15 +118,12 @@ def _looks_ok(html):
 
 
 def fetch_html():
-    """Try FootyWire directly, then via public relays that fetch it server-side.
-    Returns raw HTML from the first source that yields a real injury page.
-    Raises the last error if every source fails."""
-    sources = [("footywire direct", URL)]
-    sources += [(f"relay {i+1}", mk(URL)) for i, mk in enumerate(RELAYS)]
+    """Try FootyWire directly, then via server-side fetch services (Jina/codetabs/allorigins).
+    Returns HTML from the first source that yields a real injury page. Raises if all fail."""
     last = None
-    for label, u in sources:
+    for label, u, extra in _sources():
         try:
-            html = _get(u)
+            html = _get(u, extra)
         except urllib.error.HTTPError as e:
             print(f"::warning::{label}: HTTP {e.code}"); last = e; continue
         except Exception as e:
