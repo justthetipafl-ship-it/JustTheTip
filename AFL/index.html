@@ -84,27 +84,6 @@
   .deg-v2b{font-weight:800;font-size:11px;opacity:.85;margin-top:1px;}
   .deg-v2a span,.deg-v2b span{font-weight:700;font-size:8.5px;letter-spacing:.04em;text-transform:uppercase;opacity:.72;margin-left:4px;}
   .brand-img{width:28px;height:28px;border-radius:50%;display:block;}
-  .tr-wrap{max-width:640px;margin:0 auto;}
-  .tr-hero{text-align:center;padding:14px;border:1px solid var(--border);border-radius:12px;background:var(--surface-2);margin-bottom:12px;}
-  .tr-hero-big{font-family:var(--font-display);font-weight:800;font-size:40px;line-height:1;color:var(--text);}
-  .tr-hero-sub{font-size:12px;color:var(--text-2);margin-top:6px;}
-  .tr-cards{display:grid;gap:10px;}
-  .tr-card{border:1px solid var(--border);border-radius:10px;padding:11px 13px;background:var(--surface);}
-  .tr-card-h{font-family:var(--font-display);font-weight:700;font-size:13px;display:flex;align-items:center;gap:6px;margin-bottom:7px;}
-  .tr-void{margin-left:auto;font-size:9px;font-weight:700;color:#6b7280;border:1px solid #6b728055;background:#6b728015;border-radius:4px;padding:1px 5px;}
-  .tr-row{display:flex;justify-content:space-between;gap:10px;font-size:12px;padding:3px 0;}
-  .tr-k{color:var(--text-3);text-transform:uppercase;font-size:10px;letter-spacing:.04em;padding-top:1px;}
-  .tr-v{text-align:right;color:var(--text-2);font-family:var(--font-mono);font-size:11px;}
-  .tr-list{border:1px solid var(--border);border-radius:10px;overflow:hidden;}
-  .tr-lrow{display:flex;align-items:center;gap:9px;padding:7px 11px;font-size:12px;border-bottom:1px solid var(--border);}
-  .tr-lrow:last-child{border-bottom:0;}
-  .tr-chip{font-family:var(--font-display);font-weight:800;font-size:10px;width:19px;height:19px;display:inline-flex;align-items:center;justify-content:center;border-radius:5px;border:1px solid;flex:none;}
-  .tr-lp{font-weight:600;color:var(--text);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;}
-  .tr-lm{color:var(--text-3);font-size:10px;font-family:var(--font-mono);}
-  .tr-la{color:var(--text-2);font-family:var(--font-mono);font-size:11px;width:34px;text-align:right;}
-  .tr-lu{font-family:var(--font-mono);font-size:11px;width:52px;text-align:right;}
-  .tr-note{font-size:10.5px;color:var(--text-3);line-height:1.55;margin-top:12px;padding:9px 11px;border:1px dashed var(--border);border-radius:8px;}
-  .tr-note i{color:#22c55e;}
   .mm-leg{display:flex;align-items:center;gap:8px;padding:7px 4px;border-bottom:1px solid var(--border);font-size:12px;}
   .mm-leg:last-child{border-bottom:0;}
   .mm-lp{flex:1;min-width:0;font-weight:600;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
@@ -890,7 +869,6 @@
     {k:'nmu',      n:'Next Man Up',   i:'ti-arrow-up-right',d:'Beneficiaries of outs'},
     {k:'form',     n:'Form Alerts',   i:'ti-trending-up',  d:'Trend shifts'},
     {k:'taggers',  n:'Lurking Taggers',i:'ti-user-search', d:'Tag risk'},
-    {k:'record',   n:'Track Record',  i:'ti-receipt',      d:'Signal results'},
   ];
 
   /* ===================== STATE ===================== */
@@ -3969,75 +3947,6 @@
     return '<details class="tp-collapse c-green" open><summary class="tp-collapse-sum"><i class="ti ti-stack-2"></i><span class="tp-collapse-title">Multi Builder</span><span class="tp-count">'+games.length+'</span><i class="ti ti-chevron-down tp-collapse-chev"></i></summary><div class="tp-collapse-body"><div class="tp-body-meta">'+metaLine+'</div>'+blocks+'</div></details>';
   }
 
-  // ---- Track Record: auto-graded signal ledger (receipts, not vibes) ----
-  let _ledgerLoading=false, _curDegen=null;
-  function _loadLedger(){
-    if(_ledgerLoading) return; _ledgerLoading=true;
-    const cb=state.dataVersion?('?v='+state.dataVersion):('?t='+Date.now());
-    fetch('./data/ledger.json'+cb,{cache:'no-cache'})
-      .then(r=>r.ok?r.json():null)
-      .then(j=>{ state.data.ledger=j||{records:[]}; _ledgerLoading=false; if(_curDegen==='record') degenTile('record'); })
-      .catch(()=>{ state.data.ledger={records:[]}; _ledgerLoading=false; if(_curDegen==='record') degenTile('record'); });
-  }
-  const _TR_MIN_N=25;                              // hold back units until the sample earns it
-  const _TR_DEFS={ green_light:{label:'Green Lights',icon:'ti-traffic-lights',col:'#22c55e'},
-                   death_rider:{label:'Death Riders',icon:'ti-skull',col:'#ef4444'},
-                   matchup_multi:{label:'Matchup Multi',icon:'ti-crosshair',col:'#22c55e'},
-                   elite:{label:'Elite Matchups',icon:'ti-trophy',col:'#22c55e'},
-                   bunnies:{label:'Bunnies',icon:'ti-carrot',col:'#3b82f6'},
-                   bogey:{label:'Bogey',icon:'ti-mood-sad',col:'#ef4444'},
-                   climb:{label:"Let's Climb",icon:'ti-stairs-up',col:'#22d3ee'} };
-  function _trStatLine(b){
-    if(!b||!b.n) return '<span style="color:var(--text-3)">no graded bets yet</span>';
-    const hr=(b.hitRate!=null)?(b.hitRate*100).toFixed(0)+'%':'—';
-    const hrCol=(b.hitRate!=null&&b.hitRate>=0.5)?'#22c55e':(b.hitRate!=null?'#ef4444':'var(--text-3)');
-    const rec=b.wins+'-'+b.losses+(b.pushes?'-'+b.pushes+'p':'');
-    let units,roi='';
-    if(b.n>=_TR_MIN_N){ units='<b style="color:'+(b.units>=0?'#22c55e':'#ef4444')+'">'+(b.units>=0?'+':'')+b.units.toFixed(1)+'u</b>';
-      if(b.roi!=null) roi=' · ROI '+(b.roi>=0?'+':'')+(b.roi*100).toFixed(1)+'%'; }
-    else units='<span style="color:var(--text-3)" title="Units shown once n reaches '+_TR_MIN_N+'">building ('+b.n+'/'+_TR_MIN_N+')</span>';
-    return '<b style="color:'+hrCol+'">'+hr+'</b> · '+rec+' · n='+b.n+' · '+units+roi;
-  }
-  function _trCard(key,sAll,s30,voids){
-    const d=_TR_DEFS[key];
-    return '<div class="tr-card"><div class="tr-card-h"><i class="ti '+d.icon+'" style="color:'+d.col+'"></i> '+d.label+
-      (voids?'<span class="tr-void" title="Did not play — voided, never counted as a loss">'+voids+' void</span>':'')+'</div>'+
-      '<div class="tr-row"><span class="tr-k">Season</span><span class="tr-v">'+_trStatLine(sAll)+'</span></div>'+
-      '<div class="tr-row"><span class="tr-k">Last 30d</span><span class="tr-v">'+_trStatLine(s30)+'</span></div></div>';
-  }
-  function trackRecordPage(){
-    if(!state.data.ledger){ _loadLedger(); return '<div class="empty"><div class="ico"><i class="ti ti-loader-2"></i></div><div>Loading track record…</div></div>'; }
-    const recs=(state.data.ledger.records||[]);
-    const graded=recs.filter(r=>r.result&&r.result!=='void'||r.result==='void');   // any settled
-    if(!graded.length) return emptyState('ti-receipt','No results yet','Signals are captured before each round and graded once results land. Check back after the round.');
-    const cs=CUR_SEASON(), now=Date.now();
-    const inWin=(r,days)=>{ const t=Date.parse(r.capturedAt); return isFinite(t)&&(now-t)<=days*864e5; };
-    const seasonRecs=recs.filter(r=>String(r.season)===cs && r.result);
-    const voidsBy=k=>seasonRecs.filter(r=>r.signalType===k&&r.result==='void').length;
-    const rollAll=JTTSignals.rollup(seasonRecs);
-    const roll30=JTTSignals.rollup(seasonRecs.filter(r=>inWin(r,30)));
-    // combined (both signals) season summary
-    const decided=seasonRecs.filter(r=>r.result==='win'||r.result==='loss');
-    const wins=decided.filter(r=>r.result==='win').length;
-    const totU=seasonRecs.reduce((a,r)=>a+JTTSignals.pnl(r),0);
-    const nAll=decided.length;
-    const overall='<div class="tr-hero"><div class="tr-hero-big">'+(nAll?((wins/nAll*100).toFixed(0)+'%'):'—')+'</div>'+
-      '<div class="tr-hero-sub">'+wins+'-'+(nAll-wins)+' this season · n='+nAll+(nAll>=_TR_MIN_N?' · <b style="color:'+(totU>=0?'#22c55e':'#ef4444')+'">'+(totU>=0?'+':'')+totU.toFixed(1)+'u</b>':'')+'</div></div>';
-    let cards=''; ['green_light','death_rider','matchup_multi','elite','bunnies','bogey','climb'].forEach(k=>{ if(rollAll[k]&&rollAll[k].n||roll30[k]&&roll30[k].n||voidsBy(k)) cards+=_trCard(k,rollAll[k],roll30[k],voidsBy(k)); });
-    // recent settled (newest first)
-    const recent=seasonRecs.filter(r=>r.settledAt).sort((a,b)=>Date.parse(b.settledAt)-Date.parse(a.settledAt)).slice(0,20);
-    const chip=r=>{ const c={win:'#22c55e',loss:'#ef4444',push:'#f59e0b',void:'#6b7280'}[r.result]||'#6b7280';
-      const lab={win:'W',loss:'L',push:'P',void:'V'}[r.result]||'?';
-      return '<span class="tr-chip" style="background:'+c+'22;color:'+c+';border-color:'+c+'55">'+lab+'</span>'; };
-    const rows=recent.map(r=>'<div class="tr-lrow">'+chip(r)+'<span class="tr-lp">'+esc(r.player)+'</span>'+
-      '<span class="tr-lm">'+(r.side==='over'?'O':'U')+' '+r.line+' '+r.market+'</span>'+
-      '<span class="tr-la">'+(r.result==='void'?'DNP':(r.actual!=null?r.actual:'—'))+'</span>'+
-      '<span class="tr-lu" style="color:'+(JTTSignals.pnl(r)>0?'#22c55e':JTTSignals.pnl(r)<0?'#ef4444':'var(--text-3)')+'">'+(r.result==='void'||r.result==='push'?'—':(JTTSignals.pnl(r)>0?'+':'')+JTTSignals.pnl(r).toFixed(2)+'u')+'</span></div>').join('');
-    const note='<div class="tr-note"><i class="ti ti-shield-check"></i> Auto-graded against the official box score every round. <b>Void = didn\'t play</b> — never counted as a loss. Flat 1u at the price shown when the signal fired. It\'s a public ledger: every result lives in the repo\'s git history.</div>';
-    return '<div class="tr-wrap">'+overall+'<div class="tr-cards">'+cards+'</div>'+
-      '<div class="section-title" style="margin-top:14px">Recent results</div><div class="tr-list">'+rows+'</div>'+note+'</div>';
-  }
-
   // ---- Today's Board: the round's best plays across every signal, ranked ----
   // ---- Today's Board: best few priced plays per game, today's slate ----
   function _gkey(a,b){ return [a,b].sort().join(' | '); }
@@ -4114,13 +4023,11 @@
     return h;
   }
   window.degenTile=function(k){
-    _curDegen=k;
     const c=CREW.find(x=>x.k===k);
     let body;
     const teams=(state.data.fixture||[]).flatMap(g=>[g.home,g.away]);
     if(k==='board') body=todaysBoardPage();
     else if(k==='compare') body=comparePage();
-    else if(k==='record') body=trackRecordPage();
     else if(k==='green') body=ouSection(collectOU(teams,'over'),'over','Green Lights','ti-traffic-lights','c-green');
     else if(k==='death') body=ouSection(collectOU(teams,'under'),'under','Death Riders','ti-skull','c-red');
     else if(k==='snags') body=snagsPage();
