@@ -4379,6 +4379,7 @@
         '<div class="pc-row">'+stepper+hrHtml+'</div>'+
         '<div class="pc-scopes">'+scopes+'</div>'+
         oddsHtml+
+        ((od&&od.over!=null)?'<button onclick="_pcAddMulti()" style="margin-top:10px;width:100%;background:var(--surface-2);border:1px solid var(--border);color:var(--text);font-family:var(--font-display);font-weight:800;font-size:12px;padding:9px;border-radius:7px;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;gap:6px"><i class="ti ti-stack-2"></i> Add to multi slip</button>':'')+
         _pcChart(games,S.stat,S.line,opp)+
       '</div>';
   }
@@ -4813,10 +4814,30 @@
       '<button class="seg on" id="cmb-share-btn" onclick="cmpShareImage()"><i class="ti ti-download"></i> Save PNG</button>'+
       '<button class="seg on" id="cmb-copy-btn" onclick="cmpCopyImage()"><i class="ti ti-copy"></i> Copy</button>'+
       '<button class="seg on" onclick="_cmbAddCard()"><i class="ti ti-receipt"></i> Add to card</button>'+
+      '<button class="seg on" onclick="_cmbAddMulti()"><i class="ti ti-stack-2"></i> Add to multi</button>'+
       '<button class="seg on" onclick="cmpReset()"><i class="ti ti-search"></i> New search</button></div>';
     return h;
   }
   window._cmbAddCard=function(){ if(!_cmbCtx||!_cmbCtx.p)return; const p=_cmbCtx.p,stat=_cmbCtx.stat,line=_cmbCtx.line; const label=(CMP_STAT_LABELS[stat]||stat); const posted=oddsFor(p.name,stat); const it={name:p.name,team:p.team,opp:nextOpp(p.team),mkt:stat,line:line,side:'over',odds:(posted&&posted.over!=null?posted.over:null),book:(posted?posted.book:''),label:line+'+ '+label,src:'Check My Bet'}; if(_cardAdd(it)) _cardToast('Added \u00b7 '+_cardCount()+' bet'+(_cardCount()!==1?'s':'')+' on card'); else _cardToast('Already on your card'); };
+  // Shared: push a prop (player + market + X+ line) into the same-game multi slip.
+  // Returns true if added. Guards mirror cmbMultiAddLeg: needs a fixture, one game, no dup.
+  window._addLegToMulti=function(p,stat,line){
+    if(!p||stat==null||line==null){ _cardToast('Add a line first'); return false; }
+    if(!(state.idx.players||[]).length){ _cardToast('No player data loaded'); return false; }
+    const fx=cmbFixtureForTeam(p.team);
+    if(!fx){ _cardToast(p.name+' has no fixture this round'); return false; }
+    const M=window._cmbMulti||(window._cmbMulti={legs:[]});
+    if(M.legs.length){ const e=M.legs[0].fixture; const same=(fx.home===e.home&&fx.away===e.away)||(fx.home===e.away&&fx.away===e.home);
+      if(!same){ _cardToast('Multi is '+abbr(e.home)+' v '+abbr(e.away)+' \u2014 '+p.name.split(' ').pop()+' is a different game'); return false; } }
+    if(M.legs.find(l=>l.p.name===p.name&&l.stat===stat&&l.line===line)){ _cardToast('That leg is already in the multi'); return false; }
+    M.legs.push({p:p,stat:stat,line:line,fixture:fx});
+    _cardToast('Added to multi \u00b7 '+M.legs.length+' leg'+(M.legs.length===1?'':'s'));
+    return true;
+  };
+  // Check My Bet single calculator -> add + flip to the multi tab so they see it land.
+  window._cmbAddMulti=function(){ if(!_cmbCtx||!_cmbCtx.p) return; if(window._addLegToMulti(_cmbCtx.p,_cmbCtx.stat,_cmbCtx.line)) cmbSetMode('multi'); };
+  // Player-modal prop calculator -> add, stay in the modal (the slip lives in Check My Bet's Multi tab).
+  window._pcAddMulti=function(){ const p=state.idx.byName[_pmName]; if(p&&_pcState) window._addLegToMulti(p,_pcState.stat,_pcState.line); };
   function cmpPlayerCard(p){
     const opp=nextOpp(p.team);
     let h='<div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">'+teamLogo(p.team,40)+
