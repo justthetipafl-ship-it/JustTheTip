@@ -1,221 +1,124 @@
 #!/usr/bin/env python3
-# ============================================================
-# fetch_injuries.py — FootyWire AFL injury list -> bundle["injury"] + data/injury.json
-# ============================================================
-# Closes the last manual AFL data gap. injury.json is a flat list of
-#   {"Team","Player","Injury","Returning"}  (the shape the tool already reads).
-#
-# IMPORTANT: build_afl_data.py rewrites data/injury.json from bundle["injury"]
-# on every build, so this updates BOTH:
-#   * AFL/bundle.json -> ["injury"]  (survives every future rebuild's passthrough)
-#   * AFL/data/injury.json           (mirror, so the change is live immediately)
-#
-# Source: FootyWire serves 18 server-rendered team tables (no JS, no token). We
-# anchor on the 18 known team names rather than fragile CSS classes, and map
-# FootyWire's labels to the exact strings already in injury.json.
-#
-# NON-DESTRUCTIVE: only writes if a sane parse (>= MIN_PLAYERS across >= MIN_TEAMS).
-# A blocked fetch / login wall / layout change yields ~0 rows -> we abort and
-# leave the existing injury data untouched. The first run should be eyeballed.
-# ============================================================
-import os, sys, json, re, urllib.request, urllib.error, urllib.parse
+"""
+Fetch the official AFL injury list from afl.com.au and write it to AFL/data/injury.json
+(and mirror into AFL/bundle.json["injury"]).
 
-URL    = "https://www.footywire.com/afl/footy/injury_list"
-BUNDLE = os.environ.get("AFL_BUNDLE", "AFL/bundle.json")
-OUT    = os.environ.get("INJURY_OUT", "AFL/data/injury.json")
-# A real browser UA + headers. A bot UA is the first thing FootyWire's edge blocks;
-# this makes a plain HTTP request look like Chrome. (If the block is IP-based rather
-# than UA-based, this won't help — the diagnostics below will say so.)
-UA     = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-          "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36")
+Why afl.com.au and not FootyWire: FootyWire sits behind Cloudflare bot protection and
+refuses GitHub Actions' datacenter IPs (503 / managed challenge). afl.com.au serves the
+injury list as plain server-rendered HTML — 18 tables (one per club, in alphabetical
+order), each with rows of PLAYER | INJURY | ESTIMATED RETURN — and is reachable from the
+same runners that already pull the AFL stats feed.
+
+Non-destructive: if the fetch fails or the parse looks wrong (blocked / layout change),
+the existing injuries are preserved and the run prints diagnostics instead of writing.
+"""
+import os
+import sys
+import json
+import urllib.request
+import urllib.error
+
+from bs4 import BeautifulSoup
+
+URL     = "https://www.afl.com.au/matches/injury-list"
+BUNDLE  = os.environ.get("AFL_BUNDLE", "AFL/bundle.json")
+OUT     = os.environ.get("INJURY_OUT", "AFL/data/injury.json")
+TIMEOUT = 30
+UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+      "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36")
 HEADERS = {
     "User-Agent": UA,
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
     "Accept-Language": "en-AU,en;q=0.9",
-    "Referer": "https://www.footywire.com/",
-    "Connection": "close",
 }
-TIMEOUT = 30
-RETRIES = 3                       # (kept for reference; multi-source fetch below supersedes it)
-MIN_PLAYERS, MIN_TEAMS = 30, 8   # below this == almost certainly a broken parse
-# substrings that betray a block / challenge page rather than the real injury list
+
+# afl.com.au lists all 18 clubs in this fixed alphabetical order, one <table> each.
+# These names match the tool's team naming (players.json / fixture), so injuries line up.
+CLUBS = [
+    "Adelaide", "Brisbane", "Carlton", "Collingwood", "Essendon", "Fremantle",
+    "Geelong", "Gold Coast", "Greater Western Sydney", "Hawthorn", "Melbourne",
+    "North Melbourne", "Port Adelaide", "Richmond", "St Kilda", "Sydney",
+    "West Coast", "Western Bulldogs",
+]
+
+MIN_TABLES, MIN_PLAYERS = 15, 30   # below this == almost certainly a broken/blocked parse
 BLOCK_SIGNS = ("just a moment", "cloudflare", "captcha", "access denied",
                "attention required", "enable javascript", "unusual traffic", "cf-chl")
-# FootyWire blocks GitHub's datacenter IPs, so besides a direct hit we route through
-# services that fetch the page from THEIR servers and return HTML (parser unchanged).
-# Ordered by reliability. Best-effort + NON-DESTRUCTIVE: if all fail we keep old data.
-def _sources():
-    enc = urllib.parse.quote(URL, safe="")
-    return [
-        # (label, url, extra-headers)
-        ("footywire direct", URL, None),
-        # Jina Reader fetches + returns the page HTML from its own infra — very reliable,
-        # rarely blocked. X-Return-Format:html gives us HTML (not markdown) so parse() works.
-        ("jina reader", "https://r.jina.ai/" + URL, {"X-Return-Format": "html"}),
-        ("codetabs", "https://api.codetabs.com/v1/proxy/?quest=" + enc, None),
-        ("allorigins", "https://api.allorigins.win/raw?url=" + enc, None),
-    ]
-
-# (needle, canonical) — LONGEST/most-specific needles first so "north melbourne"
-# beats "melbourne" and "port adelaide" beats "adelaide". Output strings match
-# injury.json verbatim (FootyWire's own labels).
-TEAM_KEYS = [
-    ("western bulldogs", "Western Bulldogs"),
-    ("north melbourne", "North Melbourne"),
-    ("port adelaide", "Port Adelaide"),
-    ("greater western sydney", "GWS GIANTS"),
-    ("west coast", "West Coast Eagles"),
-    ("gold coast", "Gold Coast SUNS"),
-    ("st kilda", "St Kilda"),
-    ("adelaide", "Adelaide Crows"),
-    ("brisbane", "Brisbane Lions"),
-    ("carlton", "Carlton"),
-    ("collingwood", "Collingwood"),
-    ("essendon", "Essendon"),
-    ("fremantle", "Fremantle"),
-    ("geelong", "Geelong Cats"),
-    ("gws", "GWS GIANTS"),
-    ("hawthorn", "Hawthorn"),
-    ("melbourne", "Melbourne"),
-    ("richmond", "Richmond"),
-    ("sydney", "Sydney Swans"),
-]
-DATE_RE   = re.compile(r"\d{1,2}/\d{1,2}/\d{2,4}")              # FootyWire "Last Updated" cell
-HEADER_RE = re.compile(r"^(player|injury|recovery|return|last updated|est\.?)\b", re.I)
-
-
-def team_from_text(txt):
-    t = txt.strip().lower()
-    if not t or len(t) > 36:
-        return None
-    for needle, canon in TEAM_KEYS:
-        if needle in t:
-            return canon
-    return None
-
-
-def _get(u, extra=None):
-    h = dict(HEADERS)
-    if extra:
-        h.update(extra)
-    req = urllib.request.Request(u, headers=h)
-    with urllib.request.urlopen(req, timeout=TIMEOUT) as r:
-        raw = r.read()
-    try:
-        return raw.decode("utf-8")             # relays return UTF-8
-    except UnicodeDecodeError:
-        return raw.decode("iso-8859-1", "replace")   # FootyWire direct is ISO-8859-1
-
-
-def _looks_ok(html):
-    low = html.lower()
-    hit = [w for w in BLOCK_SIGNS if w in low]
-    if hit:
-        return False, "block/challenge page (" + ", ".join(hit) + ")"
-    if "<table" not in low:
-        return False, f"no <table> in response ({len(html)} chars)"
-    return True, ""
 
 
 def fetch_html():
-    """Try FootyWire directly, then via server-side fetch services (Jina/codetabs/allorigins).
-    Returns HTML from the first source that yields a real injury page. Raises if all fail."""
-    last = None
-    for label, u, extra in _sources():
-        try:
-            html = _get(u, extra)
-        except urllib.error.HTTPError as e:
-            print(f"::warning::{label}: HTTP {e.code}"); last = e; continue
-        except Exception as e:
-            print(f"::warning::{label}: {e}"); last = e; continue
-        ok, why = _looks_ok(html)
-        if not ok:
-            print(f"::warning::{label}: {why}"); last = RuntimeError(why); continue
-        print(f"fetched injuries via {label} ({len(html)} chars)")
-        return html
-    if last:
-        raise last
-    raise RuntimeError("all injury sources failed")
+    req = urllib.request.Request(URL, headers=HEADERS)
+    with urllib.request.urlopen(req, timeout=TIMEOUT) as r:
+        raw = r.read()
+    try:
+        return raw.decode("utf-8")
+    except UnicodeDecodeError:
+        return raw.decode("iso-8859-1", "replace")
 
 
 def parse(html):
-    from bs4 import BeautifulSoup
+    """Return (rows, table_count). Each club is one <table>; rows are 3-cell
+    PLAYER / INJURY / ESTIMATED RETURN. Header and 'Updated: ...' rows are skipped."""
     soup = BeautifulSoup(html, "html.parser")
-    rows, current = [], None
-    for tr in soup.find_all("tr"):
-        cells = [c.get_text(" ", strip=True) for c in tr.find_all(["td", "th"])]
-        cells = [c for c in cells if c != ""]
-        if not cells:
-            continue
-        joined = " ".join(cells)
-        # team header row: short, dominated by a team name
-        t = team_from_text(joined)
-        if t and len(cells) <= 2 and len(joined) <= 36:
-            current = t
-            continue
-        if not current:
-            continue
-        # skip column-header rows
-        if HEADER_RE.match(cells[0]):
-            continue
-        # player row: first cell = name, then Injury / Return (drop any date "Last Updated")
-        player = cells[0].strip()
-        if len(player) < 3 or len(player) > 48 or player.lower() in ("player", "no injuries"):
-            continue
-        rest = [c for c in cells[1:] if c and not DATE_RE.search(c)]
-        injury    = rest[0] if rest else ""
-        returning = rest[1] if len(rest) > 1 else ""
-        if not injury and not returning:
-            continue
-        rows.append({"Team": current, "Player": player, "Injury": injury, "Returning": returning})
-    return rows
+    tables = soup.find_all("table")
+    rows = []
+    for i, table in enumerate(tables):
+        if i >= len(CLUBS):
+            break                                   # ignore any trailing/unrelated tables
+        club = CLUBS[i]
+        for tr in table.find_all("tr"):
+            cells = [c.get_text(" ", strip=True) for c in tr.find_all(["td", "th"])]
+            if len(cells) < 3:
+                continue                            # 'Updated: ...' colspan row, etc.
+            player, injury, ret = cells[0], cells[1], cells[2]
+            if not player:
+                continue
+            if player.upper() == "PLAYER":
+                continue                            # header row
+            if player.lower().startswith("updated"):
+                continue
+            rows.append({
+                "Team": club,
+                "Player": player,
+                "Injury": injury,
+                "Returning": ret,
+            })
+    return rows, len(tables)
 
 
 def main():
     try:
         html = fetch_html()
     except urllib.error.HTTPError as e:
-        print(f"::warning::all sources failed (last HTTP {e.code}) — keeping existing injuries.")
-        print("::warning::FootyWire blocks GitHub's datacenter IPs and every relay also failed this run. "
-              "If this persists, the durable fix is an AU residential proxy/host or a different injury source."); return 0
+        print(f"::warning::afl.com.au HTTP {e.code} — keeping existing injuries.")
+        if e.code in (403, 429, 503):
+            print("::warning::a 403/429/503 from a GitHub-Actions IP would mean afl.com.au is "
+                  "blocking the datacenter address; if this persists we'd need a proxy or an "
+                  "alternate source.")
+        return 0
     except Exception as e:
-        print(f"::warning::all sources failed ({e}) — keeping existing injuries"); return 0
+        print(f"::warning::afl.com.au fetch failed ({e}) — keeping existing injuries.")
+        return 0
 
-    try:
-        rows = parse(html)
-    except Exception as e:
-        print(f"::warning::parse failed ({e}) — keeping existing injuries"); return 0
-
+    rows, ntables = parse(html)
     teams = sorted(set(r["Team"] for r in rows))
-    print(f"parsed {len(rows)} players across {len(teams)} teams")
-    by = {}
-    for r in rows:
-        by[r["Team"]] = by.get(r["Team"], 0) + 1
-    for t in teams:
-        print(f"  {t}: {by[t]}")
-    if rows[:1]:
-        print(f"  sample: {rows[0]}")
 
-    if len(rows) < MIN_PLAYERS or len(teams) < MIN_TEAMS:
-        print(f"::warning::parse looks wrong ({len(rows)} players / {len(teams)} teams "
-              f"< {MIN_PLAYERS}/{MIN_TEAMS}) — NOT writing, existing data preserved")
-        # Diagnostics so the Actions log reveals *why* (block page vs. layout change).
+    if ntables < MIN_TABLES or len(rows) < MIN_PLAYERS:
+        print(f"::warning::parse looks wrong ({ntables} tables / {len(rows)} players "
+              f"< {MIN_TABLES}/{MIN_PLAYERS}) — NOT writing, existing data preserved")
         low = html.lower()
         hit = [w for w in BLOCK_SIGNS if w in low]
-        print(f"::warning::response was {len(html)} chars; "
-              f"tables seen: {low.count('<table')}, rows seen: {low.count('<tr')}")
+        print(f"::warning::response was {len(html)} chars; <table> seen: {low.count('<table')}")
         if hit:
             print(f"::warning::looks like a BLOCK/CHALLENGE page (matched: {', '.join(hit)}). "
-                  "FootyWire is refusing the request — most likely an IP block on GitHub's runners. "
-                  "Options: run the fetch from an AU host/proxy, or switch to another injury source.")
+                  "afl.com.au is refusing the request from this IP.")
         else:
-            print("::warning::no block signature found — this looks like a LAYOUT CHANGE on FootyWire. "
-                  "The table structure the parser anchors on has moved.")
-        # first 400 chars help identify the served page at a glance
+            print("::warning::no block signature — this looks like a LAYOUT CHANGE on afl.com.au "
+                  "(the injury tables moved or changed structure).")
         print("::group::response head\n" + html[:400].replace("\n", " ") + "\n::endgroup::")
         return 0
 
-    # update bundle["injury"] (survives future rebuild passthrough)
+    # --- write bundle["injury"] (abort if bundle unreadable, matching prior behaviour) ---
     try:
         with open(BUNDLE, encoding="utf-8") as f:
             bundle = json.load(f)
@@ -227,14 +130,15 @@ def main():
         json.dump(bundle, f, ensure_ascii=False, separators=(",", ":"))
     os.replace(tmp, BUNDLE)
 
-    # mirror to data/injury.json so it's live without a full rebuild
+    # --- mirror to data/injury.json so it's live without a full rebuild ---
     os.makedirs(os.path.dirname(OUT), exist_ok=True)
     tmp2 = OUT + ".tmp"
     with open(tmp2, "w", encoding="utf-8") as f:
         json.dump(rows, f, ensure_ascii=False, indent=1)
     os.replace(tmp2, OUT)
 
-    print(f"wrote {len(rows)} injuries -> {BUNDLE}['injury'] + {OUT}")
+    print(f"wrote {len(rows)} injuries across {len(teams)} clubs from {ntables} tables "
+          f"-> {BUNDLE}['injury'] + {OUT}")
     return 0
 
 
