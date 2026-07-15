@@ -843,7 +843,12 @@
         g.home=cv(g.home,g.homeName); g.away=cv(g.away,g.awayName); });
       (d.results||[]).forEach(r=>{ r.home=cv(r.home,r.homeName); r.away=cv(r.away,r.awayName); });
       (d.firsttd||[]).forEach(r=>{ r.Team=cv(r.teamId); });
-      (d.weather||[]).forEach(r=>{ r.home=cv(r.home); r.away=cv(r.away); });
+      (d.weather||[]).forEach(r=>{ r.home=cv(r.home); r.away=cv(r.away);
+        // normalise college fields onto the shared chip/env shape
+        if(r.roof==null) r.roof=r.indoor?'dome':'outdoors';
+        if(r.wind==null&&r.windKph!=null) r.wind=r.windKph;
+        if(r.temp==null&&r.tempC!=null) r.temp=r.tempC;
+        if(r.rainProb==null&&r.rainPct!=null) r.rainProb=r.rainPct; });
       (d.injury||[]).forEach(r=>{ if(!r.Team&&r.TeamId!=null) r.Team=cv(r.TeamId); });
       state.idx.teamInfo=info; state.idx.idToAbbr=id2ab;
       // college redzone board rows from players.json per-game usage rates
@@ -920,8 +925,8 @@
       const w=(state.data.weather||[]).find(x=>x.home===g.home&&x.away===g.away)||null;
       const total=(mo&&mo.total&&mo.total.points!=null)?+mo.total.points:null;
       const homeSpread=(mo&&mo.line&&mo.line.home!=null)?+mo.line.home:null;   // negative = home favored
-      const roof=(w&&w.roof)||g.roof||null;
-      const wind=(w&&w.wind!=null)?+w.wind:null;
+      const roof=(w&&w.indoor)?'dome':((w&&w.roof)||g.roof||null);
+      const wind=(w&&w.windKph!=null)?+w.windKph:((w&&w.wind!=null)?+w.wind:null);
       const kick=gameStart(g);
       const hLast=kick?_lastGameDate(g.home,kick):null, aLast=kick?_lastGameDate(g.away,kick):null;
       let hRest=null,aRest=null;
@@ -2849,7 +2854,7 @@
       const w=(state.data.weather||[]).find(x=>x.home===g.home&&x.away===g.away); if(!w) return;
       if(w.roof&&w.roof!=='outdoors'&&w.roof!=='open') return;               // dome — no weather angle
       const windy=w.wind!=null&&+w.wind>=WX_WIND;
-      const wet=w.code!=null&&+w.code>=61;                                    // WMO: rain and worse
+      const wet=(w.code!=null&&+w.code>=61)||(w.rainProb!=null&&+w.rainProb>=60);   // WMO rain codes, or high rain prob
       if(!windy&&!wet) return;
       const headline=(windy?Math.round(w.wind)+' km/h wind':'')+(windy&&wet?' + ':'')+(wet?(w.desc||'rain'):'');
       const runners=[g.home,g.away].map(t=>playersOnTeam(t).filter(p=>p.position==='RB'&&(p.matches||0)>=4)
