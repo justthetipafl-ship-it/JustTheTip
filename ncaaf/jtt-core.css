@@ -1,0 +1,786 @@
+/* ============================================================
+   JTT-CORE.CSS — Universal stylesheet for JTT tools
+   ============================================================
+   Drop-in stylesheet that provides JTT's design tokens, brand
+   chrome, and reusable components for any sport-specific tool.
+
+   What's in here:
+     • Design tokens (colors, fonts, spacing)
+     • Base reset + typography
+     • App footer + responsible-gambling disclaimer
+     • Auth gate (full-screen password overlay)
+     • Topbar / brand / freshness pill / ticker
+     • Tab nav (top of page)
+     • Page container, headers, section titles
+     • Crew tile grid (Degen Crew brand identity)
+     • Empty states, back button, data status
+     • Boot overlay (branded initial load)
+     • Loader card (file-input fallback)
+     • Meta bar (pill row for focused entities)
+     • Universal data filter strip
+     • tp-collapse + tp-body-meta + tp-toolbar
+     • Check My Bet FAB + modal pattern
+     • Mobile responsive base
+
+   What's NOT in here (sport-specific, build per-tool):
+     • Sport-specific market panels (goals/cards/tries/etc.)
+     • Sport-specific stat breakdowns (DVP, By The Halves, etc.)
+     • Sport-specific modals (Depth Chart, Match Stakes, etc.)
+     • Sport-specific player modal extensions
+
+   Usage:
+     <link rel="stylesheet" href="jtt-core.css">
+     Then build your sport-specific styles in <style> below it.
+   ============================================================ */
+
+/* === DESIGN TOKENS === */
+:root {
+  --bg:           #0a0a0a;
+  --surface:      #111;
+  --surface-2:    #161616;
+  --surface-3:    #1d1d1d;
+  --border:       #1f1f1f;
+  --border-light: #2a2a2a;
+  --text:         #f2f2f2;
+  --text-2:       #d2d2d2;
+  --text-3:       #a6a6a6;
+  --accent:       #22c55e;
+  --accent-dim:   #16a34a;
+  --accent-bg:    rgba(34, 197, 94, 0.08);
+  --warn:         #eab308;
+  --bad:          #ef4444;
+  --neutral:      #888;
+  --good:         #22c55e;
+  --font-display: 'Montserrat', system-ui, sans-serif;
+  --font-mono:    'IBM Plex Mono', ui-monospace, monospace;
+}
+
+/* === BASE RESET === */
+* {
+  margin: 0; padding: 0; box-sizing: border-box;
+  -webkit-tap-highlight-color: transparent;
+}
+html, body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-display);
+  font-weight: 400;
+  min-height: 100vh;
+  overscroll-behavior-y: none;
+}
+body { padding-bottom: 60px; }
+::selection { background: var(--accent); color: #000; }
+a { color: var(--accent); text-decoration: none; }
+
+/* === APP FOOTER (responsible gambling + copyright) === */
+.app-footer {
+  margin-top: 32px;
+  padding: 20px 0 80px;
+  border-top: 1px solid var(--border);
+  background: var(--surface);
+}
+.ft-inner {
+  max-width: 1280px; margin: 0 auto;
+  padding: 0 16px;
+  font-family: var(--font-mono);
+  color: var(--text-3);
+}
+.ft-disclaimer {
+  font-size: 11px; line-height: 1.55;
+  margin-bottom: 8px;
+}
+.ft-disclaimer strong {
+  color: var(--text-2); font-weight: 700; letter-spacing: 0.2px;
+}
+.ft-disclaimer a {
+  color: var(--accent); font-weight: 600; text-decoration: underline;
+}
+.ft-copy {
+  font-size: 10px; letter-spacing: 0.5px;
+  color: var(--text-3); opacity: 0.6;
+}
+
+/* ============================================================
+   AUTH GATE — full-screen overlay shown until auth succeeds.
+   z-index 99999 above everything. JS adds .unlocked to fade
+   and remove it once the user enters the correct password.
+   ============================================================ */
+.auth-overlay {
+  position: fixed; inset: 0; z-index: 99999;
+  background: rgba(8, 10, 14, 0.96);
+  backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+  display: grid; place-items: center;
+  padding: 20px;
+  opacity: 1; transition: opacity 0.25s ease;
+}
+.auth-overlay.unlocked { opacity: 0; pointer-events: none; }
+.auth-card {
+  width: 100%; max-width: 380px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 28px 26px 22px;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.5), 0 0 0 1px rgba(255,255,255,0.04);
+}
+.auth-brand {
+  display: flex; align-items: center; gap: 12px;
+  margin-bottom: 24px;
+}
+.auth-logo { flex-shrink: 0; }
+.auth-title {
+  font-family: var(--font-display); font-weight: 800;
+  font-size: 18px; color: var(--text); letter-spacing: 0.3px;
+}
+.auth-sub {
+  font-family: var(--font-mono); font-size: 9px; font-weight: 600;
+  color: var(--text-3); letter-spacing: 1px; margin-top: 2px;
+}
+.auth-form { display: flex; flex-direction: column; gap: 10px; }
+.auth-label {
+  font-family: var(--font-mono); font-size: 10px; font-weight: 600;
+  color: var(--text-2); letter-spacing: 0.5px;
+  text-transform: uppercase;
+}
+.auth-input {
+  width: 100%;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 12px 14px;
+  color: var(--text);
+  font-family: var(--font-mono); font-size: 14px; letter-spacing: 1.5px;
+  outline: none;
+  transition: border-color 0.15s, background 0.15s;
+}
+.auth-input:focus {
+  border-color: var(--accent);
+  background: var(--surface-3);
+}
+.auth-input.error {
+  border-color: #ef4444;
+  background: rgba(239,68,68,0.05);
+  animation: auth-shake 0.32s cubic-bezier(0.36, 0.07, 0.19, 0.97);
+}
+@keyframes auth-shake {
+  10%, 90% { transform: translateX(-2px); }
+  20%, 80% { transform: translateX(3px); }
+  30%, 50%, 70% { transform: translateX(-5px); }
+  40%, 60% { transform: translateX(5px); }
+}
+.auth-btn {
+  margin-top: 4px;
+  width: 100%;
+  background: var(--accent);
+  color: #000;
+  border: 0; border-radius: 6px;
+  padding: 12px 18px;
+  font-family: var(--font-display); font-weight: 800; font-size: 13px;
+  letter-spacing: 1.2px;
+  cursor: pointer;
+  display: flex; align-items: center; justify-content: center; gap: 8px;
+  transition: background 0.12s, transform 0.08s;
+}
+.auth-btn:hover { background: #1de17c; }
+.auth-btn:active { transform: scale(0.985); }
+.auth-btn:disabled {
+  opacity: 0.55; cursor: not-allowed;
+  background: var(--surface-3); color: var(--text-3);
+}
+.auth-btn i { font-size: 16px; }
+.auth-msg {
+  min-height: 16px;
+  font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.3px;
+  text-align: center;
+  margin-top: 2px;
+}
+.auth-msg.error   { color: #f87171; }
+.auth-msg.success { color: #4ade80; }
+.auth-footer {
+  margin-top: 22px; padding-top: 16px;
+  border-top: 1px solid var(--border);
+  font-family: var(--font-mono); font-size: 11px;
+  color: var(--text-3); text-align: center;
+}
+.auth-footer a { color: var(--accent); font-weight: 600; }
+body.auth-locked { overflow: hidden; }
+
+/* === HEADER / TOPBAR === */
+.topbar {
+  position: sticky; top: 0; z-index: 50;
+  background: var(--bg); border-bottom: 1px solid var(--border);
+  padding: 12px 16px;
+  display: flex; align-items: center; justify-content: space-between;
+}
+.brand { display: flex; align-items: center; gap: 9px; }
+.logo-check {
+  width: 28px; height: 28px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
+}
+.logo-check svg { width: 28px; height: 28px; display: block; }
+.brand-text {
+  font-family: var(--font-display); font-weight: 900;
+  font-size: 18px; letter-spacing: -0.02em; line-height: 1; color: #fff;
+}
+.brand-text .sub {
+  display: block; font-size: 10px; color: var(--text-3); font-weight: 600;
+  letter-spacing: 1.5px; margin-top: 3px; text-transform: uppercase;
+}
+.topbar-meta {
+  display: flex; align-items: center; gap: 12px;
+  font-family: var(--font-mono); font-size: 10px; color: var(--text-3);
+}
+
+/* === CROSS-LINK PILL (e.g. "back to AFL" from WC tool) === */
+.cross-link {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 4px 8px;
+  background: var(--surface-2); border: 1px solid var(--border);
+  border-radius: 5px;
+  color: var(--text-2) !important;
+  font-weight: 700; font-size: 10px; letter-spacing: 0.8px;
+  text-decoration: none;
+  transition: background 0.12s, color 0.12s, border-color 0.12s;
+}
+.cross-link:hover {
+  background: var(--accent); color: #000 !important; border-color: var(--accent);
+}
+.cross-link i { font-size: 13px; }
+.cross-link-label { letter-spacing: 0.5px; }
+@media (max-width: 480px) {
+  .cross-link-label { display: none; }
+  .cross-link { padding: 4px 6px; }
+}
+
+/* === FRESHNESS PILL (data update indicator) === */
+.freshness-pill {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 3px 8px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  font-family: var(--font-mono); font-size: 10px; font-weight: 600;
+  color: var(--text-3);
+  letter-spacing: 0.4px;
+}
+.freshness-pill::before {
+  content: ""; width: 6px; height: 6px; border-radius: 50%;
+  background: var(--accent);
+}
+.freshness-pill.stale::before      { background: var(--warn); }
+.freshness-pill.very-stale::before { background: var(--bad); }
+
+/* === LIVE TICKER (pulsing dot for in-play games) === */
+.ticker { display: flex; align-items: center; gap: 6px; }
+.ticker-dot {
+  width: 6px; height: 6px; border-radius: 50%;
+  background: var(--accent);
+  animation: pulse 2s ease-in-out infinite;
+}
+@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+
+/* === TAB NAV === */
+.tabnav {
+  display: flex; background: var(--bg);
+  border-bottom: 1px solid var(--border);
+  position: sticky; top: 57px; z-index: 49;
+}
+.tab {
+  flex: 1; padding: 14px 8px; text-align: center;
+  font-family: var(--font-display); font-weight: 600;
+  font-size: 14px; letter-spacing: 1px; text-transform: uppercase;
+  color: var(--text-2); cursor: pointer; border: none; background: transparent;
+  border-bottom: 2px solid transparent;
+  transition: color 0.15s, border-color 0.15s;
+}
+.tab:hover { color: var(--text); }
+.tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+.tab i { display: block; font-size: 16px; margin-bottom: 2px; }
+
+/* === PAGE CONTAINER === */
+.page { padding: 16px; max-width: 1100px; margin: 0 auto; }
+.page-header {
+  display: flex; align-items: baseline; justify-content: space-between;
+  margin-bottom: 16px; flex-wrap: wrap; gap: 8px;
+}
+.page-title {
+  font-family: var(--font-display); font-weight: 700;
+  font-size: 22px; letter-spacing: 0.5px; line-height: 1;
+}
+.page-sub {
+  font-family: var(--font-mono); font-size: 10px;
+  color: var(--text-3); letter-spacing: 1px; text-transform: uppercase;
+}
+
+/* === FILTER BAR (generic toggle row) === */
+.filterbar {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 6px; padding: 8px;
+  margin-bottom: 16px;
+}
+.filter-toggle {
+  display: inline-flex;
+  background: var(--surface-2); border-radius: 4px;
+  padding: 2px; gap: 2px;
+}
+.filter-toggle button {
+  background: transparent; color: var(--text-2); border: none;
+  padding: 6px 12px;
+  font-family: var(--font-display); font-weight: 600;
+  font-size: 12px; letter-spacing: 1px; text-transform: uppercase;
+  border-radius: 3px; cursor: pointer;
+}
+.filter-toggle button.active { background: var(--surface-3); color: var(--accent); }
+
+/* === SECTION TITLE (page-level section headers) === */
+.section-title {
+  font-family: var(--font-display); font-weight: 700; font-size: 16px;
+  letter-spacing: 1px; text-transform: uppercase; margin: 20px 0 10px;
+  display: flex; align-items: center; gap: 8px;
+}
+.section-title::before {
+  content: ''; width: 3px; height: 14px;
+  background: var(--accent);
+}
+
+/* === CREW TILE GRID (Degen Crew home page) === */
+.crew-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 10px;
+}
+.crew-tile {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 16px 12px; cursor: pointer;
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  min-height: 110px; text-align: center;
+  transition: border-color 0.15s, background 0.15s, transform 0.1s;
+}
+.crew-tile:hover  { border-color: var(--accent); background: var(--surface-2); }
+.crew-tile:active { transform: scale(0.98); }
+.crew-tile-icon {
+  width: 36px; height: 36px;
+  display: grid; place-items: center;
+  color: var(--accent); margin-bottom: 8px; font-size: 24px;
+}
+.crew-tile-name {
+  font-family: var(--font-display); font-weight: 700; font-size: 14px;
+  letter-spacing: 0.5px; line-height: 1.1; text-transform: uppercase;
+}
+.crew-tile-sub {
+  font-family: var(--font-mono); font-size: 9px; color: var(--text-3);
+  letter-spacing: 0.5px; margin-top: 4px;
+}
+
+/* === EMPTY STATE === */
+.empty {
+  background: var(--surface);
+  border: 1px dashed var(--border);
+  border-radius: 6px;
+  padding: 32px 16px; text-align: center;
+  color: var(--text-3); font-family: var(--font-mono); font-size: 12px;
+}
+.empty .ico { font-size: 28px; margin-bottom: 8px; opacity: 0.5; }
+
+/* === BACK BUTTON === */
+.back-btn {
+  background: transparent; border: 1px solid var(--border);
+  color: var(--text-2);
+  font-family: var(--font-display); font-weight: 600; font-size: 11px;
+  letter-spacing: 1px; text-transform: uppercase;
+  padding: 6px 12px; border-radius: 4px; cursor: pointer;
+  display: inline-flex; align-items: center; gap: 6px;
+  margin-bottom: 12px;
+}
+.back-btn:hover { color: var(--accent); border-color: var(--accent); }
+
+/* === DATA STATUS PANEL === */
+.data-status {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 6px; padding: 12px;
+  font-family: var(--font-mono); font-size: 11px; color: var(--text-2);
+  margin-bottom: 16px;
+}
+.data-status-row { display: flex; justify-content: space-between; padding: 3px 0; }
+.data-status .ok      { color: var(--good); }
+.data-status .pending { color: var(--warn); }
+.data-status .err     { color: var(--bad); }
+
+/* === BOOT OVERLAY (branded initial load screen) === */
+.boot-overlay {
+  position: fixed; inset: 0;
+  background: var(--bg);
+  z-index: 99998;
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  gap: 18px;
+  transition: opacity 0.25s ease;
+}
+.boot-overlay.hide { opacity: 0; pointer-events: none; }
+.boot-logo {
+  width: 64px; height: 64px;
+  border-radius: 50%;
+  background: var(--accent);
+  display: grid; place-items: center;
+  box-shadow: 0 0 0 4px rgba(34,197,94,0.18);
+}
+.boot-logo i { font-size: 32px; color: #0a0a0a; }
+.boot-title {
+  font-family: var(--font-display); font-weight: 800;
+  font-size: 22px; color: var(--text);
+  letter-spacing: 0.5px;
+  margin-top: 4px;
+}
+.boot-sub {
+  font-family: var(--font-mono); font-size: 10px;
+  color: var(--text-3); letter-spacing: 1.5px;
+  text-transform: uppercase;
+}
+.boot-dots { display: flex; gap: 6px; margin-top: 10px; }
+.boot-dot {
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  opacity: 0.3;
+  animation: bootPulse 1.2s ease-in-out infinite;
+}
+.boot-dot:nth-child(2) { animation-delay: 0.2s; }
+.boot-dot:nth-child(3) { animation-delay: 0.4s; }
+@keyframes bootPulse {
+  0%, 80%, 100% { opacity: 0.3; transform: scale(0.85); }
+  40%           { opacity: 1;   transform: scale(1.1);  }
+}
+.boot-status {
+  font-family: var(--font-mono); font-size: 10px;
+  color: var(--text-3); letter-spacing: 0.5px;
+  margin-top: 12px; min-height: 14px;
+}
+
+/* === LOADER CARD (file-input fallback when autoload fails) === */
+.loader-card {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 6px; padding: 24px; text-align: center;
+  margin-bottom: 16px;
+}
+.loader-card .file-input-wrap {
+  margin-top: 12px;
+  display: flex; flex-direction: column; gap: 8px;
+}
+.loader-card input[type=file] {
+  background: var(--surface-2); border: 1px solid var(--border);
+  color: var(--text); padding: 8px; border-radius: 4px;
+  font-family: var(--font-mono); font-size: 11px; width: 100%;
+}
+.loader-card label {
+  font-family: var(--font-display); font-size: 12px; font-weight: 600;
+  color: var(--text-2); letter-spacing: 1px; text-transform: uppercase;
+  text-align: left;
+}
+
+/* === META BAR (pill row at top of focused entity) === */
+.meta-bar {
+  display: flex; flex-wrap: wrap; gap: 16px;
+  margin-bottom: 12px; padding: 8px 12px;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 6px;
+  font-family: var(--font-mono); font-size: 10px;
+  color: var(--text-2); letter-spacing: 0.5px;
+}
+.meta-bar .meta-item { display: flex; align-items: center; gap: 6px; }
+.meta-bar .meta-item i { color: var(--accent); font-size: 13px; }
+.meta-bar .meta-key { color: var(--text-3); text-transform: uppercase; }
+.meta-bar .meta-val { color: var(--text); font-weight: 500; }
+
+/* === UNIVERSAL DATA FILTER STRIP ===
+   Use for "Last 12mo / All time" + "Exclude friendlies" type toggles
+   that filter the data fed into downstream sections. */
+.data-filter-strip {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  border-radius: 6px;
+  padding: 10px 12px;
+  margin-bottom: 12px;
+  display: flex; flex-direction: column; gap: 8px;
+}
+.dfilt-row {
+  display: flex; align-items: center; gap: 10px;
+  flex-wrap: wrap;
+}
+.dfilt-lbl {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-family: var(--font-mono); font-size: 10px;
+  color: var(--text-3); letter-spacing: 0.5px;
+  text-transform: uppercase;
+  min-width: 110px;
+}
+.dfilt-lbl i { color: var(--accent); font-size: 14px; }
+.dfilt-chips {
+  display: inline-flex; gap: 4px; flex-wrap: wrap;
+}
+.dfilt-chip {
+  background: var(--surface-2); color: var(--text-2);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 5px 10px;
+  font-family: var(--font-display); font-weight: 600;
+  font-size: 11px; letter-spacing: 0.4px;
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s, border-color 0.12s;
+}
+.dfilt-chip:hover { border-color: var(--accent); color: var(--text); }
+.dfilt-chip.active {
+  background: var(--accent); color: #0a0a0a;
+  border-color: var(--accent);
+}
+.dfilt-note {
+  font-family: var(--font-mono); font-size: 9px;
+  color: var(--text-3); font-style: italic;
+  letter-spacing: 0.3px;
+}
+
+/* === TP-COLLAPSE (universal collapsible section) ===
+   Used everywhere there's a "click to expand" pattern. Built on the
+   native <details>/<summary> element so it works without JS.
+
+   Markup:
+     <details class="tp-collapse" open>
+       <summary class="tp-collapse-sum">
+         <i class="ti ti-icon" aria-hidden="true"></i>
+         <span class="tp-collapse-title">Section name</span>
+         <i class="ti ti-chevron-down tp-collapse-chev" aria-hidden="true"></i>
+       </summary>
+       <div class="tp-collapse-body">
+         <div class="tp-body-meta">Optional context line (sample size, window)</div>
+         <!-- content -->
+       </div>
+     </details>
+*/
+.tp-collapse {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 6px; margin: 0 0 16px;
+  overflow: hidden;
+}
+.tp-collapse-sum {
+  list-style: none; cursor: pointer; padding: 11px 14px;
+  display: flex; align-items: center; gap: 8px;
+  font-family: var(--font-display); font-weight: 700; font-size: 13px;
+  color: var(--text);
+  transition: background 0.12s;
+}
+.tp-collapse-sum::-webkit-details-marker { display: none; }
+.tp-collapse-sum:hover { background: var(--surface-2); }
+.tp-collapse-sum > i:first-child { color: var(--accent); font-size: 16px; }
+.tp-collapse-title { letter-spacing: 0.2px; }
+.tp-collapse-chev {
+  margin-left: auto; color: var(--text-3); font-size: 14px;
+  transition: transform 0.18s ease;
+}
+.tp-collapse[open] .tp-collapse-chev { transform: rotate(180deg); }
+.tp-collapse-body {
+  border-top: 1px solid var(--border);
+  background: var(--surface-2);
+  padding: 10px 12px;
+}
+/* Dashed subtitle inside a collapse body — sample size, window, opponent
+   reference. Replaces "summary meta pill" pattern so closed sections stay
+   clean and the context only shows on expand. */
+.tp-body-meta {
+  font-family: var(--font-mono); font-size: 10px;
+  color: var(--text-3); letter-spacing: 0.4px;
+  text-transform: uppercase;
+  padding-bottom: 8px;
+  margin-bottom: 8px;
+  border-bottom: 1px dashed var(--border);
+}
+/* Toolbar slot inside the collapse body for in-section controls
+   (toggle, sort, filter). Right-aligned so it doesn't fight with body content. */
+.tp-toolbar {
+  display: flex; justify-content: flex-end; align-items: center;
+  margin-bottom: 8px;
+  flex-wrap: wrap; gap: 4px;
+}
+
+/* === GENERIC PILL VOCABULARY ===
+   Base pill class for chips, badges, statuses. Apply modifier classes
+   to color it. Sport-specific tools should extend this rather than
+   reinvent — keeps the visual language consistent. */
+.jtt-pill {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 4px 9px; border-radius: 4px;
+  font-family: var(--font-mono); font-size: 10px;
+  letter-spacing: 0.4px; font-weight: 600;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--text-2);
+}
+.jtt-pill i { font-size: 12px; }
+.jtt-pill.accent  { background: var(--accent-bg);             color: var(--accent);  border-color: rgba(34,197,94,0.30); }
+.jtt-pill.warn    { background: rgba(234,179,8,0.10);         color: #facc15;        border-color: rgba(234,179,8,0.30); }
+.jtt-pill.bad     { background: rgba(239,68,68,0.10);         color: #f87171;        border-color: rgba(239,68,68,0.30); }
+.jtt-pill.info    { background: rgba(59,130,246,0.10);        color: #60a5fa;        border-color: rgba(59,130,246,0.30); }
+.jtt-pill.purple  { background: rgba(168,139,250,0.10);       color: #a78bfa;        border-color: rgba(168,139,250,0.30); }
+
+/* === CMB FAB (floating "Check My Bet" trigger) ===
+   Sits fixed bottom-right on every page. Click opens the .cmb-overlay. */
+.cmb-fab {
+  position: fixed;
+  bottom: 18px; right: 18px;
+  z-index: 9000;
+  background: var(--accent);
+  color: #0a0a0a;
+  border: none; border-radius: 24px;
+  padding: 11px 16px 11px 14px;
+  font-family: var(--font-display); font-weight: 700;
+  font-size: 13px; letter-spacing: 0.5px;
+  display: inline-flex; align-items: center; gap: 6px;
+  cursor: pointer;
+  box-shadow: 0 4px 14px rgba(0,0,0,0.5), 0 0 0 1px rgba(74,222,128,0.5);
+  transition: transform 0.15s, box-shadow 0.15s;
+}
+.cmb-fab:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 18px rgba(0,0,0,0.6), 0 0 0 1px rgba(74,222,128,0.8);
+}
+.cmb-fab i { font-size: 18px; }
+@media (max-width: 480px) {
+  .cmb-fab { bottom: 14px; right: 14px; padding: 10px 13px; font-size: 12px; }
+  .cmb-fab-lbl { display: none; }
+  .cmb-fab i { font-size: 20px; }
+}
+
+/* === CMB OVERLAY + MODAL (Check My Bet container) ===
+   Drop in your sport-specific prop validation UI inside .cmb-modal. */
+.cmb-overlay {
+  display: none;
+  position: fixed; inset: 0;
+  background: rgba(0,0,0,0.78);
+  backdrop-filter: blur(4px);
+  z-index: 9500;
+  padding: 24px 16px;
+  overflow-y: auto;
+  align-items: flex-start; justify-content: center;
+}
+.cmb-overlay.open { display: flex; }
+.cmb-modal {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  max-width: 560px; width: 100%;
+  padding: 16px 14px 20px;
+  max-height: calc(100vh - 48px);
+  overflow-y: auto;
+}
+@media (max-width: 480px) {
+  .cmb-overlay { padding: 0; }
+  .cmb-modal { border-radius: 0; max-height: 100vh; min-height: 100vh; }
+}
+.cmb-hdr {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 12px;
+}
+.cmb-hdr h2 {
+  font-family: var(--font-display); font-weight: 700;
+  font-size: 17px; margin: 0;
+  display: inline-flex; align-items: center; gap: 7px;
+  color: var(--text);
+}
+.cmb-hdr h2 i { color: var(--accent); font-size: 19px; }
+.cmb-close {
+  background: none; border: none; color: var(--text-2);
+  font-size: 26px; line-height: 1; cursor: pointer;
+  padding: 0 6px;
+}
+.cmb-close:hover { color: var(--text); }
+.cmb-tabs {
+  display: flex; gap: 4px;
+  background: var(--surface-2); border-radius: 5px;
+  padding: 3px;
+  margin-bottom: 12px;
+}
+.cmb-tab {
+  flex: 1;
+  background: none; border: none;
+  color: var(--text-2);
+  padding: 7px 8px;
+  font-family: var(--font-display); font-weight: 600; font-size: 12px;
+  letter-spacing: 0.3px;
+  border-radius: 4px; cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center; gap: 5px;
+  transition: background 0.15s, color 0.15s;
+}
+.cmb-tab:hover { color: var(--text); }
+.cmb-tab.cmb-tab-active { background: var(--surface); color: var(--accent); }
+.cmb-tab i { font-size: 14px; }
+
+/* === FORM FIELDS (used in CMB modal + filter areas) === */
+.jtt-field { display: flex; flex-direction: column; gap: 4px; margin-bottom: 10px; }
+.jtt-field label {
+  font-family: var(--font-mono); font-size: 9px;
+  color: var(--text-3); letter-spacing: 0.6px; text-transform: uppercase;
+}
+.jtt-field input, .jtt-field select {
+  background: var(--surface-2); border: 1px solid var(--border);
+  color: var(--text); border-radius: 4px;
+  padding: 8px 10px;
+  font-family: var(--font-mono); font-size: 13px;
+  outline: none;
+}
+.jtt-field input:focus, .jtt-field select:focus {
+  border-color: var(--accent);
+}
+
+/* === CHECKBOX / TOGGLE (data filter chips, etc.) === */
+.jtt-check {
+  display: inline-flex; align-items: center; gap: 8px;
+  cursor: pointer; user-select: none;
+  font-family: var(--font-mono); font-size: 11px;
+  color: var(--text-2); letter-spacing: 0.3px;
+}
+.jtt-check input[type=checkbox] {
+  appearance: none; -webkit-appearance: none;
+  width: 16px; height: 16px;
+  border: 1px solid var(--border-light);
+  background: var(--surface-2);
+  border-radius: 3px;
+  position: relative; cursor: pointer;
+  transition: background 0.12s, border-color 0.12s;
+}
+.jtt-check input[type=checkbox]:checked {
+  background: var(--accent); border-color: var(--accent);
+}
+.jtt-check input[type=checkbox]:checked::after {
+  content: ''; position: absolute;
+  left: 4px; top: 1px;
+  width: 5px; height: 9px;
+  border: solid #0a0a0a;
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg);
+}
+
+/* === MOBILE RESPONSIVE BASE === */
+@media (max-width: 540px) {
+  .page { padding: 12px; }
+  .page-title { font-size: 19px; }
+  .tab { font-size: 12px; padding: 12px 6px; }
+  .tab i { font-size: 14px; }
+  .meta-bar { gap: 10px; padding: 6px 10px; font-size: 9px; }
+  .data-filter-strip { padding: 8px 10px; }
+  .tp-collapse-sum { padding: 9px 12px; font-size: 12px; }
+  .tp-collapse-body { padding: 8px 10px; }
+  .section-title { font-size: 14px; margin: 16px 0 8px; }
+  .crew-grid { grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 8px; }
+  .crew-tile { min-height: 95px; padding: 12px 8px; }
+  .crew-tile-icon { font-size: 22px; }
+  .crew-tile-name { font-size: 12px; }
+}
+
+@media (max-width: 380px) {
+  .brand-text { font-size: 16px; }
+  .brand-text .sub { font-size: 9px; }
+  .topbar { padding: 10px 12px; }
+  .freshness-pill { font-size: 9px; }
+}
