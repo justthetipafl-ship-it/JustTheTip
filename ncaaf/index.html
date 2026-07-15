@@ -1252,6 +1252,9 @@
       top(snags,'paydirt','Tuddy','#f59e0b');
       top(chunkPlays,'chunk','Chunk','#22d3ee');
       top(usageTrend,'usage','Usage','#22c55e');
+      top(dualThreat,'dual','Dual threat','#22d3ee');
+      top(freshmanWatch,'frosh','Rising frosh','#22c55e');
+      (garbageTime()||[]).slice(0,1).forEach(x=>bits.push({i:'ti-trash',t:abbr(x.fav)+' -'+Math.abs(x.spread).toFixed(0)+': '+Math.round(x.p17*100)+'% blowout',k:'garbage',c:'#ef4444'}));
       top(nextManUp,'next','Next man up','#f97316');
       if(!bits.length) return '';
       return '<div style="display:flex;gap:8px;overflow-x:auto;padding:2px 0 10px;-webkit-overflow-scrolling:touch">'+
@@ -1833,11 +1836,13 @@
         wx:_fc(weatherWatch(),6).length,
         usage:_fc(usageTrend(),8).length, next:_fc(nextManUp(),6).length,
         stack:_fc(stackLab(),6).length,
+        dual:_fc(dualThreat(),8).length, frosh:_fc(freshmanWatch(),8).length,
+        garbage:_fc(garbageTime(),6).length, trap:_fc(trapWatch(),6).length,
         form:_fc(formAlerts('spike'),6,25).length+_fc(formAlerts('drop'),6,25).length };
       total=Object.values(counts).reduce((a,b)=>a+b,0);
       html+=ouSection(ov,'over','Green Lights','ti-traffic-lights','c-green');
       html+=ouSection(un,'under','Death Riders','ti-skull','c-red');
-      ['paydirt','elite','streak','chunk','usage','next','stack','wx','form'].forEach(k=>{ html+=renderTile(k); });
+      ['paydirt','elite','streak','chunk','usage','next','stack','wx','dual','frosh','garbage','trap','form'].forEach(k=>{ html+=renderTile(k); });
     } finally { _degenScope=prevScope; _degenFocused=prevFocus; }
     const hdr='<div class="tp-sec"><div class="sec-title"><i class="ti ti-flame"></i> Degen Signals</div><div class="sec-meta">'+total+' fired</div></div>';
     return hdr+(html||'<div class="tp-body-meta" style="border:0">No signals fired.</div>');
@@ -2880,6 +2885,134 @@
   // position (run-heavy, high-play-volume offences feed LB/DL tackle counts) —
   // plus opponent plays/g and rush att/g league ranks. Hard-excluded when the
   // opponent starves the position of tackle chances.
+  /* ===== COLLEGE-NATIVE ENGINES (build 5) ===== */
+  // Tempo Kings — top-decile pace teams on this slate; volume props ride play counts
+  function tempoKings(){
+    const teams=_fixtureSet(); const out=[];
+    const all=Object.values(state.idx.teamMap||{}).filter(t=>t.plays!=null&&(t.matches||0)>=2);
+    if(all.length<20) return all.length?[]:null;
+    const ranked=[...all].sort((a,b)=>(b.plays||0)-(a.plays||0));
+    const cut=Math.max(3,Math.ceil(ranked.length*0.12));
+    ranked.slice(0,cut).forEach((t,i)=>{
+      if(!teams.has(t.team)) return;
+      const opp=nextOpp(t.team); if(!opp) return;
+      const to=state.idx.teamMap[opp]||{};
+      const oppPaceRank=to.plays!=null?ranked.findIndex(x=>x.team===opp)+1:null;
+      const trackMeet=oppPaceRank!=null&&oppPaceRank<=Math.ceil(ranked.length*0.25);
+      const vols=playersOnTeam(t.team).filter(p=>(p.matches||0)>=3&&(p.touchShare||0)>=12)
+        .sort((a,b)=>(b.touchShare||0)-(a.touchShare||0)).slice(0,3);
+      out.push({team:t.team,opp,rank:i+1,n:ranked.length,plays:t.plays,oppAllows:to.plays_a||null,trackMeet,vols});
+    });
+    return out.sort((a,b)=>a.rank-b.rank);
+  }
+  function tempoCard(c){
+    const rows=c.vols.map(p=>{
+      const q=esc(p.name).replace(/\x27/g,"\\\x27");
+      return '<div style="padding:5px 0;border-top:1px solid var(--line);cursor:pointer;display:flex;justify-content:space-between;gap:8px" onclick="openPlayer(\''+q+'\')">'+
+        '<span style="font-weight:700;font-size:12px">'+esc(p.name)+' <span style="color:var(--text-3);font-weight:400">'+posShort(p.position)+'</span></span>'+
+        '<span style="font-family:var(--font-mono);font-size:11px;color:var(--text-2)">'+fmt(p.touchShare,0)+'% touch · '+fmt(p.fanPts,1)+' FP'+lineTag(p.name,p.position==='QB'?'passYds':p.position==='RB'?'rushYds':'recYds')+'</span></div>';
+    }).join('');
+    return '<div class="lc-card"><div class="lc-hd"><span class="lc-nm"><i class="ti ti-gauge"></i> '+esc(teamSchool(c.team))+' — #'+c.rank+' pace of '+c.n+'</span>'+
+      '<span class="lc-meta">'+fmt(c.plays,1)+' plays/g · v '+esc(abbr(c.opp))+(c.oppAllows?' (allow '+fmt(c.oppAllows,1)+')':'')+(c.trackMeet?' · <b style="color:#22d3ee">track meet</b>':'')+'</span></div>'+rows+'</div>';
+  }
+  // Garbage Time — calibrated blowout risk from 20 seasons of closing spreads
+  function _calibFor(sp){
+    const C=state.data.calib||[]; const a=Math.abs(+sp||0); if(!C.length) return null;
+    for(let i=0;i<C.length;i++){ const r=C[i];
+      if(a>=r.spreadLo&&(a<r.spreadHi||i===C.length-1)) return r; }
+    return null;
+  }
+  function garbageTime(){
+    const scope=_degenScope; const out=[];
+    (state.data.fixture||[]).forEach(g=>{
+      if(scope && !scope.has(g.home) && !scope.has(g.away)) return;
+      if(g.spread==null||Math.abs(g.spread)<14) return;
+      const cal=_calibFor(g.spread); if(!cal||(cal.pBlowout17||0)<0.45) return;
+      const fav=g.spread<0?g.home:g.away, dog=fav===g.home?g.away:g.home;
+      const stars=playersOnTeam(fav).filter(p=>(p.matches||0)>=3&&(p.touchShare||0)>=15)
+        .sort((a,b)=>(b.touchShare||0)-(a.touchShare||0)).slice(0,2);
+      const chaser=playersOnTeam(dog).filter(p=>p.position==='WR'&&(p.matches||0)>=3)
+        .sort((a,b)=>(b.recYds||0)-(a.recYds||0))[0]||null;
+      out.push({g,fav,dog,spread:g.spread,p17:cal.pBlowout17,p24:cal.pBlowout24,med:cal.medianMargin,n:cal.n,stars,chaser});
+    });
+    return out.sort((a,b)=>b.p17-a.p17);
+  }
+  function garbageCard(c){
+    const pl=p=>{ const q=esc(p.name).replace(/\x27/g,"\\\x27");
+      return '<span class="lu-p" style="cursor:pointer" onclick="openPlayer(\''+q+'\')">'+esc(p.name)+' '+fmt(p.touchShare,0)+'%</span>'; };
+    return '<div class="lc-card"><div class="lc-hd"><span class="lc-nm"><i class="ti ti-trash"></i> '+esc(abbr(c.fav))+' -'+Math.abs(c.spread).toFixed(1)+' v '+esc(abbr(c.dog))+'</span>'+
+      '<span class="lc-meta">'+Math.round(c.p17*100)+'% land 17+ · '+Math.round(c.p24*100)+'% land 24+ · median margin '+c.med+' (n='+c.n+' hist)</span></div>'+
+      '<div style="padding:6px 0;border-top:1px solid var(--line)"><div class="deg-sub" style="margin-bottom:4px">4th-quarter sit risk — '+esc(abbr(c.fav))+' volume unders live late:</div><div class="lu-grid" style="gap:4px">'+c.stars.map(pl).join(' ')+'</div></div>'+
+      (c.chaser?'<div style="padding:6px 0;border-top:1px solid var(--line)"><div class="deg-sub" style="margin-bottom:4px">Chasing script — '+esc(abbr(c.dog))+' airs it out trailing:</div><div class="lu-grid" style="gap:4px">'+pl(c.chaser)+'</div></div>':'')+
+      '</div>';
+  }
+  // Trap Watch — ranked chalk in a letdown spot (fresh off a 21+ blowout, big fav v unranked)
+  function _lastMargin(team){
+    let best=null;
+    (state.data.results||[]).forEach(r=>{
+      if(r.hs==null||r.as==null) return;
+      if(r.home!==team&&r.away!==team) return;
+      const k=String(r.date||'');
+      if(best&&k<=best.k) return;
+      const m=r.home===team?r.hs-r.as:r.as-r.hs;
+      best={k,m};
+    });
+    return best?best.m:null;
+  }
+  function trapWatch(){
+    const scope=_degenScope; const out=[];
+    (state.data.fixture||[]).forEach(g=>{
+      if(scope && !scope.has(g.home) && !scope.has(g.away)) return;
+      if(g.spread==null||Math.abs(g.spread)<10) return;
+      const fav=g.spread<0?g.home:g.away, dog=fav===g.home?g.away:g.home;
+      const favRank=fav===g.home?g.homeRank:g.awayRank;
+      const dogRank=fav===g.home?g.awayRank:g.homeRank;
+      if(!favRank||dogRank) return;
+      const lm=_lastMargin(fav);
+      if(lm==null||lm<21) return;
+      const star=playersOnTeam(fav).filter(p=>(p.matches||0)>=3)
+        .sort((a,b)=>(b.touchShare||0)-(a.touchShare||0))[0]||null;
+      out.push({g,fav,dog,favRank,spread:g.spread,lastMargin:lm,star});
+    });
+    return out.sort((a,b)=>b.lastMargin-a.lastMargin);
+  }
+  function trapCard(c){
+    const q=c.star?esc(c.star.name).replace(/\x27/g,"\\\x27"):'';
+    return '<div class="lc-card"><div class="lc-hd"><span class="lc-nm"><i class="ti ti-alert-triangle"></i> #'+c.favRank+' '+esc(teamSchool(c.fav))+' -'+Math.abs(c.spread).toFixed(1)+' v '+esc(teamSchool(c.dog))+'</span>'+
+      '<span class="lc-meta">won last week by '+c.lastMargin+' · unranked dog · classic letdown shape</span></div>'+
+      '<div style="padding:6px 0;border-top:1px solid var(--line)"><div class="deg-sub">Market prices the highlight reel — flat spots hit star volume first'+
+      (c.star?': <span class="lu-p" style="cursor:pointer" onclick="openPlayer(\''+q+'\')">'+esc(c.star.name)+' '+fmt(c.star.touchShare,0)+'% touch</span>':'')+
+      '. Dog +'+Math.abs(c.spread).toFixed(1)+' and dog volume overs are the value side.</div></div></div>';
+  }
+  // Dual Threat — QBs whose legs are a second prop market
+  function dualThreat(){
+    const teams=_fixtureSet(); const out=[];
+    (state.idx.players||[]).filter(p=>teams.has(p.team)&&p.position==='QB'&&(p.matches||0)>=3).forEach(p=>{
+      const ry=p.rushYds||0, ra=p.rushAtt||0;
+      if(!(ry>=30||(ra>=6&&ry>=20))) return;
+      const opp=nextOpp(p.team); if(!opp) return;
+      const dvpPct=JTTScoring.getDVPPct(opp,'QB','rushYds');
+      out.push({p,opp,ry,ra,ypc:p.ypc||((ra>0)?ry/ra:0),dvpPct});
+    });
+    return out.sort((a,b)=>b.ry-a.ry);
+  }
+  // Freshman Watch — FR/SO with a rising role (touch share L3 vs season)
+  function freshmanWatch(){
+    const teams=_fixtureSet(); const out=[];
+    (state.idx.players||[]).filter(p=>teams.has(p.team)&&(p.classYear==='FR'||p.classYear==='SO')&&(p.matches||0)>=3).forEach(p=>{
+      const logs=allLogs(p.name); if(logs.length<3) return;
+      const ts=r=>+r.touchShare||0;
+      const l3=logs.slice(-3), base=logs;
+      const av=a=>a.reduce((s,r)=>s+ts(r),0)/a.length;
+      const l3s=av(l3), ses=av(base);
+      const d=l3s-ses;
+      if(d<3||l3s<8) return;
+      const opp=nextOpp(p.team);
+      const key=p.position==='QB'?'passYds':p.position==='RB'?'rushYds':'recYds';
+      out.push({p,opp,d,l3s,ses,key,val:p[key]||0});
+    });
+    return out.sort((a,b)=>b.d-a.d);
+  }
   const DV_MARKETS=[['passYds','Pass Yds',150],['rushYds','Rush Yds',30],['recYds','Rec Yds',30],['receptions','Receptions',3],['rushAtt','Rush Att',8],['passAtt','Pass Att',24],['rushRecYds','Rush+Rec Yds',40]];
   const DV_MIN_DEFAULT=1.25;
   function _dvState(){ return state.view.dejaVu || (state.view.dejaVu={tier:3,minOdds:DV_MIN_DEFAULT,maxOdds:0,hail:false,sel:null,book:null,home:null,away:null,meets:2,markets:null}); }
@@ -3532,9 +3665,29 @@
     if(k==='multi'){
       return '<div id="multi-wrap">'+multiFilterBar()+'<div id="multi-results">'+multiResults()+'</div></div>';
     }
-    if(k==='tempo'||k==='garbage'||k==='trap'||k==='dual'||k==='frosh'){
-      const NAMES={tempo:'Tempo Kings',garbage:'Garbage Time',trap:'Trap Watch',dual:'Dual Threat',frosh:'Freshman Watch'};
-      return emptyState('ti-flame',NAMES[k]+' is arming','College-native engine lands in build 5 — the tile is wired and the data (pace, blowout calibration, ranks, class years) already ships in the weekly build.');
+    if(k==='tempo'){
+      const arr=tempoKings();
+      if(arr===null) return _degenFocused?'':emptyState('ti-gauge','Tempo Kings is arming','Pace ranks need a few completed weeks of team play counts.');
+      return degWrap('ti-gauge','Tempo Kings',_fc(arr,6).map(tempoCard),'c-blue');
+    }
+    if(k==='garbage'){
+      const rows=_fc(garbageTime(),6).map(garbageCard);
+      return (state.data.calib&&state.data.calib.length?'<div class="tp-body-meta" style="border:0;margin:0 0 8px">Blowout odds are calibrated on 16,000+ historical closing spreads — not vibes.</div>':'')+
+        degWrap('ti-trash','Garbage Time',rows,'c-red');
+    }
+    if(k==='trap'){
+      return degWrap('ti-alert-triangle','Trap Watch',_fc(trapWatch(),6).map(trapCard),'c-amber');
+    }
+    if(k==='dual'){
+      const rows=_byGame(_fc(dualThreat(),8), d=>d.p.team, d=>degRow(d.p.name,'#22d3ee',{v1:fmt(d.ry,1),l1:'rush yds/g',v2:fmt(d.ypc,1),l2:'ypc'},
+        'QB · '+abbr(d.p.team)+' v '+abbr(d.opp)+' · '+fmt(d.ra,1)+' carries/g · also '+fmt(d.p.passYds,0)+' pass yds/g'+
+        (d.dvpPct!=null?' · opp '+(d.dvpPct>=0?'+':'')+d.dvpPct.toFixed(0)+'% v QB rush':'')+lineTag(d.p.name,'rushYds')));
+      return degWrap('ti-arrows-split-2','Dual Threat',rows,'c-blue');
+    }
+    if(k==='frosh'){
+      const rows=_byGame(_fc(freshmanWatch(),8), f=>f.p.team, f=>degRow(f.p.name,'#22c55e',{v1:'\u25b2 +'+f.d.toFixed(1),l1:'touch share',v2:fmt(f.l3s,0)+'%',l2:'L3 share'},
+        f.p.classYear+' '+posShort(f.p.position)+' · '+abbr(f.p.team)+(f.opp?' v '+abbr(f.opp):'')+' · L3 '+f.l3s.toFixed(0)+'% vs season '+f.ses.toFixed(0)+'% · '+fmt(f.val,1)+' '+(f.key==='passYds'?'pass yds':f.key==='rushYds'?'rush yds':'rec yds')+'/g'+lineTag(f.p.name,f.key)));
+      return degWrap('ti-seeding','Freshman Watch',rows,'c-green');
     }
     return emptyState('ti-flame','Coming next','This tile ports next.');
   }
