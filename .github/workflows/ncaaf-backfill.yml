@@ -1,0 +1,107 @@
+name: JTT NCAAF — box-store backfill (manual, resumable)
+
+# Fills ncaaf/data/raw/player_box_{season}.json from ESPN summaries in
+# chunks. ~800 FBS games per season ≈ 6 dispatches at the default cap of 150
+# (or fewer with a higher cap). The committed store is the resume point:
+# re-dispatching the same season only fetches games still missing, so runs
+# are safely repeatable and interruption-proof (in-run checkpoint every 25).
+#
+# Suggested order: backfill 2025 first (weeks 1-16 in one or two runs at
+# max_fetch 400), then 2024. The weekly ncaaf-data.yml handles 2026 itself.
+#
+# Shares its concurrency group with ncaaf-data.yml so the two can never
+# write the box store at the same time.
+
+on:
+  workflow_dispatch:
+    inputs:
+      season:
+        description: "Season to backfill (e.g. 2024)"
+        required: true
+      weeks:
+        description: "Optional canonical week range, e.g. 1-8 (bowls = 17)"
+        required: false
+      max_fetch:
+        description: "Max ESPN summaries this run"
+        required: false
+        default: "150"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ncaaf-data
+  cancel-in-progress: false
+
+jobs:
+  backfill:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: ncaaf/requirements.txt
+
+      - name: Install deps
+        run: pip install -r ncaaf/requirements.txt
+
+      - name: Selftest (transforms + ESPN parser, no network)
+        run: python ncaaf/build_ncaaf_data.py --selftest
+
+      - name: Backfill box store
+        run: |
+          WEEKS="${{ github.event.inputs.weeks }}"
+          if [ -n "$WEEKS" ]; then
+            python ncaaf/build_ncaaf_data.py --out ncaaf/data \
+              --seasons 2024,2025,2026 --current 2026 \
+              --backfill ${{ github.event.inputs.season }} \
+              --weeks "$WEEKS" \
+              --max-fetch ${{ github.event.inputs.max_fetch }}
+          else
+            python ncaaf/build_ncaaf_data.py --out ncaaf/data \
+              --seasons 2024,2025,2026 --current 2026 \
+              --backfill ${{ github.event.inputs.season }} \
+              --max-fetch ${{ github.event.inputs.max_fetch }}
+          fi
+
+      - name: Commit store + rebuilt data
+        run: |
+          git config user.name  "jtt-bot"
+          git config user.email "actions@github.com"
+          git add ncaaf/data
+          if git diff --cached --quiet; then
+            echo "No changes — season already fully cached."
+          else
+            git commit -m "chore(ncaaf): backfill ${{ github.event.inputs.season }} $(date -u +%Y-%m-%dT%H:%MZ)"
+            pushed=0
+            for i in 1 2 3 4 5; do
+              if git pull --rebase --autostash origin main && git push; then
+                echo "pushed on attempt $i"; pushed=1; break
+              fi
+              echo "push contended by a concurrent commit, retrying ($i)…"; sleep $((RANDOM % 5 + 2))
+            done
+            if [ "$pushed" != "1" ]; then echo "::error::push failed after retries"; exit 1; fi
+          fi
+
+      - name: Preserve box-store progress on failure
+        if: failure()
+        run: |
+          git config user.name  "jtt-bot"
+          git config user.email "actions@github.com"
+          git add ncaaf/data/raw
+          if git diff --cached --quiet; then
+            echo "No raw-store progress to preserve."
+          else
+            git commit -m "chore(ncaaf): box-store checkpoint (run failed) $(date -u +%Y-%m-%dT%H:%MZ)"
+            for i in 1 2 3 4 5; do
+              if git pull --rebase --autostash origin main && git push; then break; fi
+              sleep $((RANDOM % 5 + 2))
+            done
+          fi
