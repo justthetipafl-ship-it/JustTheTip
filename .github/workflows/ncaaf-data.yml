@@ -1,0 +1,103 @@
+name: JTT NCAAF — split data refresh (advanced)
+
+# College football plays Sat-heavy with midweek MACtion. Two weekly runs:
+#   • Tue 09:00 UTC → after Monday settles: full box-store top-up, stats/DVP/
+#     gamelogs/first-TD refresh (fetches new ESPN summaries, cap 150/run)
+#   • Sat 13:00 UTC → pre-slate: scoreboard odds + AP ranks + injuries +
+#     weather ~3h before the noon-ET kicks
+# Plus manual dispatch (optionally with the weekly password → hashed into meta.json).
+# Off-season runs are cheap no-ops: identical output → nothing committed.
+#
+# The ESPN box store lives at ncaaf/data/raw/player_box_{yyyy}.json and is
+# committed — it IS the resume point. If a week has more new games than the
+# per-run cap, the next run picks up the remainder automatically.
+#
+# Shares its concurrency group with ncaaf-backfill.yml so the two can never
+# write the box store at the same time.
+
+on:
+  schedule:
+    - cron: "0 9 * * 2"    # Tuesday 09:00 UTC
+    - cron: "0 13 * * 6"   # Saturday 13:00 UTC (pre-slate)
+  workflow_dispatch:
+    inputs:
+      password:
+        description: "Weekly subscriber password (stored hashed, never in repo)"
+        required: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ncaaf-data
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: ncaaf/requirements.txt
+
+      - name: Install deps
+        run: pip install -r ncaaf/requirements.txt
+
+      - name: Selftest (transforms + ESPN parser, no network)
+        run: python ncaaf/build_ncaaf_data.py --selftest
+
+      - name: Build split data
+        run: |
+          PW="${{ github.event.inputs.password || secrets.NCAAF_WEEKLY_PASSWORD }}"
+          if [ -n "$PW" ]; then
+            python ncaaf/build_ncaaf_data.py --out ncaaf/data \
+              --seasons 2024,2025,2026 --current 2026 \
+              --max-fetch 150 --password "$PW"
+          else
+            python ncaaf/build_ncaaf_data.py --out ncaaf/data \
+              --seasons 2024,2025,2026 --current 2026 \
+              --max-fetch 150
+          fi
+
+      - name: Commit refreshed data
+        run: |
+          git config user.name  "jtt-bot"
+          git config user.email "actions@github.com"
+          git add ncaaf/data
+          if git diff --cached --quiet; then
+            echo "No changes."
+          else
+            git commit -m "chore(ncaaf): data refresh $(date -u +%Y-%m-%dT%H:%MZ)"
+            pushed=0
+            for i in 1 2 3 4 5; do
+              if git pull --rebase --autostash origin main && git push; then
+                echo "pushed on attempt $i"; pushed=1; break
+              fi
+              echo "push contended by a concurrent commit, retrying ($i)…"; sleep $((RANDOM % 5 + 2))
+            done
+            if [ "$pushed" != "1" ]; then echo "::error::push failed after retries"; exit 1; fi
+          fi
+
+      - name: Preserve box-store progress on failure
+        if: failure()
+        run: |
+          git config user.name  "jtt-bot"
+          git config user.email "actions@github.com"
+          git add ncaaf/data/raw
+          if git diff --cached --quiet; then
+            echo "No raw-store progress to preserve."
+          else
+            git commit -m "chore(ncaaf): box-store checkpoint (run failed) $(date -u +%Y-%m-%dT%H:%MZ)"
+            for i in 1 2 3 4 5; do
+              if git pull --rebase --autostash origin main && git push; then break; fi
+              sleep $((RANDOM % 5 + 2))
+            done
+          fi
