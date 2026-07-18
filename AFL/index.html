@@ -2295,7 +2295,7 @@
       _pmSec('Prop Calculator',propCalc(name),true)+
       _pmSec('Venue \u2014 this week',_venueSplitHTML(name,p),false)+
       _pmSec('Game Log',pmBoxScores(name,6),false)+
-      (opp?_pmSec('Similar Players',similarPlayers(p,_pcState?_pcState.stat:'disposals',opp,_pcState?_pcState.line:NaN,6),false):'');
+      (opp?_pmSec('Similar Players',similarPlayers(p,_pcState?_pcState.stat:'disposals',opp,_pcState?_pcState.line:NaN,6,_pcState?_pcState.side:'over'),false):'');
   }
   window._pmSetMode=function(m){_pmMode=m;_pmRender();};
   window._gsInput=function(v){
@@ -4288,7 +4288,7 @@
   function _pcInit(p,opp){
     const isFwd=p.position==='Key Forward'||p.position==='Gen. Forward'||p.position==='Mid-Forward';
     const stat=isFwd?'goals':'disposals';
-    return {stat, line:_pcDefaultLine(p.name,stat), scope:'season'};
+    return {stat, line:_pcDefaultLine(p.name,stat), scope:'season', side:'over'};
   }
   function _pcDefaultLine(name,stat){
     if(stat==='goals') return 1;                                  // default anytime goal (1+)
@@ -4323,14 +4323,15 @@
     }
     return null;
   }
-  function _pcChart(games,statKey,line,opp){
+  function _pcChart(games,statKey,line,opp,side){
+    const isU=side==='under';
     if(!games.length) return '<div class="pc-empty">No games in this window</div>';
     const isG=statKey==='goals'||statKey==='behinds';
     const vals=games.map(r=>r[statKey]||0);
     const mx=Math.max(line||0,...vals,1);
     const BAND=104;
     const cols=games.map(r=>{
-      const v=r[statKey]||0, hit=v>=line, isOpp=opp&&r.opponent===opp;
+      const v=r[statKey]||0, hit=isU?(v<line):(v>=line), isOpp=opp&&r.opponent===opp;
       const col=isOpp?'#f59e0b':(hit?'#22c55e':'#ef4444');
       const rnd=(''+(r.RoundName||'')).replace(/round\s*/i,'R').replace(/opening\s*round/i,'OR').replace(/\s+/g,'').slice(0,4)||'\u00b7';
       const op=r.opponent?abbr(r.opponent):'\u00b7';
@@ -4340,7 +4341,7 @@
         '<div style="font-size:8px;color:var(--text-3);margin-top:3px;white-space:nowrap">'+rnd+'</div>'+
         '<div style="font-size:8px;font-weight:700;color:'+(isOpp?'#f59e0b':'var(--text-3)')+';white-space:nowrap">'+op+'</div></div>';
     }).join('');
-    const dash='<div style="position:absolute;left:0;right:0;bottom:'+(18+Math.round(line/mx*BAND))+'px;border-top:1px dashed #999;pointer-events:none"><span style="position:absolute;right:0;top:-14px;font-size:9px;color:#bbb;font-weight:700">'+(isG?line:Math.round(line))+'+</span></div>';
+    const dash='<div style="position:absolute;left:0;right:0;bottom:'+(18+Math.round(line/mx*BAND))+'px;border-top:1px dashed #999;pointer-events:none"><span style="position:absolute;right:0;top:-14px;font-size:9px;color:#bbb;font-weight:700">'+(isU?'U':'')+(isG?line:Math.round(line))+(isU?'':'+')+'</span></div>';
     return '<div style="margin-top:10px"><div style="position:relative;display:flex;gap:2px;align-items:flex-end">'+cols+dash+'</div></div>';
   }
   function propCalc(name){
@@ -4352,38 +4353,66 @@
     const SCOPES=[['season','Season'],['l10','L10'],['l5','L5']].concat(opp?[['h2h','v '+abbr(opp)]]:[]);
     const scopes=SCOPES.map(([k,l])=>'<button class="pc-scope'+(k===S.scope?' on':'')+'" onclick="_pcScope(\''+k+'\')">'+l+'</button>').join('');
     const games=_pcGames(name,S.scope,opp);
-    const vals=games.map(r=>r[S.stat]||0), hits=vals.filter(v=>v>=S.line).length;
+    const isUnder=S.side==='under';
+    const vals=games.map(r=>r[S.stat]||0), hits=vals.filter(v=>isUnder?v<S.line:v>=S.line).length;
     const hr=games.length?hits/games.length:null;
     const hrCol=hr==null?'#888':(hr>=0.6?'#22c55e':hr>=0.45?'#eab308':'#ef4444');
-    const stepper='<div class="pc-line"><button onclick="_pcLine(-1)">\u2212</button><b>'+S.line+'+ '+label+'</b><button onclick="_pcLine(1)">+</button></div>';
+    const stepper='<div class="pc-line"><button onclick="_pcLine(-1)">\u2212</button><b>'+(isUnder?'Under '+S.line+' ':S.line+'+ ')+label+'</b><button onclick="_pcLine(1)">+</button></div>';
     const hrHtml='<div class="pc-hr" style="color:'+hrCol+'">'+(hr==null?'\u2014':Math.round(hr*100)+'%')+'<span>'+hits+'/'+games.length+' hit \u00b7 '+S.scope.toUpperCase()+'</span></div>';
     // odds at the chosen line
     const od=_pcOddsAt(name,S.stat,S.line);
+    const myPrice=od?(isUnder?od.under:od.over):null, betTxt=(isUnder?'Under '+S.line+' ':S.line+'+ ')+label;
     let oddsHtml;
-    if(od&&od.over!=null){
+    if(myPrice!=null){
       let implied=null, devig=false;
-      if(od.under!=null){ const d=_powerDevig(od.over,od.under); if(d!=null){ implied=d; devig=true; } else implied=1/od.over; }
-      else implied=1/od.over;
+      if(od.over!=null&&od.under!=null){ const d=_powerDevig(od.over,od.under); if(d!=null){ implied=isUnder?(1-d):d; devig=true; } }
+      if(implied==null) implied=1/myPrice;
       const edge=(implied!=null&&hr!=null)?(hr-implied):null;
-      const parts=['Over <b>$'+od.over.toFixed(2)+'</b>'+(od.book?' '+bookName(od.book):'')];
-      if(od.under!=null) parts.push('Under $'+od.under.toFixed(2));
+      const parts=[(isUnder?'Under':'Over')+' <b>$'+myPrice.toFixed(2)+'</b>'+(od.book?' '+bookName(od.book):'')];
+      const other=isUnder?od.over:od.under;
+      if(other!=null) parts.push((isUnder?'Over':'Under')+' $'+other.toFixed(2));
       if(implied!=null) parts.push('implied '+Math.round(implied*100)+'%'+(devig?' (devig)':''));
       if(edge!=null){ const ec=edge>=0?'#22c55e':'#ef4444'; parts.push('<span style="color:'+ec+';font-weight:800">edge '+(edge>=0?'+':'')+Math.round(edge*100)+'%</span>'); }
       oddsHtml='<div class="pc-odds">'+parts.join(' \u00b7 ')+'</div>';
     } else {
-      oddsHtml='<div class="pc-odds pc-noodds">No price at '+S.line+'+ '+label+(hasAnyOdds()?'':' \u00b7 odds not loaded')+'</div>';
+      oddsHtml='<div class="pc-odds pc-noodds">No price at '+betTxt+(hasAnyOdds()?'':' \u00b7 odds not loaded')+' \u00b7 you can still add it and type your own price</div>';
     }
+    // Over/Under: goals is a milestone market here (1+/2+/3+), so it has no under side.
+    const canUnder=S.stat!=='goals';
+    const sideHtml=canUnder?('<div class="pc-scopes">'+[['over','Over','#22c55e'],['under','Under','#ef4444']].map(function(x){
+      return '<button class="pc-scope'+(x[0]===S.side?' on':'')+'" onclick="_pcSide(\''+x[0]+'\')"'+(x[0]===S.side?' style="border-color:'+x[2]+';color:'+x[2]+'"':'')+'>'+x[1]+'</button>';
+    }).join('')+'</div>'):'';
+    const BTN='flex:1;background:var(--surface-2);border:1px solid var(--border);color:var(--text);font-family:var(--font-display);font-weight:800;font-size:12px;padding:9px;border-radius:7px;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;gap:6px';
+    // Add to card works for ANY line/side, priced or not (the card has an editable odds field).
+    // The multi slip only carries overs, so that button hides on the under side.
+    const actions='<div style="display:flex;gap:6px;margin-top:10px">'+
+      '<button onclick="_pcAddCard()" style="'+BTN+'"><i class="ti ti-receipt"></i> Add to card</button>'+
+      ((myPrice!=null&&!isUnder)?'<button onclick="_pcAddMulti()" style="'+BTN+'"><i class="ti ti-stack-2"></i> Add to multi</button>':'')+
+      '</div>';
     return '<div class="section-title">Prop calculator</div>'+
       '<div class="pc-wrap">'+
         '<div class="pc-chips">'+chips+'</div>'+
         '<div class="pc-row">'+stepper+hrHtml+'</div>'+
+        sideHtml+
         '<div class="pc-scopes">'+scopes+'</div>'+
         oddsHtml+
-        ((od&&od.over!=null)?'<button onclick="_pcAddMulti()" style="margin-top:10px;width:100%;background:var(--surface-2);border:1px solid var(--border);color:var(--text);font-family:var(--font-display);font-weight:800;font-size:12px;padding:9px;border-radius:7px;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;gap:6px"><i class="ti ti-stack-2"></i> Add to multi slip</button>':'')+
-        _pcChart(games,S.stat,S.line,opp)+
+        actions+
+        _pcChart(games,S.stat,S.line,opp,S.side)+
       '</div>';
   }
-  window._pcStat=function(k){ if(_pcState){ _pcState.stat=k; _pcState.line=_pcDefaultLine(_pmName,k); _pmRender(); } };
+  window._pcStat=function(k){ if(_pcState){ _pcState.stat=k; _pcState.line=_pcDefaultLine(_pmName,k); if(k==='goals') _pcState.side='over'; _pmRender(); } };
+  window._pcSide=function(sd){ if(_pcState){ _pcState.side=sd; _pmRender(); } };
+  // Add the dialled-up prop (any market, any line, over OR under) straight to the card.
+  window._pcAddCard=function(){
+    const p=state.idx.byName[_pmName]; if(!p||!_pcState) return;
+    const S=_pcState, label=(PC_STATS.find(x=>x[0]===S.stat)||[null,S.stat])[1], isU=S.side==='under';
+    const od=_pcOddsAt(p.name,S.stat,S.line), price=od?(isU?od.under:od.over):null;
+    const it={name:p.name,team:p.team,opp:nextOpp(p.team),mkt:S.stat,line:S.line,side:S.side,
+      odds:(price!=null?price:null),book:(price!=null?(od.book||''):''),
+      label:(isU?'Under '+S.line+' ':S.line+'+ ')+label,src:'Prop Calc'};
+    if(_cardAdd(it)) _cardToast('Added \u00b7 '+_cardCount()+' bet'+(_cardCount()!==1?'s':'')+' on card'+(price==null?' \u00b7 add your price':''));
+    else _cardToast('Already on your card');
+  };
   window._pcScope=function(k){ if(_pcState){ _pcState.scope=k; _pmRender(); } };
   window._pcLine=function(d){ if(_pcState){ _pcState.line=Math.max(1,_pcState.line+d); _pmRender(); } };
 
@@ -4413,8 +4442,8 @@
   }
 
   // ---- shared: stylistically-similar players (same position, nearest avg) vs same opp ----
-  function similarPlayers(p,statKey,opp,line,n){
-    n=n||10;
+  function similarPlayers(p,statKey,opp,line,n,side){
+    n=n||10; const isU=side==='under';
     if(!opp) return '';
     const myAvg=p[statKey]||0;
     const pool=(state.idx.players||[]).filter(q=>q.name!==p.name&&q.position===p.position&&(q.matches||0)>=3);
@@ -4426,7 +4455,7 @@
       if(!vs.length) continue;
       vs.sort((a,b)=>{const y=(+a.Year||0)-(+b.Year||0);return y||(_roundNum(a.RoundName)-_roundNum(b.RoundName));});
       const vals=vs.map(r=>r[statKey]||0);
-      const hits=hasLine?vals.filter(v=>v>=line).length:0;
+      const hits=hasLine?vals.filter(v=>isU?v<line:v>=line).length:0;
       rows.push({q,vals,hits,n:vals.length});
       if(rows.length>=n) break;
     }
@@ -4436,7 +4465,7 @@
     const body=rows.map(r=>{
       const ok=r.hits>=1;
       const mk='<i class="ti '+(ok?'ti-check':'ti-x')+'" style="color:'+(ok?'#22c55e':'#ef4444')+';flex-shrink:0;font-size:14px"></i>';
-      const valStr=r.vals.map(v=>{const hit=hasLine&&v>=line;return '<span style="color:'+(hit?'#22c55e':'#ef4444')+';font-weight:800">'+(isG?v:Math.round(v))+'</span>';}).join('<span style="color:var(--text-3)">, </span>');
+      const valStr=r.vals.map(v=>{const hit=hasLine&&(isU?v<line:v>=line);return '<span style="color:'+(hit?'#22c55e':'#ef4444')+';font-weight:800">'+(isG?v:Math.round(v))+'</span>';}).join('<span style="color:var(--text-3)">, </span>');
       return '<div class="sp-row" onclick="openPlayer(\''+esc(r.q.name).replace(/\x27/g,"\\\x27")+'\')">'+
         mk+'<span class="sp-nm" style="margin-left:8px">'+esc(r.q.name)+'</span>'+
         '<span style="font-size:9px;color:#60a5fa;background:rgba(96,165,250,.13);border-radius:4px;padding:1px 6px;margin-left:6px;white-space:nowrap">'+posShort(r.q.position)+'</span>'+
