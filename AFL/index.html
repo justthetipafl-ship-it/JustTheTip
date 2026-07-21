@@ -58,6 +58,10 @@
   .pm-od{display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:700;color:var(--text-2);background:var(--surface-2);border:1px solid var(--border);border-radius:6px;padding:5px 9px;}
   .pm-od i{font-size:13px;color:var(--accent);}
   /* ---- player prop calculator ---- */
+  .cl-line{display:inline-flex;align-items:center;gap:0;border:1px solid var(--border-light);border-radius:6px;overflow:hidden;padding:0;}
+  .cl-line button{width:22px;height:24px;border:none;background:var(--surface-3);color:var(--text-2);font-size:14px;font-weight:700;cursor:pointer;line-height:1;padding:0;}
+  .cl-line button:active{background:var(--accent);color:#0b0b0b;}
+  .cl-line b{padding:0 7px;font-size:12px;font-weight:800;color:var(--text);font-family:var(--font-display);min-width:30px;text-align:center;}
   .pc-wrap{background:var(--surface-2);border:1px solid var(--border);border-radius:8px;padding:10px;margin-top:4px;}
   .pc-chips{display:flex;flex-wrap:wrap;gap:5px;margin-bottom:9px;}
   .pc-chip{font-size:11px;font-weight:700;padding:4px 10px;border-radius:14px;border:1px solid var(--border);background:var(--surface);color:var(--text-3);cursor:pointer;}
@@ -289,6 +293,11 @@
   .deg-game-hdr:first-child{margin-top:2px;}
   .deg-game-hdr::before{content:"";width:3px;height:11px;background:var(--accent);border-radius:2px;flex:0 0 auto;}
   .pm-injury{display:flex;align-items:center;gap:7px;margin:-4px 0 12px;padding:8px 11px;border-radius:6px;font-family:var(--font-mono);font-size:12px;font-weight:700;color:#fecaca;background:rgba(239,68,68,.12);border:1px solid rgba(239,68,68,.35);}
+  .pm-injury.pm-injury-named{color:#86efac;background:rgba(34,197,94,.12);border-color:rgba(34,197,94,.35);}
+  .pm-injury.pm-injury-doubt{color:#fcd34d;background:rgba(245,158,11,.12);border-color:rgba(245,158,11,.4);}
+  .ce-linestep{display:inline-flex;gap:0;margin-left:8px;vertical-align:middle;border:1px solid var(--border-light);border-radius:5px;overflow:hidden}
+  .ce-linestep button{width:22px;height:19px;border:none;background:var(--surface-3);color:var(--text-2);font-size:13px;font-weight:800;cursor:pointer;line-height:1;padding:0}
+  .ce-linestep button:active{background:var(--accent);color:#0b0b0b}
   .deg-odds{color:var(--accent)!important;font-weight:800;white-space:nowrap;}
   /* focused fixture header */
   .fixture-header{background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:16px;
@@ -2271,8 +2280,19 @@
       if(shop) oddsHtml+=_pmSec('Line Shop — every book, every line',shop,false);
     }
     const _inj=_injuryFor(name);
-    let injPill=_inj?'<div class="pm-injury"><i class="ti ti-bandage"></i> OUT \u2014 '+esc(_inj.Injury||'Injury')+(_inj.Returning?' \u00b7 back '+esc(_inj.Returning):'')+'</div>':'';
-    if(!_inj&&_justBack(name)) injPill='<div class="pm-injury" style="border-color:#f59e0b55;background:#f59e0b14;color:#f59e0b"><i class="ti ti-stethoscope"></i> Just back from a spell \u2014 role/TOG often capped first game or two</div>';
+    // Lineup is the source of truth once a side is NAMED. Before that, the injury list drives it,
+    // but a "Test"/"TBC" tag means genuinely in doubt (likely to play) — not a hard OUT.
+    const _named=lineupOut(p.team), _plays=isPlaying(name,p.team);
+    let injPill='';
+    if(_named && _plays){
+      if(_inj) injPill='<div class="pm-injury pm-injury-named"><i class="ti ti-circle-check"></i> Named to play \u2014 carrying '+esc(_inj.Injury||'injury')+(_inj.Returning?' ('+esc(_inj.Returning)+')':'')+'</div>';
+    } else if(_named && !_plays){
+      injPill='<div class="pm-injury"><i class="ti ti-bandage"></i> OUT'+(_inj?' \u2014 '+esc(_inj.Injury||'Injury')+(_inj.Returning?' \u00b7 back '+esc(_inj.Returning):''):' \u2014 not in the named side')+'</div>';
+    } else if(_inj){
+      if(_injDoubt(_inj.Returning)) injPill='<div class="pm-injury pm-injury-doubt"><i class="ti ti-help-circle"></i> In doubt \u2014 '+esc(_inj.Injury||'')+' ('+esc(_inj.Returning||'test')+')</div>';
+      else injPill='<div class="pm-injury"><i class="ti ti-bandage"></i> OUT \u2014 '+esc(_inj.Injury||'Injury')+(_inj.Returning?' \u00b7 back '+esc(_inj.Returning):'')+'</div>';
+    }
+    if(!injPill && _justBack(name)) injPill='<div class="pm-injury" style="border-color:#f59e0b55;background:#f59e0b14;color:#f59e0b"><i class="ti ti-stethoscope"></i> Just back from a spell \u2014 role/TOG often capped first game or two</div>';
     let ctxPills='';
     {
       const isFwd2=p.position==='Key Forward'||p.position==='Gen. Forward'||p.position==='Mid-Forward';
@@ -2360,6 +2380,8 @@
   }
   function isPlaying(name, team){ const keys=_lineupKeyMap()[team]; if(!keys) return true; return _nmKeys(name).some(k=>keys.has(k)); }
   function lineupOut(team){ return !!_lineupKeyMap()[team]; }
+  // afl.com.au 'Estimated return' tags: Test / TBC / Late = in doubt (could still play the upcoming game).
+  function _injDoubt(ret){ const r=(ret||'').toLowerCase().trim(); return r.indexOf('test')>=0||r.indexOf('tbc')>=0||r==='late'||r==='proof'||r==='1st'; }
   function hasAnyOdds(){ return state.idx.oddsMeta && state.idx.oddsMeta.count>0; }
   function _oddsLive(){ return hasAnyOdds() && !(state.idx.oddsMeta&&state.idx.oddsMeta.sample); }
   // Green Lights / Death Riders now come from the SHARED signals.js module — the exact
@@ -2644,7 +2666,7 @@
     return {wAvg,wN,woAvg,woN,delta:woAvg-wAvg};
   }
   const _EMPTYSET=new Set();
-  function _wwIsOut(name,team){ if(_injuryFor(name)) return true; if((state.data.lineups||[]).some(r=>r.team===team)&&!isPlaying(name,team)) return true; return false; }
+  function _wwIsOut(name,team){ if(_confirmedIn(name)) return false; if(_injuryFor(name)) return true; if((state.data.lineups||[]).some(r=>r.team===team)&&!isPlaying(name,team)) return true; return false; }
   function nextManUp(){
     const {keyAvg}=_wwBuild(); const out=[];
     const teamSet=new Set((state.data.fixture||[]).flatMap(g=>[g.home,g.away]));
@@ -3527,6 +3549,8 @@
   window._negTip=function(ev,el){ ev.stopPropagation(); _negShow(el); };
   function _normName(s){ return (s||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-z ]/g,' ').replace(/\s+/g,' ').trim(); }
   function _injuryFor(name){ const ix=state.idx&&state.idx.injuryByName; return ix?(ix[_normName(name)]||null):null; }
+  // Lineup is ground truth once it's out: a player carrying a niggle who gets NAMED is playing, not OUT.
+  function _confirmedIn(name){ const p=state.idx&&state.idx.byName?state.idx.byName[name]:null; return !!(p&&lineupOut(p.team)&&isPlaying(name,p.team)); }
   // "just back" — played the team's most recent match after missing the 2+ immediately prior
   let _tmSrc=null,_tmIdx=null;
   function _teamMatches(team){
@@ -3572,7 +3596,7 @@
     if(p&&p.position){ const col=POS_C[p.position]||'#888'; h+='<span class="deg-pos" style="color:'+col+';border-color:'+col+'55;background:'+col+'1a">'+posShort(p.position)+'</span>'; }
     const lu=(state.data.lineups||[]).find(r=>r.player===name && !/UNCONFIRMED/i.test(r.status||'') && !/^NA\b/i.test(r.player||''));
     if(lu) h+='<span class="deg-named">NAMED</span>';
-    const ij=_injuryFor(name); if(ij) h+='<span class="deg-inj" title="'+esc((ij.Injury||'Injury')+(ij.Returning?' \u00b7 '+ij.Returning:''))+'">OUT</span>';
+    const ij=_injuryFor(name); if(ij&&!_confirmedIn(name)) h+='<span class="deg-inj" title="'+esc((ij.Injury||'Injury')+(ij.Returning?' \u00b7 '+ij.Returning:''))+'">OUT</span>';
     else if(_justBack(name)) h+='<span class="deg-back" title="First game(s) back from a spell \u2014 role/TOG often capped">JUST BACK</span>';
     h+=_warnBadge(name);
     h+=_cbaBadge(name);
@@ -3652,7 +3676,7 @@
         const team=pair[0], opp=pair[1], ob=bf[opp]; if(!ob) return;
         Object.keys(KI).forEach(name=>{
           const k=KI[name]; if(!k||k.team!==team||k.ki<KI_MIN_RATE) return;
-          if(_injuryFor(name)) return; if(!isPlaying(name,team)) return;
+          if(_injuryFor(name)&&!_confirmedIn(name)) return; if(!isPlaying(name,team)) return;
           if(seen.has(name)) return; seen.add(name);
           const p=state.idx.byName[name]||{name:name,team:team};
           out.push({p:p,team:team,opp:opp,ki:k.ki,kiPct:k.kiPct,playOn:k.playOn,m:k.m,oppBeh:ob.pg,oppRank:ob.rank,oppTotal:ob.total,proj:(k.kiPct/100)*ob.pg});
@@ -4573,6 +4597,17 @@
     else { bar.style.display='none'; bar.innerHTML=''; }
   }
   window._cardSetOdds=function(id,v){ const it=_CARD.find(x=>x.id===id); if(!it)return; const n=parseFloat(v); it.odds=(n&&n>1)?n:null; _cardSave(); _cardRefreshTotals(id); };
+  function _cardMktLabel(mkt){ try{ if(typeof CMP_STAT_LABELS!=='undefined'&&CMP_STAT_LABELS[mkt]) return CMP_STAT_LABELS[mkt]; }catch(e){} return mkt||''; }
+  function _cardRelabel(e){ if(e.line===''||e.line==null) return e.label||''; return (e.side==='under'?'Under '+e.line+' ':e.line+'+ ')+_cardMktLabel(e.mkt); }
+  // Adjust the line on a card single; re-price from live odds at the new line (or clear so it isn't stale).
+  window._cardSetLine=function(id,delta){
+    const it=_CARD.find(x=>x.id===id); if(!it||it.type==='multi'||!it.mkt||it.line===''||it.line==null)return;
+    const nl=Math.max(1,(+it.line||0)+delta); if(nl===+it.line) return;
+    it.line=nl; it.label=_cardRelabel(it);
+    let px=null,bk=it.book; try{ const od=(typeof _pcOddsAt==='function')?_pcOddsAt(it.name,it.mkt,nl):null; if(od){ px=(it.side==='under'?od.under:od.over); if(px!=null)bk=od.book||bk; } }catch(e){}
+    it.odds=(px!=null&&px>1)?px:null; it.book=bk;
+    _cardSave(); _cardRender();
+  };
   window._cardSetStake=function(id,v){ const it=_CARD.find(x=>x.id===id); if(!it)return; const n=parseFloat(v); it.stake=(n&&n>0)?n:null; _cardSave(); _cardRefreshTotals(id); };
   window._cardSetBook=function(id,v){ const it=_CARD.find(x=>x.id===id); if(!it)return; it.book=v||''; _cardSave(); };
   window._cardSetTitle=function(id,v){ const it=_CARD.find(x=>x.id===id); if(!it)return; const t=(v||'').trim(); it.title=t||((it.legs?it.legs.length:0)+'-leg multi'); _cardSave(); };
@@ -4597,11 +4632,31 @@
   }
   function _ceCtrls(e){
     const ret=_cardReturn(e);
-    return '<div class="ce-ctrls">'+_bookSel(e.id,e.book)+
+    const lineCtrl=(e.type!=='multi'&&e.mkt&&e.line!==''&&e.line!=null)?
+      '<span class="cl-io cl-line" title="Adjust line"><button onclick="_cardSetLine(\''+e.id+'\',-1)">\u2212</button><b>'+(e.side==='under'?'U':'')+e.line+(e.side==='under'?'':'+')+'</b><button onclick="_cardSetLine(\''+e.id+'\',1)">+</button></span>':'';
+    return '<div class="ce-ctrls">'+lineCtrl+_bookSel(e.id,e.book)+
       '<span class="cl-io" title="Odds">$<input type="number" step="0.01" min="1" inputmode="decimal" value="'+(e.odds!=null?(+e.odds).toFixed(2):'')+'" placeholder="odds" onchange="_cardSetOdds(\''+e.id+'\',this.value)"></span>'+
       '<span class="cl-io cl-units" title="Stake (units)"><input type="number" step="0.5" min="0" inputmode="decimal" value="'+(e.stake!=null?e.stake:'')+'" placeholder="units" onchange="_cardSetStake(\''+e.id+'\',this.value)"><span class="u">u</span></span>'+
       '<span class="ce-ret" id="ce-ret-'+e.id+'">'+(ret?'\u2192 '+_fmtU(ret)+'u':'')+'</span></div>';
   }
+  // Adjustable line on single card bets (\u2212/+): rebuild label, re-price at the new line, no dup.
+  function _ceLineStep(e){
+    if(e.type!=='single'||!e.mkt||e.line==null||e.line===''||isNaN(+e.line)) return '';
+    return '<span class="ce-linestep" title="Adjust line"><button onclick="_cardSetLine(\''+e.id+'\',-1)" aria-label="Lower line">\u2212</button><button onclick="_cardSetLine(\''+e.id+'\',1)" aria-label="Raise line">+</button></span>';
+  }
+  window._cardSetLine=function(id,delta){
+    const e=_CARD.find(x=>x.id===id); if(!e||e.type!=='single'||e.line==null||e.line===''||isNaN(+e.line)) return;
+    const nl=Math.max(1,(+e.line)+delta); if(nl===+e.line) return;
+    const key='s|'+(e.name||'')+'|'+(e.mkt||'')+'|'+nl+'|'+(e.side||'over');
+    if(_CARD.some(x=>x.id!==id&&_entryKey(x)===key)){ _cardToast('You already have '+(e.side==='under'?'Under '+nl:nl+'+')+' on the card'); return; }
+    e.line=nl;
+    const lab=(typeof CMP_STAT_LABELS!=='undefined'&&CMP_STAT_LABELS[e.mkt])||e.mkt;
+    e.label=(e.side==='under'?'Under '+nl+' ':nl+'+ ')+lab;
+    let od=null; try{ od=(typeof _pcOddsAt==='function')?_pcOddsAt(e.name,e.mkt,nl):null; }catch(_){}
+    const pr=od?(e.side==='under'?od.under:od.over):null;
+    if(pr!=null){ e.odds=+pr; if(od.book) e.book=od.book; } else { e.odds=null; }
+    _cardSave(); _cardRender();
+  };
   function _cardRender(){
     const body=document.getElementById('card-body'); if(!body) return;
     if(!_CARD.length){ body.innerHTML='<div class="empty" style="padding:34px 10px"><div class="ico"><i class="ti ti-receipt-off"></i></div>Your card is empty.<div style="font-size:11px;color:var(--text-3);margin-top:8px;line-height:1.5">Tap the <b style="color:var(--accent)">+</b> on any bet \u2014 Today\u2019s Board, signals, Nerd Mode, CMB \u2014 or add a whole multi. Each bet keeps its own odds &amp; stake.</div></div>'; return; }
@@ -4613,7 +4668,7 @@
       }
       const lbl=(e.label||((e.side==='under'?'U':'')+(e.line!=null?e.line:'')+(e.mkt?' '+e.mkt:'')));
       return '<div class="ce"><div class="ce-hd"><input type="checkbox" class="ce-chk"'+(_cardSel.has(e.id)?' checked':'')+' onchange="_cardToggleSel(\''+e.id+'\')" title="Select to combine into a multi"><span class="ce-nm" data-n="'+_attrEsc(e.name)+'" onclick="_closeCard();openPlayer(this.dataset.n)">'+esc(e.name)+'</span><span class="ce-tag">'+esc(e.src||'single')+'</span><button class="cl-rm" onclick="_cardRemove(\''+e.id+'\')" aria-label="Remove">\u00d7</button></div>'+
-        '<div class="ce-lbl">'+esc(lbl)+(e.team?' \u00b7 '+abbr(e.team)+(e.opp?' v '+abbr(e.opp):''):'')+'</div>'+_ceCtrls(e)+'</div>';
+        '<div class="ce-lbl">'+esc(lbl)+_ceLineStep(e)+(e.team?' \u00b7 '+abbr(e.team)+(e.opp?' v '+abbr(e.opp):''):'')+'</div>'+_ceCtrls(e)+'</div>';
     }).join('');
     const t=_cardTotals();
     body.innerHTML='<div class="card-entries">'+blocks+'</div>'+
