@@ -85,6 +85,12 @@
   .fxp-bebtn:active:not(:disabled){background:var(--accent);color:#0b0b0b;}
   .fxp-odds{margin-left:auto;font-family:var(--font-display);font-weight:800;font-size:13px;color:var(--text);}
   .fxp-bk{font-size:9px;font-weight:700;color:var(--text-3);}
+  .fxp-stats{margin:2px 0 7px;}
+  .fxp-l5row{display:flex;align-items:center;gap:5px;margin-bottom:5px;}
+  .fxp-l5lab{font-size:8.5px;font-weight:800;letter-spacing:.06em;color:var(--text-3);text-transform:uppercase;}
+  .fxp-l5{font-family:var(--font-display);font-weight:800;font-size:12px;min-width:20px;text-align:center;}
+  .fxp-chips2{display:flex;flex-wrap:wrap;gap:5px;}
+  .fxp-chip2{font-size:9.5px;font-weight:700;color:var(--text-3);border:1px solid var(--border);border-radius:4px;padding:1px 6px;white-space:nowrap;}
   .fxp-bot{display:flex;align-items:center;justify-content:space-between;gap:8px;}
   .fxp-why{font-size:10px;color:var(--text-3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
   .fxp-add{flex-shrink:0;font-size:11px;font-weight:800;padding:5px 12px;border-radius:6px;border:1px solid var(--accent);background:transparent;color:var(--accent);cursor:pointer;display:inline-flex;align-items:center;gap:4px;}
@@ -3495,6 +3501,20 @@
     return l;
   }
   function _fxpTier(p){ p=p||0; return p>=0.65?{t:'Strong',c:'#22c55e',ic:'ti-flame'}:p>=0.55?{t:'Solid',c:'#eab308',ic:'ti-circle-check'}:{t:'Thin',c:'#f97316',ic:'ti-alert-triangle'}; }
+  // CMB-style context strip for a leg: L5 scores (coloured vs the line), DVP, H2H, L10.
+  function _fxpStats(l){
+    const name=l.p.name, mk=l.statKey, line=l.line, opp=l.opp, side=l.side||'over', isG=mk==='goals';
+    const logs=(state.idx.logsByName||{})[name]||[];
+    const l5=logs.slice(-5).map(r=>r[mk]).filter(v=>v!=null);
+    const l5html=l5.length?l5.map(v=>{ const hit=side==='under'?v<line:v>=line; return '<span class="fxp-l5" style="color:'+(hit?'#22c55e':'#ef4444')+'">'+(isG?v:Math.round(v))+'</span>'; }).join(''):'<span class="fxp-l5" style="color:var(--text-3)">\u2014</span>';
+    let dvpHtml='';
+    try{ const pos=(JTTScoring.POS_TO_DVP&&JTTScoring.POS_TO_DVP[l.p.position])||l.p.position; const dp=JTTScoring.getDVPPct(opp,pos,mk); const mi=(dp!=null&&isFinite(dp))?JTTScoring.muInfo(dp):null; if(mi) dvpHtml='<span class="fxp-chip2" style="color:'+mi.c+';border-color:'+mi.c+'55">DVP '+(dp>=0?'+':'')+Math.round(dp)+'% '+mi.t+'</span>'; }catch(e){}
+    let h2hHtml='', l10Html='';
+    let hits=[]; try{ hits=_legHitRates(name,mk,line,side,opp)||[]; }catch(e){}
+    const h2h=hits.find(h=>h.label==='H2H'); if(h2h&&h2h.n){ const c=h2h.rate>=0.6?'#22c55e':h2h.rate>=0.45?'#eab308':'#ef4444'; h2hHtml='<span class="fxp-chip2" style="color:'+c+';border-color:'+c+'55">H2H '+h2h.h+'/'+h2h.n+'</span>'; }
+    const l10=hits.find(h=>h.label==='L10'); if(l10&&l10.n) l10Html='<span class="fxp-chip2">L10 '+Math.round(l10.rate*100)+'%</span>';
+    return '<div class="fxp-stats"><div class="fxp-l5row"><span class="fxp-l5lab">L5</span>'+l5html+'</div><div class="fxp-chips2">'+dvpHtml+h2hHtml+l10Html+'</div></div>';
+  }
   function _fxpCard(base){
     const S=_fxPickS(); const l=_fxPickLegAt(base); const on=!!S.on[base.p.name];
     const tier=_fxpTier(l.prob); const pct=Math.round((l.prob||0)*100);
@@ -3509,6 +3529,7 @@
     return '<div class="fxp-card'+(on?' on':'')+'">'+
       '<div class="fxp-top"><span class="fxp-nm" data-n="'+dn+'" onclick="openPlayer(this.dataset.n)">'+esc(base.p.name)+'</span>'+conf+'</div>'+
       '<div class="fxp-mid"><span class="fxp-bet">'+esc(l.betLabel)+'</span>'+be+'<span class="fxp-odds">'+price+(l._odds&&l._odds.book?' <span class="fxp-bk">'+bookName(l._odds.book)+'</span>':'')+'</span></div>'+
+      _fxpStats(l)+
       '<div class="fxp-bot"><span class="fxp-why">'+(l.reasons&&l.reasons[0]?esc(l.reasons[0].label||''):'')+'</span>'+addBtn+'</div></div>';
   }
   function fxPickMulti(g){
