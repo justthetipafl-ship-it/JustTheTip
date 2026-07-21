@@ -66,6 +66,7 @@
   .fxp-ctlrow{display:flex;align-items:center;gap:9px;}
   .fxp-ctllab{font-size:10px;font-weight:800;letter-spacing:.05em;text-transform:uppercase;color:var(--text-3);width:52px;flex-shrink:0;}
   .fxp-chips{display:flex;flex-wrap:wrap;gap:5px;}
+  .fxp-desc{font-size:10px;color:var(--text-3);margin:-2px 0 2px 61px;line-height:1.4;}
   .fxp-chip{font-size:11px;font-weight:700;padding:4px 10px;border-radius:13px;border:1px solid var(--border);background:var(--surface);color:var(--text-3);cursor:pointer;}
   .fxp-chip.on{background:var(--accent);border-color:var(--accent);color:#0b0b0b;}
   .fxp-mkt.on{background:var(--surface-3);border-color:var(--accent);color:var(--accent);}
@@ -76,6 +77,8 @@
   .fxp-top{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:5px;}
   .fxp-nm{font-family:var(--font-display);font-weight:800;font-size:13px;color:var(--text);cursor:pointer;}
   .fxp-conf{font-size:11px;font-weight:800;display:inline-flex;align-items:center;gap:4px;white-space:nowrap;}
+  .fxp-gtag{font-size:8.5px;font-weight:800;color:var(--text-3);background:var(--surface);border:1px solid var(--border);border-radius:4px;padding:1px 5px;letter-spacing:.03em;}
+  .fxp-slipg{font-size:8.5px;font-weight:800;color:var(--text-3);background:var(--surface-3);border-radius:3px;padding:1px 4px;}
   .fxp-n{font-size:9px;font-weight:700;color:var(--text-3);}
   .fxp-mid{display:flex;align-items:center;gap:8px;margin-bottom:6px;}
   .fxp-bet{font-size:12px;font-weight:700;color:var(--text-2);}
@@ -3470,27 +3473,37 @@
     sel.manual=null; _reRenderMulti();
   };
   // Unified Multi Builder scoped to one fixture — same 7-mode interactive tool as Degen Crew.
-  // ===== Pick-your-own focused-fixture Multi Builder =====
-  // Every triggered leg for the game shows as a card (confidence + boost/ease); tap Add to build a
-  // running slip below. Reuses _modePool (respects Type + Markets + Book) and the alt-line ladder.
-  const FXP_MODES=[['smart','Smart'],['value','Value'],['matchup','Matchup']];
+  // ===== Pick-your-own Multi Builder — shared by focused fixture ('fx') and Degen Crew ('dg') =====
+  // Every triggered leg shows as a mini-CMB card (confidence + L5/DVP/H2H + boost/ease); tap Add to
+  // build a running slip. 'dg' spans the whole round (game filter) so you can stack cross-game.
+  const FXP_MODES=[['smart','Smart'],['safe','100% Hit Rater'],['value','Value Hunter'],['lotto','Lottery Legs'],['h2h','History Repeats'],['matchup','Matchup Multi'],['team','Thats My Team']];
+  const FXP_DESC={smart:'Best-rated legs by our signal score.',safe:'Only legs that have cleared in every game this season \u2014 safe, short odds.',value:'Every leg is +EV \u2014 our hit-rate beats the book price.',lotto:'Longshot legs with a genuine shot.',h2h:'Legs the player has landed against THIS opponent before.',matchup:'Overs where the opponent bleeds to that position or playstyle.',team:'Legs from one chosen team only.'};
   const FXP_MARKETS=[['disposals','Disp'],['goals','Goals'],['marks','Marks'],['tackles','Tackles'],['clearances','Clear'],['kicks','Kicks'],['handballs','HB']];
-  function _fxPickS(){ return state.view.fxPick||(state.view.fxPick={on:{},line:{},key:''}); }
-  function _fxPickPool(g){
+  const DG_POOL_CAP=60;
+  function _pickS(ctx){ const k=ctx==='dg'?'dgPick':'fxPick'; return state.view[k]||(state.view[k]={on:{},line:{},key:'',game:null}); }
+  function _pickGames(){ return (state.data.fixture||[]).filter(g=>g.home&&g.away); }
+  function _pickPool(ctx){
     const M=SETTINGS.multi; const prev=_mbActiveBook; _mbActiveBook=M.book||null;
     let legs=[];
     try{
       const banned=new Set(M.banned||[]);
       const pl=t=>(state.idx.players||[]).filter(p=>p.team===t&&(p.matches||0)>=3&&!banned.has(p.name));
-      legs=[..._modePool(pl(g.home),g.away),..._modePool(pl(g.away),g.home)];
+      const mode=M.mode||'smart';
+      if(ctx==='dg' && mode==='team'){
+        const tm=M.team; const g=tm&&_pickGames().find(x=>x.home===tm||x.away===tm);
+        if(g){ const opp=g.home===tm?g.away:g.home; legs=_modePool(pl(tm),opp); }
+      } else {
+        let games=_pickGames();
+        if(ctx==='fx'){ const g=_fxmG(); games=g?[g]:[]; }
+        else { const sel=_pickS('dg').game; if(sel) games=games.filter(g=>abbr(g.home)+'v'+abbr(g.away)===sel); }
+        games.forEach(g=>{ legs.push(..._modePool(pl(g.home),g.away)); legs.push(..._modePool(pl(g.away),g.home)); });
+      }
     }catch(e){}finally{ _mbActiveBook=prev; }
     const best={}; legs.forEach(l=>{ const n=l.p.name; if(!best[n]||(l.score||0)>(best[n].score||0)) best[n]=l; });
-    return Object.keys(best).map(k=>best[k])
-      .sort((a,b)=>(b.prob||0)-(a.prob||0)||(a._odds&&b._odds?b._odds.price-a._odds.price:0));
+    return Object.keys(best).map(k=>best[k]).sort((a,b)=>(b.prob||0)-(a.prob||0)||(a._odds&&b._odds?b._odds.price-a._odds.price:0));
   }
-  // resolve a pool leg to its current (boosted/eased) priced form
-  function _fxPickLegAt(base){
-    const S=_fxPickS(), ov=S.line[base.p.name];
+  function _pickLegAt(ctx,base){
+    const S=_pickS(ctx), ov=S.line[base.p.name];
     if(ov==null||ov===base.line) return base;
     let pr=null; try{ pr=priceForLine(base.p.name,base.statKey,ov); }catch(e){}
     if(!pr||!pr.price) return base;
@@ -3501,7 +3514,7 @@
     return l;
   }
   function _fxpTier(p){ p=p||0; return p>=0.65?{t:'Strong',c:'#22c55e',ic:'ti-flame'}:p>=0.55?{t:'Solid',c:'#eab308',ic:'ti-circle-check'}:{t:'Thin',c:'#f97316',ic:'ti-alert-triangle'}; }
-  // CMB-style context strip for a leg: L5 scores (coloured vs the line), DVP, H2H, L10.
+  // CMB-style context strip: L5 scores (coloured vs the line), DVP, H2H, L10.
   function _fxpStats(l){
     const name=l.p.name, mk=l.statKey, line=l.line, opp=l.opp, side=l.side||'over', isG=mk==='goals';
     const logs=(state.idx.logsByName||{})[name]||[];
@@ -3515,68 +3528,99 @@
     const l10=hits.find(h=>h.label==='L10'); if(l10&&l10.n) l10Html='<span class="fxp-chip2">L10 '+Math.round(l10.rate*100)+'%</span>';
     return '<div class="fxp-stats"><div class="fxp-l5row"><span class="fxp-l5lab">L5</span>'+l5html+'</div><div class="fxp-chips2">'+dvpHtml+h2hHtml+l10Html+'</div></div>';
   }
-  function _fxpCard(base){
-    const S=_fxPickS(); const l=_fxPickLegAt(base); const on=!!S.on[base.p.name];
+  function _fxpCard(ctx,base){
+    const S=_pickS(ctx); const l=_pickLegAt(ctx,base); const on=!!S.on[base.p.name]; const q="'"+ctx+"'";
     const tier=_fxpTier(l.prob); const pct=Math.round((l.prob||0)*100);
     const conf='<span class="fxp-conf" style="color:'+tier.c+'"><i class="ti '+tier.ic+'"></i> '+pct+'%'+(l.probReal?(l.probN?' <span class="fxp-n">'+l.probN+'g</span>':''):' <span class="fxp-n">est</span>')+'</span>';
     const ladder=[...new Set(altLines(base.p.name,base.statKey).map(r=>Math.ceil(r.line)))].sort((a,b)=>a-b);
     const ci=ladder.indexOf(l.line), canBoost=ci>=0&&ci<ladder.length-1, canEase=ci>0;
     const dn=_attrEsc(base.p.name);
-    const be='<span class="fxp-be"><button class="fxp-bebtn"'+(canEase?'':' disabled')+' data-n="'+dn+'" onclick="_fxPickAdj(this.dataset.n,-1)" title="Ease \u2014 safer line, shorter odds">\u2212</button>'+
-      '<button class="fxp-bebtn"'+(canBoost?'':' disabled')+' data-n="'+dn+'" onclick="_fxPickAdj(this.dataset.n,1)" title="Boost \u2014 harder line, longer odds">+</button></span>';
+    const be='<span class="fxp-be"><button class="fxp-bebtn"'+(canEase?'':' disabled')+' data-n="'+dn+'" onclick="_pickAdj('+q+',this.dataset.n,-1)" title="Ease \u2014 safer line, shorter odds">\u2212</button>'+
+      '<button class="fxp-bebtn"'+(canBoost?'':' disabled')+' data-n="'+dn+'" onclick="_pickAdj('+q+',this.dataset.n,1)" title="Boost \u2014 harder line, longer odds">+</button></span>';
     const price=l._odds?'$'+(+l._odds.price).toFixed(2):'\u2014';
-    const addBtn='<button class="fxp-add'+(on?' on':'')+'" data-n="'+dn+'" onclick="_fxPickToggle(this.dataset.n)">'+(on?'<i class="ti ti-check"></i> Added':'<i class="ti ti-plus"></i> Add')+'</button>';
+    const addBtn='<button class="fxp-add'+(on?' on':'')+'" data-n="'+dn+'" onclick="_pickToggle('+q+',this.dataset.n)">'+(on?'<i class="ti ti-check"></i> Added':'<i class="ti ti-plus"></i> Add')+'</button>';
+    const gtag=(ctx==='dg')?'<span class="fxp-gtag">'+abbr(base.p.team)+' v '+abbr(base.opp)+'</span>':'';
     return '<div class="fxp-card'+(on?' on':'')+'">'+
-      '<div class="fxp-top"><span class="fxp-nm" data-n="'+dn+'" onclick="openPlayer(this.dataset.n)">'+esc(base.p.name)+'</span>'+conf+'</div>'+
+      '<div class="fxp-top"><span class="fxp-nm" data-n="'+dn+'" onclick="openPlayer(this.dataset.n)">'+esc(base.p.name)+'</span>'+gtag+conf+'</div>'+
       '<div class="fxp-mid"><span class="fxp-bet">'+esc(l.betLabel)+'</span>'+be+'<span class="fxp-odds">'+price+(l._odds&&l._odds.book?' <span class="fxp-bk">'+bookName(l._odds.book)+'</span>':'')+'</span></div>'+
       _fxpStats(l)+
       '<div class="fxp-bot"><span class="fxp-why">'+(l.reasons&&l.reasons[0]?esc(l.reasons[0].label||''):'')+'</span>'+addBtn+'</div></div>';
   }
-  function fxPickMulti(g){
-    if(!g||!_oddsLive()) return '';
-    const S=_fxPickS(); const key=abbr(g.home)+'v'+abbr(g.away);
-    if(S.key!==key){ S.key=key; S.on={}; S.line={}; }
-    const M=SETTINGS.multi;
-    const modeBar=FXP_MODES.map(x=>'<button class="fxp-chip'+((M.mode||'smart')===x[0]?' on':'')+'" data-k="'+x[0]+'" onclick="_fxPickMode(this.dataset.k)">'+x[1]+'</button>').join('');
+  function _pickControls(ctx){
+    const M=SETTINGS.multi, q="'"+ctx+"'";
+    const modeList=FXP_MODES.filter(x=>ctx!=='fx'||x[0]!=='team');
+    const modeBar=modeList.map(x=>'<button class="fxp-chip'+((M.mode||'smart')===x[0]?' on':'')+'" data-k="'+x[0]+'" onclick="_pickMode('+q+',this.dataset.k)">'+x[1]+'</button>').join('');
+    const desc=FXP_DESC[M.mode||'smart']?'<div class="fxp-desc">'+FXP_DESC[M.mode||'smart']+'</div>':'';
+    let teamRow='';
+    if(ctx==='dg' && (M.mode||'smart')==='team'){
+      const teams=[...new Set(_pickGames().flatMap(g=>[g.home,g.away]))].sort();
+      teamRow='<div class="fxp-ctlrow"><span class="fxp-ctllab">Team</span><select class="fxp-booksel" onchange="_pickTeam(this.value)"><option value="">Pick a team\u2026</option>'+teams.map(t=>'<option value="'+_attrEsc(t)+'"'+(M.team===t?' selected':'')+'>'+esc(t)+'</option>').join('')+'</select></div>';
+    }
     const mkts=M.markets||[];
-    const mktBar=FXP_MARKETS.map(x=>'<button class="fxp-chip fxp-mkt'+(mkts.indexOf(x[0])>=0?' on':'')+'" data-k="'+x[0]+'" onclick="_fxPickMkt(this.dataset.k)">'+x[1]+'</button>').join('');
-    const bookSel='<select class="fxp-booksel" onchange="_fxPickBook(this.value)"><option value="">Best price</option>'+ALL_BOOKS.map(x=>'<option value="'+x[0]+'"'+((M.book||'')===x[0]?' selected':'')+'>'+x[1]+'</option>').join('')+'</select>';
-    const controls='<div class="fxp-controls">'+
-      '<div class="fxp-ctlrow"><span class="fxp-ctllab">Type</span><div class="fxp-chips">'+modeBar+'</div></div>'+
+    const mktBar=FXP_MARKETS.map(x=>'<button class="fxp-chip fxp-mkt'+(mkts.indexOf(x[0])>=0?' on':'')+'" data-k="'+x[0]+'" onclick="_pickMkt('+q+',this.dataset.k)">'+x[1]+'</button>').join('');
+    const bookSel='<select class="fxp-booksel" onchange="_pickBook('+q+',this.value)"><option value="">Best price</option>'+ALL_BOOKS.map(x=>'<option value="'+x[0]+'"'+((M.book||'')===x[0]?' selected':'')+'>'+x[1]+'</option>').join('')+'</select>';
+    let gameRow='';
+    if(ctx==='dg'){ const S=_pickS('dg');
+      const opts='<option value="">All games</option>'+_pickGames().map(g=>{ const k=abbr(g.home)+'v'+abbr(g.away); return '<option value="'+k+'"'+(S.game===k?' selected':'')+'>'+abbr(g.home)+' v '+abbr(g.away)+'</option>'; }).join('');
+      gameRow='<div class="fxp-ctlrow"><span class="fxp-ctllab">Game</span><select class="fxp-booksel" onchange="_pickGame(this.value)">'+opts+'</select></div>';
+    }
+    return '<div class="fxp-controls">'+gameRow+
+      '<div class="fxp-ctlrow"><span class="fxp-ctllab">Type</span><div class="fxp-chips">'+modeBar+'</div></div>'+desc+teamRow+
       '<div class="fxp-ctlrow"><span class="fxp-ctllab">Book</span>'+bookSel+'</div>'+
       '<div class="fxp-ctlrow"><span class="fxp-ctllab">Markets</span><div class="fxp-chips">'+mktBar+'</div></div></div>';
-    const poolCards=_fxPickPool(g);
-    const cards=poolCards.length?poolCards.map(_fxpCard).join(''):'<div class="tp-body-meta" style="border:0;margin:8px 0;opacity:.75">No legs match \u2014 try a different Type, add markets, or switch to Best price.</div>';
-    const picked=Object.keys(S.on).filter(n=>S.on[n]).map(n=>{ const b=poolCards.find(l=>l.p.name===n); return b?_fxPickLegAt(b):null; }).filter(Boolean);
-    const comb=picked.reduce((a,l)=>a*(l._odds?l._odds.price:1),1);
-    const slipLegs=picked.length?picked.map(l=>'<div class="fxp-sliprow"><span class="fxp-slipnm">'+esc(l.p.name)+'</span><span class="fxp-slipbet">'+esc(l.betLabel)+'</span><span class="fxp-slipod">$'+(+l._odds.price).toFixed(2)+'</span><button class="fxp-slipx" data-n="'+_attrEsc(l.p.name)+'" onclick="_fxPickToggle(this.dataset.n)" title="Remove">\u00d7</button></div>').join(''):'<div class="fxp-slipempty">Tap <b>Add</b> on any leg above to start building.</div>';
-    const slipMeta=picked.length?('<span>'+picked.length+' leg'+(picked.length!==1?'s':'')+'</span><span class="fxp-slipcomb">$'+comb.toFixed(2)+'</span>'):'';
-    const slipActs=picked.length?'<div class="fxp-slipacts"><button class="fxp-slipcard" onclick="_fxPickToCard()"><i class="ti ti-receipt"></i> Add to card</button><button class="fxp-slipclr" onclick="_fxPickClear()"><i class="ti ti-trash"></i> Clear</button></div>':'';
-    const slip='<div class="fxp-slip"><div class="fxp-sliphd"><span><i class="ti ti-stack-2"></i> Your multi</span><span class="fxp-slipmeta">'+slipMeta+'</span></div>'+slipLegs+slipActs+'</div>';
-    const head='<div class="tp-sec" style="margin-top:14px"><div class="sec-title"><i class="ti ti-stack-2"></i> Multi Builder</div><div class="sec-meta">'+poolCards.length+' triggered leg'+(poolCards.length!==1?'s':'')+'</div></div>';
-    return '<div id="fx-pick">'+head+controls+'<div class="fxp-pool">'+cards+'</div>'+slip+'</div>';
   }
-  function _fxPickRerender(){ const g=_fxmG(); const el=document.getElementById('fx-pick'); if(el&&g) el.outerHTML=fxPickMulti(g); }
-  window._fxPickToggle=function(name){ const S=_fxPickS(); if(S.on[name]) delete S.on[name]; else S.on[name]=1; _fxPickRerender(); };
-  window._fxPickAdj=function(name,dir){
-    const g=_fxmG(); if(!g)return; const base=_fxPickPool(g).find(l=>l.p.name===name); if(!base)return;
-    const S=_fxPickS(); const cur=(S.line[name]!=null?S.line[name]:base.line);
+  function _pickSlip(ctx,pool){
+    const S=_pickS(ctx), q="'"+ctx+"'";
+    const picked=Object.keys(S.on).filter(n=>S.on[n]).map(n=>{ const b=pool.find(l=>l.p.name===n); return b?_pickLegAt(ctx,b):null; }).filter(Boolean);
+    const comb=picked.reduce((a,l)=>a*(l._odds?l._odds.price:1),1);
+    const rows=picked.length?picked.map(l=>'<div class="fxp-sliprow"><span class="fxp-slipnm">'+esc(l.p.name)+'</span>'+(ctx==='dg'?'<span class="fxp-slipg">'+abbr(l.p.team)+'</span>':'')+'<span class="fxp-slipbet">'+esc(l.betLabel)+'</span><span class="fxp-slipod">$'+(+l._odds.price).toFixed(2)+'</span><button class="fxp-slipx" data-n="'+_attrEsc(l.p.name)+'" onclick="_pickToggle('+q+',this.dataset.n)" title="Remove">\u00d7</button></div>').join(''):'<div class="fxp-slipempty">Tap <b>Add</b> on any leg above to start building.</div>';
+    const meta=picked.length?('<span>'+picked.length+' leg'+(picked.length!==1?'s':'')+'</span><span class="fxp-slipcomb">$'+comb.toFixed(2)+'</span>'):'';
+    const acts=picked.length?'<div class="fxp-slipacts"><button class="fxp-slipcard" onclick="_pickToCard('+q+')"><i class="ti ti-receipt"></i> Add to card</button><button class="fxp-slipclr" onclick="_pickClear('+q+')"><i class="ti ti-trash"></i> Clear</button></div>':'';
+    return '<div class="fxp-slip"><div class="fxp-sliphd"><span><i class="ti ti-stack-2"></i> Your multi</span><span class="fxp-slipmeta">'+meta+'</span></div>'+rows+acts+'</div>';
+  }
+  function fxPickMulti(g){
+    if(!g||!_oddsLive()) return '';
+    const S=_pickS('fx'); const key=abbr(g.home)+'v'+abbr(g.away);
+    if(S.key!==key){ S.key=key; S.on={}; S.line={}; }
+    const pool=_pickPool('fx');
+    const cards=pool.length?pool.map(l=>_fxpCard('fx',l)).join(''):'<div class="tp-body-meta" style="border:0;margin:8px 0;opacity:.75">No legs match \u2014 try a different Type, add markets, or switch to Best price.</div>';
+    const head='<div class="tp-sec" style="margin-top:14px"><div class="sec-title"><i class="ti ti-stack-2"></i> Multi Builder</div><div class="sec-meta">'+pool.length+' triggered leg'+(pool.length!==1?'s':'')+'</div></div>';
+    return '<div id="fx-pick">'+head+_pickControls('fx')+'<div class="fxp-pool">'+cards+'</div>'+_pickSlip('fx',pool)+'</div>';
+  }
+  function degenPickMulti(){
+    if(!_oddsLive()) return '<div class="tp-body-meta" style="border:0;margin:10px 0;opacity:.75">Live odds are off right now \u2014 the Multi Builder needs posted prices to build legs.</div>';
+    const pool=_pickPool('dg');
+    const shown=pool.slice(0,DG_POOL_CAP);
+    const cap=pool.length>DG_POOL_CAP?'<div class="tp-body-meta" style="border:0;margin:6px 0 0;opacity:.6;font-size:10px">Showing top '+DG_POOL_CAP+' of '+pool.length+' \u2014 narrow with the Game, Type or Market filters.</div>':'';
+    const cards=shown.length?shown.map(l=>_fxpCard('dg',l)).join(''):'<div class="tp-body-meta" style="border:0;margin:8px 0;opacity:.75">No legs match \u2014 try a different Game, Type, add markets, or switch to Best price.</div>';
+    return '<div id="dg-pick">'+_pickControls('dg')+'<div class="fxp-pool">'+cards+'</div>'+cap+_pickSlip('dg',pool)+'</div>';
+  }
+  function _pickRerender(ctx){ const el=document.getElementById(ctx==='dg'?'dg-pick':'fx-pick'); if(!el) return; if(ctx==='dg') el.outerHTML=degenPickMulti(); else { const g=_fxmG(); if(g) el.outerHTML=fxPickMulti(g); } }
+  window._pickToggle=function(ctx,name){ const S=_pickS(ctx); if(S.on[name]) delete S.on[name]; else S.on[name]=1; _pickRerender(ctx); };
+  window._pickAdj=function(ctx,name,dir){
+    const base=_pickPool(ctx).find(l=>l.p.name===name); if(!base)return;
+    const S=_pickS(ctx); const cur=(S.line[name]!=null?S.line[name]:base.line);
     const ladder=[...new Set(altLines(name,base.statKey).map(r=>Math.ceil(r.line)))].sort((a,b)=>a-b); if(!ladder.length)return;
     let idx=ladder.indexOf(cur); if(idx<0) idx=ladder.reduce((bi,v,i)=>Math.abs(v-cur)<Math.abs(ladder[bi]-cur)?i:bi,0);
     const nl=ladder[Math.min(ladder.length-1,Math.max(0,idx+dir))];
     if(nl===base.line) delete S.line[name]; else S.line[name]=nl;
-    _fxPickRerender();
+    _pickRerender(ctx);
   };
-  window._fxPickClear=function(){ const S=_fxPickS(); S.on={}; S.line={}; _fxPickRerender(); };
-  window._fxPickMode=function(k){ SETTINGS.multi.mode=k; saveSettings(); _fxPickRerender(); };
-  window._fxPickMkt=function(k){ const a=SETTINGS.multi.markets||(SETTINGS.multi.markets=[]); const i=a.indexOf(k); if(i>=0)a.splice(i,1); else a.push(k); saveSettings(); _fxPickRerender(); };
-  window._fxPickBook=function(v){ SETTINGS.multi.book=v||null; saveSettings(); _fxPickRerender(); };
-  window._fxPickToCard=function(){
-    const g=_fxmG(); if(!g)return; const S=_fxPickS(); const pool=_fxPickPool(g);
-    const picked=Object.keys(S.on).filter(n=>S.on[n]).map(n=>{ const b=pool.find(l=>l.p.name===n); return b?_fxPickLegAt(b):null; }).filter(Boolean);
+  window._pickClear=function(ctx){ const S=_pickS(ctx); S.on={}; S.line={}; _pickRerender(ctx); };
+  window._pickMode=function(ctx,k){ SETTINGS.multi.mode=k; saveSettings(); _pickRerender(ctx); };
+  window._pickMkt=function(ctx,k){ const a=SETTINGS.multi.markets||(SETTINGS.multi.markets=[]); const i=a.indexOf(k); if(i>=0)a.splice(i,1); else a.push(k); saveSettings(); _pickRerender(ctx); };
+  window._pickBook=function(ctx,v){ SETTINGS.multi.book=v||null; saveSettings(); _pickRerender(ctx); };
+  window._pickGame=function(v){ _pickS('dg').game=v||null; _pickRerender('dg'); };
+  window._pickTeam=function(v){ SETTINGS.multi.team=v||null; saveSettings(); _pickRerender('dg'); };
+  window._pickToCard=function(ctx){
+    const S=_pickS(ctx); const pool=_pickPool(ctx);
+    const picked=Object.keys(S.on).filter(n=>S.on[n]).map(n=>{ const b=pool.find(l=>l.p.name===n); return b?_pickLegAt(ctx,b):null; }).filter(Boolean);
     if(picked.length<2){ _cardToast('Add at least 2 legs for a multi'); return; }
     const comb=picked.reduce((a,l)=>a*l._odds.price,1);
-    _cardAddMultiEntry({ title:abbr(g.home)+' v '+abbr(g.away)+' \u00b7 '+picked.length+'-leg multi', legs:picked.map(l=>({name:l.p.name,label:l.betLabel,odds:l._odds.price})), odds:comb, book:(SETTINGS.multi.book||''), src:'Multi Builder' });
+    let title;
+    if(ctx==='dg'){ const gset=new Set(picked.map(l=>[abbr(l.p.team),abbr(l.opp)].sort().join('v'))); title=picked.length+'-leg '+(gset.size>1?'round multi':'multi'); }
+    else { const g=_fxmG(); title=(g?abbr(g.home)+' v '+abbr(g.away)+' \u00b7 ':'')+picked.length+'-leg multi'; }
+    _cardAddMultiEntry({ title:title, legs:picked.map(l=>({name:l.p.name,label:l.betLabel,odds:l._odds.price})), odds:comb, book:(SETTINGS.multi.book||''), src:'Multi Builder' });
   };
 
   function focusedMultiTool(g){
@@ -3974,7 +4018,7 @@
     }
     if(k==='multi'){
       _mbFocusGame=null;
-      return '<div id="multi-wrap">'+multiFilterBar()+'<div id="multi-results">'+multiResults()+'</div></div>';
+      return degenPickMulti();
     }
     return emptyState('ti-flame','Coming next','This tile ports next.');
   }
