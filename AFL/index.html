@@ -712,6 +712,21 @@
   .card-fab .card-badge{min-width:18px;height:18px;padding:0 5px;border-radius:9px;background:var(--accent);color:#08140c;font-size:11px;font-weight:800;display:inline-flex;align-items:center;justify-content:center;}
   .card-fab.empty .card-badge{display:none;}
   @media(max-width:480px){.card-fab{padding:9px 13px;font-size:12px;}}
+.lt-meta{display:flex;align-items:center;justify-content:space-between;font-size:11px;color:var(--text-3);margin-bottom:10px;font-weight:700;}
+  .lt-refresh{background:none;border:1px solid var(--border);border-radius:6px;color:var(--text-2);cursor:pointer;padding:3px 8px;}
+  .lt-entry{background:var(--surface-2);border:1px solid var(--border);border-radius:8px;padding:9px 10px;margin-bottom:8px;}
+  .lt-ehd{display:flex;align-items:center;gap:8px;font-family:var(--font-display);font-weight:800;font-size:12px;color:var(--text);margin-bottom:7px;}
+  .lt-tag{font-size:10px;font-weight:800;margin-left:auto;letter-spacing:.03em;}
+  .lt-odds{font-size:11px;color:var(--text-2);font-weight:800;}
+  .lt-leg{margin:5px 0;}
+  .lt-leg-top{display:flex;align-items:center;gap:8px;font-size:12px;margin-bottom:3px;}
+  .lt-nm{font-weight:700;color:var(--text);}
+  .lt-bet{color:var(--text-3);font-size:11px;}
+  .lt-st{margin-left:auto;font-weight:800;font-size:11px;white-space:nowrap;}
+  .lt-bar{height:5px;background:var(--surface-3);border-radius:3px;overflow:hidden;}
+  .lt-fill{height:100%;border-radius:3px;transition:width .4s;}
+  .lt-empty{font-size:12px;color:var(--text-3);text-align:center;padding:26px 14px;line-height:1.5;}
+  .lt-open-btn{background:var(--surface-2);border:1px solid var(--accent);color:var(--accent);font-family:var(--font-display);font-weight:800;font-size:11px;padding:5px 10px;border-radius:7px;cursor:pointer;display:inline-flex;align-items:center;gap:5px;margin-left:auto;margin-right:8px;}
   .card-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.72);z-index:9500;padding:24px 16px;overflow-y:auto;align-items:flex-start;justify-content:center;}
   .card-overlay.open{display:flex;}
   .card-modal{background:var(--surface);border:1px solid var(--border);border-radius:14px;max-width:460px;width:100%;padding:16px 14px 20px;max-height:calc(100vh - 48px);overflow-y:auto;}
@@ -844,8 +859,16 @@
   <button class="card-fab empty" id="card-fab" onclick="_openCard()" aria-label="My Card"><i class="ti ti-receipt"></i> Card <span class="card-badge" id="card-badge">0</span></button>
   <div class="card-overlay" id="card-overlay" onclick="if(event.target===this)_closeCard()">
     <div class="card-modal">
-      <div class="card-hdr"><h2><i class="ti ti-receipt"></i> My Card</h2><button class="card-x" onclick="_closeCard()">&times;</button></div>
+      <div class="card-hdr"><h2><i class="ti ti-receipt"></i> My Card</h2><button class="lt-open-btn" onclick="_liveOpen()"><i class="ti ti-antenna-bars-5"></i> Track live</button><button class="card-x" onclick="_closeCard()">&times;</button></div>
       <div id="card-body"></div>
+    </div>
+  </div>
+
+  <!-- LIVE TRACKER PANEL -->
+  <div class="card-overlay" id="live-overlay" onclick="if(event.target===this)_liveClose()">
+    <div class="card-modal">
+      <div class="card-hdr"><h2><i class="ti ti-antenna-bars-5"></i> Live Tracker</h2><button class="card-x" onclick="_liveClose()">&times;</button></div>
+      <div id="live-body"></div>
     </div>
   </div>
 
@@ -2522,17 +2545,17 @@
   const STREAK_STATS = [['disposals','Disposals'],['kicks','Kicks'],['handballs','Handballs'],['marks','Marks'],
     ['tackles','Tackles'],['clearances','Clearances'],['goals','Goals'],['dreamteam','Fantasy']];
   const TAGGER_NAMES = { hard:['Oisin Mullin','Toby Bedford','James Jordon','Marcus Windhager','Koltyn Tholstrup',"Finn O'Sullivan",'Edward Allan','Brady Hough','Milan Murdock','Jacob Konstanty','Finn Maginness','Nick Holman'],
-    defensive:['Conor Nash','Jarrod Berry','Josh Dunkley',"Mark O'Connor",'Willem Drew','Harry Perryman','James Peatling','George Hewett','Matt Guelfi','Jy Simpkin','Matthew Johnson'] };
+    defensive:['Conor Nash','Jarrod Berry','Josh Dunkley',"Mark O'Connor",'Willem Drew','Harry Perryman','James Peatling','George Hewett','Matt Guelfi','Jy Simpkin','Matthew Johnson','Hugh Boxshall'] };
   const TAGGING_THREATS = ['Jordan Dawson','Izak Rankine','Lachie Neale','Hugh McCluggage','Dayne Zorko','Patrick Cripps',
     'Sam Walsh','Nick Daicos','Zach Merrett','Caleb Serong','Andrew Brayshaw','Max Holmes','Tom Stewart','Noah Anderson',
     'Matt Rowell','Finn Callaghan','Lachie Whitfield','Jai Newcombe','Nick Watson','Christian Salem','Luke Davies-Uniacke',
     'Harry Sheezel','Zak Butters','Jason Horne-Francis','Tim Taranto','Jack Sinclair','Nasiah Wanganeen-Milera',
-    'Isaac Heeney','Chad Warner','Harley Reid','Marcus Bontempelli','Bailey Dale','Bailey Smith','Kysaiah Pickett','Christian Petracca','Will Ashcroft','Touk Miller','Shai Bolton','Josh Daicos','Ed Richards','Jagga Smith','Wayne Milera','Scott Pendlebury'];
+    'Isaac Heeney','Chad Warner','Harley Reid','Marcus Bontempelli','Bailey Dale','Bailey Smith','Kysaiah Pickett','Christian Petracca','Will Ashcroft','Touk Miller','Shai Bolton','Josh Daicos','Ed Richards','Jagga Smith','Wayne Milera','Scott Pendlebury','Jordan Clark'];
   const ALERT_THRESHOLD = 0.25, ALERT_MIN_L3 = 3;
   // How recently each tagger has actually been given a run-with job (2026 tagging log, to R19).
   // {l:last round tagged, n:tag jobs in 2026}. Names absent = no logged tag this season.
-  const TAGGER_LOG_ASOF=19;
-  const TAGGER_LOG={'Oisin Mullin':{l:19,n:13},'James Jordon':{l:19,n:11},'Edward Allan':{l:19,n:6},'Milan Murdock':{l:19,n:5},"Finn O'Sullivan":{l:18,n:11},'James Peatling':{l:18,n:3},'Brady Hough':{l:17,n:8},'Nick Holman':{l:16,n:1},'Jy Simpkin':{l:14,n:3},'Marcus Windhager':{l:13,n:1},'Matthew Johnson':{l:12,n:2},'Toby Bedford':{l:12,n:1},'Jacob Konstanty':{l:11,n:2},'Josh Dunkley':{l:11,n:1},'Koltyn Tholstrup':{l:10,n:5},'Finn Maginness':{l:10,n:1},'Jarrod Berry':{l:3,n:2}};
+  const TAGGER_LOG_ASOF=20;
+  const TAGGER_LOG={'James Jordon':{l:20,n:12},'Edward Allan':{l:20,n:7},'Milan Murdock':{l:20,n:6},'Koltyn Tholstrup':{l:20,n:6},'Hugh Boxshall':{l:20,n:2},'Oisin Mullin':{l:19,n:13},"Finn O'Sullivan":{l:18,n:11},'James Peatling':{l:18,n:3},'Brady Hough':{l:17,n:8},'Nick Holman':{l:16,n:1},'Jy Simpkin':{l:14,n:3},'Marcus Windhager':{l:13,n:1},'Matthew Johnson':{l:12,n:2},'Toby Bedford':{l:12,n:1},'Jacob Konstanty':{l:11,n:2},'Josh Dunkley':{l:11,n:1},'Finn Maginness':{l:10,n:1},'Jarrod Berry':{l:3,n:2}};
   function _taggerNote(name){
     const g=TAGGER_LOG[name];
     if(!g) return ' \u00b7 <span style="color:#6b7280" title="No run-with role logged in 2026">no \u201926 tag on record</span>';
@@ -4839,6 +4862,113 @@
   function _cardBtn(it){ if(!it||!it.name) return ''; const added=_cardHasKey(_cardKeyS(it)); return '<button class="add-card'+(added?' added':'')+'" data-card="'+_attrEsc(JSON.stringify(it))+'" onclick="event.stopPropagation();_cardAddEncoded(this)" title="Add to card" aria-label="Add to card">'+(added?'\u2713':'+')+'</button>'; }
   window._openCard=function(){ const ov=document.getElementById('card-overlay'); if(!ov)return; ov.classList.add('open'); _cardRender(); };
   window._closeCard=function(){ const ov=document.getElementById('card-overlay'); if(ov)ov.classList.remove('open'); };
+  // ===== Live bet tracker — overlays your card legs against live AFL player stats =====
+  // Data comes from the JTT live Worker (token handshake + Champion Data feed, ~30–60s fresh).
+  const LIVE_WORKER = 'https://health.justthetipafl.workers.dev';
+  const _LIVE_FIELD = { disposals:'D', goals:'G', kicks:'K', handballs:'H', marks:'M', tackles:'T', clearances:'CLR', dreamteam:'AF', fantasy:'AF', behinds:'B' };
+  const _LIVE_MLAB = { disposals:'disp', goals:'goals', kicks:'kicks', handballs:'HB', marks:'marks', tackles:'tackles', clearances:'clears', dreamteam:'fantasy' };
+  let _liveState = { games:null, gamesAt:0, rows:{}, updated:{}, at:0, loading:false, err:null, timer:null };
+
+  // parse a multi-leg label ("28+ Disposals" / "Under 27 Disposals") -> {market,line,side}
+  function _liveParse(label){
+    const m = /^(under\s+)?(\d+(?:\.\d+)?)\+?\s+(.+)$/i.exec(String(label||'').trim());
+    if(!m) return null;
+    const side = m[1] ? 'under' : 'over';
+    const line = parseFloat(m[2]);
+    const w = m[3].toLowerCase().trim().replace(/s$/,'');
+    const map = { disposal:'disposals', disp:'disposals', goal:'goals', kick:'kicks', handball:'handballs', hb:'handballs', mark:'marks', tackle:'tackles', clearance:'clearances', clear:'clearances', fantasy:'dreamteam', dreamteam:'dreamteam' };
+    return { market: map[w] || (w+'s'), line, side };
+  }
+  // flatten the card into trackable legs (singles + multi legs)
+  function _liveLegs(){
+    const out = [];
+    (_CARD||[]).forEach(e=>{
+      if(e.type==='multi'){
+        (e.legs||[]).forEach(l=>{ const pr=_liveParse(l.label); if(pr&&l.name) out.push({eid:e.id, multi:true, name:l.name, market:pr.market, line:pr.line, side:pr.side, odds:l.odds}); });
+      } else if(e.mkt && e.line!=='' && e.line!=null){
+        out.push({eid:e.id, multi:false, name:e.name, market:e.mkt, line:+e.line, side:e.side||'over', odds:e.odds});
+      }
+    });
+    return out;
+  }
+  function _liveTeamEq(a,b){ a=(a||'').toLowerCase(); b=(b||'').toLowerCase(); return a===b || a.startsWith(b) || b.startsWith(a); }
+  // resolve the card's games, fetch live stats, index by player name
+  async function _liveResolve(){
+    _liveState.loading = true; _liveState.err = null; if(document.getElementById('live-body')) _liveRender();
+    try {
+      if(!_liveState.games || Date.now()-_liveState.gamesAt > 300000){
+        const j = await fetch(LIVE_WORKER+'/fixtures').then(r=>r.json());
+        _liveState.games = (j && j.matches) || []; _liveState.gamesAt = Date.now();
+      }
+      const legs = _liveLegs();
+      const teamOf = n => { const p = state.idx.byName[n]; return p && p.team; };
+      const gameFor = t => _liveState.games.find(g => _liveTeamEq(g.home,t) || _liveTeamEq(g.away,t));
+      const needed = {};
+      legs.forEach(l => { const t=teamOf(l.name); const g=t&&gameFor(t); if(g) needed[g.matchId]=g; });
+      const rows = {};
+      await Promise.all(Object.keys(needed).map(async mid => {
+        try {
+          const j = await fetch(LIVE_WORKER+'/match?id='+mid).then(r=>r.json());
+          if(j && j.ok){ (j.home||[]).concat(j.away||[]).forEach(p=>{ rows[_normName(p.name)] = p; }); _liveState.updated[mid] = j.updated; }
+        } catch(e){}
+      }));
+      _liveState.rows = rows; _liveState.needed = needed;
+    } catch(e){ _liveState.err = String(e && e.message || e); }
+    _liveState.loading = false; _liveState.at = Date.now();
+    if(document.getElementById('live-body')) _liveRender();
+  }
+  // per-leg live status
+  function _liveLegStatus(l){
+    const row = _liveState.rows[_normName(l.name)];
+    const field = _LIVE_FIELD[l.market];
+    if(!row || row[field]==null) return { s:'none', txt:'no live data yet', pct:0 };
+    const v = row[field], line = l.line;
+    if(l.side==='under'){
+      const dead = v >= line;
+      return { s: dead?'dead':'safe', v, pct: Math.min(1, line?v/line:0), txt: dead ? ('BUST — '+v) : (v+' · under '+line) };
+    }
+    const hit = v >= line;
+    return { s: hit?'hit':'live', v, pct: Math.min(1, line?v/line:0), txt: hit ? ('HIT · '+v) : (v+' / '+line+' · needs '+(Math.max(0,line-v))) };
+  }
+  const _LIVE_COL = { hit:'#22c55e', safe:'#22c55e', live:'#eab308', dead:'#ef4444', none:'#6b7280' };
+  function _liveLegRow(l){
+    const st = _liveLegStatus(l);
+    const mk = _LIVE_MLAB[l.market] || l.market;
+    const bet = (l.side==='under'?'U':'')+l.line+(l.side==='under'?'':'+')+' '+mk;
+    return '<div class="lt-leg"><div class="lt-leg-top"><span class="lt-nm">'+esc(l.name)+'</span><span class="lt-bet">'+esc(bet)+'</span>'+
+      '<span class="lt-st" style="color:'+_LIVE_COL[st.s]+'">'+esc(st.txt)+'</span></div>'+
+      '<div class="lt-bar"><div class="lt-fill" style="width:'+Math.round(st.pct*100)+'%;background:'+_LIVE_COL[st.s]+'"></div></div></div>';
+  }
+  function liveTracker(){
+    const legs = _liveLegs();
+    if(!legs.length) return '<div class="lt-empty">Your card is empty. Add some bets and they\'ll show here with live progress once games are underway.</div>';
+    const byE = {}; legs.forEach(l => { (byE[l.eid]=byE[l.eid]||[]).push(l); });
+    let h = '';
+    (_CARD||[]).forEach(e => {
+      const els = byE[e.id]; if(!els) return;
+      if(e.type==='multi'){
+        const sts = els.map(_liveLegStatus);
+        const anyDead = sts.some(s=>s.s==='dead');
+        const hitN = sts.filter(s=>s.s==='hit'||s.s==='safe').length;
+        const started = sts.some(s=>s.s!=='none');
+        const badge = anyDead ? '<span class="lt-tag" style="color:#ef4444">LEG DOWN</span>'
+          : (started ? (hitN===els.length ? '<span class="lt-tag" style="color:#22c55e">ALL UP</span>' : '<span class="lt-tag" style="color:#eab308">'+hitN+'/'+els.length+' up</span>')
+          : '<span class="lt-tag" style="color:#6b7280">not started</span>');
+        h += '<div class="lt-entry"><div class="lt-ehd"><span>'+esc(e.title||'Multi')+'</span>'+badge+(e.odds?'<span class="lt-odds">$'+(+e.odds).toFixed(2)+'</span>':'')+'</div>'+els.map(_liveLegRow).join('')+'</div>';
+      } else {
+        h += '<div class="lt-entry">'+_liveLegRow(els[0])+'</div>';
+      }
+    });
+    const up = Object.values(_liveState.updated||{}).filter(Boolean).sort().pop();
+    const meta = _liveState.err ? '<span style="color:#ef4444">'+esc(_liveState.err)+'</span>'
+      : (_liveState.loading ? 'refreshing…' : (up ? 'live · updated '+_liveAgo(up) : (_liveState.at?'no games live right now':'loading…')));
+    return '<div class="lt-meta">'+meta+'<button class="lt-refresh" onclick="_liveResolve()"><i class="ti ti-refresh"></i></button></div>'+h;
+  }
+  function _liveAgo(iso){ const s=Math.max(0,Math.round((Date.now()-Date.parse(iso))/1000)); return s<90?s+'s ago':Math.round(s/60)+'m ago'; }
+  function _liveRender(){ const b=document.getElementById('live-body'); if(b) b.innerHTML = liveTracker(); }
+  window._liveOpen = function(){ const ov=document.getElementById('live-overlay'); if(!ov)return; ov.classList.add('open'); _liveRender(); _liveResolve(); if(_liveState.timer) clearInterval(_liveState.timer); _liveState.timer=setInterval(_liveResolve, 60000); };
+  window._liveClose = function(){ const ov=document.getElementById('live-overlay'); if(ov) ov.classList.remove('open'); if(_liveState.timer){ clearInterval(_liveState.timer); _liveState.timer=null; } };
+
   function _bookSel(id,cur){
     const std=ALL_BOOKS.map(function(bk){return '<option value="'+bk[0]+'"'+(cur===bk[0]?' selected':'')+'>'+bk[1]+'</option>';}).join('');
     const cus=(SETTINGS.customBooks||[]).map(function(nm){return '<option value="'+_attrEsc(nm)+'"'+(cur===nm?' selected':'')+'>'+esc(nm)+'</option>';}).join('');
