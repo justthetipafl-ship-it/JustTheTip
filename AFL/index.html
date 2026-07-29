@@ -726,6 +726,7 @@
   .lt-bar{height:5px;background:var(--surface-3);border-radius:3px;overflow:hidden;}
   .lt-fill{height:100%;border-radius:3px;transition:width .4s;}
   .lt-empty{font-size:12px;color:var(--text-3);text-align:center;padding:26px 14px;line-height:1.5;}
+  .lt-acts{display:inline-flex;gap:5px;}
   .lt-open-btn{background:var(--surface-2);border:1px solid var(--accent);color:var(--accent);font-family:var(--font-display);font-weight:800;font-size:11px;padding:5px 10px;border-radius:7px;cursor:pointer;display:inline-flex;align-items:center;gap:5px;margin-left:auto;margin-right:8px;}
   .card-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.72);z-index:9500;padding:24px 16px;overflow-y:auto;align-items:flex-start;justify-content:center;}
   .card-overlay.open{display:flex;}
@@ -4962,12 +4963,48 @@
     const up = Object.values(_liveState.updated||{}).filter(Boolean).sort().pop();
     const meta = _liveState.err ? '<span style="color:#ef4444">'+esc(_liveState.err)+'</span>'
       : (_liveState.loading ? 'refreshing…' : (up ? 'live · updated '+_liveAgo(up) : (_liveState.at?'no games live right now':'loading…')));
-    return '<div class="lt-meta">'+meta+'<button class="lt-refresh" onclick="_liveResolve()"><i class="ti ti-refresh"></i></button></div>'+h;
+    return '<div class="lt-meta">'+meta+'<span class="lt-acts"><button class="lt-refresh" onclick="_livePop()" title="Pop out floating overlay"><i class="ti ti-picture-in-picture-top"></i></button><button class="lt-refresh" onclick="_liveResolve()" title="Refresh"><i class="ti ti-refresh"></i></button></span></div>'+h;
   }
   function _liveAgo(iso){ const s=Math.max(0,Math.round((Date.now()-Date.parse(iso))/1000)); return s<90?s+'s ago':Math.round(s/60)+'m ago'; }
-  function _liveRender(){ const b=document.getElementById('live-body'); if(b) b.innerHTML = liveTracker(); }
-  window._liveOpen = function(){ const ov=document.getElementById('live-overlay'); if(!ov)return; ov.classList.add('open'); _liveRender(); _liveResolve(); if(_liveState.timer) clearInterval(_liveState.timer); _liveState.timer=setInterval(_liveResolve, 60000); };
-  window._liveClose = function(){ const ov=document.getElementById('live-overlay'); if(ov) ov.classList.remove('open'); if(_liveState.timer){ clearInterval(_liveState.timer); _liveState.timer=null; } };
+  function _liveRender(){ const b=document.getElementById('live-body'); if(b) b.innerHTML = liveTracker(); _liveRenderPip(); }
+  // shared 60s poll runs while either the panel or the float is open
+  function _livePolling(){ const ov=document.getElementById('live-overlay'); return (ov&&ov.classList.contains('open')) || (_liveState.pip && !_liveState.pip.closed); }
+  function _livePoll(){ if(_liveState.timer) clearInterval(_liveState.timer); _liveState.timer=setInterval(function(){ if(_livePolling()) _liveResolve(); else { clearInterval(_liveState.timer); _liveState.timer=null; } }, 60000); }
+  // ---- Picture-in-Picture float (desktop Chrome/Edge) ----
+  function _livePipCSS(){
+    return 'html,body{margin:0;padding:0;background:transparent;}'+
+      'body{font-family:-apple-system,Segoe UI,Roboto,sans-serif;color:#e9e9ec;background:rgba(9,10,13,var(--pip-a,.86));padding:8px 9px;box-sizing:border-box;-webkit-font-smoothing:antialiased;}'+
+      '.pip-top{display:flex;align-items:center;gap:8px;margin-bottom:7px;}'+
+      '.pip-title{font-weight:800;font-size:10px;letter-spacing:.06em;color:#f4b400;display:flex;align-items:center;gap:5px;}'+
+      '.pip-dot{width:7px;height:7px;border-radius:50%;background:#22c55e;box-shadow:0 0 6px #22c55e;}'+
+      '.pip-op{margin-left:auto;width:74px;accent-color:#f4b400;height:14px;}'+
+      '.lt-meta{display:flex;justify-content:space-between;font-size:10px;color:#8a8a92;margin-bottom:7px;font-weight:700;}'+
+      '.lt-acts,.lt-refresh{display:none;}'+
+      '.lt-entry{background:rgba(255,255,255,.055);border:1px solid rgba(255,255,255,.09);border-radius:7px;padding:6px 8px;margin-bottom:6px;}'+
+      '.lt-ehd{display:flex;align-items:center;gap:6px;font-weight:800;font-size:10.5px;margin-bottom:5px;}'+
+      '.lt-tag{font-size:9px;font-weight:800;margin-left:auto;}.lt-odds{font-size:10px;color:#c2c2c9;font-weight:800;}'+
+      '.lt-leg{margin:4px 0;}.lt-leg-top{display:flex;align-items:center;gap:6px;font-size:10.5px;margin-bottom:2px;}'+
+      '.lt-nm{font-weight:700;}.lt-bet{color:#8a8a92;font-size:9.5px;}'+
+      '.lt-st{margin-left:auto;font-weight:800;font-size:10px;white-space:nowrap;}'+
+      '.lt-bar{height:4px;background:rgba(255,255,255,.1);border-radius:2px;overflow:hidden;}.lt-fill{height:100%;border-radius:2px;}'+
+      '.lt-empty{font-size:10.5px;color:#8a8a92;text-align:center;padding:16px 10px;line-height:1.5;}';
+  }
+  function _liveRenderPip(){ const w=_liveState.pip; if(!w||w.closed) return; try{ const b=w.document.getElementById('live-pip-body'); if(b) b.innerHTML=liveTracker(); }catch(e){} }
+  window._livePop = async function(){
+    if(!('documentPictureInPicture' in window)){ _liveState.err='Floating overlay needs Chrome or Edge on desktop.'; _liveRender(); return; }
+    try{
+      const w = await documentPictureInPicture.requestWindow({ width:300, height:380 });
+      _liveState.pip = w;
+      const st = w.document.createElement('style'); st.textContent = _livePipCSS(); w.document.head.appendChild(st);
+      w.document.documentElement.style.setProperty('--pip-a','0.86');
+      w.document.body.innerHTML = '<div class="pip-top"><span class="pip-title"><span class="pip-dot"></span>JTT LIVE</span><input type="range" min="25" max="100" value="86" class="pip-op" oninput="__op(this.value)" title="Overlay opacity"></div><div id="live-pip-body"></div>';
+      w.__op = function(v){ try{ w.document.documentElement.style.setProperty('--pip-a', (v/100).toFixed(2)); }catch(e){} };
+      w.addEventListener('pagehide', function(){ _liveState.pip=null; });
+      _livePoll(); _liveResolve();
+    }catch(e){ _liveState.err='Floating overlay blocked: '+(e && e.message || e); _liveRender(); }
+  };
+  window._liveOpen = function(){ const ov=document.getElementById('live-overlay'); if(!ov)return; ov.classList.add('open'); _liveRender(); _liveResolve(); _livePoll(); };
+  window._liveClose = function(){ const ov=document.getElementById('live-overlay'); if(ov) ov.classList.remove('open'); /* float (if open) keeps polling; poll self-stops when both are closed */ };
 
   function _bookSel(id,cur){
     const std=ALL_BOOKS.map(function(bk){return '<option value="'+bk[0]+'"'+(cur===bk[0]?' selected':'')+'>'+bk[1]+'</option>';}).join('');
