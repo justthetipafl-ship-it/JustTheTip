@@ -721,7 +721,9 @@
   .lt-leg{margin:5px 0;}
   .lt-leg-sub{display:flex;align-items:center;gap:8px;}
   .lt-leg-top{display:flex;align-items:center;gap:8px;font-size:12px;margin-bottom:3px;}
-  .lt-nm{font-weight:700;color:var(--text);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .lt-nmwrap{flex:1;min-width:0;display:flex;align-items:center;gap:6px;}
+  .lt-nm{font-weight:700;color:var(--text);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .lt-bench{font-size:8.5px;font-weight:800;color:#f59e0b;background:rgba(245,158,11,.15);border:1px solid rgba(245,158,11,.4);border-radius:4px;padding:1px 4px;letter-spacing:.04em;flex-shrink:0;}
   .lt-bet{color:var(--text-3);font-size:11px;flex-shrink:0;}
   .lt-st{margin-left:auto;font-weight:800;font-size:11px;white-space:nowrap;flex-shrink:0;}
   .lt-bar{height:5px;background:var(--surface-3);border-radius:3px;overflow:hidden;flex:1;}
@@ -4937,7 +4939,8 @@
     const st = _liveLegStatus(l);
     const mk = _LIVE_MLAB[l.market] || l.market;
     const bet = (l.side==='under'?'U':'')+l.line+(l.side==='under'?'':'+')+' '+mk;
-    return '<div class="lt-leg"><div class="lt-leg-top"><span class="lt-nm">'+esc(l.name)+'</span>'+
+    const _row = _liveState.rows[_normName(l.name)]; const _benched = _row && _row.bench;
+    return '<div class="lt-leg"><div class="lt-leg-top"><span class="lt-nmwrap"><span class="lt-nm">'+esc(l.name)+'</span>'+(_benched?'<span class="lt-bench" title="On the interchange bench">BENCH</span>':'')+'</span>'+
       '<span class="lt-st" style="color:'+_LIVE_COL[st.s]+'">'+esc(st.txt)+'</span></div>'+
       '<div class="lt-leg-sub"><span class="lt-bet">'+esc(bet)+'</span>'+
       '<div class="lt-bar"><div class="lt-fill" style="width:'+Math.round(st.pct*100)+'%;background:'+_LIVE_COL[st.s]+'"></div></div></div></div>';
@@ -4971,7 +4974,7 @@
   function _liveRender(){ const b=document.getElementById('live-body'); if(b) b.innerHTML = liveTracker(); _liveRenderPip(); }
   // shared 60s poll runs while either the panel or the float is open
   function _livePolling(){ const ov=document.getElementById('live-overlay'); return (ov&&ov.classList.contains('open')) || (_liveState.pip && !_liveState.pip.closed); }
-  function _livePoll(){ if(_liveState.timer) clearInterval(_liveState.timer); _liveState.timer=setInterval(function(){ if(_livePolling()) _liveResolve(); else { clearInterval(_liveState.timer); _liveState.timer=null; } }, 60000); }
+  function _livePoll(){ if(_liveState.timer) clearInterval(_liveState.timer); _liveState.timer=setInterval(function(){ if(_livePolling()) _liveResolve(); else { clearInterval(_liveState.timer); _liveState.timer=null; } }, 30000); }
   // ---- Picture-in-Picture float (desktop Chrome/Edge) ----
   function _livePipCSS(){
     return 'html,body{margin:0;padding:0;background:transparent;}'+
@@ -4986,7 +4989,7 @@
       '.lt-ehd{display:flex;align-items:center;gap:6px;font-weight:800;font-size:10.5px;margin-bottom:5px;}'+
       '.lt-tag{font-size:9px;font-weight:800;margin-left:auto;}.lt-odds{font-size:10px;color:#c2c2c9;font-weight:800;}'+
       '.lt-leg{margin:4px 0;}.lt-leg-top{display:flex;align-items:center;gap:6px;font-size:10.5px;margin-bottom:2px;}'+
-      '.lt-nm{font-weight:700;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}.lt-leg-sub{display:flex;align-items:center;gap:6px;}.lt-bet{color:#8a8a92;font-size:9.5px;flex-shrink:0;}'+
+      '.lt-nmwrap{flex:1;min-width:0;display:flex;align-items:center;gap:5px;}.lt-nm{font-weight:700;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}.lt-bench{font-size:8px;font-weight:800;color:#f59e0b;background:rgba(245,158,11,.16);border:1px solid rgba(245,158,11,.4);border-radius:3px;padding:0 3px;flex-shrink:0;}.lt-leg-sub{display:flex;align-items:center;gap:6px;}.lt-bet{color:#8a8a92;font-size:9.5px;flex-shrink:0;}'+
       '.lt-st{margin-left:auto;font-weight:800;font-size:10px;white-space:nowrap;}'+
       '.lt-bar{height:4px;background:rgba(255,255,255,.1);border-radius:2px;overflow:hidden;flex:1;}.lt-fill{height:100%;border-radius:2px;}'+
       '.lt-empty{font-size:10.5px;color:#8a8a92;text-align:center;padding:16px 10px;line-height:1.5;}'+
