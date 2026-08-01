@@ -95,7 +95,9 @@
   .j-rna{font-size:10px;color:var(--text-3);flex:1;}
   .j-chips{display:flex;flex-wrap:wrap;gap:5px;margin:8px 0;}
   .j-chip{font-size:10px;font-weight:700;border:1px solid var(--border);border-radius:4px;padding:2px 6px;color:var(--text-3);}
-  .j-add{width:100%;font-size:12px;font-weight:800;padding:8px;border-radius:7px;border:1px solid var(--accent);background:transparent;color:var(--accent);cursor:pointer;display:inline-flex;align-items:center;justify-content:center;gap:5px;}
+  .j-actions{display:flex;gap:7px;}
+  .j-add{flex:1;font-size:12px;font-weight:800;padding:8px;border-radius:7px;border:1px solid var(--accent);background:transparent;color:var(--accent);cursor:pointer;display:inline-flex;align-items:center;justify-content:center;gap:5px;}
+  .j-add2{flex:1;font-size:12px;font-weight:800;padding:8px;border-radius:7px;border:1px solid var(--border-light);background:var(--surface-3);color:var(--text);cursor:pointer;display:inline-flex;align-items:center;justify-content:center;gap:5px;}
   .j-add.on{background:#22c55e;border-color:#22c55e;color:#0b0b0b;}
   .j-slip{margin-top:10px;background:var(--surface-2);border:1px solid var(--border);border-radius:8px;padding:10px 11px;}
   .j-sliphd{display:flex;align-items:center;justify-content:space-between;font-family:var(--font-display);font-weight:800;font-size:13px;color:var(--text);margin-bottom:7px;}
@@ -3686,7 +3688,8 @@
       '<span class="j-dsub">'+abbr(d.p.team)+' v '+abbr(d.opp)+' \u00b7 '+d.line+'+ '+(J_MLAB[S.market]||S.market)+'</span>'+oddsBadge+'</div>'+
       _jBar('Season',r.season,r.seasonN)+_jBar('L5',r.l5,r.l5N)+_jBar('H2H',r.h2h,r.h2hN)+_jBar('Venue',r.venue,r.venueN)+
       '<div class="j-chips">'+chip('DVP',d.dvp)+scChip+chip('Def',d.def)+'</div>'+
-      '<button class="j-add'+(on?' on':'')+'" data-n="'+_attrEsc(d.p.name)+'" onclick="_jToggle(this.dataset.n)">'+(on?'<i class="ti ti-check"></i> In your multi':'<i class="ti ti-plus"></i> Add to multi'+(price!=null?' \u00b7 $'+price.toFixed(2):''))+'</button></div>';
+      '<div class="j-actions"><button class="j-add2" data-n="'+_attrEsc(d.p.name)+'" onclick="_jAddSingle(this.dataset.n)"><i class="ti ti-receipt"></i> Add single'+(price!=null?' \u00b7 $'+price.toFixed(2):'')+'</button>'+
+      '<button class="j-add'+(on?' on':'')+'" data-n="'+_attrEsc(d.p.name)+'" onclick="_jToggle(this.dataset.n)">'+(on?'<i class="ti ti-check"></i> In multi':'<i class="ti ti-stack-2"></i> Add to multi')+'</button></div></div>';
   }
   function _jSlip(g,data){
     const S=_jS(); const legs=Object.keys(S.sel).filter(n=>S.sel[n]).map(n=>data.find(x=>x.p.name===n)).filter(Boolean);
@@ -3725,6 +3728,15 @@
   window._jOddsMin=function(v){ const n=parseFloat(v); _jS().oddsMin=(isFinite(n)&&n>0)?n:null; _jRerender(); };
   window._jOddsMax=function(v){ const n=parseFloat(v); _jS().oddsMax=(isFinite(n)&&n>0)?n:null; _jRerender(); };
   window._jOddsClear=function(){ const S=_jS(); S.oddsMin=null; S.oddsMax=null; _jRerender(); };
+  window._jAddSingle=function(name){
+    const g=_fxmG(); if(!g)return; const S=_jS(); const d=_jData(g).find(x=>x.p.name===name); if(!d)return;
+    const od=_jOdds(name,S.market,d.line), price=od?od.over:null;
+    const it={name:d.p.name,team:d.p.team,opp:d.opp,mkt:S.market,line:d.line,side:'over',
+      odds:(price!=null?price:null),book:(price!=null?(od.book||''):''),
+      label:d.line+'+ '+(_MKT_NM[S.market]||S.market),src:'Jupiter'};
+    if(_cardAdd(it)) _cardToast('Added \u00b7 '+_cardCount()+' bet'+(_cardCount()!==1?'s':'')+' on card'+(price==null?' \u00b7 add your price':''));
+    else _cardToast('Already on your card');
+  };
   window._jToCard=function(){
     const g=_fxmG(); if(!g)return; const S=_jS(); const data=_jData(g);
     const legs=Object.keys(S.sel).filter(n=>S.sel[n]).map(n=>data.find(x=>x.p.name===n)).filter(Boolean);
