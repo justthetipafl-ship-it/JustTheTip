@@ -73,6 +73,8 @@
   .j-linectl button.j-auto{width:auto;padding:0 8px;font-size:10px;color:var(--accent);}
   .j-linectl b{padding:0 9px;font-size:12px;font-weight:800;color:var(--text);min-width:38px;text-align:center;font-family:var(--font-display);}
   .j-book{font-size:11px;font-weight:700;padding:4px 8px;border-radius:6px;border:1px solid var(--border);background:var(--surface);color:var(--text);cursor:pointer;}
+  .j-odin{width:56px;font-size:12px;font-weight:700;padding:3px 6px;border-radius:6px;border:1px solid var(--border);background:var(--surface);color:var(--text);font-family:var(--font-display);}
+  .j-oddash{color:var(--text-3);font-weight:700;}
   .j-orbwrap{display:flex;justify-content:center;padding:6px 0 2px;}
   .j-svg{width:100%;max-width:400px;height:auto;overflow:visible;}
   .j-dot circle{transition:r .15s;}
@@ -81,6 +83,9 @@
   .j-dhd{display:flex;align-items:baseline;gap:8px;margin-bottom:8px;flex-wrap:wrap;}
   .j-dnm{font-family:var(--font-display);font-weight:800;font-size:14px;color:var(--text);cursor:pointer;}
   .j-dsub{font-size:11px;color:var(--text-3);font-weight:700;}
+  .j-dodds{margin-left:auto;font-family:var(--font-display);font-weight:800;font-size:15px;color:var(--accent);}
+  .j-dbook{font-size:9px;color:var(--text-3);font-weight:700;}
+  .j-nop{font-size:11px;color:var(--text-3);font-weight:700;}
   .j-rrow{display:flex;align-items:center;gap:7px;margin:4px 0;}
   .j-rlab{font-size:10px;font-weight:800;color:var(--text-3);width:44px;text-transform:uppercase;letter-spacing:.03em;}
   .j-rbar{flex:1;height:6px;background:var(--surface-3);border-radius:3px;overflow:hidden;}
@@ -3630,11 +3635,13 @@
       const dvp=(dpct!=null&&isFinite(dpct))?{pct:dpct,mi:JTTScoring.muInfo(dpct)}:null;
       const styleDvp=_jStyleDvp(p, isHome?smForHome:smForAway);
       const def=isHome?defForHome:defForAway;
-      out.push({p,opp,line,rates,pos,dvp,styleDvp,def,home:isHome});
+      const _od=_jOdds(p.name,mkt,line);
+      out.push({p,opp,line,rates,pos,dvp,styleDvp,def,home:isHome,price:_od?_od.over:null,book:_od?_od.book:''});
     });
     return out;
   }
   const _jTier=s=> s>=0.65?{c:'#22c55e'}: s>=0.55?{c:'#eab308'}: s>=0.45?{c:'#f97316'}:{c:'#6b7280'};
+  function _jInRange(d){ const S=_jS(); if(S.oddsMin==null&&S.oddsMax==null) return true; if(S.sel[d.p.name]) return true; if(d.price==null) return false; return (S.oddsMin==null||d.price>=S.oddsMin)&&(S.oddsMax==null||d.price<=S.oddsMax); }
   function _jOrbSVG(data){
     const W=360,C=180,R=150,IN=22;
     const map=s=>{ const t=Math.max(0,Math.min(1,(s-0.35)/(0.80-0.35))); return IN+t*(R-IN); };
@@ -3645,7 +3652,7 @@
       const lx=C+(R+13)*Math.cos(a[2]), ly=C+(R+13)*Math.sin(a[2]); spokes+='<text x="'+lx.toFixed(1)+'" y="'+(ly+3).toFixed(1)+'" text-anchor="middle" font-size="10" font-weight="800" fill="#e8b84b" letter-spacing="1">'+a[1].toUpperCase()+'</text>'; });
     // dots
     const S=_jS();
-    let dots=data.map(d=>{
+    let dots=data.filter(_jInRange).map(d=>{
       let ang=d.pos.angle; const rad=map(d.pos.strength);
       // deterministic jitter to reduce exact overlaps
       let hsh=0; for(let i=0;i<d.p.name.length;i++) hsh=(hsh*31+d.p.name.charCodeAt(i))&255;
@@ -3665,22 +3672,26 @@
     const pct=Math.round(rate*100), c=_jTier(rate).c;
     return '<div class="j-rrow"><span class="j-rlab">'+lab+'</span><div class="j-rbar"><div class="j-rfill" style="width:'+pct+'%;background:'+c+'"></div></div><span class="j-rpct" style="color:'+c+'">'+pct+'%</span><span class="j-rn">'+(n?n+'g':'')+'</span></div>';
   }
+  // price at the selected book (falls back to best) so the Book selector drives Jupiter's odds
+  function _jOdds(name,mkt,line){ const S=_jS(); const prev=_mbActiveBook; if(S.book)_mbActiveBook=S.book; let od=null; try{ od=_pcOddsAt(name,mkt,line); }catch(e){} finally{ _mbActiveBook=prev; } return od; }
   function _jDetail(data){
     const S=_jS(); const d=data.find(x=>x.p.name===S.focus);
     if(!d) return '<div class="j-detail j-detail-empty">Hover or tap a dot for the full read.</div>';
     const r=d.rates, on=!!S.sel[d.p.name];
+    const od=_jOdds(d.p.name,S.market,d.line); const price=od?od.over:null;
+    const oddsBadge='<span class="j-dodds">'+(price!=null?('$'+price.toFixed(2)+(od.book?' <span class="j-dbook">'+bookName(od.book)+'</span>':'')):'<span class="j-nop">no price</span>')+'</span>';
     const chip=(lab,o)=> o?('<span class="j-chip" style="color:'+o.mi.c+';border-color:'+o.mi.c+'55">'+lab+' '+(o.pct>=0?'+':'')+Math.round(o.pct)+'% '+o.mi.t+'</span>'):'';
     const sc=d.styleDvp; const scChip=(sc&&isFinite(sc.pct))?('<span class="j-chip" style="color:'+(sc.pct>=0?'#22c55e':'#ef4444')+';border-color:'+(sc.pct>=0?'#22c55e':'#ef4444')+'55" title="'+esc(sc.style)+'">Style '+(sc.pct>=0?'+':'')+Math.round(sc.pct)+'%</span>'):'';
     return '<div class="j-detail"><div class="j-dhd"><span class="j-dnm" data-n="'+_attrEsc(d.p.name)+'" onclick="openPlayer(this.dataset.n)">'+esc(d.p.name)+'</span>'+
-      '<span class="j-dsub">'+abbr(d.p.team)+' v '+abbr(d.opp)+' \u00b7 '+d.line+'+ '+(J_MLAB[_jS().market]||_jS().market)+'</span></div>'+
+      '<span class="j-dsub">'+abbr(d.p.team)+' v '+abbr(d.opp)+' \u00b7 '+d.line+'+ '+(J_MLAB[S.market]||S.market)+'</span>'+oddsBadge+'</div>'+
       _jBar('Season',r.season,r.seasonN)+_jBar('L5',r.l5,r.l5N)+_jBar('H2H',r.h2h,r.h2hN)+_jBar('Venue',r.venue,r.venueN)+
       '<div class="j-chips">'+chip('DVP',d.dvp)+scChip+chip('Def',d.def)+'</div>'+
-      '<button class="j-add'+(on?' on':'')+'" data-n="'+_attrEsc(d.p.name)+'" onclick="_jToggle(this.dataset.n)">'+(on?'<i class="ti ti-check"></i> In your multi':'<i class="ti ti-plus"></i> Add to multi')+'</button></div>';
+      '<button class="j-add'+(on?' on':'')+'" data-n="'+_attrEsc(d.p.name)+'" onclick="_jToggle(this.dataset.n)">'+(on?'<i class="ti ti-check"></i> In your multi':'<i class="ti ti-plus"></i> Add to multi'+(price!=null?' \u00b7 $'+price.toFixed(2):''))+'</button></div>';
   }
   function _jSlip(g,data){
     const S=_jS(); const legs=Object.keys(S.sel).filter(n=>S.sel[n]).map(n=>data.find(x=>x.p.name===n)).filter(Boolean);
     if(!legs.length) return '';
-    const priced=legs.map(d=>{ let od=null; try{ od=_pcOddsAt(d.p.name,S.market,d.line); }catch(e){} return {d, price:od?od.over:null, book:od?od.book:''}; });
+    const priced=legs.map(d=>{ const od=_jOdds(d.p.name,S.market,d.line); return {d, price:od?od.over:null, book:od?od.book:''}; });
     const comb=priced.reduce((a,x)=>a*(x.price||1),1); const anyUnpriced=priced.some(x=>x.price==null);
     const rows=priced.map(x=>'<div class="j-sliprow"><span class="j-slipnm">'+esc(x.d.p.name)+'</span><span class="j-slipbet">'+x.d.line+'+ '+(J_MLAB[S.market]||S.market)+'</span><span class="j-slipod">'+(x.price?'$'+x.price.toFixed(2):'—')+'</span><button class="j-slipx" data-n="'+_attrEsc(x.d.p.name)+'" onclick="_jToggle(this.dataset.n)">\u00d7</button></div>').join('');
     return '<div class="j-slip"><div class="j-sliphd"><span><i class="ti ti-stack-2"></i> Same-game multi</span><span class="j-slipmeta">'+legs.length+' leg'+(legs.length!==1?'s':'')+(anyUnpriced?'':' \u00b7 <b>$'+comb.toFixed(2)+'</b>')+'</span></div>'+rows+
@@ -3696,8 +3707,10 @@
     const lineCtl='<div class="j-linectl"><button onclick="_jLineStep(-1)">\u2212</button><b>'+lineTxt+'</b><button onclick="_jLineStep(1)">+</button>'+(S.line!=='auto'?'<button class="j-auto" onclick="_jLineAuto()">Auto</button>':'')+'</div>';
     const bookSel='<select class="j-book" onchange="_jBook(this.value)"><option value="">Best price</option>'+ALL_BOOKS.map(x=>'<option value="'+x[0]+'"'+((S.book||'')===x[0]?' selected':'')+'>'+x[1]+'</option>').join('')+'</select>';
     const controls='<div class="j-controls"><div class="j-crow"><span class="j-clab">Market</span><div class="j-chips2">'+mkts+'</div></div>'+
-      '<div class="j-crow"><span class="j-clab">Line</span>'+lineCtl+'<span class="j-clab" style="margin-left:auto">Book</span>'+bookSel+'</div></div>';
-    const head='<div class="tp-sec" style="margin-top:14px"><div class="sec-title"><i class="ti ti-planet"></i> Jupiter</div><div class="sec-meta">'+data.length+' players \u00b7 outer rim = hotter</div></div>';
+      '<div class="j-crow"><span class="j-clab">Line</span>'+lineCtl+'<span class="j-clab" style="margin-left:auto">Book</span>'+bookSel+'</div>'+
+      '<div class="j-crow"><span class="j-clab">Odds</span><input type="number" step="0.05" min="1" class="j-odin" value="'+(S.oddsMin!=null?S.oddsMin:'')+'" placeholder="min" onchange="_jOddsMin(this.value)"><span class="j-oddash">\u2013</span><input type="number" step="0.05" min="1" class="j-odin" value="'+(S.oddsMax!=null?S.oddsMax:'')+'" placeholder="max" onchange="_jOddsMax(this.value)">'+((S.oddsMin!=null||S.oddsMax!=null)?'<button class="j-auto" onclick="_jOddsClear()">Clear</button>':'')+'</div></div>';
+    const shown=data.filter(_jInRange).length;
+    const head='<div class="tp-sec" style="margin-top:14px"><div class="sec-title"><i class="ti ti-planet"></i> Jupiter</div><div class="sec-meta">'+shown+(shown!==data.length?' of '+data.length:'')+' players \u00b7 outer rim = hotter</div></div>';
     return '<div id="jupiter">'+head+controls+'<div class="j-orbwrap">'+_jOrbSVG(data)+'</div>'+_jDetail(data)+_jSlip(g,data)+'</div>';
   }
   function _jRerender(){ const el=document.getElementById('jupiter'); const g=_fxmG(); if(el&&g) el.outerHTML=jupiter(g); }
@@ -3709,11 +3722,14 @@
   window._jLineAuto=function(){ _jS().line='auto'; _jRerender(); };
   window._jBook=function(v){ _jS().book=v||null; _jRerender(); };
   window._jClear=function(){ const S=_jS(); S.sel={}; _jRerender(); };
+  window._jOddsMin=function(v){ const n=parseFloat(v); _jS().oddsMin=(isFinite(n)&&n>0)?n:null; _jRerender(); };
+  window._jOddsMax=function(v){ const n=parseFloat(v); _jS().oddsMax=(isFinite(n)&&n>0)?n:null; _jRerender(); };
+  window._jOddsClear=function(){ const S=_jS(); S.oddsMin=null; S.oddsMax=null; _jRerender(); };
   window._jToCard=function(){
     const g=_fxmG(); if(!g)return; const S=_jS(); const data=_jData(g);
     const legs=Object.keys(S.sel).filter(n=>S.sel[n]).map(n=>data.find(x=>x.p.name===n)).filter(Boolean);
     if(legs.length<2){ _cardToast('Add at least 2 legs for a multi'); return; }
-    const priced=legs.map(d=>{ let od=null; try{ od=_pcOddsAt(d.p.name,S.market,d.line); }catch(e){} return {d,price:od?od.over:null,book:od?od.book:''}; });
+    const priced=legs.map(d=>{ const od=_jOdds(d.p.name,S.market,d.line); return {d,price:od?od.over:null,book:od?od.book:''}; });
     const comb=priced.reduce((a,x)=>a*(x.price||1),1);
     _cardAddMultiEntry({ title:abbr(g.home)+' v '+abbr(g.away)+' \u00b7 Jupiter '+legs.length+'-leg', legs:priced.map(x=>({name:x.d.p.name,label:x.d.line+'+ '+(J_MLAB[S.market]||S.market),odds:x.price})), odds:comb, book:(S.book||''), src:'Jupiter' });
   };
