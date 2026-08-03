@@ -91,12 +91,153 @@
       return out.sort(function (a, b) { return (b._dvp - a._dvp) || (b._odds.price - a._odds.price); });
     }
 
+    // ---- render helpers injected by the shell (so tiles produce shell-consistent HTML) ----
+    var getData   = deps.getData   || function () { return {}; };
+    var getScope  = deps.getScope  || function () { return null; };
+    var esc       = deps.esc       || function (s) { return String(s == null ? '' : s); };
+    var fmt       = deps.fmt       || function (v, d) { return v == null ? '\u2014' : (+v).toFixed(d == null ? 1 : d); };
+    var abbr      = deps.abbr      || function (t) { return String(t || '').slice(0, 3).toUpperCase(); };
+    var degWrap   = deps.degWrap   || function (i, t, items) { return (items && items.length) ? items.join('') : ''; };
+    var emptyState = deps.emptyState || function () { return ''; };
+    var posShort  = deps.posShort  || function (p) { return String(p || '').slice(0, 3).toUpperCase(); };
+    var _byGame   = deps._byGame   || function (items, tf, rf) { return (items || []).map(rf); };
+    var _fc       = deps._fc       || function (arr) { return arr || []; };
+    var _degBadges = deps._degBadges || function () { return ''; };
+    var dvpRank   = deps.dvpRank   || function () { return null; };
+    var bookName  = deps.bookName  || function (b) { return b || ''; };
+    var byName    = deps.byName    || function () { return null; };
+    var logsFor   = deps.logsFor   || function () { return []; };
+    var curSeason = deps.curSeason || function () { return ''; };
+
+    /* ===================== RESEARCH TILES ===================== */
+    // Each tile is a data producer + bespoke card that returns HTML for the shell's Degen Crew.
+    // Ported from nfl/index.html; the shell delegates renderTile(k) -> tiles[k]() for NFL.
+
+    // Weather Watch — condition-driven angles (wind kills the deep ball, rain funnels runs).
+    var WX_WIND = 25;   // km/h sustained
+    function weatherWatch() {
+      var scope = getScope(), D = getData(), out = [];
+      (D.fixture || []).forEach(function (g) {
+        if (scope && !scope.has(g.home) && !scope.has(g.away)) return;
+        var w = (D.weather || []).find(function (x) { return x.home === g.home && x.away === g.away; });
+        if (!w) return;
+        if (w.roof && w.roof !== 'outdoors' && w.roof !== 'open') return;      // dome — no angle
+        var windy = w.wind != null && +w.wind >= WX_WIND;
+        var wet = w.code != null && +w.code >= 61;                             // WMO: rain and worse
+        if (!windy && !wet) return;
+        var headline = (windy ? Math.round(w.wind) + ' km/h wind' : '') + (windy && wet ? ' + ' : '') + (wet ? (w.desc || 'rain') : '');
+        var runners = [g.home, g.away].map(function (t) {
+          return playersOnTeam(t).filter(function (p) { return p.position === 'RB' && (p.matches || 0) >= 4; })
+            .sort(function (a, b) { return (b.rushAtt || 0) - (a.rushAtt || 0); })[0];
+        }).filter(Boolean);
+        var deep = [g.home, g.away].reduce(function (a, t) {
+          return a.concat(playersOnTeam(t).filter(function (p) { return (p.aDot || 0) >= 13 && (p.tgtShare || 0) >= 15 && (p.matches || 0) >= 4; }));
+        }, []).slice(0, 3);
+        out.push({ g: g, w: w, headline: headline, windy: windy, wet: wet, runners: runners, deep: deep });
+      });
+      return out;
+    }
+    function wxCard(x) {
+      var chips = [];
+      x.runners.forEach(function (r) {
+        var q = esc(r.name).replace(/'/g, "\\'");
+        chips.push('<span class="lu-p" style="color:#22c55e;border-color:#22c55e55;cursor:pointer" onclick="openPlayer(\'' + q + '\')">rush funnel \u00b7 ' + esc(r.name) + ' ' + fmt(r.rushAtt, 1) + ' att/g</span>');
+      });
+      x.deep.forEach(function (p) {
+        var q = esc(p.name).replace(/'/g, "\\'");
+        chips.push('<span class="lu-p" style="color:#f97316;border-color:#f9731655;cursor:pointer" onclick="openPlayer(\'' + q + '\')">fade deep \u00b7 ' + esc(p.name) + ' aDot ' + (p.aDot || 0).toFixed(1) + '</span>');
+      });
+      if (x.windy) chips.push('<span class="lu-p">unders lean \u00b7 deep passing degrades in ' + Math.round(x.w.wind) + ' km/h</span>');
+      return '<div class="lc-card"><div class="lc-hd"><span class="lc-nm"><i class="ti ti-' + (x.wet ? 'cloud-rain' : 'wind') + '"></i> ' +
+        abbr(x.g.home) + ' v ' + abbr(x.g.away) + '</span><span class="lc-meta">' + esc(x.headline) + (x.g.venue ? ' \u00b7 ' + esc(x.g.venue) : '') + '</span></div>' +
+        (chips.length ? '<div class="lu-grid" style="gap:5px">' + chips.join(' ') + '</div>' : '') + '</div>';
+    }
+
+    // Tuddy Targets — players top-5 in a red-zone usage stat for their position, facing a
+    // bottom-10 TD defence for that position. Cards show L10 / H2H / season TD-game rates.
+    var _TUDDY_STATS = {
+      WR: [['rzTgt','RZ targets'],['rzTgtPct','RZ target %'],['rzRec','RZ receptions'],['rzRecTd','RZ TDs'],
+           ['i10Tgt','inside-10 targets'],['i10TgtPct','inside-10 target %'],['i10Rec','inside-10 receptions'],['i10RecTd','inside-10 TDs']],
+      RB: [['rzTgt','RZ targets'],['rzTgtPct','RZ target %'],['rzRec','RZ receptions'],['rzRecTd','RZ receiving TDs'],
+           ['rzAtt','RZ carries'],['rzRushPct','RZ rush %'],['rzRushTd','RZ rush TDs'],
+           ['i10Att','inside-10 carries'],['i10RushPct','inside-10 rush %'],['i10RushTd','inside-10 TDs'],
+           ['i5Att','inside-5 carries'],['i5RushPct','inside-5 rush %'],['i5RushTd','inside-5 TDs']],
+      QB: [['rzAtt','RZ carries'],['rzRushPct','RZ rush %'],['rzRushTd','RZ rush TDs']]
+    };
+    _TUDDY_STATS.TE = _TUDDY_STATS.WR;
+    function _tdRate(logs) { var n = logs.length; return { h: logs.filter(function (r) { return (r.totalTds || 0) >= 1; }).length, n: n }; }
+    function tdOddsTag(name) {
+      var any = oddsFor(name, 'anytimeTd'), fst = oddsFor(name, 'firstTd');
+      if (any && any.over != null && any.book) return ' \u00b7 ATD $' + any.over.toFixed(2) + ' (' + bookName(any.book) + ')';
+      if (fst && fst.over != null && fst.book) return ' \u00b7 1st TD $' + fst.over.toFixed(2) + ' (' + bookName(fst.book) + ')';
+      return '';
+    }
+    function snags() {
+      var D = getData(), rz = D.redzone || []; if (!rz.length) return [];
+      var byPos = {};
+      rz.forEach(function (r) { var p = byName(r.player); if (p && _TUDDY_STATS[p.position]) (byPos[p.position] = byPos[p.position] || []).push(r); });
+      var qual = {};
+      Object.keys(byPos).forEach(function (pos) {
+        var rows = byPos[pos];
+        _TUDDY_STATS[pos].forEach(function (kl) {
+          var k = kl[0], l = kl[1];
+          rows.filter(function (r) { return (r[k] || 0) > 0; }).sort(function (a, b) { return (b[k] || 0) - (a[k] || 0); }).slice(0, 5).forEach(function (r, i) {
+            var p = byName(r.player); if (!p) return;
+            var q = qual[r.player] = qual[r.player] || { p: p, chips: [] };
+            q.chips.push({ rank: i + 1, l: '#' + (i + 1) + ' ' + pos + ' ' + l });
+          });
+        });
+      });
+      var out = [], cs = curSeason();
+      Object.keys(qual).forEach(function (nm) {
+        var e = qual[nm], p = e.p, chips = e.chips;
+        var opp = nextOpp(p.team); if (!opp) return;
+        var dr = dvpRank(opp, p.position, 'anytimeTd'); if (!dr) return;
+        if (dr.rank > 10) return;                              // bottom-10 (softest) TD defence for the position
+        var sorted = (logsFor(p.name) || []).slice();
+        var l10 = _tdRate(sorted.slice(-10));
+        var h2hLogs = sorted.filter(function (r) { return r.opponent === opp; });
+        var h2h = h2hLogs.length ? _tdRate(h2hLogs) : null;
+        var ssn = _tdRate(sorted.filter(function (r) { return String(r.Year) === String(cs); }));
+        chips.sort(function (a, b) { return a.rank - b.rank; });
+        out.push({ p: p, opp: opp, dvpRank: dr.rank, dvpPct: dr.pct, chips: chips.slice(0, 4), l10: l10, h2h: h2h, ssn: ssn, season: cs });
+      });
+      return out.sort(function (a, b) { return (a.dvpRank - b.dvpRank) || (b.chips.length - a.chips.length); });
+    }
+    function tuddyCard(c) {
+      var q = esc(c.p.name).replace(/'/g, "\\'");
+      var rate = function (r, lab) { return r ? ('<span><b>' + lab + '</b> ' + r.h + '/' + r.n + '</span>') : ''; };
+      var rates = [rate(c.l10, 'L10'), rate(c.h2h, 'H2H'), rate(c.ssn, c.season)].filter(Boolean).join(' \u00b7 ');
+      var chips = ['<span class="lu-p" style="color:#f59e0b;border-color:#f59e0b55">#' + c.dvpRank + ' TDs allowed ' + posShort(c.p.position) + '</span>']
+        .concat(c.chips.map(function (ch) { return '<span class="lu-p">' + esc(ch.l) + '</span>'; })).join(' ');
+      var od = tdOddsTag(c.p.name);
+      return '<div class="lc-card" onclick="openPlayer(\'' + q + '\')">' +
+        '<div class="lc-hd"><span class="lc-nm">' + esc(c.p.name) + '</span>' + _degBadges(c.p.name) +
+        '<span class="lc-meta">' + posShort(c.p.position) + ' \u00b7 ' + abbr(c.p.team) + ' v ' + abbr(c.opp) + (od ? ' \u00b7' + od : '') + '</span></div>' +
+        (rates ? '<div class="tp-body-meta" style="border:0;padding:2px 0 6px">TD games: ' + rates + '</div>' : '') +
+        '<div class="lu-grid" style="gap:5px">' + chips + '</div></div>';
+    }
+
+    // tiles: key -> () => HTML. The shell's renderTile(k) calls tiles[k]() for NFL.
+    // Keys mirror the shell's tile vocabulary. (More ported in batches.)
+    var tiles = {
+      paydirt: function () {
+        var rows = _byGame(_fc(snags(), 6), function (s) { return s.p.team; }, tuddyCard);
+        return degWrap('ti-ball-american-football', 'Tuddy Targets', rows, 'c-amber');
+      },
+      wx: function () {
+        var arr = weatherWatch();
+        if (!arr.length) return emptyState('ti-wind', 'Weather Watch is calm', 'No outdoor game on the slate has wind \u2265' + WX_WIND + ' km/h or rain in the forecast.');
+        return degWrap('ti-wind', 'Weather Watch', arr.map(wxCard), 'c-cyan');
+      }
+    };
+
     // Capture helpers exist for API parity with AFL/signals.js. The live shell never calls
     // them (only the offline ledger job does); NFL's ledger pipeline can flesh these out later.
     function captureOU() { return []; }
     function captureMatchup() { return []; }
 
-    return { collectOU: collectOU, matchupLegs: matchupLegs,
+    return { collectOU: collectOU, matchupLegs: matchupLegs, tiles: tiles,
              captureOU: captureOU, captureMatchup: captureMatchup };
   }
 
