@@ -2146,7 +2146,7 @@
       total=Object.values(counts).reduce((a,b)=>a+b,0);
       if(!_fxHid('sig','green')) html+=ouSection(ov,'over','Green Lights','ti-traffic-lights','c-green');
       if(!_fxHid('sig','death')) html+=ouSection(un,'under','Death Riders','ti-skull','c-red');
-      ['snags','elite','bunnies','hunting','nmu','kickins','bogey','streak','climb','form','taggers'].filter(k=>!_fxHid('sig',k)).forEach(k=>{ html+=renderTile(k); });
+      _degenTileKeys().filter(k=>!_fxHid('sig',k)).forEach(k=>{ html+=renderTile(k); });
     } finally { _degenScope=prevScope; _degenFocused=prevFocus; }
     const hdr='<div class="tp-sec"><div class="sec-title"><i class="ti ti-flame"></i> Degen Signals</div><div class="sec-meta">'+total+' fired</div></div>';
     return hdr+(html||'<div class="tp-body-meta" style="border:0">No signals fired.</div>');
@@ -2555,7 +2555,11 @@
       playersOnTeam:playersOnTeam, hasAnyOdds:hasAnyOdds, SIGNAL_MIN_ODDS:SIGNAL_MIN_ODDS,
       priceForLine:priceForLine, snapToRung:_snapToRung,
       logsFor:function(n){ return (state.idx.logsByName||{})[n]||[]; }, abbr:abbr, curSeason:CUR_SEASON,
-      players:state.idx.players, dvp:(state.data.dvp||[])
+      players:state.idx.players, dvp:(state.data.dvp||[]),
+      esc:esc, fmt:fmt, degWrap:degWrap, emptyState:emptyState, degRow:degRow, posShort:posShort, teamLogo:teamLogo,
+      _byGame:_byGame, _fc:_fc, _degBadges:_degBadges, dvpRank:dvpRank, bookName:bookName,
+      byName:function(n){return (state.idx.byName||{})[n];},
+      getData:function(){return state.data;}, getScope:function(){return _degenScope;}
     }));
   }
   function collectOU(teamList, kind){
@@ -4206,7 +4210,7 @@
     try{
       if(!_fxHid('sig','green')) out+=ouSection(collectOU([home,away],'over'),'over','Green Lights','ti-traffic-lights','c-green');
       if(!_fxHid('sig','death')) out+=ouSection(collectOU([home,away],'under'),'under','Death Riders','ti-skull','c-red');
-      ['snags','elite','bunnies','hunting','nmu','kickins','bogey','streak','climb','form','taggers'].filter(k=>!_fxHid('sig',k)).forEach(k=>{ out+=renderTile(k); });
+      _degenTileKeys().filter(k=>!_fxHid('sig',k)).forEach(k=>{ out+=renderTile(k); });
     } finally { _degenScope=prevScope; _degenFocused=prevFocus; }
     return out || '<div class="empty"><div class="ico"><i class="ti ti-flame"></i></div>No Degen signals fired for this matchup.</div>';
   }
@@ -4244,7 +4248,15 @@
     ordered.forEach(b=>{ out.push('<div class="deg-game-hdr">'+b.g.label+'</div>'); b.list.forEach(it=>out.push(rowFn(it))); });
     return out;
   }
+  function _degenTileKeys(){
+    if(SPORT.key==='afl') return ['snags','elite','bunnies','hunting','nmu','kickins','bogey','streak','climb','form','taggers'];
+    const S=_signals(); return (S&&S.tiles)?Object.keys(S.tiles):[];
+  }
   function renderTile(k){
+    // Other sports get their OU signals (Green Lights/Death Riders) + Matchup from their signals.js,
+    // and the config-driven Multi Builder — but the AFL-specific research tiles stay AFL-only until
+    // each sport's versions are ported into its signals.js.
+    if(SPORT.key!=='afl'){ const _S=_signals(); if(_S&&_S.tiles&&typeof _S.tiles[k]==='function'){ try{ return _S.tiles[k](); }catch(_e){ return ''; } } if(k!=='multi') return ''; }
     const M=v=>fmt(v,1), abv=t=>abbr(t);
     if(k==='snags'){
       const rows=_byGame(_fc(snags(),6), s=>s.p.team, s=>degRow(s.p.name,'#f59e0b',{v1:fmt(s.val,2),l1:'gpg',v2:'#'+s.dvpRank,l2:posShort(s.p.position)},
