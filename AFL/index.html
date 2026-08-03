@@ -781,6 +781,8 @@
   .lt-empty{font-size:12px;color:var(--text-3);text-align:center;padding:26px 14px;line-height:1.5;}
   .lt-acts{display:inline-flex;gap:5px;}
   .lt-open-btn{background:var(--surface-2);border:1px solid var(--accent);color:var(--accent);font-family:var(--font-display);font-weight:800;font-size:11px;padding:5px 10px;border-radius:7px;cursor:pointer;display:inline-flex;align-items:center;gap:5px;margin-left:auto;margin-right:8px;}
+  .sport-toggle{display:inline-flex;align-items:center;}
+  .sport-sel{background:var(--surface-2);border:1px solid var(--border);color:var(--text);font-family:var(--font-display);font-weight:800;font-size:12px;padding:5px 8px;border-radius:7px;cursor:pointer;margin-right:8px;}
   .card-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.72);z-index:9500;padding:24px 16px;overflow-y:auto;align-items:flex-start;justify-content:center;}
   .card-overlay.open{display:flex;}
   .card-modal{background:var(--surface);border:1px solid var(--border);border-radius:14px;max-width:460px;width:100%;padding:16px 14px 20px;max-height:calc(100vh - 48px);overflow-y:auto;}
@@ -892,6 +894,7 @@
     </div>
     <div class="topbar-meta">
       <div class="gsearch"><i class="ti ti-search"></i><input id="gs-input" placeholder="Search…" autocomplete="off" oninput="_gsInput(this.value)" onfocus="_gsInput(this.value)" onblur="setTimeout(_gsHide,180)"><div class="gs-drop" id="gs-drop"></div></div>
+      <div id="sport-toggle" class="sport-toggle"></div>
       <a class="cross-link" href="/" title="JTT Homepage"><i class="ti ti-home"></i><span class="cross-link-label">Home</span></a>
       <span class="freshness-pill" id="freshness-pill">Loading…</span>
     </div>
@@ -937,14 +940,33 @@
     <div class="ft-copy">© <span id="ft-year"></span> Just The Tip. All rights reserved.</div>
   </div></footer>
 
-  <script src="scoring.js"></script>
-  <script src="signals.js"></script>
+  <!-- scoring.js + signals.js are loaded per-sport by the shell (_ensureScripts) -->
   <script>
   "use strict";
   /* ===================== CONSTANTS ===================== */
   const AUTH_HASH_DEFAULT = "6bbaa0af9ac8cf78c4cf5ca258bfd862c3aa4fb860401abfb387fc34b65af59b"; // fallback only; live hash comes from meta.json (rotated weekly)
   let AUTH_HASH = AUTH_HASH_DEFAULT;
   const AUTH_STORAGE_KEY = "jtt_afl_auth";
+  /* ===================== SPORT SHELL ===================== */
+  // Unified shell: one build serves every sport. Each sport is a self-contained module in its
+  // own folder (scoring.js, signals.js, data/*.json), loaded on demand. Add a sport = one entry
+  // here + its folder. Paths are absolute so the shell works at root or any subpath.
+  const SPORTS = {
+    afl: { key:'afl', dir:'AFL', name:'AFL', oddsUrl:'https://jtt-afl-odds.justthetipafl.workers.dev/odds.json', liveWorker:'https://health.justthetipafl.workers.dev' },
+  };
+  const _SPORT_STORE='jtt_sport';
+  function _activeSportKey(){ let q=null; try{ q=new URLSearchParams(location.search).get('sport'); }catch(e){} let k=q||(function(){try{return localStorage.getItem(_SPORT_STORE);}catch(e){return null;}})()||'afl'; if(!SPORTS[k])k='afl'; try{ localStorage.setItem(_SPORT_STORE,k); }catch(e){} return k; }
+  const SPORT = SPORTS[_activeSportKey()];
+  function _sportPath(p){ return '/'+SPORT.dir+'/'+String(p).replace(/^[.\/]+/,''); }
+  function _switchSport(k){ if(!SPORTS[k]||k===SPORT.key)return; try{ localStorage.setItem(_SPORT_STORE,k); }catch(e){} try{ const u=new URL(location.href); u.searchParams.set('sport',k); location.href=u.href; }catch(e){ location.reload(); } }
+  let _scriptsReady=false;
+  function _ensureScripts(cb){
+    if((window.JTTScoring&&window.JTTSignals)||_scriptsReady){ _scriptsReady=true; cb(); return; }
+    const s1=document.createElement('script'); s1.src=_sportPath('scoring.js');
+    s1.onload=function(){ const s2=document.createElement('script'); s2.src=_sportPath('signals.js'); s2.onload=function(){ _scriptsReady=true; cb(); }; s2.onerror=function(){ cb(); }; document.head.appendChild(s2); };
+    s1.onerror=function(){ cb(); }; document.head.appendChild(s1);
+  }
+  function _renderSportToggle(){ const el=document.getElementById('sport-toggle'); if(!el)return; const keys=Object.keys(SPORTS); if(keys.length<2){ el.innerHTML=''; return; } el.innerHTML='<select class="sport-sel" onchange="_switchSport(this.value)" aria-label="Sport">'+keys.map(k=>'<option value="'+k+'"'+(k===SPORT.key?' selected':'')+'>'+SPORTS[k].name+'</option>').join('')+'</select>'; }
   const DATA_FILES = { meta:'data/meta.json', players:'data/players.json', teams:'data/teams.json',
                        teams_form:'data/teams_form.json', dvp:'data/dvp.json',
                        gamelogs:'data/gamelogs.json', fixture:'data/fixture.json',
@@ -955,7 +977,7 @@
   // Live odds from the Cloudflare Worker (proximity-gated poller). Leave '' to use the
   // committed data/odds.json. Set to your Worker, e.g.:
   //   'https://jtt-afl-odds.<your-subdomain>.workers.dev/odds.json'
-  const ODDS_LIVE_URL = 'https://jtt-afl-odds.justthetipafl.workers.dev/odds.json';
+  const ODDS_LIVE_URL = SPORT.oddsUrl || '';
   const ODDS_REFRESH_MS = 150000;   // re-pull live odds every 2.5 min while the page is open (only when ODDS_LIVE_URL is set)
 
   // Per-signal minimum decimal odds. null = no minimum (fires on any priced line).
@@ -1060,7 +1082,7 @@
 
   async function tryAutoLoadData(){
     let version='';
-    try{const v=await fetch('./data/version.txt',{cache:'no-cache'});if(v.ok)version=(await v.text()).trim();}catch(e){}
+    try{const v=await fetch(_sportPath('data/version.txt'),{cache:'no-cache'});if(v.ok)version=(await v.text()).trim();}catch(e){}
     if(version)state.dataVersion=version;
     const cb=version?'?v='+version:'';
     _bootStatus('Loading data…');
@@ -1070,8 +1092,8 @@
         let r;
         if(k==='odds' && ODDS_LIVE_URL){
           try{ r=await fetch(ODDS_LIVE_URL+cb,{cache:'no-cache'}); if(!r||!r.ok) throw 0; }
-          catch(_){ r=await fetch('./'+u+cb,{cache:'no-cache'}); }   // fall back to committed odds.json
-        } else { r=await fetch('./'+u+cb,{cache:'no-cache'}); }
+          catch(_){ r=await fetch(_sportPath(u)+cb,{cache:'no-cache'}); }   // fall back to committed odds.json
+        } else { r=await fetch(_sportPath(u)+cb,{cache:'no-cache'}); }
         if(!r.ok)return; state.data[k]=await r.json(); any=true;
       }
       catch(e){console.warn('load fail',k,e);}
@@ -5100,7 +5122,7 @@
   window._closeCard=function(){ const ov=document.getElementById('card-overlay'); if(ov)ov.classList.remove('open'); };
   // ===== Live bet tracker — overlays your card legs against live AFL player stats =====
   // Data comes from the JTT live Worker (token handshake + Champion Data feed, ~30–60s fresh).
-  const LIVE_WORKER = 'https://health.justthetipafl.workers.dev';
+  const LIVE_WORKER = SPORT.liveWorker || '';
   const _LIVE_FIELD = { disposals:'D', goals:'G', kicks:'K', handballs:'H', marks:'M', tackles:'T', clearances:'CLR', dreamteam:'AF', fantasy:'AF', behinds:'B' };
   const _LIVE_MLAB = { disposals:'disp', goals:'goals', kicks:'kicks', handballs:'HB', marks:'marks', tackles:'tackles', clearances:'clears', dreamteam:'fantasy' };
   let _liveState = { games:null, gamesAt:0, rows:{}, updated:{}, at:0, loading:false, err:null, timer:null };
@@ -5789,11 +5811,11 @@
   }
 
   /* ===================== INIT ===================== */
-  function _appBoot(){ _renderTabnav(); _applyTextSize(); _cardUpdateBadge(); tryAutoLoadData(); }
+  function _appBoot(){ _ensureScripts(function(){ _renderSportToggle(); _renderTabnav(); _applyTextSize(); _cardUpdateBadge(); tryAutoLoadData(); }); }
   (function init(){
     document.getElementById('ft-year').textContent=new Date().getFullYear();
     // pull meta early for password_hash (rotate weekly without code edits), then gate
-    fetch('./data/meta.json',{cache:'no-cache'}).then(r=>r.ok?r.json():null).then(m=>{ if(m&&m.password_hash)AUTH_HASH=m.password_hash; }).catch(()=>{}).finally(()=>{
+    fetch(_sportPath('data/meta.json'),{cache:'no-cache'}).then(r=>r.ok?r.json():null).then(m=>{ if(m&&m.password_hash)AUTH_HASH=m.password_hash; }).catch(()=>{}).finally(()=>{
       // already-unlocked session?
       try{const s=JSON.parse(localStorage.getItem(AUTH_STORAGE_KEY)||'null');if(s&&s.hash===AUTH_HASH&&(Date.now()-s.unlockedAt)<7*864e5){_authUnlock();return;}}catch(e){}
     });
