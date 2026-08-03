@@ -953,7 +953,7 @@
   // here + its folder. Paths are absolute so the shell works at root or any subpath.
   const SPORTS = {
     afl: { key:'afl', dir:'AFL', name:'AFL', oddsUrl:'https://jtt-afl-odds.justthetipafl.workers.dev/odds.json', liveWorker:'https://health.justthetipafl.workers.dev' },
-    // nfl: { key:'nfl', dir:'nfl', name:'NFL', oddsUrl:'https://jtt-nfl-odds.justthetipafl.workers.dev/odds.json', liveWorker:'' },  // ← un-comment to flip NFL live once its full config is migrated
+    nfl: { key:'nfl', dir:'nfl', name:'NFL', oddsUrl:'https://jtt-nfl-odds.justthetipafl.workers.dev/odds.json', liveWorker:'' },
   };
   const _SPORT_STORE='jtt_sport';
   function _activeSportKey(){ let q=null; try{ q=new URLSearchParams(location.search).get('sport'); }catch(e){} let k=q||(function(){try{return localStorage.getItem(_SPORT_STORE);}catch(e){return null;}})()||'afl'; if(!SPORTS[k])k='afl'; try{ localStorage.setItem(_SPORT_STORE,k); }catch(e){} return k; }
@@ -979,6 +979,7 @@
     FXP_MARKETS=CFG.fxpMarkets||[['disposals','Disp'],['goals','Goals'],['marks','Marks'],['tackles','Tackles'],['clearances','Clear'],['kicks','Kicks'],['handballs','HB']];
     DVP_STATS=CFG.dvpStats||[['disposals','Disposals'],['kicks','Kicks'],['handballs','Handballs'],['marks','Marks'],['tackles','Tackles'],['goals','Goals'],['shotsAtGoal','Shots'],['clearances','Clearances'],['inside50s','Inside 50s'],['contested','Cont. Poss'],['intercepts','Intercepts'],['hitouts','Hitouts'],['marks','Marks'],['groundBallGets','Ground Balls'],['metresGained','Metres'],['scoreInvolvements','Score Inv.']];
     POS_ORDER=CFG.posOrder||['Midfielder','Mid-Forward','Gen. Forward','Key Forward','Gen. Defender','Key Defender','Ruck'];
+    CREW=CFG.crew||CREW_AFL;
   }
   function _renderSportToggle(){ const el=document.getElementById('sport-toggle'); if(!el)return; const keys=Object.keys(SPORTS); if(keys.length<2){ el.innerHTML=''; return; } el.innerHTML='<select class="sport-sel" onchange="_switchSport(this.value)" aria-label="Sport">'+keys.map(k=>'<option value="'+k+'"'+(k===SPORT.key?' selected':'')+'>'+SPORTS[k].name+'</option>').join('')+'</select>'; }
   const DATA_FILES = { meta:'data/meta.json', players:'data/players.json', teams:'data/teams.json',
@@ -1025,7 +1026,11 @@
     {name:'info',    label:'Settings',icon:'ti-settings'},
   ];
   // Degen Crew tiles (brand identity). Signal engine ports in build 2.
-  const CREW = [
+  // CREW is per-sport: the AFL list below is the built-in fallback, and _applyConfig()
+  // swaps in SPORT_CONFIG.crew once the sport module loads (config.js is fetched async,
+  // so this cannot be a plain const resolved at parse time).
+  let CREW;
+  const CREW_AFL = [
     {k:'board',    n:"Today's Board",i:'ti-clipboard-list',d:'Best plays ranked'},
     {k:'multi',    n:'Multi Builder', i:'ti-stack-2',      d:'Stacked legs'},
     {k:'green',    n:'Green Lights',  i:'ti-traffic-lights',d:'Strong OVER'},
@@ -1042,6 +1047,7 @@
     {k:'form',     n:'Form Alerts',   i:'ti-trending-up',  d:'Trend shifts'},
     {k:'taggers',  n:'Lurking Taggers',i:'ti-user-search', d:'Tag risk'},
   ];
+  CREW = CREW_AFL;
 
   /* ===================== STATE ===================== */
   const state = { data:{}, idx:{}, dataVersion:'', view:{ activeTab:TABS[0].name, fixtureId:null, sortKey:'disposals', sortDir:-1, posFilter:'', search:'', statsSub:'scanner', statsStat:'disposals', teamsAllowed:true, teamsSort:'disposals' } };
@@ -2548,19 +2554,47 @@
   // Green Lights / Death Riders now come from the SHARED signals.js module — the exact
   // same code path the pre-slate capture job grades, so the ledger can't drift from what's
   // shown here. Deps are the tool's own live helpers (oddsFor respects the book filter).
-  let _sigInst=null;
+  let _sigInst=null, _sigScopeKey=null;
   function _signals(){
+    // _degenScope / _degenFocused are baked into the instance, so re-create when they move.
+    const sk=(_degenFocused?'F':'-')+'|'+(_degenScope?[..._degenScope].sort().join(','):'');
+    if(_sigInst&&_sigScopeKey!==sk){ _sigInst=null; }
+    _sigScopeKey=sk;
     return _sigInst||(_sigInst=window.JTTSignals&&JTTSignals.create({
       JTTScoring:window.JTTScoring, oddsFor:oddsFor, nextOpp:nextOpp,
       playersOnTeam:playersOnTeam, hasAnyOdds:hasAnyOdds, SIGNAL_MIN_ODDS:SIGNAL_MIN_ODDS,
       priceForLine:priceForLine, snapToRung:_snapToRung,
       logsFor:function(n){ return (state.idx.logsByName||{})[n]||[]; }, abbr:abbr, curSeason:CUR_SEASON,
-      players:state.idx.players, dvp:(state.data.dvp||[])
+      players:state.idx.players, dvp:(state.data.dvp||[]),
+      // ---- extra deps for sport modules that own their own tiles (NFL) ----
+      // AFL ignores these; nfl/signals.js needs live state + the shell's render helpers.
+      state:state, allLogs:allLogs, curLogs:curLogs, _avg:_avg,
+      fixtureSet:_fixtureSet, roundNum:_roundNum, isPlaying:(typeof isPlaying==='function'?isPlaying:null),
+      windowDvp:(typeof windowDvp==='function'?windowDvp:null),
+      estimateHitProb:(typeof estimateHitProb==='function'?estimateHitProb:null),
+      pairRho:(typeof _pairRho==='function'?_pairRho:null),
+      clusterJoint:(typeof _clusterJoint==='function'?_clusterJoint:null),
+      degenScope:_degenScope, degenFocused:_degenFocused,
+      esc:esc, fmt:fmt, teamLogo:teamLogo, byGame:_byGame, fc:_fc, emptyState:emptyState,
+      attrEsc:(typeof _attrEsc==='function'?_attrEsc:null),
+      lineTag:(typeof lineTag==='function'?lineTag:null),
+      multiLineTag:(typeof multiLineTag==='function'?multiLineTag:null),
+      underTag:(typeof underTag==='function'?underTag:null),
+      streakOdds:(typeof streakOdds==='function'?streakOdds:null),
+      muTag:(typeof muTag==='function'?muTag:null),
+      formNote:(typeof formNote==='function'?formNote:null),
+      injuryFor:(typeof _injuryFor==='function'?_injuryFor:null)
     }));
   }
   function collectOU(teamList, kind){
     const S=_signals(); if(!S) return [];
     return S.collectOU(teamList, kind);
+  }
+  // Short market label for a fired OU row. AFL stays 'disp' (disposals-only by design);
+  // NFL rows carry their own mktLabel because collectOU spans eight markets.
+  function _sigMkt(r){
+    if(SPORT.key==='afl') return 'disp';
+    return r.mktLabel||(_MKT_NM&&_MKT_NM[r.market||r.statKey])||(r.market||r.statKey||'');
   }
   function _tierChip(sc,kind){
     if(typeof sc!=='number') return '';
@@ -2579,12 +2613,21 @@
   }
   function signalCard(r,kind){
     const col=r.verdictCol;
+    const isAfl=SPORT.key==='afl';
+    // AFL's collectOU is disposals-only; NFL's is multi-market and tags each row with the
+    // market it fired on. Never assume 'disposals' here.
+    const mkt=r.market||r.statKey||'disposals';
+    const mLab=r.mktLabel||(_MKT_NM&&_MKT_NM[mkt])||mkt;
+    const shortLab=isAfl?'disp':mLab;
+    // AFL scoring returns games2026; NFL returns gamesCur. Reading only games2026 printed
+    // "undefined gm" on every NFL card.
+    const gm=(r.gamesCur!=null?r.gamesCur:r.games2026);
     const priceTxt=r.odds!=null?' @ $'+r.odds.toFixed(2)+(r.book?' ('+r.book+')':''):'';
-    let detail=(kind==='over'?'O':'U')+' '+r.line+priceTxt+' · L5 '+fmt(r.l5)+' · hit '+Math.round(r.hitRate*100)+'%'+(r.dvpPct!=null?' · dvp '+(r.dvpPct>0?'+':'')+r.dvpPct.toFixed(0)+'%':'');
-    const _v=_volCV(r.p.name,'disposals'); if(_v&&_v.tag!=='mixed') detail+=' · '+_v.tag;
+    let detail=(isAfl?'':mLab+' ')+(kind==='over'?'O':'U')+' '+r.line+priceTxt+' · L5 '+fmt(r.l5)+' · hit '+Math.round(r.hitRate*100)+'%'+(r.dvpPct!=null?' · dvp '+(r.dvpPct>0?'+':'')+r.dvpPct.toFixed(0)+'%':'');
+    const _v=(typeof _volCV==='function')?_volCV(r.p.name,mkt):null; if(_v&&_v.tag!=='mixed') detail+=' · '+_v.tag;
     return '<div class="fixture-row deg-row" style="cursor:pointer" onclick="openPlayer(\''+esc(r.p.name).replace(/\x27/g,"\\\x27")+'\')">'+
-      '<div class="deg-main"><div class="fxr-name deg-nm"><span>'+r.p.name+'</span>'+_tierChip(r.score,kind)+_cbaBadge(r.p.name)+_sparkline(r.p.name,'disposals')+(r.odds!=null?_cardBtn({name:r.p.name,team:r.team,opp:r.oppName,mkt:'disposals',line:r.line,side:kind,odds:r.odds,book:r.book,label:(kind==='over'?r.line+'+ disp':'U'+r.line+' disp'),src:(kind==='over'?'Green Lights':'Death Riders')}):'')+'</div>'+
-      '<div class="deg-sub">'+(r.p.position||'')+' · '+abbr(r.team)+' v '+abbr(r.oppName)+' · '+r.games2026+' gm</div></div>'+
+      '<div class="deg-main"><div class="fxr-name deg-nm"><span>'+r.p.name+'</span>'+_tierChip(r.score,kind)+(isAfl?_cbaBadge(r.p.name):'')+_sparkline(r.p.name,mkt)+(r.odds!=null?_cardBtn({name:r.p.name,team:r.team,opp:r.oppName,mkt:mkt,line:r.line,side:kind,odds:r.odds,book:r.book,label:(kind==='over'?r.line+'+ '+shortLab:'U'+r.line+' '+shortLab),src:(kind==='over'?'Green Lights':'Death Riders')}):'')+'</div>'+
+      '<div class="deg-sub">'+(r.p.position||'')+' · '+abbr(r.team)+' v '+abbr(r.oppName)+(gm!=null?' · '+gm+' gm':'')+'</div></div>'+
       '<div class="deg-val" style="color:'+col+'"><div>'+r.verdictLabel+'</div>'+
       '<div class="deg-sub" style="color:var(--text-2);margin-top:2px">'+detail+'</div></div></div>';
   }
@@ -2592,7 +2635,7 @@
     if(!hasAnyOdds()) return _degenFocused?'':emptyState(icon,'No lines loaded','Signals fire only against real posted lines. Connect an odds feed (or paste lines in Info) to light these up.');
     if(!list.length) return _degenFocused?'':emptyState(icon,'No '+title.toLowerCase()+' on the board','Lines are loaded, but none cleared the gate this slate — selective by design.');
     return '<details class="tp-collapse '+colorClass+'" open><summary class="tp-collapse-sum"><i class="ti '+icon+'"></i><span class="tp-collapse-title">'+title+'</span><i class="ti ti-chevron-down tp-collapse-chev"></i></summary><div class="tp-collapse-body">'+
-      '<div class="tp-body-meta">Disposals · posted line · '+(kind==='over'?'score \u2265 5.5':'score \u2264 -3.5')+(SIGNAL_MIN_ODDS[kind==='over'?'over':'under']!=null?' · min $'+SIGNAL_MIN_ODDS[kind==='over'?'over':'under'].toFixed(2):'')+'</div>'+
+      '<div class="tp-body-meta">'+(SPORT.key==='afl'?'Disposals · posted line':'All markets · posted lines')+' · '+(kind==='over'?'score \u2265 5.5':'score \u2264 -3.5')+(SIGNAL_MIN_ODDS[kind==='over'?'over':'under']!=null?' · min $'+SIGNAL_MIN_ODDS[kind==='over'?'over':'under'].toFixed(2):'')+'</div>'+
       _byGame(list, r=>r.team, r=>signalCard(r,kind)).join('')+'</div></details>';
   }
 
@@ -4244,6 +4287,16 @@
     return out;
   }
   function renderTile(k){
+    // Research tiles below are AFL-specific (disposals/goals/CBA/kick-ins/venues). A sport
+    // module that ships its own tiles renders them itself; the shell only owns AFL's.
+    if(SPORT.key!=='afl'){
+      const S=_signals();
+      if(S&&typeof S.renderTile==='function'){
+        try{ const h=S.renderTile(k); if(h!=null) return h; }catch(e){ console.error('renderTile',k,e); }
+      }
+      if(k==='multi') return '<div id="multi-wrap">'+multiFilterBar()+'<div id="multi-results">'+multiResults()+'</div></div>';
+      return emptyState('ti-flame','Not available for '+SPORT.name,'This tile has no '+SPORT.name+' engine yet.');
+    }
     const M=v=>fmt(v,1), abv=t=>abbr(t);
     if(k==='snags'){
       const rows=_byGame(_fc(snags(),6), s=>s.p.team, s=>degRow(s.p.name,'#f59e0b',{v1:fmt(s.val,2),l1:'gpg',v2:'#'+s.dvpRank,l2:posShort(s.p.position)},
@@ -4487,9 +4540,9 @@
     const teams=[...dayTeams];
     const P=[]; const push=o=>{ if(o.p&&o.p.name&&o.odds!=null&&isFinite(o.odds)&&o.odds>1&&isFinite(o.rank)) P.push(o); };  // priced plays only
     // Green Lights — posted disposals line, over price
-    try{ (collectOU(teams,'over')||[]).forEach(r=>push({p:r.p,team:r.team,opp:r.oppName,game:_gkey(r.team,r.oppName),sig:'Green Light',card:{name:r.p.name,team:r.team,opp:r.oppName,mkt:'disposals',line:r.line,side:'over',odds:r.odds,book:r.book,label:r.line+'+ disp',src:'Green Lights'},col:'#22c55e',ic:'ti-traffic-lights',bet:r.line+'+ disp',odds:r.odds,rank:Math.round((r.hitRate||0)*100),why:Math.round((r.hitRate||0)*100)+'% hit'+((r.dvpPct||0)>0?' \u00b7 +'+r.dvpPct.toFixed(0)+'% DVP':'')})); }catch(e){}
+    try{ (collectOU(teams,'over')||[]).forEach(r=>push({p:r.p,team:r.team,opp:r.oppName,game:_gkey(r.team,r.oppName),sig:'Green Light',card:{name:r.p.name,team:r.team,opp:r.oppName,mkt:(r.market||r.statKey||'disposals'),line:r.line,side:'over',odds:r.odds,book:r.book,label:r.line+'+ '+_sigMkt(r),src:'Green Lights'},col:'#22c55e',ic:'ti-traffic-lights',bet:r.line+'+ '+_sigMkt(r),odds:r.odds,rank:Math.round((r.hitRate||0)*100),why:Math.round((r.hitRate||0)*100)+'% hit'+((r.dvpPct||0)>0?' \u00b7 +'+r.dvpPct.toFixed(0)+'% DVP':'')})); }catch(e){}
     // Death Riders — posted line, under price
-    try{ (collectOU(teams,'under')||[]).forEach(r=>push({p:r.p,team:r.team,opp:r.oppName,game:_gkey(r.team,r.oppName),sig:'Death Rider',card:{name:r.p.name,team:r.team,opp:r.oppName,mkt:'disposals',line:r.line,side:'under',odds:r.odds,book:r.book,label:'U'+r.line+' disp',src:'Death Riders'},col:'#ef4444',ic:'ti-skull',bet:'U'+r.line+' disp',odds:r.odds,rank:Math.round((r.hitRate||0)*100),why:Math.round((r.hitRate||0)*100)+'% under'})); }catch(e){}
+    try{ (collectOU(teams,'under')||[]).forEach(r=>push({p:r.p,team:r.team,opp:r.oppName,game:_gkey(r.team,r.oppName),sig:'Death Rider',card:{name:r.p.name,team:r.team,opp:r.oppName,mkt:(r.market||r.statKey||'disposals'),line:r.line,side:'under',odds:r.odds,book:r.book,label:'U'+r.line+' '+_sigMkt(r),src:'Death Riders'},col:'#ef4444',ic:'ti-skull',bet:'U'+r.line+' '+_sigMkt(r),odds:r.odds,rank:Math.round((r.hitRate||0)*100),why:Math.round((r.hitRate||0)*100)+'% under'})); }catch(e){}
     // Hunting Grounds — priced at the POSTED disposals line, venue record as the reason
     try{ (huntingGrounds()||[]).filter(b=>dayTeams.has(b.p.team)&&b.statKey==='disposals'&&b.odds&&b.odds.line!=null&&b.odds.over!=null).forEach(b=>push({p:b.p,team:b.p.team,opp:b.opp,game:_gkey(b.p.team,b.opp),sig:'Hunting Ground',card:{name:b.p.name,team:b.p.team,opp:b.opp,mkt:'disposals',line:b.odds.line,side:'over',odds:b.odds.over,book:b.odds.book,label:b.odds.line+'+ disp',src:'Hunting Grounds'},col:'#16a34a',ic:'ti-target-arrow',bet:b.odds.line+'+ disp',odds:b.odds.over,rank:Math.round(60+Math.min(22,(b.delta/b.seasonAvg)*70)),why:b.vAvg.toFixed(1)+' @ '+b.venue+' (n'+b.n+')'})); }catch(e){}
     // Snags — anytime goal price
@@ -4559,8 +4612,10 @@
     else if(k==='compare') body=comparePage();
     else if(k==='green') body=ouSection(collectOU(teams,'over'),'over','Green Lights','ti-traffic-lights','c-green');
     else if(k==='death') body=ouSection(collectOU(teams,'under'),'under','Death Riders','ti-skull','c-red');
-    else if(k==='snags') body=snagsPage();
-    else if(k==='elite') body=elitePage();
+    // snagsPage/elitePage below are the AFL implementations (goals board / AFL stat defs).
+    // Other sports route through renderTile -> their own module's page renderers.
+    else if(k==='snags'&&SPORT.key==='afl') body=snagsPage();
+    else if(k==='elite'&&SPORT.key==='afl') body=elitePage();
     else body=renderTile(k);
     document.getElementById('page-content').innerHTML='<button class="back-btn" onclick="_switchTab(\'degen\')"><i class="ti ti-arrow-left"></i> Degen Crew</button><div class="page-header"><div class="page-title">'+c.n+'</div><div class="page-sub">'+c.d+'</div></div>'+body;
     window.scrollTo({top:0});
