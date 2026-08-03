@@ -953,6 +953,7 @@
   // here + its folder. Paths are absolute so the shell works at root or any subpath.
   const SPORTS = {
     afl: { key:'afl', dir:'AFL', name:'AFL', oddsUrl:'https://jtt-afl-odds.justthetipafl.workers.dev/odds.json', liveWorker:'https://health.justthetipafl.workers.dev' },
+    // nfl: { key:'nfl', dir:'nfl', name:'NFL', oddsUrl:'', liveWorker:'' },  // ← un-comment to flip NFL live once its full config is migrated
   };
   const _SPORT_STORE='jtt_sport';
   function _activeSportKey(){ let q=null; try{ q=new URLSearchParams(location.search).get('sport'); }catch(e){} let k=q||(function(){try{return localStorage.getItem(_SPORT_STORE);}catch(e){return null;}})()||'afl'; if(!SPORTS[k])k='afl'; try{ localStorage.setItem(_SPORT_STORE,k); }catch(e){} return k; }
@@ -961,10 +962,17 @@
   function _switchSport(k){ if(!SPORTS[k]||k===SPORT.key)return; try{ localStorage.setItem(_SPORT_STORE,k); }catch(e){} try{ const u=new URL(location.href); u.searchParams.set('sport',k); location.href=u.href; }catch(e){ location.reload(); } }
   let _scriptsReady=false;
   function _ensureScripts(cb){
-    if((window.JTTScoring&&window.JTTSignals)||_scriptsReady){ _scriptsReady=true; cb(); return; }
-    const s1=document.createElement('script'); s1.src=_sportPath('scoring.js');
-    s1.onload=function(){ const s2=document.createElement('script'); s2.src=_sportPath('signals.js'); s2.onload=function(){ _scriptsReady=true; cb(); }; s2.onerror=function(){ cb(); }; document.head.appendChild(s2); };
-    s1.onerror=function(){ cb(); }; document.head.appendChild(s1);
+    if((window.JTTScoring&&window.JTTSignals&&window.SPORT_CONFIG)||_scriptsReady){ _scriptsReady=true; cb(); return; }
+    const load=function(src,next){ const el=document.createElement('script'); el.src=src; el.onload=next; el.onerror=next; document.head.appendChild(el); };
+    load(_sportPath('config.js'), function(){ load(_sportPath('scoring.js'), function(){ load(_sportPath('signals.js'), function(){ _scriptsReady=true; cb(); }); }); });
+  }
+  // Sport-specific config (markets, labels, etc.) comes from /{dir}/config.js as window.SPORT_CONFIG,
+  // with AFL values as the built-in fallback so the flagship is safe even if config.js fails to load.
+  function _applyConfig(){
+    const j=(window.SPORT_CONFIG&&window.SPORT_CONFIG.jupiter)||{};
+    J_MARKETS=j.markets||[['disposals','Disp'],['goals','Goals'],['marks','Marks'],['tackles','Tackles'],['kicks','Kicks'],['handballs','HB'],['clearances','Clear']];
+    J_MLAB=j.mlab||{disposals:'disp',goals:'goals',marks:'marks',tackles:'tackles',kicks:'kicks',handballs:'HB',clearances:'clears'};
+    J_BASE=j.base||{disposals:20,goals:1,marks:4,tackles:4,kicks:12,handballs:8,clearances:4};
   }
   function _renderSportToggle(){ const el=document.getElementById('sport-toggle'); if(!el)return; const keys=Object.keys(SPORTS); if(keys.length<2){ el.innerHTML=''; return; } el.innerHTML='<select class="sport-sel" onchange="_switchSport(this.value)" aria-label="Sport">'+keys.map(k=>'<option value="'+k+'"'+(k===SPORT.key?' selected':'')+'>'+SPORTS[k].name+'</option>').join('')+'</select>'; }
   const DATA_FILES = { meta:'data/meta.json', players:'data/players.json', teams:'data/teams.json',
@@ -3591,11 +3599,9 @@
   // Every player is a dot in a radial field. Radius = overall hit-rate strength (outer rim = elite),
   // angle = which signal they lean on (H2H / Season / L5 / Venue). Hover for the full read, click to
   // build a same-game multi. Named for the planet of luck.
-  const J_MARKETS=[['disposals','Disp'],['goals','Goals'],['marks','Marks'],['tackles','Tackles'],['kicks','Kicks'],['handballs','HB'],['clearances','Clear']];
-  const J_MLAB={disposals:'disp',goals:'goals',marks:'marks',tackles:'tackles',kicks:'kicks',handballs:'HB',clearances:'clears'};
+  let J_MARKETS, J_MLAB, J_BASE;  // populated by _applyConfig() from SPORT_CONFIG (AFL fallback)
   const J_AXES=[['h2h','H2H',-Math.PI/2],['season','Season',0],['l5','L5',Math.PI/2],['venue','Venue',Math.PI]];
-  const J_BASE={disposals:20,goals:1,marks:4,tackles:4,kicks:12,handballs:8,clearances:4};
-  function _jS(){ return state.view.jupiter||(state.view.jupiter={market:'disposals',line:'auto',book:null,sel:{},focus:null,key:''}); }
+  function _jS(){ return state.view.jupiter||(state.view.jupiter={market:((J_MARKETS&&J_MARKETS[0]&&J_MARKETS[0][0])||'disposals'),line:'auto',book:null,sel:{},focus:null,key:''}); }
   function _jLineFor(name,mkt){ const S=_jS(); return S.line==='auto' ? _pcDefaultLine(name,mkt) : S.line; }
   // 4-axis hit rates (over the line) from the player's logs
   function _jRates(p,mkt,line,opp,venue){
@@ -5811,7 +5817,7 @@
   }
 
   /* ===================== INIT ===================== */
-  function _appBoot(){ _ensureScripts(function(){ _renderSportToggle(); _renderTabnav(); _applyTextSize(); _cardUpdateBadge(); tryAutoLoadData(); }); }
+  function _appBoot(){ _ensureScripts(function(){ _applyConfig(); _renderSportToggle(); _renderTabnav(); _applyTextSize(); _cardUpdateBadge(); tryAutoLoadData(); }); }
   (function init(){
     document.getElementById('ft-year').textContent=new Date().getFullYear();
     // pull meta early for password_hash (rotate weekly without code edits), then gate
