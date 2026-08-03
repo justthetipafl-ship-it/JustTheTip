@@ -953,7 +953,7 @@
   // here + its folder. Paths are absolute so the shell works at root or any subpath.
   const SPORTS = {
     afl: { key:'afl', dir:'AFL', name:'AFL', oddsUrl:'https://jtt-afl-odds.justthetipafl.workers.dev/odds.json', liveWorker:'https://health.justthetipafl.workers.dev' },
-    // nfl: { key:'nfl', dir:'nfl', name:'NFL', oddsUrl:'', liveWorker:'' },  // ← un-comment to flip NFL live once its full config is migrated
+    // nfl: { key:'nfl', dir:'nfl', name:'NFL', oddsUrl:'https://jtt-nfl-odds.justthetipafl.workers.dev/odds.json', liveWorker:'' },  // ← un-comment to flip NFL live once its full config is migrated
   };
   const _SPORT_STORE='jtt_sport';
   function _activeSportKey(){ let q=null; try{ q=new URLSearchParams(location.search).get('sport'); }catch(e){} let k=q||(function(){try{return localStorage.getItem(_SPORT_STORE);}catch(e){return null;}})()||'afl'; if(!SPORTS[k])k='afl'; try{ localStorage.setItem(_SPORT_STORE,k); }catch(e){} return k; }
@@ -969,10 +969,16 @@
   // Sport-specific config (markets, labels, etc.) comes from /{dir}/config.js as window.SPORT_CONFIG,
   // with AFL values as the built-in fallback so the flagship is safe even if config.js fails to load.
   function _applyConfig(){
-    const j=(window.SPORT_CONFIG&&window.SPORT_CONFIG.jupiter)||{};
+    const CFG=window.SPORT_CONFIG||{}; const j=CFG.jupiter||{};
     J_MARKETS=j.markets||[['disposals','Disp'],['goals','Goals'],['marks','Marks'],['tackles','Tackles'],['kicks','Kicks'],['handballs','HB'],['clearances','Clear']];
     J_MLAB=j.mlab||{disposals:'disp',goals:'goals',marks:'marks',tackles:'tackles',kicks:'kicks',handballs:'HB',clearances:'clears'};
     J_BASE=j.base||{disposals:20,goals:1,marks:4,tackles:4,kicks:12,handballs:8,clearances:4};
+    _MKT_NM=CFG.mktNames||{disposals:'Disposals',goals:'Goals',dreamteam:'Fantasy',marks:'Marks',tackles:'Tackles',clearances:'Clearances',kicks:'Kicks',handballs:'Handballs'};
+    PC_STATS=CFG.pcStats||[['disposals','Disp'],['goals','Goals'],['kicks','Kicks'],['handballs','HB'],['marks','Marks'],['tackles','Tackles'],['clearances','Clear'],['dreamteam','Fantasy']];
+    CMB_PICK_MARKETS=CFG.cmbPick||[['disposals','Disposals',15],['kicks','Kicks',8],['handballs','Handballs',8],['marks','Marks',3],['tackles','Tackles',3],['clearances','Clearances',3],['goals','Goals',0.6],['dreamteam','Fantasy',75]];
+    FXP_MARKETS=CFG.fxpMarkets||[['disposals','Disp'],['goals','Goals'],['marks','Marks'],['tackles','Tackles'],['clearances','Clear'],['kicks','Kicks'],['handballs','HB']];
+    DVP_STATS=CFG.dvpStats||[['disposals','Disposals'],['kicks','Kicks'],['handballs','Handballs'],['marks','Marks'],['tackles','Tackles'],['goals','Goals'],['shotsAtGoal','Shots'],['clearances','Clearances'],['inside50s','Inside 50s'],['contested','Cont. Poss'],['intercepts','Intercepts'],['hitouts','Hitouts'],['marks','Marks'],['groundBallGets','Ground Balls'],['metresGained','Metres'],['scoreInvolvements','Score Inv.']];
+    POS_ORDER=CFG.posOrder||['Midfielder','Mid-Forward','Gen. Forward','Key Forward','Gen. Defender','Key Defender','Ruck'];
   }
   function _renderSportToggle(){ const el=document.getElementById('sport-toggle'); if(!el)return; const keys=Object.keys(SPORTS); if(keys.length<2){ el.innerHTML=''; return; } el.innerHTML='<select class="sport-sel" onchange="_switchSport(this.value)" aria-label="Sport">'+keys.map(k=>'<option value="'+k+'"'+(k===SPORT.key?' selected':'')+'>'+SPORTS[k].name+'</option>').join('')+'</select>'; }
   const DATA_FILES = { meta:'data/meta.json', players:'data/players.json', teams:'data/teams.json',
@@ -1820,7 +1826,7 @@
     }).join('');
     return '<div class="tp-sec"><div class="sec-title"><i class="ti ti-masks-theater"></i> Defence vs Play Style — '+abbr(opp)+' allows '+sel+' <span style="font-size:10px;color:var(--text-3);font-weight:600;letter-spacing:.04em">'+CS+' season</span></div></div><div class="dvps-grid">'+cells+'</div>';
   }
-  const CMB_PICK_MARKETS=[['disposals','Disposals',15],['kicks','Kicks',8],['handballs','Handballs',8],['marks','Marks',3],['tackles','Tackles',3],['clearances','Clearances',3],['goals','Goals',0.6],['dreamteam','Fantasy',75]];
+  let CMB_PICK_MARKETS;  // from SPORT_CONFIG
   function fxCmbPicks(team,opp){
     const roster=playersOnTeam(team).filter(p=>isPlaying(p.name,team));
     // Current-season games floor: a player who's missed most of the season
@@ -2160,11 +2166,8 @@
   /* ---------- STATS ---------- */
   const STATS_SUBS=[['scanner','Scanner','ti-table'],['teams','Teams','ti-shield'],['dvp','DVP','ti-shield-half'],['compare','Compare','ti-users']];
   // stats offered in the DVP grid + Teams sort (key -> label)
-  const DVP_STATS=[['disposals','Disposals'],['kicks','Kicks'],['handballs','Handballs'],['marks','Marks'],
-    ['tackles','Tackles'],['goals','Goals'],['shotsAtGoal','Shots'],['clearances','Clearances'],
-    ['inside50s','Inside 50s'],['contested','Cont. Poss'],['intercepts','Intercepts'],['hitouts','Hitouts'],
-    ['marks','Marks'],['groundBallGets','Ground Balls'],['metresGained','Metres'],['scoreInvolvements','Score Inv.']];
-  const POS_ORDER=['Midfielder','Mid-Forward','Gen. Forward','Key Forward','Gen. Defender','Key Defender','Ruck'];
+  let DVP_STATS;  // from SPORT_CONFIG
+  let POS_ORDER;  // from SPORT_CONFIG
 
   function renderStats(){
     const ps=state.idx.players||[];
@@ -3260,6 +3263,7 @@
       });
   }
   function taggerAlerts(){
+    if(SPORT.key!=='afl') return [];   // taggers are AFL-specific
     const scope=_degenScope;
     const taggers=[...TAGGER_NAMES.hard.map(n=>({n,t:'hard'})),...TAGGER_NAMES.defensive.map(n=>({n,t:'defensive'}))]
       .map(x=>({...x,p:state.idx.byName[x.n]})).filter(x=>x.p);
@@ -3355,7 +3359,7 @@
   }
   // ===== Multi Builder modes — each builds a different leg pool; downstream selection/analysis shared =====
   const _MKT_TYPE={disposals:'DISPOSALS',goals:'GOALS',dreamteam:'FANTASY',marks:'MARKS',tackles:'TACKLES',clearances:'CLEARANCES',kicks:'KICKS',handballs:'HANDBALLS'};
-  const _MKT_NM={disposals:'Disposals',goals:'Goals',dreamteam:'Fantasy',marks:'Marks',tackles:'Tackles',clearances:'Clearances',kicks:'Kicks',handballs:'Handballs'};
+  let _MKT_NM;  // from SPORT_CONFIG (_applyConfig)
   function _rungScan(name,statKey){
     let lines; if(statKey==='goals') lines=[1,2,3];
     else lines=[...new Set(altLines(name,statKey).map(r=>Math.round(r.line+0.5)))].filter(L=>L>=1);
@@ -3779,7 +3783,7 @@
   // build a running slip. 'dg' spans the whole round (game filter) so you can stack cross-game.
   const FXP_MODES=[['smart','Smart'],['safe','100% Hit Rater'],['value','Value Hunter'],['lotto','Lottery Legs'],['h2h','History Repeats'],['matchup','Matchup Multi'],['team','Thats My Team']];
   const FXP_DESC={smart:'Best-rated legs by our signal score.',safe:'Only legs that have cleared in every game this season \u2014 safe, short odds.',value:'Every leg is +EV \u2014 our hit-rate beats the book price.',lotto:'Longshot legs with a genuine shot.',h2h:'Legs the player has landed against THIS opponent before.',matchup:'Overs where the opponent bleeds to that position or playstyle.',team:'Legs from one chosen team only.'};
-  const FXP_MARKETS=[['disposals','Disp'],['goals','Goals'],['marks','Marks'],['tackles','Tackles'],['clearances','Clear'],['kicks','Kicks'],['handballs','HB']];
+  let FXP_MARKETS;  // from SPORT_CONFIG
   const DG_POOL_CAP=60;
   function _pickS(ctx){ const k=ctx==='dg'?'dgPick':'fxPick'; return state.view[k]||(state.view[k]={on:{},line:{},key:'',game:null}); }
   function _pickGames(){ return (state.data.fixture||[]).filter(g=>g.home&&g.away); }
@@ -4809,7 +4813,7 @@
   }
   // ---- shared: recent-games bar chart (last n games vs a line) ----
   // ===== Player prop calculator (old-tool style, now with live odds) =====
-  const PC_STATS=[['disposals','Disp'],['goals','Goals'],['kicks','Kicks'],['handballs','HB'],['marks','Marks'],['tackles','Tackles'],['clearances','Clear'],['dreamteam','Fantasy']];
+  let PC_STATS;  // from SPORT_CONFIG
   function _pcInit(p,opp){
     const isFwd=p.position==='Key Forward'||p.position==='Gen. Forward'||p.position==='Mid-Forward';
     const stat=isFwd?'goals':'disposals';
