@@ -13,6 +13,7 @@ window.SPORT_CONFIG = {
   fxpMarkets: [['disposals','Disp'],['goals','Goals'],['marks','Marks'],['tackles','Tackles'],['clearances','Clear'],['kicks','Kicks'],['handballs','HB']],
   dvpsOpts: [['disposals','Disposals'],['kicks','Kicks'],['handballs','Handballs'],['marks','Marks'],['tackles','Tackles'],['clearances','Clearances'],['goals','Goals'],['dreamteam','Fantasy']],
   dvpStylePos: {'Accumulator Mid':'Midfielder','Contested Mid':'Midfielder','Running Mid':'Midfielder','Handball Mid':'Midfielder','Scoring MF':'Mid-Forward','Bear in the Square':'Key Forward','Key Target':'Key Forward','Pressure Fwd':'Gen. Forward','Small Forwards':'Gen. Forward','Clearance Beast':'Midfielder','Intercept Def':'Key Defender','Uncontested Marker':'Gen. Defender','Defensive Ball User':'Gen. Defender','Ruck Mid':'Ruck','Dominant Ruck':'Ruck','Winger':'Midfielder','Shankers':'All Positions','Cuddle Monsters':'All Positions','Fantasy Stars':'All Positions','Entry Man':'All Positions'},
+  posColors: {'Midfielder':'#3b82f6','Mid-Forward':'#8b5cf6','Gen. Forward':'#f59e0b','Key Forward':'#f97316','Gen. Defender':'#64748b','Key Defender':'#06b6d4','Ruck':'#ec4899'},
   crew: [
     {k:'board',n:"Today's Board",i:'ti-clipboard-list',d:'Best plays ranked'},
     {k:'multi',n:'Multi Builder',i:'ti-stack-2',d:'Stacked legs'},
