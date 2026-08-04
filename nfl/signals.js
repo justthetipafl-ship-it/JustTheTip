@@ -785,7 +785,42 @@
     function captureOU() { return []; }
     function captureMatchup() { return []; }
 
-    return { collectOU: collectOU, matchupLegs: matchupLegs, tiles: tiles,
+    // Play-style classifier for Defence-vs-Play-Style (shell's allPlayStyles delegates here for NFL).
+    function playStyles(p, pg) {
+      var pa = p.passAtt || 0, py = p.passYds || 0, ra = p.rushAtt || 0, tg = p.targets || 0, rc = p.receptions || 0,
+        ts = p.tgtShare || 0, adot = p.aDot || 0, ypr = p.ypr || 0, snap = p.snapPct || 0, gl = p.glCarry || 0,
+        rtd = p.rushTds || 0, ttd = p.totalTds || 0, fp = p.fanPts || 0, touch = ra + tg;
+      var s = [];
+      if (pg === 'QB') {
+        if (ra >= 5) s.push('Dual Threat');
+        if (pa >= 36 || (adot >= 8.5 && py >= 240)) s.push('Gunslinger');
+        if (pa > 0 && pa < 30) s.push('Game Manager');
+        if (!s.length && pa >= 15) s.push('Pocket Passer');
+      }
+      if (pg === 'RB') {
+        if (ra >= 15) s.push('Workhorse');
+        if (ra > 0 && ra < 10) s.push('Committee Back');
+        if (tg >= 4) s.push('Receiving Back');
+        if (gl >= 1 || (rtd >= 0.5 && ra < 12)) s.push('Goal-Line Back');
+      }
+      if (pg === 'WR') {
+        if (ts >= 24) s.push('Alpha WR');
+        if (adot >= 13) s.push('Deep Threat');
+        if (ypr > 0 && ypr < 11 && rc >= 4) s.push('Possession / Slot');
+        if (snap > 0 && snap < 50) s.push('Rotational WR');
+      }
+      if (pg === 'TE') {
+        if (ts >= 15) s.push('Route TE');
+        else if (tg >= 2) s.push('Hybrid TE');
+        else s.push('Blocking TE');
+      }
+      if (ttd >= 0.6) s.push('TD Machine');
+      if (touch >= 18) s.push('Volume King');
+      if (fp >= 15) s.push('Fantasy Stars');
+      return s.length ? s : [pg];
+    }
+
+    return { collectOU: collectOU, matchupLegs: matchupLegs, tiles: tiles, playStyles: playStyles,
              captureOU: captureOU, captureMatchup: captureMatchup };
   }
 
