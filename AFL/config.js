@@ -16,6 +16,7 @@ window.SPORT_CONFIG = {
   h2hKeys: [['disposals','Disposals'],['kicks','Kicks'],['handballs','Handballs'],['marks','Marks'],['contested','Contested'],['clearances','Clearances'],['inside50s','Inside 50s'],['tackles','Tackles'],['goals','Goals']],
   lowCount: ['goals'],
   dvpByPos: false,
+  teamCols: [['disposals','Disp'],['kicks','Kick'],['handballs','HB'],['marks','Mark'],['tackles','Tkl'],['goals','Goal'],['shotsAtGoal','Shot'],['clearances','Clr'],['inside50s','I50'],['contestedMarks','CM'],['interceptMarks','IM'],['goalAssists','GA'],['scoreInvolvements','SI']],
   oddsMkts: [['disposals','Disposals'],['kicks','Kicks'],['handballs','Handballs'],['marks','Marks'],['tackles','Tackles'],['clearances','Clearances'],['goals','Goals'],['dreamteam','Fantasy']],
   posColors: {'Midfielder':'#3b82f6','Mid-Forward':'#8b5cf6','Gen. Forward':'#f59e0b','Key Forward':'#f97316','Gen. Defender':'#64748b','Key Defender':'#06b6d4','Ruck':'#ec4899'},
   crew: [
