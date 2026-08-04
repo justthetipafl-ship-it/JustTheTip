@@ -1723,7 +1723,7 @@
   window.setFxDvpPosStat=function(v){ window._fxDvpPosStat=v; _renderApp(); };
   function fxDvpByPos(team,opp){
     const rows=state.data.dvp||[]; if(!rows.length) return '';
-    const statKey=window._fxDvpPosStat||'disposals';
+    const statKey=window._fxDvpPosStat||(DVPS_OPTS[0]&&DVPS_OPTS[0][0])||'disposals';
     const oppRows=rows.filter(r=>r.team===opp); if(!oppRows.length) return '';
     const sel='<select onchange="setFxDvpPosStat(this.value)" class="dvps-sel">'+DVPS_OPTS.map(o=>'<option value="'+o[0]+'"'+(o[0]===statKey?' selected':'')+'>'+o[1]+'</option>').join('')+'</select>';
     const pills=POS_ORDER.map(pos=>{
@@ -1843,25 +1843,6 @@
         '<div class="dvps-row"><span class="dvps-v" style="color:'+col+'">'+r.oppAvg.toFixed(dec)+'</span><span class="dvps-l">'+statLbl+'</span><span class="dvps-p" style="color:'+col+'">'+(r.pct>=0?'+':'')+r.pct.toFixed(0)+'%</span></div></div>';
     }).join('');
     return '<div class="tp-sec"><div class="sec-title"><i class="ti ti-masks-theater"></i> Defence vs Play Style — '+abbr(opp)+' allows '+sel+' <span style="font-size:10px;color:var(--text-3);font-weight:600;letter-spacing:.04em">'+CS+' season</span></div></div><div class="dvps-grid">'+cells+'</div>';
-  }
-  // DVP by Position (focused fixture) — opponent's per-position allowance vs league (sport-gated)
-  window.setFxDvpPosStat=function(v){ window._fxDvpPosStat=v; _renderApp(); };
-  function fxDvpByPos(team,opp){
-    const rows=state.data.dvp||[]; if(!rows.length) return '';
-    const statKey=window._fxDvpPosStat||(DVPS_OPTS[0]&&DVPS_OPTS[0][0])||'receptions';
-    const oppRows=rows.filter(r=>r.team===opp); if(!oppRows.length) return '';
-    const sel='<select onchange="setFxDvpPosStat(this.value)" class="dvps-sel">'+DVPS_OPTS.map(o=>'<option value="'+o[0]+'"'+(o[0]===statKey?' selected':'')+'>'+o[1]+'</option>').join('')+'</select>';
-    const pills=(POS_ORDER||[]).map(pos=>{
-      const orow=oppRows.find(r=>r.pos===pos); if(!orow||orow[statKey]==null) return '';
-      const vals=rows.filter(r=>r.pos===pos&&r[statKey]!=null).map(r=>+r[statKey]);
-      const lg=vals.length?vals.reduce((a,b)=>a+b,0)/vals.length:0;
-      const val=+orow[statKey], pct=lg?((val-lg)/lg*100):0;
-      const c=pct>15?'#22c55e':pct>5?'#86efac':pct>-5?'var(--text-3)':pct>-15?'#f97316':'#ef4444';
-      const col=POS_C[pos]||'#888';
-      return '<div class="dvpp-pill" title="'+esc(pos)+' \u00b7 vs league avg"><span class="dvpp-pos" style="color:'+col+';border-color:'+col+'55;background:'+col+'1a">'+posShort(pos)+'</span><span class="dvpp-v">'+val.toFixed(1)+'</span><span class="dvpp-p" style="color:'+c+'">'+(pct>=0?'+':'')+pct.toFixed(0)+'%</span></div>';
-    }).filter(Boolean).join('');
-    if(!pills) return '';
-    return '<div class="tp-sec"><div class="sec-title"><i class="ti ti-shield-half"></i> DVP by Position \u2014 '+abbr(opp)+' allows '+sel+'</div></div><div class="dvpp-grid">'+pills+'</div>';
   }
   let CMB_PICK_MARKETS;  // from SPORT_CONFIG
   function fxCmbPicks(team,opp){
@@ -2154,7 +2135,6 @@
     // Defence vs Play Style (how the opponent concedes vs this team's playstyles)
     h+=fxLineup(team);
     h+=fxDvpByPos(team,opp);
-    h+=(window.SPORT_CONFIG&&SPORT_CONFIG.dvpByPos?fxDvpByPos(team,opp):'');
     h+=fxDvPS(team,opp);
     h+=fxCmbPicks(team,opp);
     h+='</div>';
