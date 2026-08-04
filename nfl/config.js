@@ -16,6 +16,8 @@ window.SPORT_CONFIG = {
   h2hKeys: [['points','Points'],['passYds','Pass Yds'],['rushYds','Rush Yds'],['passTds','Pass TDs'],['rushTds','Rush TDs'],['receptions','Receptions'],['passInt','INTs Thrown'],['sacks','Sacks Taken']],
   lowCount: ['passTds','rushTds','recTds','anytimeTd','passInt','totalTds'],
   dvpByPos: true,
+  teamCols: [['points','Pts'],['plays','Plays'],['passYds','PaYd'],['passAtt','PaAtt'],['passComp','Cmp'],['passTds','PaTD'],['passInt','INT'],['sacks','Sck'],['rushYds','RuYd'],['rushAtt','RuAtt'],['rushTds','RuTD'],['receptions','Rec'],['targets','Tgt']],
+  viewDefaults: { sortKey:'fanPts', statsStat:'receptions', teamsSort:'points' },
   oddsMkts: [['passYds','Pass Yds'],['passTds','Pass TDs'],['passAtt','Pass Att'],['rushYds','Rush Yds'],['rushAtt','Rush Att'],['receptions','Receptions'],['recYds','Rec Yds'],['rushRecYds','Rush+Rec'],['anytimeTd','Anytime TD'],['tackles','Tackles+Ast']],
   tileOrder: ['paydirt','elite','bunnies','bogey','streak','chunk','wrap','usage','next','stack','wx','push','clamp','form'],
   posColors: {'QB':'#ef4444','RB':'#22c55e','WR':'#3b82f6','TE':'#f59e0b','LB':'#a855f7','DL':'#f97316','DB':'#06b6d4'},
