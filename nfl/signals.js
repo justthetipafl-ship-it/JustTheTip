@@ -112,6 +112,22 @@
     var degRow    = deps.degRow    || function (n) { return '<div>' + n + '</div>'; };
     var multiLineTag = deps.multiLineTag || function () { return ''; };
     var lineTag   = deps.lineTag   || function () { return ''; };
+    var underTag  = deps.underTag  || function () { return ''; };
+    var _fixtureSet = deps._fixtureSet || function () { return new Set(); };
+    var _roundNum = deps._roundNum || function () { return 0; };
+    var curLogs   = deps.curLogs   || function () { return []; };
+    var windowDvp = deps.windowDvp || function () { return null; };
+    var formNote  = deps.formNote  || function () { return ''; };
+    var muTag     = deps.muTag     || function () { return ''; };
+    var streakOdds = deps.streakOdds || function () { return ''; };
+    var logsByName = deps.logsByName || function () { return []; };
+    var isFocused = deps.isFocused || function () { return false; };
+    var estimateHitProb = deps.estimateHitProb || function () { return 0.5; };
+    var isPlaying = deps.isPlaying || function () { return true; };
+    var _pairRho  = deps._pairRho  || function () { return 0; };
+    var _clusterJoint = deps._clusterJoint || function (legs) { return legs.reduce(function (a, l) { return a * (l.prob || 0); }, 1); };
+    var POS_TO_DVP = (JTTScoring && JTTScoring.POS_TO_DVP) || {};
+    var _dvpPos = function (p) { return POS_TO_DVP[p.position] || p.position; };
     var teamMap   = deps.teamMap   || function () { return {}; };
     var _avg = function (a) { return a.length ? a.reduce(function (x, y) { return x + y; }, 0) / a.length : 0; };
     function sameDivision(a, b) { var tm = teamMap(), ta = tm[a], tb = tm[b]; return !!(ta && tb && ta.division && ta.division === tb.division); }
@@ -277,10 +293,232 @@
       return out.sort(function (a, b) { return (b.lineBunny - a.lineBunny) || ((b.diffPct || 0) - (a.diffPct || 0)); });
     }
 
+    // Bogey — Bunnies' mirror: divisional rival the player struggles against (worst matchup /
+    // never cleared the posted line in any H2H meeting).
+    var BOGEY_STATS = [{ k: 'recYds', l: 'Rec Yds', min: 30 }, { k: 'rushYds', l: 'Rush Yds', min: 30 }, { k: 'passYds', l: 'Pass Yds', min: 150 }];
+    function bogey() {
+      var out = [];
+      (players || []).filter(function (p) { return (p.matches || 0) >= 3; }).forEach(function (p) {
+        var opp = nextOpp(p.team); if (!opp) return;
+        if (!sameDivision(p.team, opp)) return;
+        var byOpp = {};
+        (logsFor(p.name) || []).forEach(function (r) { if (r.opponent) (byOpp[r.opponent] = byOpp[r.opponent] || []).push(r); });
+        var vt = byOpp[opp]; if (!vt || vt.length < 2) return;
+        BOGEY_STATS.forEach(function (s) {
+          if ((p[s.k] || 0) < s.min) return;
+          var thisAvg = _avg(vt.map(function (r) { return r[s.k] || 0; }));
+          var worst = null, worstOpp = null;
+          Object.keys(byOpp).forEach(function (o) {
+            var rs = byOpp[o]; if (o === opp || rs.length < 2) return;
+            var a = _avg(rs.map(function (r) { return r[s.k] || 0; }));
+            if (worst == null || a < worst) { worst = a; worstOpp = o; }
+          });
+          var avgBogey = (worst == null) || (thisAvg < worst);
+          var diffPct = (worst != null && worst > 0) ? ((worst - thisAvg) / worst) * 100 : null;
+          var posted = oddsFor(p.name, s.k);
+          var line = (posted && posted.line != null) ? posted.line : null;
+          var lineBogey = line != null && vt.every(function (r) { return (r[s.k] || 0) < line; });
+          if (!avgBogey && !lineBogey) return;
+          out.push({ p: p, opp: opp, stat: s, thisAvg: thisAvg, worst: worst, worstOpp: worstOpp, diffPct: diffPct, games: vt.length, avgBogey: avgBogey, lineBogey: lineBogey, line: line });
+        });
+      });
+      return out.sort(function (a, b) { return (b.lineBogey - a.lineBogey) || ((b.diffPct || 0) - (a.diffPct || 0)); });
+    }
+
+    // ---- Streakers — N straight games clearing a market-typical line ----
+    function realisticLine2(k, avg) {
+      if (k === 'passYds') { if (avg < 180) return null; var a = Math.round(avg) - 25; return a >= 150 ? a : null; }
+      if (k === 'passAtt') { if (avg < 28) return null; var b = Math.round(avg) - 4; return b >= 24 ? b : null; }
+      if (k === 'rushYds' || k === 'recYds') { if (avg < 40) return null; var c = Math.round(avg) - 10; return c >= 30 ? c : null; }
+      if (k === 'rushRecYds') { if (avg < 50) return null; var d = Math.round(avg) - 12; return d >= 40 ? d : null; }
+      if (k === 'receptions') { if (avg < 3.5) return null; var e = Math.floor(avg) - 1; return e >= 2 ? e : null; }
+      if (k === 'rushAtt') { if (avg < 10) return null; var f = Math.round(avg) - 3; return f >= 8 ? f : null; }
+      if (k === 'anytimeTd') { return avg >= 0.55 ? 1 : null; }
+      if (k === 'tackles') { if (avg < 6.5) return null; var g = Math.floor(avg) - 1; return g >= 5 ? g : null; }
+      return null;
+    }
+    var STREAK_STATS = [['passYds', 'Pass Yds'], ['rushYds', 'Rush Yds'], ['recYds', 'Rec Yds'], ['receptions', 'Receptions'],
+                        ['rushAtt', 'Rush Att'], ['rushRecYds', 'Rush+Rec Yds'], ['anytimeTd', 'Anytime TD'], ['tackles', 'Tackles+Ast']];
+    function streakers() {
+      var teams = _fixtureSet(), out = [];
+      (players || []).filter(function (p) { return teams.has(p.team); }).forEach(function (p) {
+        var sorted = (logsFor(p.name) || []).slice().sort(function (a, b) { var y = (+a.Year || 0) - (+b.Year || 0); return y || _roundNum(a.RoundName) - _roundNum(b.RoundName); });
+        STREAK_STATS.forEach(function (kl) {
+          var k = kl[0], l = kl[1];
+          var line = realisticLine2(k, p[k] || 0); if (!line) return;
+          var vals = sorted.map(function (r) { return r[k] || 0; }); if (vals.length < 5) return;
+          var streak = 0; for (var i = vals.length - 1; i >= 0; i--) { if (vals[i] >= line) streak++; else break; }
+          if (streak < 7) return;                              // 7 straight (AFL's 10-gate scaled to 17-game seasons)
+          var opp = nextOpp(p.team), pos = _dvpPos(p);
+          out.push({ p: p, stat: l, statKey: k, line: line, streak: streak, opp: opp,
+            dvpPct: opp ? JTTScoring.getDVPPct(opp, pos, k) : null, runDvp: windowDvp(p, k, sorted.slice(-streak)),
+            rate: vals.filter(function (v) { return v >= line; }).length / vals.length });
+        });
+      });
+      return out.sort(function (a, b) { return b.streak - a.streak; });
+    }
+
+    // ---- Form Alerts — L3 vs season swing (spike / drop) ----
+    function formAlerts(dir) {
+      var teams = _fixtureSet(), out = [];
+      var STATS = [['passYds', 'Pass Yds', 150], ['rushYds', 'Rush Yds', 30], ['recYds', 'Rec Yds', 30], ['receptions', 'Receptions', 3], ['rushAtt', 'Rush Att', 8], ['fanPts', 'Fan Pts', 8], ['tackles', 'Tackles+Ast', 5]];
+      var ALERT_THRESHOLD = 0.25, ALERT_MIN_L3 = 3;
+      (players || []).filter(function (p) { return teams.has(p.team); }).forEach(function (p) {
+        var cur = (curLogs(p.name) || []).slice().sort(function (a, b) { return _roundNum(b.RoundName) - _roundNum(a.RoundName); });
+        if (cur.length < ALERT_MIN_L3) return;
+        var base = cur.length >= 10 ? cur : (logsFor(p.name) || []).slice(-10);
+        STATS.forEach(function (klm) {
+          var k = klm[0], l = klm[1], min = klm[2];
+          var seasonAvg = _avg(base.map(function (r) { return r[k] || 0; })); if (seasonAvg <= 0) return;
+          var l3 = _avg(cur.slice(0, 3).map(function (r) { return r[k] || 0; }));
+          var swing = (l3 - seasonAvg) / seasonAvg;
+          if (Math.abs(swing) < ALERT_THRESHOLD) return;
+          var spiking = swing > 0;
+          if (dir === 'spike' && !spiking) return; if (dir === 'drop' && spiking) return;
+          if (spiking && l3 < min) return;
+          if (!spiking && seasonAvg < min) return;
+          var opp = nextOpp(p.team), pos = _dvpPos(p);
+          out.push({ p: p, stat: l, statKey: k, seasonAvg: seasonAvg, l3: l3, swing: swing, spiking: spiking, opp: opp,
+            thisDvp: opp ? JTTScoring.getDVPPct(opp, pos, k) : null, runDvp: windowDvp(p, k, cur.slice(0, 3)) });
+        });
+      });
+      return out.sort(function (a, b) { return Math.abs(b.swing) - Math.abs(a.swing); });
+    }
+
+    // ---- Usage Trend — role INPUTS (snaps, target share, carries) L3 vs season ----
+    var USAGE_MIN_G = 6;
+    function usageTrend() {
+      var teams = _fixtureSet(), cs = curSeason(), out = [];
+      (players || []).filter(function (p) { return teams.has(p.team) && (p.matches || 0) >= USAGE_MIN_G; }).forEach(function (p) {
+        var logs = (logsByName(p.name) || []).filter(function (r) { return String(r.Year) === String(cs); });
+        if (logs.length < USAGE_MIN_G) return;
+        var l3 = logs.slice(-3), base = logs.slice(0, -3); if (base.length < 3) return;
+        var av = function (arr, k) { return arr.reduce(function (s, r) { return s + (r[k] || 0); }, 0) / arr.length; };
+        var deltas = [];
+        var dSnap = av(l3, 'snapPct') - av(base, 'snapPct');
+        if (Math.abs(dSnap) >= 8 && av(l3, 'snapPct') > 0) deltas.push({ k: 'snapPct', l: 'snaps', d: dSnap, u: 'pts' });
+        if (['WR', 'TE', 'RB'].indexOf(p.position) >= 0) {
+          var dTs = av(l3, 'tgtShare') - av(base, 'tgtShare'); if (Math.abs(dTs) >= 4) deltas.push({ k: 'tgtShare', l: 'target share', d: dTs, u: 'pts' });
+          var dTg = av(l3, 'targets') - av(base, 'targets'); if (Math.abs(dTg) >= 2) deltas.push({ k: 'targets', l: 'targets/g', d: dTg, u: '' });
+        }
+        if (p.position === 'RB') { var dRa = av(l3, 'rushAtt') - av(base, 'rushAtt'); if (Math.abs(dRa) >= 3) deltas.push({ k: 'rushAtt', l: 'carries/g', d: dRa, u: '' }); }
+        if (!deltas.length) return;
+        var score = deltas.reduce(function (s, x) { return s + Math.abs(x.d); }, 0);
+        var dir = deltas.reduce(function (s, x) { return s + x.d; }, 0) >= 0 ? 'asc' : 'fade';
+        out.push({ p: p, opp: nextOpp(p.team), deltas: deltas, dir: dir, score: score, n: logs.length });
+      });
+      return out.sort(function (a, b) { return b.score - a.score; });
+    }
+    function usageCard(c) {
+      var q = esc(c.p.name).replace(/'/g, "\\'"), col = c.dir === 'asc' ? '#22c55e' : '#f97316';
+      var chips = c.deltas.map(function (x) { return '<span class="lu-p" style="color:' + (x.d >= 0 ? '#22c55e' : '#f97316') + '">' + (x.d >= 0 ? '+' : '') + x.d.toFixed(1) + (x.u ? ' ' + x.u : '') + ' ' + x.l + ' (L3 v season)</span>'; }).join(' ');
+      return '<div class="lc-card" onclick="openPlayer(\'' + q + '\')"><div class="lc-hd"><span class="lc-nm">' + esc(c.p.name) + '</span>' + _degBadges(c.p.name) +
+        '<span class="lc-meta" style="color:' + col + '">' + (c.dir === 'asc' ? 'ASCENDING' : 'FADING') + ' \u00b7 ' + posShort(c.p.position) + ' \u00b7 ' + abbr(c.p.team) + (c.opp ? ' v ' + abbr(c.opp) : '') + '</span></div>' +
+        '<div class="lu-grid" style="gap:5px">' + chips + '</div></div>';
+    }
+
+    // ---- Chunk Plays — longest reception/rush/completion clearance streaks ----
+    var CHUNK_DEFS = [
+      { k: 'longRec', l: 'Longest Rec', thr: 20, pos: ['WR', 'TE', 'RB'], exp: 'expRec', expL: 'explosive catches', style: 'aDot' },
+      { k: 'longRush', l: 'Longest Rush', thr: 12, pos: ['RB', 'QB'], exp: 'expRush', expL: 'explosive runs', style: 'ypc' },
+      { k: 'longComp', l: 'Longest Comp', thr: 35, pos: ['QB'], exp: 'expRec', expL: 'explosive passes', style: null }
+    ];
+    var CHUNK_HIT = 0.70, CHUNK_MIN_G = 6, CHUNK_CLAMP = -12;
+    function _chunkSimilar(p, def, opp, line) {
+      if (!opp) return null;
+      var metric = def.k === 'longRush' ? 'ypc' : (def.k === 'longComp' ? 'passYds' : 'aDot');
+      var mine = p[metric] || 0; if (!mine) return null;
+      var pool = (players || []).filter(function (q) { return q.name !== p.name && q.position === p.position && (q.matches || 0) >= 3 && (q[metric] || 0) > 0; })
+        .map(function (q) { return { q: q, d: Math.abs((q[metric] || 0) - mine) }; }).sort(function (a, b) { return a.d - b.d; }).slice(0, 8);
+      var h = 0, n = 0, used = 0;
+      pool.forEach(function (pair) {
+        var vs = (logsByName(pair.q.name) || []).filter(function (r) { return r.opponent === opp && r[def.k] != null; });
+        if (!vs.length) return; used++;
+        vs.forEach(function (r) { n++; if ((r[def.k] || 0) >= line) h++; });
+      });
+      return n >= 3 ? { h: h, n: n, used: used } : null;
+    }
+    function _chunkStyle(p, def) {
+      if (def.style === 'aDot') { var a = p.aDot || 0; if (!a) return null;
+        if (a >= 12) return { txt: 'deep threat \u00b7 aDot ' + a.toFixed(1), pts: 8, c: '#22c55e' };
+        if (a <= 8) return { txt: 'short-area \u00b7 aDot ' + a.toFixed(1), pts: -8, c: '#f97316' };
+        return { txt: 'aDot ' + a.toFixed(1), pts: 0, c: 'var(--text-3)' }; }
+      if (def.style === 'ypc') { var y = p.ypc || 0; if (!y) return null;
+        if (y >= 4.8) return { txt: 'explosive runner \u00b7 ' + y.toFixed(1) + ' ypc', pts: 6, c: '#22c55e' };
+        if (y <= 3.6) return { txt: 'grinder \u00b7 ' + y.toFixed(1) + ' ypc', pts: -6, c: '#f97316' };
+        return { txt: y.toFixed(1) + ' ypc', pts: 0, c: 'var(--text-3)' }; }
+      return null;
+    }
+    function chunkPlays() {
+      var teams = _fixtureSet(), out = [];
+      (players || []).filter(function (p) { return teams.has(p.team) && (p.matches || 0) >= 3; }).forEach(function (p) {
+        var opp = nextOpp(p.team);
+        CHUNK_DEFS.forEach(function (def) {
+          if (def.pos.indexOf(p.position) < 0) return;
+          var vals = (logsFor(p.name) || []).map(function (r) { return r[def.k]; }).filter(function (v) { return v != null; });
+          if (vals.length < CHUNK_MIN_G) return;
+          var posted = oddsFor(p.name, def.k);
+          var line = (posted && posted.line != null) ? Math.ceil(posted.line) : def.thr;
+          var hits = vals.filter(function (v) { return v >= line; }).length, rate = hits / vals.length;
+          if (rate < CHUNK_HIT) return;
+          var pos = _dvpPos(p);
+          var expDvp = opp ? JTTScoring.getDVPPct(opp, pos, def.exp) : null;
+          if (expDvp != null && expDvp <= CHUNK_CLAMP) return;  // opp suppresses explosives — history means little
+          var longDvp = opp ? JTTScoring.getDVPPct(opp, pos, def.k) : null;
+          var style = _chunkStyle(p, def), sim = _chunkSimilar(p, def, opp, line), avg = _avg(vals);
+          var l5 = vals.slice(-5).map(function (v) { return Math.round(v); }).join(', ');
+          var score = rate * 100 + (expDvp || 0) * 0.6 + (longDvp || 0) * 0.3 + (style ? style.pts : 0) + (sim ? ((sim.h / sim.n) - 0.5) * 30 : 0);
+          out.push({ p: p, opp: opp, def: def, line: line, hits: hits, n: vals.length, rate: rate, avg: avg, expDvp: expDvp, longDvp: longDvp, style: style, sim: sim, l5: l5, score: score, posted: !!(posted && posted.line != null) });
+        });
+      });
+      return out.sort(function (a, b) { return b.score - a.score; });
+    }
+    function chunkCard(c) {
+      var q = esc(c.p.name).replace(/'/g, "\\'"), od = lineTag(c.p.name, c.def.k), chips = [];
+      if (c.expDvp != null) { var c1 = c.expDvp >= 10 ? '#22c55e' : c.expDvp >= 3 ? '#86efac' : c.expDvp <= -6 ? '#f97316' : 'var(--text-3)';
+        chips.push('<span class="lu-p" style="color:' + c1 + ';border-color:' + c1 + '55">' + abbr(c.opp) + ' ' + (c.expDvp >= 0 ? 'allows +' : 'allows ') + c.expDvp.toFixed(0) + '% ' + c.def.expL + ' to ' + posShort(c.p.position) + 's</span>'); }
+      if (c.longDvp != null) { var c2 = c.longDvp >= 8 ? '#22c55e' : c.longDvp <= -8 ? '#f97316' : 'var(--text-3)';
+        chips.push('<span class="lu-p" style="color:' + c2 + ';border-color:' + c2 + '55">longest allowed ' + (c.longDvp >= 0 ? '+' : '') + c.longDvp.toFixed(0) + '% v league</span>'); }
+      if (c.style) chips.push('<span class="lu-p" style="color:' + c.style.c + ';border-color:' + c.style.c + '55">' + esc(c.style.txt) + '</span>');
+      if (c.sim) { var sr = c.sim.h / c.sim.n, c3 = sr >= 0.6 ? '#22c55e' : sr >= 0.4 ? '#eab308' : '#ef4444';
+        chips.push('<span class="lu-p" style="color:' + c3 + ';border-color:' + c3 + '55">similar ' + posShort(c.p.position) + 's ' + c.sim.h + '/' + c.sim.n + ' cleared v ' + abbr(c.opp) + ' (' + c.sim.used + ' players)</span>'); }
+      return '<div class="lc-card" onclick="openPlayer(\'' + q + '\')"><div class="lc-hd"><span class="lc-nm">' + esc(c.p.name) + '</span>' + _degBadges(c.p.name) +
+        '<span class="lc-meta">' + posShort(c.p.position) + ' \u00b7 ' + abbr(c.p.team) + (c.opp ? ' v ' + abbr(c.opp) : '') + (od ? ' \u00b7' + od : '') + '</span></div>' +
+        '<div class="tp-body-meta" style="border:0;padding:2px 0 6px"><b>' + c.def.l + ' ' + c.line + '+</b>' + (c.posted ? '' : ' (est line)') + ' \u00b7 hit ' + c.hits + '/' + c.n + ' (' + Math.round(c.rate * 100) + '%) \u00b7 avg ' + c.avg.toFixed(0) + ' \u00b7 L5 ' + c.l5 + '</div>' +
+        (chips.length ? '<div class="lu-grid" style="gap:5px">' + chips.join(' ') + '</div>' : '') + '</div>';
+    }
+
     // tiles: key -> () => HTML. The shell's renderTile(k) calls tiles[k]() for NFL.
     // Keys mirror the shell's tile vocabulary. (More ported in batches.)
     var M = function (v) { return fmt(v, 1); };
     var tiles = {
+      streak: function () {
+        var rows = _byGame(_fc(streakers(), 6), function (s) { return s.p.team; }, function (s) {
+          return degRow(s.p.name, '#f97316', { v1: s.streak, l1: 'straight', v2: Math.round(s.rate * 100) + '%', l2: 'hit' },
+            s.stat + ' ' + s.line + '+ \u00b7 ' + abbr(s.p.team) + (s.opp ? ' v ' + abbr(s.opp) : '') + ' \u00b7 hit ' + Math.round(s.rate * 100) + '%' + (s.dvpPct != null ? ' \u00b7 ' + muTag(s.dvpPct) : '') + streakOdds(s));
+        });
+        return degWrap('ti-flame', 'Streakers', rows, 'c-amber');
+      },
+      form: function () {
+        var up = _byGame(_fc(formAlerts('spike'), 6, 25), function (a) { return a.p.team; }, function (a) { return degRow(a.p.name, '#22c55e', { v1: '\u25b2 +' + Math.round(a.swing * 100) + '%', l1: 'swing', v2: M(a.l3), l2: 'L3' }, a.stat + ' \u00b7 L3 ' + M(a.l3) + ' vs season ' + M(a.seasonAvg) + formNote('spike', a.runDvp, a.thisDvp)); });
+        var dn = _byGame(_fc(formAlerts('drop'), 6, 25), function (a) { return a.p.team; }, function (a) { return degRow(a.p.name, '#ef4444', { v1: '\u25bc ' + Math.round(a.swing * 100) + '%', l1: 'swing', v2: M(a.l3), l2: 'L3' }, a.stat + ' \u00b7 L3 ' + M(a.l3) + ' vs season ' + M(a.seasonAvg) + formNote('drop', a.runDvp, a.thisDvp)); });
+        return degWrap('ti-trending-up', 'Spiking', up, 'c-green') + degWrap('ti-trending-down', 'Cooling', dn, 'c-red');
+      },
+      usage: function () {
+        var rows = _byGame(_fc(usageTrend(), 8, 30), function (c) { return c.p.team; }, usageCard);
+        return degWrap('ti-activity', 'Usage Trend', rows, 'c-green');
+      },
+      chunk: function () {
+        var rows = _byGame(_fc(chunkPlays(), 6, 30), function (c) { return c.p.team; }, chunkCard);
+        return degWrap('ti-bolt', 'Chunk Plays', rows, 'c-cyan');
+      },
+      bogey: function () {
+        var rows = _byGame(_fc(bogey(), 6), function (b) { return b.p.team; }, function (b) {
+          var sub = b.stat.l + ' \u00b7 vs ' + abbr(b.opp) + ' ' + M(b.thisAvg) + (b.worst != null ? ' (next worst ' + M(b.worst) + ')' : '') + ' \u00b7 ' + b.games + ' H2H' + underTag(b.p.name, b.stat.k);
+          return degRow(b.p.name, '#ef4444', { v1: M(b.thisAvg), l1: b.stat.l, v2: (b.lineBogey ? '0/' + b.games : (b.diffPct != null ? '-' + b.diffPct.toFixed(0) + '%' : '\u2014')), l2: (b.lineBogey ? 'cleared' : 'v field') }, sub);
+        });
+        return degWrap('ti-mood-sad', 'Bogey', rows, 'c-red');
+      },
       bunnies: function () {
         var rows = _byGame(_fc(bunnies(), 6), function (b) { return b.p.team; }, function (b) {
           var sub = b.stat.l + ' \u00b7 vs ' + abbr(b.opp) + ' ' + M(b.thisAvg) + (b.best != null ? ' (next best ' + M(b.best) + ')' : '') + ' \u00b7 ' + b.games + ' H2H' + lineTag(b.p.name, b.stat.k);
