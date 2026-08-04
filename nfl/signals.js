@@ -108,6 +108,13 @@
     var byName    = deps.byName    || function () { return null; };
     var logsFor   = deps.logsFor   || function () { return []; };
     var curSeason = deps.curSeason || function () { return ''; };
+    var players   = deps.players   || [];
+    var degRow    = deps.degRow    || function (n) { return '<div>' + n + '</div>'; };
+    var multiLineTag = deps.multiLineTag || function () { return ''; };
+    var lineTag   = deps.lineTag   || function () { return ''; };
+    var teamMap   = deps.teamMap   || function () { return {}; };
+    var _avg = function (a) { return a.length ? a.reduce(function (x, y) { return x + y; }, 0) / a.length : 0; };
+    function sameDivision(a, b) { var tm = teamMap(), ta = tm[a], tb = tm[b]; return !!(ta && tb && ta.division && ta.division === tb.division); }
 
     /* ===================== RESEARCH TILES ===================== */
     // Each tile is a data producer + bespoke card that returns HTML for the shell's Degen Crew.
@@ -218,9 +225,77 @@
         '<div class="lu-grid" style="gap:5px">' + chips + '</div></div>';
     }
 
+    // Elite Matchups — top-10 in the league for a stat, facing a bottom-5 defence for it.
+    var ELITE_DEFS = [{ k: 'passYds', l: 'Pass Yds' }, { k: 'rushYds', l: 'Rush Yds' }, { k: 'recYds', l: 'Rec Yds' },
+                      { k: 'receptions', l: 'Receptions' }, { k: 'rushAtt', l: 'Rush Att' }, { k: 'targets', l: 'Targets' },
+                      { k: 'tackles', l: 'Tackles+Ast' }];
+    function elite() {
+      var pool = (players || []).filter(function (p) { return (p.matches || 0) >= 4; });
+      var out = [];
+      ELITE_DEFS.forEach(function (def) {
+        pool.slice().sort(function (a, b) { return (b[def.k] || 0) - (a[def.k] || 0); }).slice(0, 10).forEach(function (p, i) {
+          var opp = nextOpp(p.team); if (!opp) return;
+          var dr = dvpRank(opp, p.position, def.k); if (!dr) return;
+          if (dr.rank > 5) return;                             // bottom-5 (softest) defence for this stat + position
+          out.push({ p: p, def: def, opp: opp, rank: i + 1, val: p[def.k] || 0, dvpRank: dr.rank, dvpPct: dr.pct, dvpTotal: dr.total });
+        });
+      });
+      return out.sort(function (a, b) { return a.dvpRank - b.dvpRank; });
+    }
+
+    // Bunnies — divisional rivals only (they meet twice a year, so H2H means something).
+    // Two flavours: AVG (averages more vs this opp than vs any other) and LINE (cleared the
+    // posted line in every H2H meeting).
+    var BUNNY_STATS = [{ k: 'recYds', l: 'Rec Yds', min: 30 }, { k: 'receptions', l: 'Receptions', min: 3 },
+                       { k: 'rushYds', l: 'Rush Yds', min: 30 }, { k: 'passYds', l: 'Pass Yds', min: 150 }];
+    function bunnies() {
+      var out = [];
+      (players || []).filter(function (p) { return (p.matches || 0) >= 3; }).forEach(function (p) {
+        var opp = nextOpp(p.team); if (!opp) return;
+        if (!sameDivision(p.team, opp)) return;                 // divisional rivals only
+        var byOpp = {};
+        (logsFor(p.name) || []).forEach(function (r) { if (r.opponent) (byOpp[r.opponent] = byOpp[r.opponent] || []).push(r); });
+        var vt = byOpp[opp]; if (!vt || vt.length < 3) return;  // need >=3 H2H meetings vs current opp
+        BUNNY_STATS.forEach(function (s) {
+          if ((p[s.k] || 0) < s.min) return;
+          var thisAvg = _avg(vt.map(function (r) { return r[s.k] || 0; }));
+          var best = null, bestOpp = null;
+          Object.keys(byOpp).forEach(function (o) {
+            var rs = byOpp[o]; if (o === opp || rs.length < 2) return;
+            var a = _avg(rs.map(function (r) { return r[s.k] || 0; }));
+            if (best == null || a > best) { best = a; bestOpp = o; }
+          });
+          var avgBunny = (best != null) && (thisAvg > best);
+          var diffPct = (best != null && best > 0) ? ((thisAvg - best) / best) * 100 : null;
+          var posted = oddsFor(p.name, s.k);
+          var line = (posted && posted.line != null) ? posted.line : null;
+          var lineBunny = line != null && vt.every(function (r) { return (r[s.k] || 0) >= line; });
+          if (!avgBunny && !lineBunny) return;
+          out.push({ p: p, opp: opp, stat: s, thisAvg: thisAvg, best: best, bestOpp: bestOpp, diffPct: diffPct, games: vt.length, avgBunny: avgBunny, lineBunny: lineBunny, line: line });
+        });
+      });
+      return out.sort(function (a, b) { return (b.lineBunny - a.lineBunny) || ((b.diffPct || 0) - (a.diffPct || 0)); });
+    }
+
     // tiles: key -> () => HTML. The shell's renderTile(k) calls tiles[k]() for NFL.
     // Keys mirror the shell's tile vocabulary. (More ported in batches.)
+    var M = function (v) { return fmt(v, 1); };
     var tiles = {
+      bunnies: function () {
+        var rows = _byGame(_fc(bunnies(), 6), function (b) { return b.p.team; }, function (b) {
+          var sub = b.stat.l + ' \u00b7 vs ' + abbr(b.opp) + ' ' + M(b.thisAvg) + (b.best != null ? ' (next best ' + M(b.best) + ')' : '') + ' \u00b7 ' + b.games + ' H2H' + lineTag(b.p.name, b.stat.k);
+          return degRow(b.p.name, '#3b82f6', { v1: M(b.thisAvg), l1: b.stat.l, v2: (b.lineBunny ? b.games + '/' + b.games : (b.diffPct != null ? '+' + b.diffPct.toFixed(0) + '%' : '\u2014')), l2: (b.lineBunny ? 'cleared' : 'v field') }, sub);
+        });
+        return degWrap('ti-carrot', 'Bunnies', rows, 'c-blue');
+      },
+      elite: function () {
+        var M = function (v) { return fmt(v, 1); };
+        var rows = _byGame(_fc(elite(), 8, 40), function (s) { return s.p.team; }, function (s) {
+          return degRow(s.p.name, '#22c55e', { v1: M(s.val), l1: s.def.l, v2: '#' + s.dvpRank, l2: 'softest' },
+            posShort(s.p.position) + ' \u00b7 ' + abbr(s.p.team) + ' v ' + abbr(s.opp) + ' \u00b7 ' + M(s.val) + ' ' + s.def.l.toLowerCase() + multiLineTag(s.p.name, s.def.k));
+        });
+        return degWrap('ti-trophy', 'Elite Matchups', rows, 'c-green');
+      },
       paydirt: function () {
         var rows = _byGame(_fc(snags(), 6), function (s) { return s.p.team; }, tuddyCard);
         return degWrap('ti-ball-american-football', 'Tuddy Targets', rows, 'c-amber');
