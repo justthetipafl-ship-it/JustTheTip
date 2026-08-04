@@ -13,6 +13,7 @@ window.SPORT_CONFIG = {
   fxpMarkets: [['passYds','Pass Yd'],['rushYds','Rush Yd'],['recYds','Rec Yd'],['receptions','Rec'],['rushAtt','Rush Att'],['passTds','Pass TD'],['tackles','Tackles']],
   dvpsOpts: [['receptions','Receptions'],['recYds','Rec Yds'],['recTds','Rec TDs'],['rushYds','Rush Yds'],['rushAtt','Rush Att'],['rushTds','Rush TDs'],['passYds','Pass Yds'],['passTds','Pass TDs'],['anytimeTd','Anytime TD'],['fanPts','Fan Pts'],['tackles','Tackles+Ast']],
   dvpStylePos: {'Dual Threat':'QB','Gunslinger':'QB','Game Manager':'QB','Pocket Passer':'QB','Workhorse':'RB','Committee Back':'RB','Receiving Back':'RB','Goal-Line Back':'RB','Alpha WR':'WR','Deep Threat':'WR','Possession / Slot':'WR','Rotational WR':'WR','Route TE':'TE','Hybrid TE':'TE','Blocking TE':'TE','TD Machine':'All Positions','Volume King':'All Positions','Fantasy Stars':'All Positions'},
+  posColors: {'QB':'#ef4444','RB':'#22c55e','WR':'#3b82f6','TE':'#f59e0b','LB':'#a855f7','DL':'#f97316','DB':'#06b6d4'},
   crew: [
     {k:'multi',n:'Multi Builder',i:'ti-stack-2',d:'Stacked legs'},
     {k:'green',n:'Green Lights',i:'ti-traffic-lights',d:'Strong OVER'},
