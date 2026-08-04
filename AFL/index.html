@@ -980,6 +980,11 @@
     DVP_STATS=CFG.dvpStats||[['disposals','Disposals'],['kicks','Kicks'],['handballs','Handballs'],['marks','Marks'],['tackles','Tackles'],['goals','Goals'],['shotsAtGoal','Shots'],['clearances','Clearances'],['inside50s','Inside 50s'],['contested','Cont. Poss'],['intercepts','Intercepts'],['hitouts','Hitouts'],['marks','Marks'],['groundBallGets','Ground Balls'],['metresGained','Metres'],['scoreInvolvements','Score Inv.']];
     POS_ORDER=CFG.posOrder||['Midfielder','Mid-Forward','Gen. Forward','Key Forward','Gen. Defender','Key Defender','Ruck'];
     DATA_FILES=Object.assign({}, DATA_FILES_COMMON, CFG.dataFiles||{kickins:'data/kickins.json'});
+    BET_STATS=CFG.betStats||[['disposals','Disposals'],['goals','Goals'],['marks','Marks'],['tackles','Tackles'],['kicks','Kicks'],['handballs','Handballs'],['clearances','Clearances']];
+    ROUND_WORD=CFG.roundWord||'Round';
+    DV_MARKETS=CFG.dvMarkets||[['disposals','Disposals',15],['kicks','Kicks',8],['handballs','Handballs',6],['marks','Marks',3],['tackles','Tackles',3],['clearances','Clearances',2],['goals','Goals',1]];
+    DVPS_OPTS=CFG.dvpsOpts||[['disposals','Disposals'],['kicks','Kicks'],['handballs','Handballs'],['marks','Marks'],['tackles','Tackles'],['clearances','Clearances'],['goals','Goals'],['dreamteam','Fantasy']];
+    DVP_PLAY_STYLE_POS=CFG.dvpStylePos||{'Accumulator Mid':'Midfielder','Contested Mid':'Midfielder','Running Mid':'Midfielder','Handball Mid':'Midfielder','Scoring MF':'Mid-Forward','Bear in the Square':'Key Forward','Key Target':'Key Forward','Pressure Fwd':'Gen. Forward','Small Forwards':'Gen. Forward','Clearance Beast':'Midfielder','Intercept Def':'Key Defender','Uncontested Marker':'Gen. Defender','Defensive Ball User':'Gen. Defender','Ruck Mid':'Ruck','Dominant Ruck':'Ruck','Winger':'Midfielder','Shankers':'All Positions','Cuddle Monsters':'All Positions','Fantasy Stars':'All Positions','Entry Man':'All Positions'};
   }
   function _renderSportToggle(){ const el=document.getElementById('sport-toggle'); if(!el)return; const keys=Object.keys(SPORTS); if(keys.length<2){ el.innerHTML=''; return; } el.innerHTML='<select class="sport-sel" onchange="_switchSport(this.value)" aria-label="Sport">'+keys.map(k=>'<option value="'+k+'"'+(k===SPORT.key?' selected':'')+'>'+SPORTS[k].name+'</option>').join('')+'</select>'; }
   const DATA_FILES_COMMON = { meta:'data/meta.json', players:'data/players.json', teams:'data/teams.json',
@@ -1010,8 +1015,8 @@
   const POS_C = {'Midfielder':'#3b82f6','Mid-Forward':'#8b5cf6','Gen. Forward':'#f59e0b','Key Forward':'#f97316',
                  'Gen. Defender':'#64748b','Key Defender':'#06b6d4','Ruck':'#ec4899'};
   // bettable player-prop markets, full labels (shared by Clash / Last Meeting / Matchup)
-  const BET_STATS = [['disposals','Disposals'],['goals','Goals'],['marks','Marks'],['tackles','Tackles'],
-                     ['kicks','Kicks'],['handballs','Handballs'],['clearances','Clearances']];
+  let BET_STATS;  // from SPORT_CONFIG (_applyConfig)
+  let ROUND_WORD='Round';  // from SPORT_CONFIG
   // display columns for Stats table + player modal: [key, label]
   const DISPLAY = [
     ['disposals','Disp'],['kicks','Kick'],['handballs','HB'],['marks','Mark'],['tackles','Tkl'],
@@ -1675,17 +1680,20 @@
   function gameLastMeeting(home,away){
     const roundNum=rn=>{ if(!rn)return null; if(/opening/i.test(rn))return 0; const m=(''+rn).match(/\d+/); return m?+m[0]:null; };
     const rs=(state.data.results||[]).filter(r=>(r.home===home&&r.away===away)||(r.home===away&&r.away===home))
-      .sort((a,b)=>((b.year||0)-(a.year||0))||((b.round||0)-(a.round||0)));
+      .sort((a,b)=>(((b.year||b.season)||0)-((a.year||a.season)||0))||(((b.round||b.week)||0)-((a.round||a.week)||0)));
     const off=rs[0];
     const cand=Object.keys(state.idx.matchTeams||{}).filter(m=>{const ts=Object.keys(state.idx.matchTeams[m]);return ts.includes(home)&&ts.includes(away);});
     let mid=null;
-    if(off){ mid=cand.find(m=>{const lg=(state.data.gamelogs||[]).find(r=>r.MatchId===m);return lg&&(''+lg.Year)===(''+off.year)&&roundNum(lg.RoundName)===off.round;})||null; }
+    if(off){ mid=cand.find(m=>{const lg=(state.data.gamelogs||[]).find(r=>r.MatchId===m);return lg&&(''+lg.Year)===(''+(off.year!=null?off.year:off.season))&&roundNum(lg.RoundName)===(off.round!=null?off.round:off.week);})||null; }
     if(!mid){ cand.sort(); mid=cand[cand.length-1]||null; }
     if(!off && !mid) return '';
     let head;
     if(off){
-      head='<div class="lm-score">'+abbr(off.home)+' <b>'+off.homeScore+'</b> &nbsp;—&nbsp; <b>'+off.awayScore+'</b> '+abbr(off.away)+'</div>'+
-        '<div class="lm-meta">Round '+off.round+' '+off.year+(off.venue?' · '+off.venue:'')+' · '+(off.margin===0?'Draw':abbr(off.winner)+' by '+Math.abs(off.margin))+'</div>';
+      const _hs=(off.homeScore!=null?off.homeScore:off.hs), _as=(off.awayScore!=null?off.awayScore:off.as),
+        _yr=(off.year!=null?off.year:off.season), _rd=(off.round!=null?off.round:off.week),
+        _win=(off.winner||(_hs>_as?off.home:_as>_hs?off.away:'Draw')), _marg=(off.margin!=null?off.margin:Math.abs((_hs||0)-(_as||0)));
+      head='<div class="lm-score">'+abbr(off.home)+' <b>'+_hs+'</b> &nbsp;—&nbsp; <b>'+_as+'</b> '+abbr(off.away)+'</div>'+
+        '<div class="lm-meta">'+ROUND_WORD+' '+_rd+' '+_yr+(off.venue?' · '+off.venue:'')+' · '+(_marg===0?'Draw':abbr(_win)+' by '+Math.abs(_marg))+'</div>';
     } else {
       const lg=(state.data.gamelogs||[]).find(r=>r.MatchId===mid)||{};
       head='<div class="lm-meta" style="margin-bottom:6px">Most recent meeting · '+esc(((lg.RoundName||'')+' '+(lg.Year||'')).trim())+' · official score pending</div>';
@@ -1767,8 +1775,9 @@
     return h;
   }
   // ===== Defence vs Play Style (focused fixture) =====
-  const DVP_PLAY_STYLE_POS={'Accumulator Mid':'Midfielder','Contested Mid':'Midfielder','Running Mid':'Midfielder','Handball Mid':'Midfielder','Scoring MF':'Mid-Forward','Bear in the Square':'Key Forward','Key Target':'Key Forward','Pressure Fwd':'Gen. Forward','Small Forwards':'Gen. Forward','Clearance Beast':'Midfielder','Intercept Def':'Key Defender','Uncontested Marker':'Gen. Defender','Defensive Ball User':'Gen. Defender','Ruck Mid':'Ruck','Dominant Ruck':'Ruck','Winger':'Midfielder','Shankers':'All Positions','Cuddle Monsters':'All Positions','Fantasy Stars':'All Positions','Entry Man':'All Positions'};
+  let DVP_PLAY_STYLE_POS;  // from SPORT_CONFIG
   function allPlayStyles(p,pg){
+    if(SPORT.key!=='afl'){ const _S=_signals(); if(_S&&_S.playStyles) return _S.playStyles(p,pg); return [pg]; }
     const cp=p.contested||0,clr=p.clearances||0,disp=p.disposals||0,kicks=p.kicks||0,hb=p.handballs||0,
       mtrs=p.metresGained||0,tack=p.tackles||0,press=p.pressureActs||0,ho=p.hitouts||0,goals=p.goals||0,
       i50=p.inside50s||0,scoreInv=p.scoreInvolvements||0,intMk=p.interceptMarks||0,contMk=p.contestedMarks||0,
@@ -1796,16 +1805,16 @@
     if(i50>=5.5) s.push('Entry Man');
     return s.length?s:[pg];
   }
-  const DVPS_OPTS=[['disposals','Disposals'],['kicks','Kicks'],['handballs','Handballs'],['marks','Marks'],['tackles','Tackles'],['clearances','Clearances'],['goals','Goals'],['dreamteam','Fantasy']];
+  let DVPS_OPTS;  // from SPORT_CONFIG
   function fxDvPS(team,opp){
-    const statKey=window._fxDvpStat||'disposals';
+    const statKey=window._fxDvpStat||(DVPS_OPTS[0]&&DVPS_OPTS[0][0])||'disposals';
     const CS=(state.data.meta&&state.data.meta.currentSeason)||'2026';
     const statLbl=(DVPS_OPTS.find(o=>o[0]===statKey)||[,statKey])[1];
     const ours=playersOnTeam(team).filter(p=>(p.matches||0)>=2 && isPlaying(p.name,team));
     const styleMap={};
     ours.forEach(p=>{ const pg=JTTScoring.POS_TO_DVP[p.position]||p.position; allPlayStyles(p,pg).forEach(st=>{ (styleMap[st]=styleMap[st]||[]).push(p.name); }); });
     const names=Object.keys(styleMap); if(!names.length) return '';
-    const cross=new Set(['Shankers','Cuddle Monsters','Fantasy Stars','Entry Man']);
+    const cross=new Set(Object.keys(DVP_PLAY_STYLE_POS).filter(function(k){return DVP_PLAY_STYLE_POS[k]==='All Positions';}));
     const allP=state.idx.players||[];
     let rows=names.map(sn=>{
       const set=new Set(allP.filter(pp=>{ const pg=JTTScoring.POS_TO_DVP[pp.position]||pp.position; if(!cross.has(sn)){ const ep=DVP_PLAY_STYLE_POS[sn]; if(ep&&ep!=='All Positions'&&ep!==pg) return false; } return allPlayStyles(pp,pg).includes(sn); }).map(pp=>pp.name));
@@ -2101,7 +2110,7 @@
     // form pips
     h+='<div style="margin-bottom:6px">'+pips(team)+'</div>';
     // Stat Leaders (top of team by a few markets)
-    const leaders=[['disposals','Disposals'],['goals','Goals'],['tackles','Tackles'],['marks','Marks']].filter(([k])=>!_fxHid('mkt',k)).map(([k,l])=>{
+    const leaders=BET_STATS.slice(0,4).filter(([k])=>!_fxHid('mkt',k)).map(([k,l])=>{
       const top=playersOnTeam(team).filter(p=>(p.matches||0)>=3 && isPlaying(p.name,team)).sort((a,b)=>(b[k]||0)-(a[k]||0))[0];
       if(!top) return '';
       return '<div class="tp-lead" onclick="openPlayer(\''+esc(top.name).replace(/\x27/g,"\\\x27")+'\')"><span class="nm">'+l+' · '+top.name+'</span><span class="vv">'+fmt(top[k],k==='goals'?2:1)+'</span></div>';
@@ -3112,7 +3121,7 @@
     '</div>';
   }
   // ===== Déjà Vu SGM — legs that hit the last 3 H2H meetings, all on one book =====
-  const DV_MARKETS=[['disposals','Disposals',15],['kicks','Kicks',8],['handballs','Handballs',6],['marks','Marks',3],['tackles','Tackles',3],['clearances','Clearances',2],['goals','Goals',1]];
+  let DV_MARKETS;  // from SPORT_CONFIG
   const DV_MIN_DEFAULT=1.25;
   function _dvState(){ return state.view.dejaVu || (state.view.dejaVu={tier:3,minOdds:DV_MIN_DEFAULT,maxOdds:0,hail:false,sel:null,book:null,home:null,away:null,meets:3,markets:null}); }
   function _dvMktOn(k){ const m=_dvState().markets; return !Array.isArray(m)||m.indexOf(k)>=0; }
