@@ -982,6 +982,8 @@
     DATA_FILES=Object.assign({}, DATA_FILES_COMMON, CFG.dataFiles||{kickins:'data/kickins.json'});
     BET_STATS=CFG.betStats||[['disposals','Disposals'],['goals','Goals'],['marks','Marks'],['tackles','Tackles'],['kicks','Kicks'],['handballs','Handballs'],['clearances','Clearances']];
     ROUND_WORD=CFG.roundWord||'Round';
+    H2H_KEYS=CFG.h2hKeys||[['disposals','Disposals'],['kicks','Kicks'],['handballs','Handballs'],['marks','Marks'],['contested','Contested'],['clearances','Clearances'],['inside50s','Inside 50s'],['tackles','Tackles'],['goals','Goals']];
+    LOW_COUNT=new Set(CFG.lowCount||['goals']);
     DV_MARKETS=CFG.dvMarkets||[['disposals','Disposals',15],['kicks','Kicks',8],['handballs','Handballs',6],['marks','Marks',3],['tackles','Tackles',3],['clearances','Clearances',2],['goals','Goals',1]];
     ODDS_MKTS=CFG.oddsMkts||[['disposals','Disposals'],['kicks','Kicks'],['handballs','Handballs'],['marks','Marks'],['tackles','Tackles'],['clearances','Clearances'],['goals','Goals'],['dreamteam','Fantasy']];
     POS_C=CFG.posColors||{'Midfielder':'#3b82f6','Mid-Forward':'#8b5cf6','Gen. Forward':'#f59e0b','Key Forward':'#f97316','Gen. Defender':'#64748b','Key Defender':'#06b6d4','Ruck':'#ec4899'};
@@ -1035,6 +1037,8 @@
   // bettable player-prop markets, full labels (shared by Clash / Last Meeting / Matchup)
   let BET_STATS;  // from SPORT_CONFIG (_applyConfig)
   let ROUND_WORD='Round';  // from SPORT_CONFIG
+  let H2H_KEYS=[];  // from SPORT_CONFIG
+  let LOW_COUNT=new Set(['goals']);  // from SPORT_CONFIG
   // display columns for Stats table + player modal: [key, label]
   const DISPLAY = [
     ['disposals','Disp'],['kicks','Kick'],['handballs','HB'],['marks','Mark'],['tackles','Tkl'],
@@ -1643,17 +1647,16 @@
   function gameHeadToHead(home,away){
     const th=state.idx.teamMap[home], ta=state.idx.teamMap[away];
     if(!th||!ta) return '';
-    const KEYS=[['disposals','Disposals'],['kicks','Kicks'],['handballs','Handballs'],['marks','Marks'],
-      ['contested','Contested'],['clearances','Clearances'],['inside50s','Inside 50s'],['tackles','Tackles'],['goals','Goals']];
+    const KEYS=H2H_KEYS;
     let rows='';
     KEYS.forEach(([k,l])=>{
       const hv=th[k], av=ta[k]; if(hv==null&&av==null) return;
       const hn=+hv||0, an=+av||0, tot=(hn+an)||1;
       const hpct=Math.round(hn/tot*100), apct=100-hpct, hWin=hn>=an;
       rows+='<div class="h2h-row">'+
-        '<div class="hv l '+(hWin?'win':'')+'">'+fmt(hv,k==='goals'?1:0)+'</div>'+
+        '<div class="hv l '+(hWin?'win':'')+'">'+fmt(hv,LOW_COUNT.has(k)?1:0)+'</div>'+
         '<div class="h2h-mid"><div class="h2h-k">'+l+'</div><div class="h2h-bar"><i class="home" style="width:'+hpct+'%"></i><i class="away" style="width:'+apct+'%"></i></div></div>'+
-        '<div class="hv r '+(!hWin&&an>hn?'win':'')+'">'+fmt(av,k==='goals'?1:0)+'</div></div>';
+        '<div class="hv r '+(!hWin&&an>hn?'win':'')+'">'+fmt(av,LOW_COUNT.has(k)?1:0)+'</div></div>';
     });
     if(!rows) return '';
     return '<div class="game-sec"><div class="gs-title"><i class="ti ti-arrows-left-right"></i> Head to Head · season averages</div>'+
@@ -1840,6 +1843,25 @@
         '<div class="dvps-row"><span class="dvps-v" style="color:'+col+'">'+r.oppAvg.toFixed(dec)+'</span><span class="dvps-l">'+statLbl+'</span><span class="dvps-p" style="color:'+col+'">'+(r.pct>=0?'+':'')+r.pct.toFixed(0)+'%</span></div></div>';
     }).join('');
     return '<div class="tp-sec"><div class="sec-title"><i class="ti ti-masks-theater"></i> Defence vs Play Style — '+abbr(opp)+' allows '+sel+' <span style="font-size:10px;color:var(--text-3);font-weight:600;letter-spacing:.04em">'+CS+' season</span></div></div><div class="dvps-grid">'+cells+'</div>';
+  }
+  // DVP by Position (focused fixture) — opponent's per-position allowance vs league (sport-gated)
+  window.setFxDvpPosStat=function(v){ window._fxDvpPosStat=v; _renderApp(); };
+  function fxDvpByPos(team,opp){
+    const rows=state.data.dvp||[]; if(!rows.length) return '';
+    const statKey=window._fxDvpPosStat||(DVPS_OPTS[0]&&DVPS_OPTS[0][0])||'receptions';
+    const oppRows=rows.filter(r=>r.team===opp); if(!oppRows.length) return '';
+    const sel='<select onchange="setFxDvpPosStat(this.value)" class="dvps-sel">'+DVPS_OPTS.map(o=>'<option value="'+o[0]+'"'+(o[0]===statKey?' selected':'')+'>'+o[1]+'</option>').join('')+'</select>';
+    const pills=(POS_ORDER||[]).map(pos=>{
+      const orow=oppRows.find(r=>r.pos===pos); if(!orow||orow[statKey]==null) return '';
+      const vals=rows.filter(r=>r.pos===pos&&r[statKey]!=null).map(r=>+r[statKey]);
+      const lg=vals.length?vals.reduce((a,b)=>a+b,0)/vals.length:0;
+      const val=+orow[statKey], pct=lg?((val-lg)/lg*100):0;
+      const c=pct>15?'#22c55e':pct>5?'#86efac':pct>-5?'var(--text-3)':pct>-15?'#f97316':'#ef4444';
+      const col=POS_C[pos]||'#888';
+      return '<div class="dvpp-pill" title="'+esc(pos)+' \u00b7 vs league avg"><span class="dvpp-pos" style="color:'+col+';border-color:'+col+'55;background:'+col+'1a">'+posShort(pos)+'</span><span class="dvpp-v">'+val.toFixed(1)+'</span><span class="dvpp-p" style="color:'+c+'">'+(pct>=0?'+':'')+pct.toFixed(0)+'%</span></div>';
+    }).filter(Boolean).join('');
+    if(!pills) return '';
+    return '<div class="tp-sec"><div class="sec-title"><i class="ti ti-shield-half"></i> DVP by Position \u2014 '+abbr(opp)+' allows '+sel+'</div></div><div class="dvpp-grid">'+pills+'</div>';
   }
   let CMB_PICK_MARKETS;  // from SPORT_CONFIG
   function fxCmbPicks(team,opp){
@@ -2132,6 +2154,7 @@
     // Defence vs Play Style (how the opponent concedes vs this team's playstyles)
     h+=fxLineup(team);
     h+=fxDvpByPos(team,opp);
+    h+=(window.SPORT_CONFIG&&SPORT_CONFIG.dvpByPos?fxDvpByPos(team,opp):'');
     h+=fxDvPS(team,opp);
     h+=fxCmbPicks(team,opp);
     h+='</div>';
