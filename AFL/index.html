@@ -1075,7 +1075,7 @@
   const state = { data:{}, idx:{}, dataVersion:'', view:{ activeTab:TABS[0].name, fixtureId:null, sortKey:'disposals', sortDir:-1, posFilter:'', search:'', statsSub:'scanner', statsStat:'disposals', teamsAllowed:true, teamsSort:'disposals' } };
 
   /* ===================== SETTINGS (localStorage) ===================== */
-  const SETTINGS_KEY='jtt_afl_settings';
+  const SETTINGS_KEY='jtt_'+((typeof SPORT!=='undefined'&&SPORT&&SPORT.key)||'afl')+'_settings';  // per-sport so AFL/NFL settings don't collide
   const ALL_BOOKS=[['sportsbet','Sportsbet'],['ladbrokes_au','Ladbrokes'],['tab','TAB'],['pointsbetau','Pointsbet'],['betr_au','Betr'],['dabble_au','Dabble'],['betright','BetRight'],['unibet','Unibet'],['betfair_ex_au','Betfair']];
   const _BOOK_NAMES=Object.fromEntries(ALL_BOOKS);
   function bookName(k){ if(!k) return ''; if(_BOOK_NAMES[k]) return _BOOK_NAMES[k]; if((SETTINGS.customBooks||[]).indexOf(k)>=0) return k; return k.charAt(0).toUpperCase()+k.slice(1); }
@@ -2364,6 +2364,24 @@
     if(Math.abs(d)<5) return null;
     return {diff:d, l3, season:se};
   }
+  // NFL: snap-share trend (last 3 vs season, percentage points)
+  function _snapTrend(name){
+    const cs=CUR_SEASON();
+    const v=(state.idx.logsByName[name]||[]).filter(r=>String(r.Year)===cs&&isFinite(+r.snapPct)&&+r.snapPct>0).map(r=>+r.snapPct);
+    if(v.length<4) return null;
+    const last=v.slice(-3), l3=last.reduce((a,b)=>a+b,0)/last.length, se=v.reduce((a,b)=>a+b,0)/v.length, d=l3-se;
+    if(Math.abs(d)<6) return null;
+    return {diff:d, l3, season:se};
+  }
+  // NFL: target-share trend (last 3 vs season, percentage points)
+  function _tgtShareTrend(name){
+    const cs=CUR_SEASON();
+    const v=(state.idx.logsByName[name]||[]).filter(r=>String(r.Year)===cs&&isFinite(+r.tgtShare)&&+r.tgtShare>0).map(r=>+r.tgtShare);
+    if(v.length<4) return null;
+    const last=v.slice(-3), l3=last.reduce((a,b)=>a+b,0)/last.length, se=v.reduce((a,b)=>a+b,0)/v.length, d=l3-se;
+    if(Math.abs(d)<3) return null;
+    return {diff:d, l3, season:se};
+  }
   let _paceSrc=null,_paceIdx=null;
   function _teamPace(team){
     const cs=CUR_SEASON();
@@ -2496,7 +2514,7 @@
     }
     if(!injPill && _justBack(name)) injPill='<div class="pm-injury" style="border-color:#f59e0b55;background:#f59e0b14;color:#f59e0b"><i class="ti ti-stethoscope"></i> Just back from a spell \u2014 role/TOG often capped first game or two</div>';
     let ctxPills='';
-    {
+    if(SPORT.key==='afl'){
       const isFwd2=p.position==='Key Forward'||p.position==='Gen. Forward'||p.position==='Mid-Forward';
       const vol=_volCV(name,isFwd2?'goals':'disposals');
       if(vol) ctxPills+='<span class="pm-od" title="Season variance (CV '+vol.cv.toFixed(2)+')" style="color:'+vol.col+'">'+(isFwd2?'Goals':'Disposals')+': '+vol.tag+'</span>';
@@ -2508,8 +2526,16 @@
       if(pc&&Math.abs(pc.pct)>=3) ctxPills+='<span class="pm-od" style="color:'+(pc.pct>0?'#22c55e':'#ef4444')+'" title="Opponent disposals conceded vs league avg">'+abbr(opp)+' '+pc.tag+' '+(pc.pct>0?'+':'')+pc.pct.toFixed(0)+'%</span>';
       const _ki=(state.idx.kickins||{})[name];
       if(_ki&&_ki.ki>=1){ const _ob=opp?(state.idx.teamBehinds||{})[opp]:null; ctxPills+='<span class="pm-od" style="color:#22d3ee" title="Kick-ins per game, share of team\u2019s kick-ins, and play-on rate">Kick-ins '+_ki.ki.toFixed(1)+'/gm \u00b7 '+_ki.kiPct.toFixed(0)+'% of team'+(_ob?' \u00b7 '+abbr(opp)+' '+_ob.pg.toFixed(1)+' beh/gm':'')+'</span>'; }
-      if(ctxPills) ctxPills='<div class="pm-odds" style="margin-top:6px">'+ctxPills+'</div>';
+    } else {
+      // NFL context pills — boom/bust on primary market, snap-share trend, target-share trend
+      const vol=_volCV(name,_pmPrimary);
+      if(vol) ctxPills+='<span class="pm-od" title="Season variance (CV '+vol.cv.toFixed(2)+')" style="color:'+vol.col+'">'+((CMP_STAT_LABELS[_pmPrimary]||_pmPrimary))+': '+vol.tag+'</span>';
+      const sn=_snapTrend(name);
+      if(sn) ctxPills+='<span class="pm-od" style="color:'+(sn.diff>0?'#22c55e':'#ef4444')+'" title="Snap share, last 3 games vs season">Snaps '+(sn.diff>0?'\u2191':'\u2193')+' '+Math.abs(sn.diff).toFixed(0)+'pp</span>';
+      const tgt=(p.position==='WR'||p.position==='TE'||p.position==='RB')?_tgtShareTrend(name):null;
+      if(tgt) ctxPills+='<span class="pm-od" style="color:'+(tgt.diff>0?'#22c55e':'#ef4444')+'" title="Target share, last 3 games vs season">Targets '+(tgt.diff>0?'\u2191':'\u2193')+' '+Math.abs(tgt.diff).toFixed(0)+'pp</span>';
     }
+    if(ctxPills) ctxPills='<div class="pm-odds" style="margin-top:6px">'+ctxPills+'</div>';
     document.getElementById('pm-modal').innerHTML=
       '<div class="pm-hdr"><div><div class="pm-name">'+p.name+'</div><div class="pm-meta"><span class="pos-dot" style="background:'+(POS_C[p.position]||'#888')+'"></span>'+(p.position||'—')+' · <span style="cursor:pointer;text-decoration:underline dotted" onclick="_openTeamModal(\''+esc(p.team||'').replace(/\x27/g,"\\\x27")+'\')">'+(p.team||'')+'</span> · '+(p.matches||0)+' games'+(p.age?' · '+(+p.age).toFixed(0)+'yo':'')+'</div></div><button class="pm-close" onclick="_pmClose()">&times;</button></div>'+injPill+ctxPills+
       edge+oddsHtml+
