@@ -651,6 +651,9 @@
   .sub-tab.active{background:var(--accent);border-color:var(--accent);color:#0b0b0b;}
   .sub-tab i{font-size:15px;}
   .teams-toggle,.dvp-controls{display:flex;align-items:center;gap:8px;margin:0 0 12px;flex-wrap:wrap;}
+  .dvp-win{display:inline-flex;gap:2px;background:var(--surface-2);border:1px solid var(--border);border-radius:7px;padding:2px;}
+  .dvp-winbtn{font-family:var(--font-mono);font-size:10px;font-weight:700;letter-spacing:.4px;padding:3px 9px;border-radius:5px;border:0;background:transparent;color:var(--text-3);cursor:pointer;transition:all .12s;}
+  .dvp-winbtn.on{background:var(--accent);color:#0a0a0a;}
   .tt-lbl{font-family:var(--font-display);font-weight:700;font-size:12px;color:var(--text-2);text-transform:uppercase;letter-spacing:.5px;}
   .tt-hint{font-size:11px;color:var(--text-3);}
   .seg{padding:5px 14px;border:1px solid var(--border);background:var(--surface);color:var(--text-2);
@@ -1088,7 +1091,8 @@
     density:'cozy',
     multi:{ legs:6, scope:'game', today:false, book:null, target:null, banned:[], minProb:55, minScore:3, markets:MULTI_MKTS.map(m=>m[0]) },
     fxHide:{ sig:{}, sec:{}, mkt:{} },   // hide Degen signals / sections / markets on focused fixtures
-    customBooks:[]   // user-added bookmakers for the card / share-card dropdown (not in the odds feed)
+    customBooks:[],   // user-added bookmakers for the card / share-card dropdown (not in the odds feed)
+    dvpWindow:'season'   // DVP window applied everywhere (getDVPPct): 'season' | 'l10' | 'l5'
   };
   let SETTINGS=(function(){
     try{ const s=JSON.parse(localStorage.getItem(SETTINGS_KEY)||'null'); if(!s) return JSON.parse(JSON.stringify(DEFAULT_SETTINGS));
@@ -1261,13 +1265,14 @@
     // recent bars, prop calculator, L5/L10, and the engine (shares these arrays) — shows the latest games
     Object.values(state.idx.logsByName).forEach(a=>a.sort((x,y)=>((+x.Year||0)-(+y.Year||0))||(_roundNum(x.RoundName)-_roundNum(y.RoundName))));
     // hand the derived model to the scoring engine
-    if(window.JTTScoring){
-      JTTScoring.configure({
-        players:state.idx.players, teams:d.teams||[], teamsForm:d.teams_form||d.teams||[],
+    state.data._dvpSeason = d.dvp||[];   // pristine season DVP — 'Season' window always restores this
+    _dvpWinCache = {};
+    _cfgCtx = { players:state.idx.players, teams:d.teams||[], teamsForm:d.teams_form||d.teams||[],
         dvp:d.dvp||[], logsByName:state.idx.logsByName, currentSeason:(d.meta&&d.meta.currentSeason)||'2026',
-        fixture:state.data.fixture||[], meta:d.meta||{}
-      });
-    }
+        fixture:state.data.fixture||[], meta:d.meta||{} };
+    if(window.JTTScoring){ JTTScoring.configure(_cfgCtx); }
+    // re-apply a saved non-season DVP window after data (re)loads
+    if((state.view.dvpWindow||SETTINGS.dvpWindow||'season')!=='season'){ _applyDvpWindow(state.view.dvpWindow||SETTINGS.dvpWindow, true); }
     buildOddsIdx();
   }
   function nextOpp(team){ return state.idx.nextOpp[team]||null; }
@@ -2297,9 +2302,12 @@
     else teams.sort((a,b)=>{const x=grid[a][sp],y=grid[b][sp];if(x==null)return 1;if(y==null)return -1;return (x-y)*sd;});
     const arr=k=> sp===k?(sd<0?' ▾':' ▴'):'';
     const scl=k=> sp===k?' sorted':'';
+    const _dw=(state.view.dvpWindow||SETTINGS.dvpWindow||'season');
+    const _winToggle='<span class="tt-lbl" style="margin-left:6px">Window</span><div class="dvp-win">'+
+      [['season','Season'],['l10','L10'],['l5','L5']].map(function(w){return '<button class="dvp-winbtn'+(_dw===w[0]?' on':'')+'" onclick="setDvpWindow(\''+w[0]+'\')" title="Rolling DVP over the last '+(w[0]==='season'?'full season':w[0]==='l10'?'10':'5')+' games — applies to Check My Bet, the modal and signals too">'+w[1]+'</button>';}).join('')+'</div>';
     let h='<div class="dvp-controls"><span class="tt-lbl">Stat</span><select class="dvp-sel" onchange="setStatsStat(this.value)">'+
       DVP_STATS.filter((x,i,a)=>a.findIndex(y=>y[0]===x[0])===i).map(([k,l])=>'<option value="'+k+'"'+(stat===k?' selected':'')+'>'+l+'</option>').join('')+
-      '</select><span class="tt-hint">avg <strong>'+(DVP_STATS.find(x=>x[0]===stat)||[,stat])[1]+'</strong> conceded per position · tap a column to sort · <span style="color:#22c55e">green = soft</span> / <span style="color:#ef4444">red = tough</span></span></div>';
+      '</select><span class="tt-hint">avg <strong>'+(DVP_STATS.find(x=>x[0]===stat)||[,stat])[1]+'</strong> conceded per position · tap a column to sort · <span style="color:#22c55e">green = soft</span> / <span style="color:#ef4444">red = tough</span></span>'+_winToggle+'</div>';
     h+='<div class="stbl-wrap"><table class="stbl dvp-grid"><thead><tr>'+
        '<th class="dvp-th'+scl('__team')+'" onclick="sortDvp(\'__team\')">Team'+arr('__team')+'</th>'+
        POS_ORDER.map(p=>'<th class="dvp-th'+scl(p)+'" title="'+p+'" onclick="sortDvp(\''+p+'\')">'+posShort(p)+arr(p)+'</th>').join('')+'</tr></thead><tbody>';
@@ -3031,6 +3039,40 @@
     return out.sort((a,b)=>(b.lineBogey-a.lineBogey)||((b.diffPct||0)-(a.diffPct||0)));
   }
   // avg opponent DVP% across a window of game-log rows (how soft/tough the matchups were)
+  // ===== Windowed DVP — recompute team allowances over the last N games from game logs =====
+  // Season DVP is precomputed in data/dvp.json; L10/L5 are derived on the client so CMB, the
+  // modal, the signals and the DVP tab all shift together (getDVPPct reads the active table).
+  let _cfgCtx=null, _dvpWinCache={};
+  function _dvpGameKey(r){ return String(r.MatchId||((r.Year||'')+'-'+(r.RoundName||r.Week||r.Date||''))); }
+  function _dvpSortVal(r){ return (+r.Year||0)*1e8 + (_roundNum(r.RoundName)|| +r.Week || +String(r.Date||'').replace(/[^0-9]/g,'') || 0); }
+  function _windowedDVP(n){
+    if(_dvpWinCache[n]) return _dvpWinCache[n];
+    const logs=state.data.gamelogs||[]; const byName=state.idx.byName||{};
+    const gameTeams={}, teamGames={};
+    logs.forEach(r=>{ const k=_dvpGameKey(r), t=r.Team; if(!t)return; (gameTeams[k]=gameTeams[k]||new Set()).add(t); (teamGames[t]=teamGames[t]||{}); teamGames[t][k]=Math.max(teamGames[t][k]||0,_dvpSortVal(r)); });
+    const recent={};
+    Object.keys(teamGames).forEach(t=>{ const gs=Object.keys(teamGames[t]).map(k=>({k:k,s:teamGames[t][k]})).sort((a,b)=>a.s-b.s); recent[t]=new Set(gs.slice(-n).map(x=>x.k)); });
+    const agg={};
+    logs.forEach(r=>{ const k=_dvpGameKey(r); const pos=r.position||(byName[r.Player]||{}).position; if(!pos)return;
+      let faced=[];
+      if(r.Opp){ faced=[r.Opp]; } else { const ts=gameTeams[k]; if(ts) ts.forEach(t=>{ if(t!==r.Team) faced.push(t); }); }
+      faced.forEach(X=>{ if(!recent[X]||!recent[X].has(k))return; const a=(agg[X]=agg[X]||{}); const ap=(a[pos]=a[pos]||{});
+        for(const st in r){ if(typeof r[st]==='number'){ const c=(ap[st]=ap[st]||{sum:0,g:new Set()}); c.sum+=r[st]; c.g.add(k); } } });
+    });
+    const rows=[];
+    Object.keys(agg).forEach(team=>{ Object.keys(agg[team]).forEach(pos=>{ const row={team:team,pos:pos}; const cell=agg[team][pos]; for(const st in cell){ row[st]=cell[st].g.size?cell[st].sum/cell[st].g.size:null; } rows.push(row); }); });
+    _dvpWinCache[n]=rows; return rows;
+  }
+  function _applyDvpWindow(win, silent){
+    win=win||'season'; state.view.dvpWindow=win;
+    try{ SETTINGS.dvpWindow=win; if(typeof saveSettings==='function') saveSettings(); }catch(e){}
+    const rows = (win==='season') ? (state.data._dvpSeason||state.data.dvp||[]) : _windowedDVP(win==='l5'?5:10);
+    state.data.dvp = rows;
+    if(window.JTTScoring&&JTTScoring.configure&&_cfgCtx){ JTTScoring.configure(Object.assign({},_cfgCtx,{dvp:rows})); }
+    if(!silent) _renderApp();
+  }
+  window.setDvpWindow=function(w){ _applyDvpWindow(w); };
+
   function windowDvp(p, statKey, rows){
     const pos=JTTScoring.POS_TO_DVP[p.position]||p.position;
     const ds=(rows||[]).map(r=>r.opponent?JTTScoring.getDVPPct(r.opponent,pos,statKey):null).filter(v=>v!=null);
