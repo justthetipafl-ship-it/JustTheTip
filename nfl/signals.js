@@ -698,7 +698,108 @@
     // tiles: key -> () => HTML. The shell's renderTile(k) calls tiles[k]() for NFL.
     // Keys mirror the shell's tile vocabulary. (More ported in batches.)
     var M = function (v) { return fmt(v, 1); };
+    // ===== Signal Ledger — every signal graded chronologically against what actually happened =====
+    var _ledgerCache = null;
+    function _lgAvg(funnel, pos) {
+      var vs = Object.keys(funnel).filter(function (k) { return k.endsWith('|' + pos); }).map(function (k) { return funnel[k].sum / Math.max(1, funnel[k].g.size); });
+      return vs.length ? vs.reduce(function (s, v) { return s + v; }, 0) / vs.length : 1;
+    }
+    var LEDGER_LABELS = {
+      streak: ['Streakers', '7-game streaks continuing at the realistic line'],
+      chunk: ['Chunk Plays', 'longest rec/rush/comp clearing the market-typical gate'],
+      wrap: ['Tackle Machines', 'tackles+assists clearing the est line, funnel-gated'],
+      tuddy: ['Tuddy Targets', 'TD-rate players scoring v a running bottom-10 TD defence']
+    };
+    function _ledgerCompute() {
+      if (_ledgerCache) return _ledgerCache;
+      try { var st = JSON.parse(localStorage.getItem('jtt_nfl_ledger') || 'null'); if (st && st.v === state.dataVersion && st.rows) { _ledgerCache = st; return st; } } catch (e) { }
+      var logs = (state.data.gamelogs || []);
+      var posOf = function (n) { var p = state.idx.byName[n]; return p ? p.position : null; };
+      var byWk = {};
+      logs.forEach(function (r) { var k = (+r.Year) * 100 + (+r.Week || 0); (byWk[k] = byWk[k] || []).push(r); });
+      var weeks = Object.keys(byWk).map(Number).sort(function (a, b) { return a - b; });
+      var hist = {}, funnel = {}, tdAllowed = {};
+      var S = { streak: { n: 0, h: 0, r8: [] }, chunk: { n: 0, h: 0, r8: [] }, wrap: { n: 0, h: 0, r8: [] }, tuddy: { n: 0, h: 0, r8: [] } };
+      weeks.forEach(function (wk) {
+        var rows = byWk[wk];
+        rows.forEach(function (r) {
+          var h = hist[r.Player]; if (!h || h.length < 6) return;
+          var pos = posOf(r.Player); if (!pos) return;
+          var grade = function (sig, hit) { S[sig].n++; if (hit) S[sig].h++; S[sig].r8.push({ wk: wk, hit: hit ? 1 : 0 }); };
+          for (var si = 0; si < STREAK_STATS.length; si++) {
+            var k = STREAK_STATS[si][0];
+            var vals = h.map(function (x) { return x[k] || 0; });
+            var avg = vals.reduce(function (s, v) { return s + v; }, 0) / vals.length;
+            var line = realisticLine2(k, avg); if (line == null) continue;
+            var stk = 0; for (var i = vals.length - 1; i >= 0; i--) { if (vals[i] >= line) stk++; else break; }
+            if (stk >= 7) grade('streak', (r[k] || 0) >= line);
+          }
+          CHUNK_DEFS.forEach(function (def) {
+            if (def.pos.indexOf(pos) < 0) return;
+            var vals = h.map(function (x) { return x[def.k]; }).filter(function (v) { return v != null; });
+            if (vals.length < 6 || r[def.k] == null) return;
+            var rate = vals.filter(function (v) { return v >= def.thr; }).length / vals.length;
+            if (rate >= CHUNK_HIT) grade('chunk', r[def.k] >= def.thr);
+          });
+          if (DEF_POS.has(pos)) {
+            var tv = h.map(function (x) { return x.tackles; }).filter(function (v) { return v != null; });
+            if (tv.length >= 6) {
+              var tavg = tv.reduce(function (s, v) { return s + v; }, 0) / tv.length;
+              if (tavg >= 4.5) {
+                var tline = Math.max(4, Math.floor(tavg) - 1) - 0.5;
+                var trate = tv.filter(function (v) { return v > tline; }).length / tv.length;
+                var f = funnel[r.Opp + '|' + pos];
+                var fPct = f && f.g.size >= 4 ? ((f.sum / f.g.size) / _lgAvg(funnel, pos) - 1) * 100 : null;
+                if (trate >= WRAP_HIT && (fPct == null || fPct > WRAP_STARVE)) grade('wrap', (r.tackles || 0) > tline);
+              }
+            }
+          }
+          if (['RB', 'WR', 'TE', 'QB'].indexOf(pos) >= 0) {
+            var dv = h.map(function (x) { return x.totalTds || 0; });
+            var tdr = dv.reduce(function (s, v) { return s + v; }, 0) / dv.length;
+            if (tdr >= 0.5) {
+              var ranks = Object.keys(tdAllowed).filter(function (k2) { return k2.endsWith('|' + pos) && tdAllowed[k2].g.size >= 4; })
+                .map(function (k2) { return { t: k2.split('|')[0], v: tdAllowed[k2].td / tdAllowed[k2].g.size }; })
+                .sort(function (a, b) { return b.v - a.v; });
+              var idx = -1; for (var ri = 0; ri < ranks.length; ri++) { if (ranks[ri].t === r.Opp) { idx = ri; break; } }
+              if (idx >= 0 && idx < 10) grade('tuddy', (r.totalTds || 0) >= 1);
+            }
+          }
+        });
+        rows.forEach(function (r) {
+          (hist[r.Player] = hist[r.Player] || []).push(r);
+          var pos = posOf(r.Player); if (!pos) return;
+          if (DEF_POS.has(pos) && r.tackles != null) { var f = funnel[r.Opp + '|' + pos] = funnel[r.Opp + '|' + pos] || { sum: 0, g: new Set() }; f.sum += r.tackles; f.g.add(r.MatchId); }
+          if (['RB', 'WR', 'TE', 'QB'].indexOf(pos) >= 0) { var t = tdAllowed[r.Opp + '|' + pos] = tdAllowed[r.Opp + '|' + pos] || { td: 0, g: new Set() }; t.td += (r.totalTds || 0); t.g.add(r.MatchId); }
+        });
+      });
+      var lastWk = weeks[weeks.length - 1] || 0;
+      var rowsOut = Object.keys(S).map(function (k) {
+        var v = S[k]; var l8 = v.r8.filter(function (x) { return x.wk > lastWk - 8; });
+        return { sig: k, n: v.n, h: v.h, pct: v.n ? v.h / v.n * 100 : 0, n8: l8.length, h8: l8.reduce(function (s, x) { return s + x.hit; }, 0) };
+      });
+      var res = { v: state.dataVersion, rows: rowsOut, weeks: weeks.length };
+      try { localStorage.setItem('jtt_nfl_ledger', JSON.stringify(res)); } catch (e) { }
+      _ledgerCache = res; return res;
+    }
+    function ledgerPage() {
+      var L = _ledgerCompute();
+      if (!L || !L.rows || !L.rows.some(function (r) { return r.n; })) return emptyState('ti-notebook', 'Ledger needs history', 'Signal grading builds from completed game weeks.');
+      var h = '<div class="tp-body-meta" style="border:0;margin-bottom:10px">Every signal condition replayed chronologically over ' + L.weeks + ' data weeks \u2014 evaluated with only the history available at the time, graded against what actually happened. Hit rates are at <b>estimated lines</b>; posted-line grading, CLV and units land with the live odds feed.</div>';
+      h += '<div class="stbl-wrap"><table class="stbl bx"><thead><tr><th>Signal</th><th>Graded</th><th>Hit</th><th>Hit %</th><th>Last 8 wks</th></tr></thead><tbody>';
+      L.rows.slice().sort(function (a, b) { return b.pct - a.pct; }).forEach(function (r) {
+        var lab = LEDGER_LABELS[r.sig] || [r.sig, ''];
+        var col = r.pct >= 62 ? '#22c55e' : r.pct >= 52 ? '#eab308' : '#ef4444';
+        h += '<tr><td class="name" title="' + esc(lab[1]) + '">' + esc(lab[0]) + '</td><td>' + r.n + '</td><td>' + r.h + '</td>' +
+          '<td style="color:' + col + ';font-weight:700">' + r.pct.toFixed(1) + '%</td>' +
+          '<td>' + (r.n8 ? (r.h8 + '/' + r.n8 + ' (' + Math.round(r.h8 / r.n8 * 100) + '%)') : '\u2014') + '</td></tr>';
+      });
+      h += '</tbody></table></div>';
+      h += '<div class="tp-body-meta" style="border:0;margin-top:8px">Method notes: no look-ahead \u2014 a Week 9 signal only knew Weeks 1\u20138. Chunk and Tackle grades use the same qualification gates as the live tiles; Tuddy uses the TD-rate \u00d7 soft-defence core. Streakers grade continuation of the streak.</div>';
+      return h;
+    }
     var tiles = {
+      ledger: function () { return ledgerPage(); },
       next: function () {
         var arr = _fc(nextManUp(), 6, 30);
         if (!arr.length) return isFocused() ? '' : emptyState('ti-user-plus', 'Next Man Up is quiet', 'No meaningful starter on the slate is listed Out/Doubtful. Alerts fire from the injury report as it fills through the week.');
