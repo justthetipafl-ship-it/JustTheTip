@@ -2,7 +2,7 @@
    Sport vocabulary for the unified shell. Batters + pitchers share one player pool
    (role: 'bat'|'pitch'); markets and display sets are role/position aware. */
 window.SPORT_CONFIG = {
-  key: 'mlb', dir: 'mlb', name: 'MLB',
+  key: 'mlb', dir: 'mlb', name: 'MLB', logoExt: '.svg',
 
   // ---- markets / stat labels ----
   // bettable player-prop markets (Clash / Last Meeting / Matchup / Stat Leaders)
