@@ -3,7 +3,7 @@
 Runs in the GitHub Actions pipeline after fetch_mlb.py produces mlb_bundle.json.
 Batters + pitchers merge into one `players` pool (role: 'bat'|'pitch'); platoon splits,
 batter-vs-pitcher (bvp) and h2h are preserved for mlb/scoring.js."""
-import json, sys, os
+import json, sys, os, hashlib
 
 SRC = sys.argv[1] if len(sys.argv) > 1 else 'mlb_bundle.json'
 OUT = sys.argv[2] if len(sys.argv) > 2 else 'data'
@@ -89,6 +89,12 @@ for g in B.get('slate', []):
 meta = {'currentSeason': str(season), 'season': season, 'asOf': B.get('asOf'), 'generated': B.get('generated'),
         'parks': B.get('parks'), 'trends': B.get('trends'), 'standings': B.get('standings'),
         'summary': {'players': len(players), 'gamelogs': len(logs), 'batters': len(B.get('batters', {})), 'pitchers': len(B.get('pitchers', {}))}}
+
+# Auth: the unified shell reads meta.password_hash for the weekly gate. Match the browser's
+# TextEncoder hash (UTF-8, no trailing newline) exactly as AFL/NFL builds do.
+_pw = (os.environ.get('MLB_PASSWORD') or '').strip()
+if _pw:
+    meta['password_hash'] = hashlib.sha256(_pw.encode('utf-8')).hexdigest()
 
 def w(name, obj):
     json.dump(obj, open(os.path.join(OUT, name), 'w', encoding='utf-8'), separators=(',', ':'))
