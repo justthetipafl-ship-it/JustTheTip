@@ -78,6 +78,10 @@
   .j-orbwrap{display:flex;justify-content:center;padding:6px 0 2px;}
   .j-svg{width:100%;max-width:400px;height:auto;overflow:visible;}
   .j-dot circle{transition:r .15s;}
+  .j-teams{display:flex;gap:6px;align-items:center;}
+  .j-team{display:inline-flex;align-items:center;gap:5px;padding:3px 9px;border-radius:6px;border:1px solid var(--border);background:var(--surface-2);color:var(--text-1);font-size:11px;font-weight:700;cursor:pointer;font-family:var(--font-mono);letter-spacing:.3px;transition:opacity .12s;}
+  .j-team.off{opacity:.38;}
+  .j-tdot{width:9px;height:9px;border-radius:50%;display:inline-block;flex-shrink:0;}
   .j-detail{background:var(--surface-2);border:1px solid var(--border);border-radius:8px;padding:10px 11px;margin-top:6px;}
   .j-detail-empty{color:var(--text-3);font-size:11px;text-align:center;padding:16px;}
   .j-dhd{display:flex;align-items:baseline;gap:8px;margin-bottom:8px;flex-wrap:wrap;}
@@ -3723,7 +3727,7 @@
     return out;
   }
   const _jTier=s=> s>=0.65?{c:'#22c55e'}: s>=0.55?{c:'#eab308'}: s>=0.45?{c:'#f97316'}:{c:'#6b7280'};
-  function _jInRange(d){ const S=_jS(); if(S.oddsMin==null&&S.oddsMax==null) return true; if(S.sel[d.p.name]) return true; if(d.price==null) return false; return (S.oddsMin==null||d.price>=S.oddsMin)&&(S.oddsMax==null||d.price<=S.oddsMax); }
+  function _jInRange(d){ const S=_jS(); if(S.teamHide&&S.teamHide[d.p.team]) return false; if(S.oddsMin==null&&S.oddsMax==null) return true; if(S.sel[d.p.name]) return true; if(d.price==null) return false; return (S.oddsMin==null||d.price>=S.oddsMin)&&(S.oddsMax==null||d.price<=S.oddsMax); }
   function _jOrbSVG(data){
     const W=360,C=180,R=150,IN=22;
     const map=s=>{ const t=Math.max(0,Math.min(1,(s-0.35)/(0.80-0.35))); return IN+t*(R-IN); };
@@ -3783,19 +3787,22 @@
   function jupiter(g){
     if(!g||!_oddsLive()) return '';
     const S=_jS(); const key=abbr(g.home)+'v'+abbr(g.away);
-    if(S.key!==key){ S.key=key; S.sel={}; S.focus=null; }
+    if(S.key!==key){ S.key=key; S.sel={}; S.focus=null; S.teamHide={}; }
     const data=_jData(g);
     const mkts=J_MARKETS.map(x=>'<button class="j-chip2'+(S.market===x[0]?' on':'')+'" data-k="'+x[0]+'" onclick="_jMarket(this.dataset.k)">'+x[1]+'</button>').join('');
     const lineTxt=S.line==='auto'?'Auto':(S.line+'+');
     const lineCtl='<div class="j-linectl"><button onclick="_jLineStep(-1)">\u2212</button><b>'+lineTxt+'</b><button onclick="_jLineStep(1)">+</button>'+(S.line!=='auto'?'<button class="j-auto" onclick="_jLineAuto()">Auto</button>':'')+'</div>';
     const bookSel='<select class="j-book" onchange="_jBook(this.value)"><option value="">Best price</option>'+ALL_BOOKS.map(x=>'<option value="'+x[0]+'"'+((S.book||'')===x[0]?' selected':'')+'>'+x[1]+'</option>').join('')+'</select>';
-    const controls='<div class="j-controls"><div class="j-crow"><span class="j-clab">Market</span><div class="j-chips2">'+mkts+'</div></div>'+
+    const _jTeamChip=(team,home)=>{ const col=home?'#38bdf8':'#fb7185'; const off=!!(S.teamHide&&S.teamHide[team]); return '<button class="j-team'+(off?' off':'')+'" data-t="'+_attrEsc(team)+'" onclick="_jTeamToggle(this.dataset.t)" title="'+esc(off?'Show ':'Isolate ')+esc(team)+'"><span class="j-tdot" style="background:'+(off?'transparent':col)+';border:1.5px solid '+col+'"></span>'+abbr(team)+'</button>'; };
+    const teamRow='<div class="j-crow"><span class="j-clab">Teams</span><div class="j-teams">'+_jTeamChip(g.home,true)+_jTeamChip(g.away,false)+'</div></div>';
+    const controls='<div class="j-controls">'+teamRow+'<div class="j-crow"><span class="j-clab">Market</span><div class="j-chips2">'+mkts+'</div></div>'+
       '<div class="j-crow"><span class="j-clab">Line</span>'+lineCtl+'<span class="j-clab" style="margin-left:auto">Book</span>'+bookSel+'</div>'+
       '<div class="j-crow"><span class="j-clab">Odds</span><input type="number" step="0.05" min="1" class="j-odin" value="'+(S.oddsMin!=null?S.oddsMin:'')+'" placeholder="min" onchange="_jOddsMin(this.value)"><span class="j-oddash">\u2013</span><input type="number" step="0.05" min="1" class="j-odin" value="'+(S.oddsMax!=null?S.oddsMax:'')+'" placeholder="max" onchange="_jOddsMax(this.value)">'+((S.oddsMin!=null||S.oddsMax!=null)?'<button class="j-auto" onclick="_jOddsClear()">Clear</button>':'')+'</div></div>';
     const shown=data.filter(_jInRange).length;
     const head='<div class="tp-sec" style="margin-top:14px"><div class="sec-title"><i class="ti ti-planet"></i> Jupiter</div><div class="sec-meta">'+shown+(shown!==data.length?' of '+data.length:'')+' players \u00b7 outer rim = hotter</div></div>';
     return '<div id="jupiter">'+head+controls+'<div class="j-orbwrap">'+_jOrbSVG(data)+'</div>'+_jDetail(data)+_jSlip(g,data)+'</div>';
   }
+  window._jTeamToggle=function(team){ const S=_jS(); if(!S.teamHide)S.teamHide={}; const g=_fxmG(); if(!g)return; const other=(team===g.home)?g.away:g.home; S.teamHide[team]=!S.teamHide[team]; if(S.teamHide[team]&&S.teamHide[other]) S.teamHide[other]=false; _jRerender(); };
   function _jRerender(){ const el=document.getElementById('jupiter'); const g=_fxmG(); if(el&&g) el.outerHTML=jupiter(g); }
   function _jDetailOnly(){ const g=_fxmG(); if(!g)return; const el=document.querySelector('#jupiter .j-detail'); if(el){ const data=_jData(g); el.outerHTML=_jDetail(data); } }
   window._jHover=function(name){ _jS().focus=name; _jDetailOnly(); };
