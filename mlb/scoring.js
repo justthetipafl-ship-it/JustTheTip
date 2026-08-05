@@ -171,6 +171,13 @@ window.JTTScoring = (function () {
   var POS = ['SP', 'RP', 'C', '1B', '2B', '3B', 'SS', 'LF', 'CF', 'RF', 'DH'];
   var POS_TO_DVP = {};                          // MLB DVP is team-level; identity/no-op
 
+  function probableNames() {
+    var out = [];
+    fixture.forEach(function (g) { if (g.homePitcher) out.push(g.homePitcher); if (g.awayPitcher) out.push(g.awayPitcher); });
+    return out;
+  }
+  function oppOfTeam(team) { var g = gameForTeam(team); return g ? (g.home === team ? g.away : g.home) : null; }
+
   function configure(ctx) {
     ctx = ctx || {};
     players = ctx.players || []; teams = ctx.teams || []; dvp = ctx.dvp || [];
@@ -195,6 +202,6 @@ window.JTTScoring = (function () {
     muInfo: muInfo, getContextSignals: getContextSignals, cmpFactors: cmpFactors,
     getL: getL, POS: POS, POS_TO_DVP: POS_TO_DVP,
     // MLB extras used by mlb/signals.js
-    projBat: projBat, batProb: batProb, pitcherKProj: pitcherKProj, starterFacing: starterFacing, parkFor: parkFor
+    projBat: projBat, batProb: batProb, pitcherKProj: pitcherKProj, starterFacing: starterFacing, parkFor: parkFor, probableNames: probableNames, oppOfTeam: oppOfTeam
   };
 })();
