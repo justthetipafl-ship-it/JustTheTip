@@ -5952,10 +5952,12 @@
   (function init(){
     document.getElementById('ft-year').textContent=new Date().getFullYear();
     // pull meta early for password_hash (rotate weekly without code edits), then gate
-    fetch(_sportPath('data/meta.json'),{cache:'no-cache'}).then(r=>r.ok?r.json():null).then(m=>{ if(m&&m.password_hash)AUTH_HASH=m.password_hash; }).catch(()=>{}).finally(()=>{
-      // already-unlocked session?
-      try{const s=JSON.parse(localStorage.getItem(AUTH_STORAGE_KEY)||'null');if(s&&s.hash===AUTH_HASH&&(Date.now()-s.unlockedAt)<7*864e5){_authUnlock();return;}}catch(e){}
-    });
+    // ONE shared password for the whole suite: read the flagship AFL meta.json hash for EVERY sport
+    // (single weekly password unlocks all tools, auto-rotated by the AFL pipeline). Falls back to
+    // /auth.json (if you want a dedicated shared file), then the active sport's meta.json, then default.
+    var _gate=function(){ try{const s=JSON.parse(localStorage.getItem(AUTH_STORAGE_KEY)||'null');if(s&&s.hash===AUTH_HASH&&(Date.now()-s.unlockedAt)<7*864e5){_authUnlock();return;}}catch(e){} };
+    var _pull=function(url){ return fetch(url,{cache:'no-cache'}).then(function(r){return r.ok?r.json():null;}).then(function(m){ return (m&&m.password_hash)?m.password_hash:null; }).catch(function(){ return null; }); };
+    _pull('/auth.json').then(function(h){ if(h) return h; return _pull('/AFL/data/meta.json'); }).then(function(h){ if(h) return h; return _pull(_sportPath('data/meta.json')); }).then(function(h){ if(h) AUTH_HASH=h; }).finally(_gate);
   })();
   </script>
 </body>
