@@ -1,7 +1,9 @@
 name: JTT MLB daily data update
 
-# Refreshes mlb/data/mlb_bundle.json from the MLB Stats API.
-# Two runs/day: morning US (probable pitchers locked) + afternoon US (lineups posting).
+# Refreshes mlb/data/mlb_bundle.json from the MLB Stats API, then rebuilds the split
+# data files the unified shell actually reads (players / gamelogs / fixture / teams /
+# dvp / results / lineups / meta .json) and pulls team logos. Two runs/day:
+# morning US (probable pitchers locked) + afternoon US (lineups posting).
 on:
   schedule:
     - cron: '0 13 * * *'   # 13:00 UTC  (~09:00 ET / ~23:00 AEST)
@@ -25,13 +27,30 @@ jobs:
         with:
           python-version: '3.12'
       - run: pip install requests
+
       - name: Fetch today's slate
         run: python3 mlb/fetch_mlb.py
+
+      # Reshape the bundle into the split files the shell loads. MLB_PASSWORD is optional:
+      # the suite uses one shared AFL password, but if the secret is set this writes a
+      # fallback hash into mlb/data/meta.json too. If it's unset, nothing breaks.
+      - name: Build split data files for the shell
+        env:
+          MLB_PASSWORD: ${{ secrets.MLB_PASSWORD }}
+        run: python3 mlb/build_mlb_data.py mlb/data/mlb_bundle.json mlb/data
+
+      # Official team logos from the MLB Stats API. Non-fatal so a logo hiccup never
+      # blocks the data refresh.
+      - name: Fetch team logos
+        continue-on-error: true
+        run: python3 mlb/fetch_mlb_logos.py mlb/data/mlb_bundle.json mlb/assets/logos
+
       - name: Commit refreshed data
         run: |
           git config user.name  "jtt-bot"
           git config user.email "[email protected]"
-          git add mlb/data/mlb_bundle.json mlb/data/version.txt
+          git add mlb/data
+          git add mlb/assets/logos 2>/dev/null || true
           git diff --cached --quiet && { echo "No changes to commit."; exit 0; }
           git commit -m "data: refresh MLB slate $(date -u +%Y-%m-%dT%H:%MZ)"
           # Rebase onto whatever else pushed (auth job, AFL cron, etc.) and retry.
