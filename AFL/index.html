@@ -959,9 +959,9 @@
   // own folder (scoring.js, signals.js, data/*.json), loaded on demand. Add a sport = one entry
   // here + its folder. Paths are absolute so the shell works at root or any subpath.
   const SPORTS = {
-    afl: { key:'afl', dir:'AFL', name:'AFL', oddsUrl:'https://jtt-afl-odds.justthetipafl.workers.dev/odds.json', liveWorker:'https://health.justthetipafl.workers.dev' },
-    nfl: { key:'nfl', dir:'nfl', name:'NFL', oddsUrl:'https://jtt-nfl-odds.justthetipafl.workers.dev/odds.json', liveWorker:'' },
-    mlb: { key:'mlb', dir:'mlb', name:'MLB', oddsUrl:'', liveWorker:'' },
+    afl: { key:'afl', dir:'AFL', name:'AFL', oddsUrl:'https://jtt-odds.justthetipafl.workers.dev/odds.json?sport=AFL', liveWorker:'https://health.justthetipafl.workers.dev' },
+    nfl: { key:'nfl', dir:'nfl', name:'NFL', oddsUrl:'https://jtt-odds.justthetipafl.workers.dev/odds.json?sport=NFL', liveWorker:'' },
+    mlb: { key:'mlb', dir:'mlb', name:'MLB', oddsUrl:'https://jtt-odds.justthetipafl.workers.dev/odds.json?sport=MLB', liveWorker:'' },
   };
   const _SPORT_STORE='jtt_sport';
   function _activeSportKey(){ let q=null; try{ q=new URLSearchParams(location.search).get('sport'); }catch(e){} let k=q||(function(){try{return localStorage.getItem(_SPORT_STORE);}catch(e){return null;}})()||'afl'; if(!SPORTS[k])k='afl'; try{ localStorage.setItem(_SPORT_STORE,k); }catch(e){} return k; }
@@ -1080,8 +1080,11 @@
 
   /* ===================== SETTINGS (localStorage) ===================== */
   const SETTINGS_KEY='jtt_'+((typeof SPORT!=='undefined'&&SPORT&&SPORT.key)||'afl')+'_settings';  // per-sport so AFL/NFL settings don't collide
-  const ALL_BOOKS=[['sportsbet','Sportsbet'],['ladbrokes_au','Ladbrokes'],['tab','TAB'],['pointsbetau','Pointsbet'],['betr_au','Betr'],['dabble_au','Dabble'],['betright','BetRight'],['unibet','Unibet'],['betfair_ex_au','Betfair']];
+  const ALL_BOOKS=[['Sportsbet','Sportsbet'],['TAB','TAB'],['Bet365','Bet365'],['Pointsbet','Pointsbet'],['Ladbrokes','Ladbrokes'],['Unibet','Unibet'],['Betr','Betr'],['BetRight','BetRight'],['PalmerBet','PalmerBet'],['NextBet','NextBet'],['PickleBet','PickleBet'],['Dabble','Dabble'],['Amused','Amused'],['Betmakers','Betmakers']];
   const _BOOK_NAMES=Object.fromEntries(ALL_BOOKS);
+  // pre-RapidOddsAPI filters used feed keys; map them to the new display-name vocabulary so saved 'My Books' selections survive
+  const _BOOK_MIGRATE={sportsbet:'Sportsbet',ladbrokes_au:'Ladbrokes',tab:'TAB',pointsbetau:'Pointsbet',betr_au:'Betr',dabble_au:'Dabble',betright:'BetRight',unibet:'Unibet',betfair_ex_au:'Betfair'};
+  function _bkMig(k){ return _BOOK_MIGRATE[k]||k; }
   function bookName(k){ if(!k) return ''; if(_BOOK_NAMES[k]) return _BOOK_NAMES[k]; if((SETTINGS.customBooks||[]).indexOf(k)>=0) return k; return k.charAt(0).toUpperCase()+k.slice(1); }
   let MULTI_MKTS=[['disposals','Disposals'],['goals','Goals'],['dreamteam','Fantasy'],['marks','Marks'],['tackles','Tackles'],['clearances','Clearances'],['kicks','Kicks'],['handballs','Handballs']];  // from SPORT_CONFIG
   const DEFAULT_SETTINGS={
@@ -1096,7 +1099,7 @@
   };
   let SETTINGS=(function(){
     try{ const s=JSON.parse(localStorage.getItem(SETTINGS_KEY)||'null'); if(!s) return JSON.parse(JSON.stringify(DEFAULT_SETTINGS));
-      return { books:Array.isArray(s.books)?s.books:[],
+      return { books:Array.isArray(s.books)?s.books.map(_bkMig):[],
         hideCompleted:!!s.hideCompleted,
         nerd:Object.assign({},DEFAULT_SETTINGS.nerd,s.nerd||{}),
         multi:Object.assign({},DEFAULT_SETTINGS.multi,s.multi||{}),
