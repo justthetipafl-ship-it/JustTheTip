@@ -464,11 +464,18 @@ def fetch_weather(park, game_iso_utc):
 # ---------------------------------------------------------------- Statcast (Baseball Savant)
 def _savant_csv(url):
     try:
-        r = _session.get(url, timeout=40, headers={"User-Agent": "Mozilla/5.0 (JTT MLB)"})
+        r = _session.get(url, timeout=60, headers={
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36",
+            "Accept": "text/csv,application/csv,*/*",
+            "Referer": "https://baseballsavant.mlb.com/leaderboard/expected_statistics"})
         if r.status_code != 200 or not r.text:
+            print(f"[JTT MLB]   savant {r.status_code} ({len(r.text) if r.text else 0}B): {url}")
             return []
-        return list(csv.DictReader(io.StringIO(r.text)))
-    except (requests.RequestException, csv.Error):
+        rows = list(csv.DictReader(io.StringIO(r.text)))
+        # normalise header keys (savant occasionally emits a BOM / stray spaces)
+        return [{(k.strip().lstrip("\ufeff") if k else k): v for k, v in row.items()} for row in rows]
+    except (requests.RequestException, csv.Error) as e:
+        print(f"[JTT MLB]   savant fetch error: {e} :: {url}")
         return []
 
 def load_statcast(year):
@@ -485,28 +492,35 @@ def load_statcast(year):
         except (TypeError, ValueError): return None
     # expected stats: xBA / xSLG / xwOBA (+ actuals for the luck gap)
     for typ, store in (("batter", bat), ("pitcher", pit)):
-        for row in _savant_csv(f"https://baseballsavant.mlb.com/leaderboard/expected_statistics"
-                               f"?type={typ}&year={year}&position=&team=&min=1&csv=true"):
-            pid = gv(row, "player_id", "playerid", "id")
+        rows = _savant_csv(f"https://baseballsavant.mlb.com/leaderboard/expected_statistics"
+                           f"?type={typ}&year={year}&position=&team=&min=1&csv=true")
+        matched = 0
+        for row in rows:
+            pid = gv(row, "player_id", "playerid", "id", "mlbam_id", "MLBAMID")
             try: pid = int(pid)
             except (TypeError, ValueError): continue
             store.setdefault(pid, {}).update({
                 "xba": fnum(gv(row, "est_ba")), "ba": fnum(gv(row, "ba")),
                 "xslg": fnum(gv(row, "est_slg")), "slg": fnum(gv(row, "slg")),
                 "xwoba": fnum(gv(row, "est_woba")), "woba": fnum(gv(row, "woba")),
-            })
+            }); matched += 1
+        print(f"[JTT MLB]   expected_statistics {typ}: {len(rows)} rows, {matched} keyed")
+        if rows and not matched: print("[JTT MLB]     first-row columns:", list(rows[0].keys())[:12])
     # exit velocity / barrels
     for typ, store in (("batter", bat), ("pitcher", pit)):
-        for row in _savant_csv(f"https://baseballsavant.mlb.com/leaderboard/statcast"
-                               f"?type={typ}&year={year}&position=&team=&min=10&csv=true"):
-            pid = gv(row, "player_id", "playerid", "id")
+        rows = _savant_csv(f"https://baseballsavant.mlb.com/leaderboard/statcast"
+                           f"?type={typ}&year={year}&position=&team=&min=10&csv=true")
+        matched = 0
+        for row in rows:
+            pid = gv(row, "player_id", "playerid", "id", "mlbam_id", "MLBAMID")
             try: pid = int(pid)
             except (TypeError, ValueError): continue
             store.setdefault(pid, {}).update({
-                "barrelPct": fnum(gv(row, "brl_percent", "barrel_batted_rate")),
+                "barrelPct": fnum(gv(row, "brl_percent", "barrel_batted_rate", "barrels_per_pa_percent")),
                 "hardHitPct": fnum(gv(row, "ev95percent", "hard_hit_percent")),
                 "ev": fnum(gv(row, "avg_hit_speed", "exit_velocity_avg")),
-            })
+            }); matched += 1
+        print(f"[JTT MLB]   statcast {typ}: {len(rows)} rows, {matched} keyed")
     return {k: v for k, v in bat.items() if v}, {k: v for k, v in pit.items() if v}
 
 # ---------------------------------------------------------------- build
