@@ -1345,6 +1345,12 @@
     // per-book prices for arbs/middles/EV: bookIdx[name][market] = [{line,book,over,under}]
     const bookArr=bookArr0; const bookIdx={};
     bookArr.forEach(b=>{ const n=RS(b.player); if(!n)return; (bookIdx[n]=bookIdx[n]||{}); (bookIdx[n][b.market]=bookIdx[n][b.market]||[]).push({line:+b.line,book:b.book,over:b.over!=null?+b.over:null,under:b.under!=null?+b.under:null}); });
+    // Milestone ladders (alt) carry the deep AFL/NFL market — most players are milestone-only.
+    // Feed them into bookIdx as over-only rows so oddsFor's over-only fallback surfaces them and
+    // déjà vu (which finds books via bookIdx, prices via altIdx) can see those players.
+    altArr.forEach(a=>{ const n=RS(a.player); if(!n) return; (bookIdx[n]=bookIdx[n]||{});
+      const arr=(bookIdx[n][a.market]=bookIdx[n][a.market]||[]);
+      if(!arr.some(r=>r.book===a.book && r.line===+a.line)) arr.push({line:+a.line,book:a.book,over:a.over!=null?+a.over:null,under:null,alt:true}); });
     state.idx.bookIdx=bookIdx;
     state.idx.oddsMeta={ count, fromPaste,
       updated:(src&&src.updated)||null,
