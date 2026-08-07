@@ -1353,7 +1353,7 @@
       if(!arr.some(r=>r.book===a.book && r.line===+a.line)) arr.push({line:+a.line,book:a.book,over:a.over!=null?+a.over:null,under:null,alt:true}); });
     state.idx.bookIdx=bookIdx;
     state.idx.oddsMeta={ count, fromPaste,
-      updated:(src&&src.updated)||null,
+      updated:(src&&(src.updated||(src.meta&&src.meta.generated)))||null,
       sample:!!(src&&src._sample) };
   }
   let _mbActiveBook=null, _mbFocusGame=null, _mbFxFiltersOpen=false;
@@ -1490,10 +1490,13 @@
   window._obTipHide=function(){ const e=document.getElementById('ob-tip'); if(e) e.style.display='none'; };
   function renderOdds(){
     const fx=state.data.fixture||[];
+    const _obLive=fx.map((g,i)=>({g,i})).filter(x=>!gameDone(x.g));
+    const _obPool=_obLive.length?_obLive:fx.map((g,i)=>({g,i}));   // if every game is finished, fall back to showing all
+    if((state.view.oddsGame==null || !_obPool.some(x=>x.i===state.view.oddsGame)) && _obPool[0]) state.view.oddsGame=_obPool[0].i;
     const gi=Math.min(state.view.oddsGame||0, Math.max(0,fx.length-1));
     const mkt=state.view.oddsMkt||(ODDS_MKTS[0]&&ODDS_MKTS[0][0])||'disposals';
     const head='<div class="tp-sec"><div class="sec-title"><i class="ti ti-coins"></i> Live Odds Board</div></div>'+oddsTimeframeNote();
-    const gameChips=fx.length?('<div class="ob-filter"><span class="ob-fl">Game</span><div class="ob-chips">'+fx.map((g,i)=>'<button class="ob-chip'+(i===gi?' active':'')+'" onclick="setOddsGame('+i+')">'+abbr(g.home)+' v '+abbr(g.away)+'</button>').join('')+'</div></div>'):'';
+    const gameChips=_obPool.length?('<div class="ob-filter"><span class="ob-fl">Game</span><div class="ob-chips">'+_obPool.map(({g,i})=>'<button class="ob-chip'+(i===gi?' active':'')+'" onclick="setOddsGame('+i+')">'+abbr(g.home)+' v '+abbr(g.away)+'</button>').join('')+'</div></div>'):'';
     const mktChips='<div class="ob-filter"><span class="ob-fl">Market</span><div class="ob-chips">'+ODDS_MKTS.map(m=>'<button class="ob-chip'+(m[0]===mkt?' active':'')+'" onclick="setOddsMkt(\''+m[0]+'\')">'+m[1]+'</button>').join('')+'</div></div>';
     const bookChips='<div class="ob-filter"><span class="ob-fl">My Books</span><div class="ob-chips"><button class="ob-chip'+(SETTINGS.books.length?'':' active')+'" onclick="_sBookAll()">All</button>'+ALL_BOOKS.map(([k,l])=>'<button class="ob-chip'+(SETTINGS.books.indexOf(k)>=0?' active':'')+'" onclick="_sBook(\''+k+'\')">'+l+'</button>').join('')+'</div></div>';
     const filters='<div class="ob-filters">'+gameChips+mktChips+bookChips+'</div>';
