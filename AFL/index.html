@@ -512,6 +512,15 @@
   .dv-swap{display:inline-flex;gap:3px;}
   .dv-swap button{width:24px;height:24px;border-radius:6px;border:1px solid var(--border);background:var(--surface);color:var(--text-2);cursor:pointer;font-size:12px;line-height:1;}
   .dv-swap button:hover{border-color:var(--accent);color:var(--text);}
+  .dv-l{display:inline-flex;align-items:center;gap:4px;}
+  .dv-statswap{display:inline-flex;align-items:center;gap:3px;padding:2px 7px;border-radius:6px;border:1px solid var(--border);background:var(--surface);color:var(--text-2);cursor:pointer;font-size:11px;font-weight:600;}
+  .dv-statswap:hover{border-color:var(--accent);color:var(--text);}
+  .dv-statswap .ti{font-size:12px;opacity:.7;}
+  .dv-linedown,.dv-linereset{width:20px;height:20px;border-radius:5px;border:1px solid var(--border);background:var(--surface);color:var(--text-2);cursor:pointer;font-size:12px;line-height:1;padding:0;}
+  .dv-linedown:hover,.dv-linereset:hover{border-color:var(--accent);color:var(--text);}
+  .dv-linedown:disabled{opacity:.35;cursor:default;}
+  .dv-leg.dv-reduced{border-left-color:#eab308;}
+  .dv-leg.dv-reduced .dv-linereset{border-color:#eab308;color:#eab308;}
   .dv-rm{width:24px;height:24px;border-radius:6px;border:1px solid var(--border);background:var(--surface);color:var(--text-3);cursor:pointer;font-size:15px;line-height:1;flex-shrink:0;}
   .dv-rm:hover{border-color:#ef4444;color:#ef4444;background:rgba(239,68,68,.12);}
   .dv-restore{margin-left:8px;background:none;border:0;color:#f59e0b;font-size:11px;font-weight:700;cursor:pointer;text-decoration:underline;padding:0;}
@@ -3337,14 +3346,19 @@
     if(!S.sel||S.sel._book!==book||S.sel._need!==want||S.sel._hail!==!!S.hail){ S.sel={_book:book,_need:want,_hail:!!S.hail,idx:_dvSel1pp(pool,want)}; S.removed=[]; }
     const sel=S.sel.idx;
     const removed=new Set(S.hail?(S.removed||[]):[]);
-    const slip=sel.map((pi,slot)=>{ const l=pool[pi]; if(!l) return '';
+    const slip=sel.map((pi,slot)=>{ let l=pool[pi]; if(!l) return '';
       if(removed.has(l.name)) return '';                                           // leg removed from the Hail Mary
+      l=_dvEffLeg(l,slot,S);
       const ctrl=S.hail
         ? '<button class="dv-rm" onclick="_dvRemove('+pi+')" title="Remove leg" aria-label="Remove leg">&times;</button>'
         : '<span class="dv-swap"><button onclick="_dvSwap('+slot+',-1)">◂</button><button onclick="_dvSwap('+slot+',1)">▸</button></span>';
-      return '<div class="dv-leg"><span class="dv-n">'+esc(l.name)+'</span><span class="dv-l">'+l.betLine+'+ '+l.marketLabel+'</span><span class="dv-o">$'+l.over.toFixed(2)+'</span>'+ctrl+'</div>';
+      const nMkt=S.hail?1:_dvPlayerMktIdx(pool,l.name).length;
+      const mktCell=(nMkt>1)?'<button class="dv-statswap" onclick="_dvStatSwap('+slot+',1)" title="Swap to another stat this player also cleared in all meetings">'+esc(l.marketLabel)+' <i class="ti ti-arrows-exchange-2"></i></button>':esc(l.marketLabel);
+      const rungs=S.hail?[]:_dvRungs(l,S); const curL=(S.lineOv&&S.lineOv[slot]!=null)?S.lineOv[slot]:l.betLine; const reduced=!!(S.lineOv&&S.lineOv[slot]!=null);
+      const lineCtl=S.hail?'':('<button class="dv-linedown" onclick="_dvLineDown('+slot+')"'+(rungs.some(r=>r<curL)?'':' disabled')+' title="Reduce the line — safer, shorter odds">−</button>'+(reduced?'<button class="dv-linereset" onclick="_dvLineReset('+slot+')" title="Restore the max line">↺</button>':''));
+      return '<div class="dv-leg'+(reduced?' dv-reduced':'')+'"><span class="dv-n">'+esc(l.name)+'</span><span class="dv-l">'+lineCtl+'<b>'+l.betLine+'+</b> '+mktCell+'</span><span class="dv-o">$'+l.over.toFixed(2)+'</span>'+ctrl+'</div>';
     }).join('');
-    const activeLegs=sel.map(i=>pool[i]).filter(l=>l&&!removed.has(l.name));
+    const activeLegs=sel.map((i,slot)=>_dvEffLeg(pool[i],slot,S)).filter(l=>l&&!removed.has(l.name));
     const comb=_dvProduct(activeLegs);
     const legN=activeLegs.length;
     const tierBtns=[3,4,5].map(t=>'<button class="dv-tier'+(!S.hail&&S.tier===t?' on':'')+'"'+(distinctN>=t?'':' disabled')+' onclick="_dvTier('+t+')">'+t+' legs</button>').join('');
@@ -3380,8 +3394,15 @@
     const others=new Set(S.sel.idx.filter((_,j)=>j!==slot).map(i=>pool[i]&&pool[i].name));  // players in other slots
     let i=S.sel.idx[slot];
     for(let step=0;step<pool.length;step++){ i=(i+dir+pool.length)%pool.length; const c=pool[i]; if(c&&!others.has(c.name)) break; }
-    S.sel.idx[slot]=i; _renderApp();
+    S.sel.idx[slot]=i; if(S.lineOv) delete S.lineOv[slot]; _renderApp();
   };
+  // ---- per-leg controls: swap to another qualifying stat, or reduce the line ----
+  function _dvPlayerMktIdx(pool, name){ const out=[]; pool.forEach((l,i)=>{ if(l&&l.name===name) out.push(i); }); return out; }
+  function _dvRungs(l, S){ const rows=(((state.idx.bookIdx||{})[l.name]||{})[l.market]||[]).filter(r=>r.book===S.book&&r.over!=null&&r.line<=l.line); return [...new Set(rows.map(r=>Math.ceil(r.line)))].sort((a,b)=>b-a); }
+  function _dvEffLeg(l, slot, S){ if(!l) return l; const ov=S.lineOv&&S.lineOv[slot]; if(ov==null) return l; const rows=(((state.idx.bookIdx||{})[l.name]||{})[l.market]||[]).filter(r=>r.book===S.book&&r.over!=null); const hit=rows.filter(r=>Math.ceil(r.line)===ov).sort((a,b)=>b.over-a.over)[0]; if(!hit) return l; return Object.assign({},l,{betLine:ov,line:hit.line,over:hit.over,_reduced:true}); }
+  window._dvStatSwap=function(slot,dir){ const S=_dvState(); if(!S.sel) return; const {pool}=_dvPool(S); const cur=pool[S.sel.idx[slot]]; if(!cur) return; const mine=_dvPlayerMktIdx(pool,cur.name); if(mine.length<2) return; let ci=mine.indexOf(S.sel.idx[slot]); ci=(ci+(dir||1)+mine.length)%mine.length; S.sel.idx[slot]=mine[ci]; if(S.lineOv) delete S.lineOv[slot]; _renderApp(); };
+  window._dvLineDown=function(slot){ const S=_dvState(); if(!S.sel) return; const {pool}=_dvPool(S); const l=pool[S.sel.idx[slot]]; if(!l) return; const rungs=_dvRungs(l,S); const cur=(S.lineOv&&S.lineOv[slot]!=null)?S.lineOv[slot]:l.betLine; const below=rungs.filter(r=>r<cur); if(!below.length) return; (S.lineOv=S.lineOv||{})[slot]=below[0]; _renderApp(); };
+  window._dvLineReset=function(slot){ const S=_dvState(); if(S.lineOv) delete S.lineOv[slot]; _renderApp(); };
   window._dvTier=function(t){ const S=_dvState(); S.hail=false; S.tier=t; S.sel=null; S.removed=[]; _renderApp(); };
   window._dvHail=function(){ const S=_dvState(); S.hail=!S.hail; S.sel=null; S.removed=[]; _renderApp(); };
   window._dvBook=function(b){ const S=_dvState(); S.book=b; S.sel=null; S.removed=[]; _renderApp(); };
