@@ -26,7 +26,7 @@ for b in B.get('batters', {}).values():
          'id': b.get('id'), 'teamId': b.get('teamId'), 'bats': b.get('bats'),
          'order': b.get('order'), 'tier': b.get('tier'), 'matches': s.get('G', 0),
          'splitVsL': b.get('splitVsL'), 'splitVsR': b.get('splitVsR'),
-         'bvp': b.get('bvp'), 'h2h': b.get('h2h')}
+         'bvp': b.get('bvp'), 'h2h': b.get('h2h'), 'statcast': b.get('statcast')}
     for k, v in s.items(): p[k] = v
     players.append(p)
     for gl in (b.get('gameLog') or []):
@@ -43,7 +43,7 @@ for pt in B.get('pitchers', {}).values():
     p = {'name': pt['name'], 'team': pt.get('abbr'), 'position': pt.get('role') or 'SP', 'role': 'pitch',
          'id': pt.get('id'), 'teamId': pt.get('teamId'), 'throws': pt.get('throws'),
          'tier': pt.get('tier'), 'matches': s.get('GS', s.get('G', 0)),
-         'splitVsL': pt.get('splitVsL'), 'splitVsR': pt.get('splitVsR'), 'h2h': pt.get('h2h')}
+         'splitVsL': pt.get('splitVsL'), 'splitVsR': pt.get('splitVsR'), 'h2h': pt.get('h2h'), 'statcast': pt.get('statcast')}
     for k, v in s.items(): p[k] = v
     players.append(p)
     for gl in (pt.get('gameLog') or []):
@@ -87,7 +87,7 @@ for g in B.get('slate', []):
     if g.get('lineups'): lineups.append({'gamePk': g.get('gamePk'), 'home': g['lineups'].get('home'), 'away': g['lineups'].get('away')})
 
 meta = {'currentSeason': str(season), 'season': season, 'asOf': B.get('asOf'), 'generated': B.get('generated'),
-        'parks': B.get('parks'), 'trends': B.get('trends'), 'standings': B.get('standings'),
+        'parks': B.get('parks'), 'trends': B.get('trends'), 'standings': B.get('standings'), 'leagueLeaders': B.get('leagueLeaders'),
         'summary': {'players': len(players), 'gamelogs': len(logs), 'batters': len(B.get('batters', {})), 'pitchers': len(B.get('pitchers', {}))}}
 
 # Auth: the unified shell reads meta.password_hash for the weekly gate. Match the browser's
