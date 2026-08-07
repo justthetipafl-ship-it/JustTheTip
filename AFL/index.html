@@ -624,6 +624,27 @@
   .cmbp-bar{display:inline-block;width:30px;min-width:18px;height:5px;background:var(--surface-2);border-radius:3px;overflow:hidden;flex-shrink:1;}
   .cmbp-bar>span{display:block;height:100%;border-radius:3px;}
   .tp-sec .sec-title{font-family:var(--font-display);font-weight:800;font-size:12px;letter-spacing:1px;text-transform:uppercase;color:var(--text-1);display:flex;align-items:center;gap:6px;}
+  /* League view (MLB) */
+  .tt-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px;margin-bottom:10px;}
+  .tt-tile{background:var(--surface-2);border:1px solid var(--border);border-radius:10px;padding:10px 12px;}
+  .tt-lbl{font-size:10px;color:var(--text-3);text-transform:uppercase;letter-spacing:.05em;}
+  .tt-val{font-size:20px;font-weight:800;margin-top:2px;}
+  .tt-lean{font-size:11px;font-weight:700;margin-top:3px;}
+  .tt-lean.pos{color:#22c55e;} .tt-lean.neg{color:#f87171;} .tt-lean.mid{color:var(--text-3);}
+  .std-table{width:100%;border-collapse:collapse;font-size:12px;}
+  .std-table th{text-align:right;color:var(--text-3);font-weight:600;padding:4px 6px;border-bottom:1px solid var(--border);white-space:nowrap;}
+  .std-table th:first-child,.std-table td:first-child{text-align:left;font-weight:700;}
+  .std-table td{text-align:right;padding:4px 6px;border-bottom:1px solid var(--border);}
+  .tp-sub{display:flex;align-items:center;gap:6px;font-size:12px;font-weight:700;color:var(--text-2);margin:12px 0 4px;}
+  .tp-sub .ti{color:var(--accent);}
+  .ldr-col{display:flex;flex-direction:column;gap:2px;margin-bottom:6px;}
+  .ldr-row{display:flex;align-items:center;gap:8px;padding:5px 8px;border-radius:7px;background:var(--surface-2);font-size:13px;}
+  .ldr-row[onclick]:hover{border:1px solid var(--accent);padding:4px 7px;}
+  .ldr-rank{width:16px;color:var(--text-3);font-size:11px;text-align:center;}
+  .ldr-row .pname{flex:1;font-weight:600;}
+  .ldr-row .ptag{font-size:10px;color:var(--text-3);background:var(--surface);padding:1px 5px;border-radius:4px;}
+  .ldr-val{font-weight:800;color:var(--accent);}
+  .sig-sub{font-size:11px;color:var(--text-3);}
   .tp-sec .sec-meta{font-family:var(--font-mono);font-size:10px;color:var(--text-3);margin-left:auto;}
   .tp-lead{display:flex;justify-content:space-between;gap:8px;padding:5px 0;border-bottom:1px solid var(--border);font-size:12px;cursor:pointer;}
   .tp-lead:last-child{border-bottom:0;}
@@ -1079,6 +1100,7 @@
     {name:'odds',    label:'Odds',    icon:'ti-coins'},
     {name:'stats',   label:'Stats',   icon:'ti-table'},
     {name:'degen',   label:'Degen Crew', icon:'ti-flame'},
+    {name:'league',  label:'League',  icon:'ti-list-numbers', sports:['mlb']},
     {name:'info',    label:'Settings',icon:'ti-settings'},
   ];
   // Degen Crew tiles (brand identity). Signal engine ports in build 2.
@@ -1428,10 +1450,59 @@
   function fmt(v,dp){return v==null?'—':(+v).toFixed(dp==null?1:dp);}
 
   /* ===================== TAB NAV / RENDER ===================== */
-  function _renderTabnav(){document.getElementById('tabnav').innerHTML=TABS.map(t=>'<button class="tab'+(t.name===state.view.activeTab?' active':'')+'" onclick="_switchTab(\''+t.name+'\')"><i class="ti '+t.icon+'"></i>'+t.label+'</button>').join('');}
+  function _renderTabnav(){document.getElementById('tabnav').innerHTML=TABS.filter(t=>!t.sports||t.sports.indexOf(SPORT.key)>=0).map(t=>'<button class="tab'+(t.name===state.view.activeTab?' active':'')+'" onclick="_switchTab(\''+t.name+'\')"><i class="ti '+t.icon+'"></i>'+t.label+'</button>').join('');}
   function _switchTab(n){state.view.activeTab=n;state.view.fixtureId=null;_renderTabnav();_renderApp();window.scrollTo({top:0});}
   function _renderApp(){const p=document.getElementById('page-content');try{p.innerHTML=renderTab(state.view.activeTab)||'';}catch(e){console.error('renderTab',e);p.innerHTML='<div class="empty"><div class="ico"><i class="ti ti-alert-triangle"></i></div>Render error — see console</div>';}}
-  function renderTab(t){ if(t==='fixture')return renderFixture(); if(t==='odds')return renderOdds(); if(t==='stats')return renderStats(); if(t==='degen')return renderDegen(); if(t==='info')return renderInfo(); return ''; }
+  // ---- League view (MLB): standings, stat leaders, scoring trends ----
+  function renderLeague(){
+    if(SPORT.key!=='mlb') return renderFixture();
+    const meta=state.data.meta||{};
+    const head='<div class="tp-sec"><div class="sec-title"><i class="ti ti-list-numbers"></i> League</div></div>'+
+      '<div class="tp-body-meta" style="border:0;padding:2px 0 10px">Standings \u00b7 stat leaders \u00b7 scoring trends</div>';
+    const body=_lgTrends(meta.trends)+_lgStandings(meta.standings)+_lgLeaders(meta.leagueLeaders);
+    return head+(body||emptyState('ti-database-off','League data not loaded','Standings, leaders and trends populate from the daily MLB data build.'));
+  }
+  function _lgTrends(t){
+    if(!t) return '';
+    const tile=(lbl,val,lean,cls)=>'<div class="tt-tile"><div class="tt-lbl">'+lbl+'</div><div class="tt-val">'+val+'</div>'+(lean?'<div class="tt-lean '+cls+'">'+lean+'</div>':'')+'</div>';
+    let tiles='';
+    if(t.avgTotalPerGame!=null){const ln=8.5,lean=t.avgTotalPerGame>ln+0.2?'OVER '+ln:t.avgTotalPerGame<ln-0.2?'UNDER '+ln:'on the line',cls=t.avgTotalPerGame>ln+0.2?'pos':t.avgTotalPerGame<ln-0.2?'neg':'mid';tiles+=tile('Avg Total Runs',t.avgTotalPerGame.toFixed(2),lean,cls);}
+    if(t.avgRunsPerGame!=null)tiles+=tile('Avg Runs / Team',t.avgRunsPerGame.toFixed(2),'per team-game','mid');
+    if(t.avgHRPerGame!=null){const lean=t.avgHRPerGame>=1.15?'HR-friendly':t.avgHRPerGame<=1.0?'HR-light':'neutral',cls=t.avgHRPerGame>=1.15?'pos':t.avgHRPerGame<=1.0?'neg':'mid';tiles+=tile('Avg HR / Team',t.avgHRPerGame.toFixed(2),lean,cls);}
+    if(t.homeWinPct!=null){const lean=t.homeWinPct>=0.54?'Home edge':'flat',cls=t.homeWinPct>=0.54?'pos':'mid';tiles+=tile('Home Win %',Math.round(t.homeWinPct*100)+'%',lean,cls);}
+    if(!tiles) return '';
+    return '<div class="section-title"><i class="ti ti-trending-up" style="color:var(--accent);margin-right:7px"></i>Scoring Trends</div><div class="tt-grid">'+tiles+'</div>'+
+      '<div class="sig-sub" style="margin-bottom:14px">Run environment across '+(t.games||'\u2014')+' games. Baseline lean before park &amp; matchup.</div>';
+  }
+  function _lgStandings(std){
+    if(!std||!std.length) return '';
+    let h='<div class="tp-sec"><div class="sec-title"><i class="ti ti-list-numbers"></i> Standings</div></div>';
+    std.forEach(function(d){ h+='<details class="tp-collapse"><summary class="tp-collapse-sum"><i class="ti ti-list-numbers"></i><span class="tp-collapse-title">'+esc(d.div)+'</span><i class="ti ti-chevron-down tp-collapse-chev"></i></summary><div class="tp-collapse-body">'+
+      '<table class="std-table"><thead><tr><th>Team</th><th>W</th><th>L</th><th>PCT</th><th>GB</th><th>RS</th><th>RA</th><th>DIFF</th><th>L10</th><th>STRK</th></tr></thead><tbody>';
+      (d.teams||[]).forEach(function(t){ h+='<tr><td>'+esc(t.abbr)+'</td><td>'+t.w+'</td><td>'+t.l+'</td><td>'+(t.pct!=null?t.pct.toFixed(3).replace(/^0/,''):'')+'</td><td>'+t.gb+'</td><td>'+t.rs+'</td><td>'+t.ra+'</td><td style="color:'+(t.diff>=0?'var(--accent)':'#f87171')+'">'+(t.diff>=0?'+':'')+t.diff+'</td><td>'+esc(t.l10||'')+'</td><td>'+esc(t.streak||'')+'</td></tr>'; });
+      h+='</tbody></table></div></details>'; });
+    return h;
+  }
+  function _lgLeaders(L){
+    if(!L) return '';
+    const byName=state.idx.byName||{};
+    const col=function(title,rows,fmt){ if(!rows||!rows.length)return '';
+      return '<div class="tp-sub"><i class="ti ti-trophy"></i>'+title+'</div><div class="ldr-col">'+rows.map(function(r,i){
+        const nm=esc(r.name), known=byName[r.name],
+          click=known?'onclick="openPlayer(\''+String(r.name).replace(/'/g,"\\'")+'\')" style="cursor:pointer"':'style="cursor:default"';
+        return '<div class="ldr-row" '+click+'><span class="ldr-rank">'+(i+1)+'</span><span class="pname">'+nm+'</span> <span class="ptag">'+esc(r.abbr||'')+'</span><span class="ldr-val">'+(fmt?fmt(r.val):r.val)+'</span></div>'; }).join('')+'</div>'; };
+    const v3=function(v){return typeof v==='number'?v.toFixed(3).replace(/^0/,''):v;}, v2=function(v){return typeof v==='number'?v.toFixed(2):v;};
+    const BAT=L.batting||{},PIT=L.pitching||{};
+    let h='<div class="tp-sec"><div class="sec-title"><i class="ti ti-trophy"></i> Stat Leaders</div></div>';
+    h+='<details class="tp-collapse" open><summary class="tp-collapse-sum"><i class="ti ti-ball-baseball"></i><span class="tp-collapse-title">Batting</span><i class="ti ti-chevron-down tp-collapse-chev"></i></summary><div class="tp-collapse-body">';
+    h+=col('Home Runs',BAT.HR)+col('Batting Avg',BAT.AVG,v3)+col('RBI',BAT.RBI)+col('OPS',BAT.OPS,v3)+col('Stolen Bases',BAT.SB);
+    h+='</div></details>';
+    h+='<details class="tp-collapse"><summary class="tp-collapse-sum"><i class="ti ti-ball-baseball"></i><span class="tp-collapse-title">Pitching</span><i class="ti ti-chevron-down tp-collapse-chev"></i></summary><div class="tp-collapse-body">';
+    h+=col('ERA',PIT.ERA,v2)+col('Strikeouts',PIT.K)+col('WHIP',PIT.WHIP,v2);
+    h+='</div></details>';
+    return h;
+  }
+  function renderTab(t){ if(t==='league')return renderLeague(); if(t==='fixture')return renderFixture(); if(t==='odds')return renderOdds(); if(t==='stats')return renderStats(); if(t==='degen')return renderDegen(); if(t==='info')return renderInfo(); return ''; }
   // Odds-poll re-render that doesn't rug-pull the user: skips while a modal is open or an
   // input/select is focused, and preserves collapsible open-state + scroll across the swap.
   function _renderAppPreserving(){
