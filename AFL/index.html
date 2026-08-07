@@ -27,6 +27,19 @@
     transition:border-color .15s,background .15s;margin-bottom:10px;}
   .fixture-row:hover{border-color:var(--accent);background:var(--surface-2);}
   .fxr-team{text-align:center;}
+  .fxr-sp{font-size:11px;color:var(--text-3);margin-top:4px;display:flex;align-items:center;gap:3px;justify-content:center;line-height:1.2;}
+  .fxr-sp .ti{font-size:11px;opacity:.55;}
+  .fxr-sp .fxr-hand{color:var(--accent);font-weight:700;font-size:10px;letter-spacing:.02em;}
+  .fxr-sp-tbd{opacity:.45;font-style:italic;}
+  .mlb-fxr .fxr-name{font-weight:800;font-size:15px;}
+  .mlb-fxr .fxr-vs{font-size:16px;color:var(--text-3);font-weight:700;}
+  .mlb-fxr .fxr-venue{font-size:11px;color:var(--text-3);margin-top:3px;max-width:120px;margin-left:auto;margin-right:auto;}
+  .mlb-meta-bar{display:flex;flex-wrap:wrap;gap:8px;margin:10px 0 14px;}
+  .mlb-meta{display:flex;align-items:center;gap:5px;background:var(--surface-2);border:1px solid var(--border);border-radius:8px;padding:5px 10px;font-size:12px;}
+  .mlb-meta .ti{color:var(--accent);font-size:13px;}
+  .mlb-meta .mm-k{color:var(--text-3);}
+  .mlb-meta .mm-v{font-weight:700;}
+  .mlb-fxh .vs-big{font-size:22px;color:var(--text-3);}
   .fxr-name{font-family:var(--font-display);font-weight:800;font-size:18px;letter-spacing:.4px;margin-top:5px;}
   .fxr-center{text-align:center;min-width:96px;}
   .fxr-kickoff{font-family:var(--font-mono);font-size:11px;color:var(--text-2);letter-spacing:1px;}
@@ -1671,6 +1684,34 @@
   }
 
   /* ---------- FIXTURE ---------- */
+  // MLB-native fixture row: logos + starting-pitcher matchup (RHP/LHP) + park (away @ home)
+  function _mlbSP(name){
+    if(!name) return '<div class="fxr-sp fxr-sp-tbd">SP TBD</div>';
+    const p=(state.idx.byName||{})[name], hand=p&&p.throws?p.throws+'HP':'';
+    const last=String(name).split(' ').slice(-1)[0];
+    return '<div class="fxr-sp"><i class="ti ti-ball-baseball"></i> '+esc(last)+(hand?' <span class="fxr-hand">'+hand+'</span>':'')+'</div>';
+  }
+  function _mlbFocusHeader(g){
+    const pk=(g.park&&g.park.name)||g.venue||'TBC';
+    const hr=g.park&&(g.park.hrFactor!=null?g.park.hrFactor:(g.park.hr!=null?g.park.hr:null));
+    const rf=g.park&&(g.park.runFactor!=null?g.park.runFactor:(g.park.runs!=null?g.park.runs:null));
+    let meta='<div class="mlb-meta-bar">'+
+      '<div class="mlb-meta"><i class="ti ti-map-pin"></i><span class="mm-k">Park</span><span class="mm-v">'+esc(pk)+'</span></div>'+
+      (hr!=null?'<div class="mlb-meta"><i class="ti ti-ball-baseball"></i><span class="mm-k">HR</span><span class="mm-v">'+(+hr).toFixed(2)+'x</span></div>':'')+
+      (rf!=null?'<div class="mlb-meta"><i class="ti ti-activity"></i><span class="mm-k">Runs</span><span class="mm-v">'+(+rf).toFixed(2)+'x</span></div>':'')+
+      (g.time?'<div class="mlb-meta"><i class="ti ti-clock"></i><span class="mm-k">First pitch</span><span class="mm-v">'+esc(g.time)+'</span></div>':'')+
+      '</div>';
+    return '<div class="fixture-header mlb-fxh">'+
+      '<div class="fixture-team">'+teamLogo(g.away,52)+'<div class="fxr-name">'+esc(g.away)+'</div>'+_mlbSP(g.awayPitcher)+'</div>'+
+      '<div class="fixture-center"><div class="vs-big">@</div><div class="venue">'+esc(pk)+'</div></div>'+
+      '<div class="fixture-team">'+teamLogo(g.home,52)+'<div class="fxr-name">'+esc(g.home)+'</div>'+_mlbSP(g.homePitcher)+'</div></div>'+meta;
+  }
+  function _mlbFxRow(g,i){
+    return '<div class="fixture-row mlb-fxr'+(gameDone(g)?' fxr-done':'')+'" onclick="state.view.fixtureId='+i+';_renderApp();window.scrollTo({top:0})">'+
+      '<div class="fxr-team">'+teamLogo(g.away,38)+'<div class="fxr-name">'+esc(g.away)+'</div>'+_mlbSP(g.awayPitcher)+'</div>'+
+      '<div class="fxr-center"><div class="fxr-kickoff">'+esc(g.time||'')+'</div><div class="fxr-vs">'+(gameDone(g)?'<span class="fxr-ft">FINAL</span>':'@')+'</div><div class="fxr-venue">'+esc(g.venue||'TBC')+'</div>'+weatherChip(g.home,g.away)+'</div>'+
+      '<div class="fxr-team">'+teamLogo(g.home,38)+'<div class="fxr-name">'+esc(g.home)+'</div>'+_mlbSP(g.homePitcher)+'</div></div>';
+  }
   // best-effort kickoff instant: prefer raw utc; else parse date+time (current data is UTC 24h, post-rebuild is venue-local 12h)
   function gameStart(g){
     if(g&&g.utc){ const s=g.utc.length<=19?g.utc+'Z':g.utc; const t=Date.parse(s); if(!isNaN(t)) return t; }
@@ -1713,9 +1754,12 @@
     let games=fx.map((g,i)=>({g,i}));
     if(SETTINGS.hideCompleted) games=games.filter(x=>!gameDone(x.g));
     const toggle=doneCount>0?'<button class="fx-hidebtn'+(SETTINGS.hideCompleted?' on':'')+'" onclick="_sHideCompleted()"><i class="ti ti-'+(SETTINGS.hideCompleted?'eye-off':'eye')+'"></i> '+(SETTINGS.hideCompleted?'Completed hidden ('+doneCount+')':'Hide completed ('+doneCount+')')+'</button>':'';
-    let h='<div class="page-header"><div style="display:flex;align-items:flex-start;justify-content:space-between;gap:10px"><div><div class="page-title">Round '+(state.data.meta&&state.data.meta.round||'')+'</div><div class="page-sub">Tap a match for the matchup breakdown</div></div>'+toggle+'</div></div>';
+    const _fxTitle=SPORT.key==='mlb'?'Focused Fixtures':('Round '+(state.data.meta&&state.data.meta.round||''));
+    const _fxSub=SPORT.key==='mlb'?(games.length+' game'+(games.length!==1?'s':'')+' \u00b7 tap for the matchup breakdown'):'Tap a match for the matchup breakdown';
+    let h='<div class="page-header"><div style="display:flex;align-items:flex-start;justify-content:space-between;gap:10px"><div><div class="page-title">'+_fxTitle+'</div><div class="page-sub">'+_fxSub+'</div></div>'+toggle+'</div></div>';
     if(!games.length) return h+emptyState('ti-calendar-check','All games completed','Every game this round has finished. Toggle off to see results.');
     games.forEach(({g,i})=>{
+      if(SPORT.key==='mlb'){ h+=_mlbFxRow(g,i); return; }
       h+='<div class="fixture-row'+(gameDone(g)?' fxr-done':'')+'" onclick="state.view.fixtureId='+i+';_renderApp();window.scrollTo({top:0})">'+
         '<div class="fxr-team">'+teamLogo(g.home,40)+'<div class="fxr-name">'+g.home+'</div>'+pips(g.home)+'</div>'+
         '<div class="fxr-center"><div class="fxr-kickoff">'+(g.date||'')+'<br>'+(g.time||'')+'</div><div class="fxr-vs">'+(gameDone(g)?'<span class="fxr-ft">FT</span>':'v')+'</div><div class="fxr-venue">'+(g.venue||'TBC')+'</div>'+weatherChip(g.home,g.away)+'</div>'+
@@ -2205,7 +2249,8 @@
   function renderFocusedFixture(g){
     if(!g) return emptyState('ti-alert-triangle','Match not found','');
     let h='<button class="back-btn" onclick="state.view.fixtureId=null;_renderApp()"><i class="ti ti-arrow-left"></i> Back to fixtures</button>';
-    h+='<div class="fixture-header">'+
+    if(SPORT.key==='mlb'){ h+=_mlbFocusHeader(g); }
+    else h+='<div class="fixture-header">'+
       '<div class="fixture-team">'+teamLogo(g.home,52)+'<div class="fxr-name">'+g.home+'</div>'+pips(g.home)+'</div>'+
       '<div class="fixture-center"><div class="kickoff">'+(g.date||'')+' '+(g.time||'')+'</div><div class="vs-big">v</div><div class="venue">'+(g.venue||'TBC')+'</div>'+weatherChip(g.home,g.away)+'</div>'+
       '<div class="fixture-team">'+teamLogo(g.away,52)+'<div class="fxr-name">'+g.away+'</div>'+pips(g.away)+'</div></div>';
