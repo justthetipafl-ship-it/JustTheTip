@@ -76,11 +76,18 @@ window.SPORT_CONFIG = {
     { k:'board',   n:"Today's Board", i:'ti-clipboard-list', d:'Best plays ranked' },
     { k:'multi',   n:'Multi Builder', i:'ti-stack-2',        d:'Stacked legs' },
     { k:'hot',     n:'Hot Bats',      i:'ti-flame',          d:'Hitters trending up' },
+    { k:'cold',    n:'Cold Bats',     i:'ti-snowflake',      d:'Hitless skids — fade or avoid' },
+    { k:'whiff',   n:'Whiff Risk',    i:'ti-circle-x',       d:'Bats likely to strike out vs high-K arms' },
     { k:'ktargets',n:'K Targets',     i:'ti-target-arrow',   d:'Pitchers into whiff-prone lineups' },
     { k:'longball',n:'Long Ball',     i:'ti-ball-baseball',  d:'HR spots — power into hitter parks' },
     { k:'platoon', n:'Platoon Edge',  i:'ti-arrows-shuffle', d:'Big handedness-split mismatches' },
     { k:'coldarm', n:'Hittable Arms', i:'ti-temperature',    d:'Bats vs contact-prone starters' },
-    { k:'wheels',  n:'Wheels',        i:'ti-run',            d:'Steal spots vs slow-to-plate arms' }
+    { k:'runners', n:'Table Setters', i:'ti-arrow-up-right', d:'Top-of-order run scorers vs wild arms' },
+    { k:'bunny',   n:'Bunnies',       i:'ti-mood-happy',     d:'Batters who own today\'s starter' },
+    { k:'bogey',   n:'Bogeys',        i:'ti-mood-sad',       d:'Batters owned by today\'s starter' },
+    { k:'wheels',  n:'Wheels',        i:'ti-run',            d:'Steal spots vs slow-to-plate arms' },
+    { k:'due',     n:'Due / Unlucky', i:'ti-trending-up',    d:'Underperforming their Statcast — back' },
+    { k:'hothand', n:'Running Hot',   i:'ti-trending-down',  d:'Overperforming their Statcast — fade' }
   ],
-  tileOrder: ['hot','ktargets','longball','platoon','coldarm','wheels']
+  tileOrder: ['hot','cold','whiff','ktargets','longball','platoon','coldarm','runners','bunny','bogey','wheels','due','hothand']
 };
