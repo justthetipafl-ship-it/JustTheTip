@@ -3609,7 +3609,29 @@
     let pick=null; for(const r of lad){ if(r<=target) pick=r; }
     return pick!=null?pick:lad[0];
   }
+  function _legCandidatesMLB(p,opp){
+    const c=[];
+    if(p.role!=='bat') return c;
+    const G=p.matches||1;
+    const MK=[['H',0.55],['TB',0.9],['HR',0.10],['RBI',0.4],['R',0.4]];
+    MK.forEach(([k,min])=>{
+      if((SETTINGS.multi.markets||[]).indexOf(k)<0) return;
+      const avg=(p[k]||0)/G; if(avg<min) return;
+      const od=oddsFor(p.name,k); if(!od||od.over==null||od.line==null) return;
+      const line=od.line;
+      const hr=JTTScoring.getHitRate(p.name,k,line,true);
+      const prob=hr?hr.rate:estimateHitProb(avg,line);
+      if(prob==null) return;
+      const sigs=(opp&&JTTScoring.getContextSignals)?JTTScoring.getContextSignals(p,k,opp):[];
+      let score=(sigs||[]).reduce((s,sig)=>s+(sig.pct||0)*(sig.weight||1),0);
+      if(!score) score=Math.round((prob-0.5)*40);
+      const reasons=(sigs||[]).filter(sg=>sg.pct>0).slice(0,2).map(sg=>({label:sg.label,pct:sg.pct}));
+      c.push({id:p.name+'-'+k,p,statKey:k,line,avg,prob,probReal:!!hr,probN:hr?hr.n:0,score,opp,type:k,betLabel:Math.ceil(line)+'+ '+((_MKT_NM&&_MKT_NM[k])||k),reasons,_odds:{price:od.over,book:od.book,label:Math.ceil(line)+'+'}});
+    });
+    return c;
+  }
   function legCandidates(p,opp){
+    if(SPORT.key==='mlb') return _legCandidatesMLB(p,opp);
     const c=[]; const pos=JTTScoring.POS_TO_DVP[p.position]||p.position;
     const add=(statKey,line,avg,type,label)=>{
       if((SETTINGS.multi.markets||[]).indexOf(statKey)<0) return;
