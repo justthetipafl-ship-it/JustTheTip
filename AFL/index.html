@@ -63,6 +63,11 @@
   .odds-refresh i{font-size:13px;color:var(--accent);}
   .odds-refresh b{color:var(--text-2);font-weight:700;}
   .deg-row{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,44%);align-items:center;gap:10px;}
+  .rdr-row{display:flex !important;align-items:center;gap:10px;}
+  .rdr-score{flex:0 0 auto;min-width:36px;height:36px;display:flex;align-items:center;justify-content:center;border-radius:9px;border:1px solid;font-family:var(--font-mono);font-weight:800;font-size:15px;}
+  .rdr-pos{font-size:9px;color:var(--text-3);font-weight:700;}
+  .rdr-grade{flex:0 0 auto;text-align:center;font-family:var(--font-display);font-weight:800;font-size:19px;line-height:1;min-width:30px;}
+  .rdr-grade span{display:block;font-size:7.5px;font-weight:700;letter-spacing:.03em;text-transform:uppercase;color:var(--text-3);margin-top:2px;white-space:nowrap;}
   .deg-main{min-width:0;text-align:left;}
   .deg-nm{font-size:15px;line-height:1.2;display:flex;align-items:center;gap:5px;flex-wrap:wrap;}
   .deg-pos{font-size:9px;font-weight:800;letter-spacing:.04em;padding:1px 5px;border-radius:3px;border:1px solid;flex-shrink:0;}
@@ -1055,6 +1060,7 @@
     CREW=CFG.crew||[
     {k:'board',    n:"Today's Board",i:'ti-clipboard-list',d:'Best plays ranked'},
     {k:'multi',    n:'Multi Builder', i:'ti-stack-2',      d:'Stacked legs'},
+    {k:'radar',    n:'The Radar',     i:'ti-radar',        d:'4-axis matchup ratings'},
     {k:'green',    n:'Green Lights',  i:'ti-traffic-lights',d:'Strong OVER'},
     {k:'death',    n:'Death Riders',  i:'ti-skull',        d:'Strong UNDER'},
     {k:'elite',    n:'Elite Matchups',i:'ti-trophy',       d:'Top v soft'},
@@ -2266,6 +2272,7 @@
     h+='<div class="team-cols">'+teamSignals(g.home,g.away,true)+teamSignals(g.away,g.home,false)+'</div>';
     if(fxMode!=='nerd' && !_fxHid('sec','deja')) h+=dejaVuSGM(g.home,g.away);
     if(fxMode!=='nerd' && !_fxHid('sec','jupiter')) h+=jupiter(g);
+    if(!_fxHid('sec','radar')) h+=radarSection(g.home,g.away,g.venue||(g.park&&g.park.name));
     if(fxMode!=='nerd' && !_fxHid('sec','multiTool')) h+=fxPickMulti(g);
     return h;
   }
@@ -3964,6 +3971,75 @@
     const angle=(Math.abs(vx)<1e-6&&Math.abs(vy)<1e-6)?-Math.PI/2:Math.atan2(vy,vx);
     return {strength,angle};
   }
+  // ===== THE RADAR — one 0-100 matchup rating fusing 4 axes: DVP + DVPlaystyle + Opp Def + hit-rate zone =====
+  function _radarRating(p, mkt, opp, venue){
+    const od=oddsFor(p.name, mkt);
+    if(!od || od.line==null || od.over==null || od.under==null) return null;         // each-way markets only
+    const line=od.line;
+    const sigs=(opp && window.JTTScoring && JTTScoring.getContextSignals)?JTTScoring.getContextSignals(p, mkt, opp):[];
+    const ctx=sigs.reduce((s,sg)=>s+(sg.pct||0)*(sg.weight||1), 0);                    // DVP + playstyle + opp def
+    let zone=null; try{ const pz=_jPos(_jRates(p, mkt, line, opp, venue)); zone=pz?pz.strength:null; }catch(e){}   // hit-rate zone
+    const ctxPart=Math.max(-28, Math.min(28, ctx*1.3));                 // DVP + playstyle + opp def (median ~0)
+    const zonePart=zone!=null?Math.max(-16, Math.min(16, (zone-0.45)*60)):0;   // hit-rate zone (median ~0.45)
+    const rating=Math.round(Math.max(0, Math.min(100, 50+ctxPart+zonePart)));
+    const top=sigs.filter(sg=>sg.pct>0).sort((a,b)=>(b.pct*b.weight)-(a.pct*a.weight)).slice(0,2);
+    return { p, opp, mkt, line, over:od.over, under:od.under, book:od.book, rating, ctx, zone, sigs:top,
+             lean:(rating>=55?'over':rating<=45?'under':'lean') };
+  }
+  function _radarBest(p, opp, venue){
+    let best=null;
+    (J_MARKETS||[]).forEach(m=>{ const r=_radarRating(p, m[0], opp, venue); if(r && (!best || r.rating>best.rating)) best=r; });
+    return best;
+  }
+  function _radarBoard(teams, venue){
+    const out=[];
+    (teams||[]).forEach(team=>{ const opp=nextOpp(team); if(!opp) return;
+      playersOnTeam(team).forEach(p=>{ if((p.matches||0)<3) return;   // each-way odds requirement already implies an active player
+        const r=_radarBest(p, opp, venue); if(r){ r.team=team; out.push(r); } });
+    });
+    return out.sort((a,b)=>b.rating-a.rating);
+  }
+  function _radarGrade(x){
+    if(x>=68) return {g:'A', c:'#22c55e', t:'Elite'};
+    if(x>=59) return {g:'B', c:'#84cc16', t:'Strong'};
+    if(x>=46) return {g:'C', c:'#eab308', t:'Neutral'};
+    if(x>=37) return {g:'D', c:'#f97316', t:'Tough'};
+    return {g:'F', c:'#ef4444', t:'Fade'};
+  }
+  function _radarRow(r){
+    const gr=_radarGrade(r.rating);
+    const nm=(_MKT_NM&&_MKT_NM[r.mkt])||r.mkt;
+    const price=r.lean==='under'?r.under:r.over;
+    const leanTxt=r.lean==='over'?(Math.ceil(r.line)+'+ '+nm):r.lean==='under'?('Under '+r.line+' '+nm):(r.line+' '+nm);
+    const priceTxt=price!=null?' @ $'+(+price).toFixed(2)+(r.book?' '+_bookShort(r.book):''):'';
+    const why=(r.sigs||[]).map(s=>s.label).slice(0,2).join(' \u00b7 ');
+    return '<div class="fixture-row deg-row rdr-row" style="cursor:pointer" onclick="openPlayer(\''+esc(r.p.name).replace(/\x27/g,"\\\x27")+'\')">'+
+      '<div class="rdr-score" style="background:'+gr.c+'1f;border-color:'+gr.c+'55;color:'+gr.c+'">'+r.rating+'</div>'+
+      '<div class="deg-main" style="flex:1;min-width:0"><div class="fxr-name deg-nm"><span>'+esc(r.p.name)+'</span> <span class="rdr-pos">'+posShort(r.p.position)+'</span></div>'+
+      '<div class="deg-sub">'+abbr(r.team)+' v '+abbr(r.opp)+' \u00b7 <b>'+esc(leanTxt)+'</b>'+priceTxt+(why?' \u00b7 '+esc(why):'')+'</div></div>'+
+      '<div class="rdr-grade" style="color:'+gr.c+'">'+gr.g+'<span>'+gr.t+'</span></div></div>';
+  }
+  function radarSection(home, away, venue){
+    if(!hasAnyOdds()) return _degenFocused?'':emptyState('ti-radar','The Radar','Needs posted each-way lines to rate matchups.');
+    const board=_radarBoard([home,away], venue);
+    if(!board.length) return _degenFocused?'':emptyState('ti-radar','The Radar','No each-way markets on the board yet.');
+    const rows=board.slice(0,24).map(_radarRow).join('');
+    return '<details class="tp-collapse c-green" open><summary class="tp-collapse-sum"><i class="ti ti-radar"></i><span class="tp-collapse-title">The Radar</span><span class="tp-count">'+board.length+'</span><i class="ti ti-chevron-down tp-collapse-chev"></i></summary><div class="tp-collapse-body"><div class="tp-body-meta">Every each-way market rated 0\u2013100 on DVP + playstyle + opp def + hit-rate zone \u2014 best spots up top, fades at the bottom.</div>'+rows+'</div></details>';
+  }
+  function radarTile(){
+    const teams=[..._fixtureSet()];
+    if(!teams.length) return '';
+    if(!hasAnyOdds()) return _degenFocused?'':emptyState('ti-radar','The Radar','Needs posted each-way lines to rate matchups.');
+    const board=[]; const seen={};
+    teams.forEach(t=>{ const opp=nextOpp(t); if(!opp||seen[t])return; seen[t]=1;
+      const g=(state.data.fixture||[]).find(x=>x.home===t||x.away===t); const venue=g?(g.venue||(g.park&&g.park.name)):null;
+      playersOnTeam(t).forEach(p=>{ if((p.matches||0)<3)return; const r=_radarBest(p,opp,venue); if(r){r.team=t;board.push(r);} }); });
+    board.sort((a,b)=>b.rating-a.rating);
+    if(!board.length) return _degenFocused?'':emptyState('ti-radar','The Radar','No each-way markets on the board yet.');
+    const rows=board.slice(0,30).map(_radarRow).join('');
+    return '<details class="tp-collapse c-green" open><summary class="tp-collapse-sum"><i class="ti ti-radar"></i><span class="tp-collapse-title">The Radar</span><span class="tp-count">'+board.length+'</span><i class="ti ti-chevron-down tp-collapse-chev"></i></summary><div class="tp-collapse-body"><div class="tp-body-meta">Slate-wide matchup ratings \u2014 best each-way spots first.</div>'+rows+'</div></details>';
+  }
+
   // opponent concession to each play-style (this season), computed once per opp+market
   function _jStyleDvpMap(opp,mkt){
     const CS=(state.data.meta&&state.data.meta.currentSeason)||'2026';
@@ -4588,6 +4664,7 @@
     return first.concat(rest);
   }
   function renderTile(k){
+    if(k==='radar') return radarTile();
     // Other sports get their OU signals (Green Lights/Death Riders) + Matchup from their signals.js,
     // and the config-driven Multi Builder — but the AFL-specific research tiles stay AFL-only until
     // each sport's versions are ported into its signals.js.
