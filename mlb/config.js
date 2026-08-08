@@ -65,6 +65,15 @@ window.SPORT_CONFIG = {
     base: { H:1, TB:1.5, HR:0.5, RBI:0.5, R:0.5 }
   },
 
+  // ---- prop calculator markets (was falling back to AFL defaults) ----
+  pcStats: [['H','Hits'],['TB','TB'],['HR','HR'],['RBI','RBI'],['R','R'],['SB','SB'],['K','K']],
+
+  // ---- logos via MLB Stats CDN by team id (local /assets/logos not serving reliably) ----
+  logoCdn: 'https://www.mlbstatic.com/team-logos/',
+  teamIds: { ATH:133, ATL:144, AZ:109, BAL:110, BOS:111, CHC:112, CIN:113, CLE:114, COL:115, CWS:145,
+    DET:116, HOU:117, KC:118, LAA:108, LAD:119, MIA:146, MIL:158, MIN:142, NYM:121, NYY:147,
+    PHI:143, PIT:134, SD:135, SEA:136, SF:137, STL:138, TB:139, TEX:140, TOR:141, WSH:120 },
+
   // ---- view defaults ----
   viewDefaults: { sortKey: 'H', statsStat: 'H', teamsSort: 'R' },
 
