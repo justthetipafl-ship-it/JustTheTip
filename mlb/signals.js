@@ -87,7 +87,7 @@ window.JTTSignals = (function () {
         var projK = soRate * 4.2 * ((pit.K9 || 8.6) / 8.6);            // adjust for the arm
         var prob = 1 - Math.exp(-Math.max(0.01, projK));               // P(1+ K)
         if (prob < 0.66) return;
-        out.push({ p: p, opp: JS.oppOfTeam(p.team), sc: prob, headline: '1+ K',
+        out.push({ p: p, opp: JS.oppOfTeam(p.team), sc: prob, mkt: 'K', headline: '1+ K',
           detail: Math.round(prob * 100) + '% to strike out \u00b7 ' + soPerG.toFixed(2) + ' K/g vs ' + esc(pit.name) + ' (K/9 ' + (pit.K9 || 0).toFixed(1) + ')' });
       });
       return wrap('ti-circle-x', 'Whiff Risk', out, 'c-tough', 'No standout strikeout-risk bats on the slate.');
@@ -261,7 +261,66 @@ window.JTTSignals = (function () {
       return wrap('ti-flame', 'Streakers', out, 'c-soft', 'No hot streaks on the slate.');
     }
 
-    var tiles = { greenlights: greenlights, platoon: platoon, runners: runners, due: due,
+    // RBI Men — run-producing bats (batter_rbis)
+    function rbimen() {
+      var out = [];
+      slateBats().forEach(function (p) {
+        if ((p.order || 9) > 6) return;
+        var prob = JS.batProb(p, 'RBI', 0.5); if (prob == null || prob < 0.42) return;
+        var mu = _muScore(p);
+        var rbiRate = p.matches ? (p.RBI || 0) / p.matches : 0;
+        out.push({ p: p, opp: JS.oppOfTeam(p.team), sc: prob * 100 + (mu.score || 0) * 0.2, mkt: 'RBI', headline: '1+ RBI',
+          detail: Math.round(prob * 100) + '% \u00b7 ' + rbiRate.toFixed(2) + ' RBI/g \u00b7 bats ' + (p.order || '?') + (mu.pit ? ' vs ' + esc(mu.pit.name) : '') });
+      });
+      return wrap('ti-target', 'RBI Men', out, 'c-soft', 'No standout RBI spots on the slate.');
+    }
+    // Free Passes — patient hitters vs wild arms (batter_walks)
+    function freepasses() {
+      var out = [];
+      slateBats().forEach(function (p) {
+        var pit = JS.starterFacing(p); if (!pit) return;
+        var bbRate = p.PA ? (p.BB || 0) / p.PA : 0;
+        if (bbRate < 0.09) return;
+        if (!((pit.BB9 || 0) >= 3.3 || (pit.WHIP || 0) >= 1.30)) return;
+        out.push({ p: p, opp: JS.oppOfTeam(p.team), sc: bbRate * 100 + (pit.BB9 || 0), mkt: 'BB', headline: '1+ Walk',
+          detail: Math.round(bbRate * 100) + '% BB rate vs ' + esc(pit.name) + ' (BB/9 ' + (pit.BB9 || 0).toFixed(1) + ', WHIP ' + (pit.WHIP || 0).toFixed(2) + ')' });
+      });
+      return wrap('ti-walk', 'Free Passes', out, 'c-soft', 'No standout walk spots on the slate.');
+    }
+    // Grinders — starters in tough spots, likely to allow runs (pitcher_earned_runs) — a fade
+    function grinders() {
+      var out = [], teams = _fixtureSet();
+      (JS.probableNames ? JS.probableNames() : []).forEach(function (nm) {
+        var p = byName(nm); if (!p || p.role !== 'pitch') return;
+        if (!teams.has(p.team)) return;
+        var pk = JS.parkFor(p.team), score = 0;
+        if (p.ERA != null) score += (p.ERA - 4.0) * 8;
+        if (p.WHIP != null) score += (p.WHIP - 1.25) * 30;
+        if (p.HR9 != null) score += (p.HR9 - 1.1) * 15;
+        if (p.oppAVG != null) score += (p.oppAVG - 0.250) * 120;
+        if (pk && pk.runFactor) score += (pk.runFactor - 1) * 40;
+        if (score < 8) return;
+        out.push({ p: p, opp: JS.oppOfTeam(p.team), sc: score, mkt: 'ER', headline: 'Runs allowed',
+          detail: 'ERA ' + (p.ERA || 0).toFixed(2) + ' \u00b7 WHIP ' + (p.WHIP || 0).toFixed(2) + (p.oppAVG != null ? ' \u00b7 oppAVG ' + d3(p.oppAVG) : '') + (pk ? ' \u00b7 park runs ' + (pk.runFactor || 1).toFixed(2) + 'x' : '') });
+      });
+      return wrap('ti-flame', 'Grinders', out, 'c-tough', 'No standout pitcher-fade spots on the slate.');
+    }
+    // Innings Eaters — efficient starters who go deep (pitcher_outs)
+    function inningseaters() {
+      var out = [], teams = _fixtureSet();
+      (JS.probableNames ? JS.probableNames() : []).forEach(function (nm) {
+        var p = byName(nm); if (!p || p.role !== 'pitch') return;
+        if (!teams.has(p.team)) return;
+        var ipg = (p.GS && p.IP) ? p.IP / p.GS : null;
+        if (ipg == null || ipg < 5.3 || (p.WHIP || 99) > 1.28) return;
+        out.push({ p: p, opp: JS.oppOfTeam(p.team), sc: ipg, mkt: 'OUTS', headline: Math.round(ipg * 3) + '+ Outs',
+          detail: ipg.toFixed(1) + ' IP/start \u00b7 WHIP ' + (p.WHIP || 0).toFixed(2) + ' \u00b7 K/9 ' + (p.K9 || 0).toFixed(1) });
+      });
+      return wrap('ti-clock-hour-9', 'Innings Eaters', out, 'c-fav', 'No standout deep-start pitchers on the slate.');
+    }
+
+    var tiles = { greenlights: greenlights, platoon: platoon, runners: runners, rbimen: rbimen,
+      freepasses: freepasses, grinders: grinders, inningseaters: inningseaters, due: due,
       ktargets: ktargets, longball: longball, wheels: wheels, streakers: streakers,
       bunny: bunny, whiff: whiff, hothand: hothand, cold: cold, deathriders: deathriders,
       bogey: bogey, hot: hot, coldarm: coldarm };
