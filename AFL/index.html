@@ -1295,6 +1295,7 @@
     Object.values(state.idx.teamForm).forEach(arr=>arr.sort((x,y)=>x.k.localeCompare(y.k)));
     // tag each log with its opponent (for last-vs-opp in scoreCMP)
     (d.gamelogs||[]).forEach(r=>{
+      if(!r.opponent && r.Opp){ r.opponent=r.Opp; return; }   // MLB/NFL gamelogs carry the opponent directly
       const ts=state.idx.matchTeams[r.MatchId]; if(!ts)return;
       const others=Object.keys(ts).filter(t=>t!==r.Team);
       if(others.length===1) r.opponent=others[0];
@@ -3089,7 +3090,7 @@
     return _venueMap[String(year)+'|'+rd+'|'+team]||null;
   }
   function _nextVenue(team){ const g=(state.data.fixture||[]).find(x=>x.home===team||x.away===team); return g?g.venue:null; }
-  function _venueLogs(name, venue){ return allLogs(name).filter(r=>_venueOf(r.Year,_roundNum(r.RoundName),r.Team)===venue); }
+  function _venueLogs(name, venue){ return allLogs(name).filter(r=>(r.venue!=null?r.venue:_venueOf(r.Year,_roundNum(r.RoundName),r.Team))===venue); }
 
   // ---- Hunting Grounds: players facing a venue they feast at this week ----
   const HG_STATS=[{k:'disposals',l:'disposals',min:15,edge:3},{k:'goals',l:'goals',min:1,edge:0.7},{k:'marks',l:'marks',min:4,edge:1.5},{k:'tackles',l:'tackles',min:3,edge:1.5}];
@@ -3989,7 +3990,7 @@
     const sc=d.styleDvp; const scChip=(sc&&isFinite(sc.pct))?('<span class="j-chip" style="color:'+(sc.pct>=0?'#22c55e':'#ef4444')+';border-color:'+(sc.pct>=0?'#22c55e':'#ef4444')+'55" title="'+esc(sc.style)+'">Style '+(sc.pct>=0?'+':'')+Math.round(sc.pct)+'%</span>'):'';
     return '<div class="j-detail"><div class="j-dhd"><span class="j-dnm" data-n="'+_attrEsc(d.p.name)+'" onclick="openPlayer(this.dataset.n)">'+esc(d.p.name)+'</span>'+
       '<span class="j-dsub">'+abbr(d.p.team)+' v '+abbr(d.opp)+' \u00b7 '+d.line+'+ '+(J_MLAB[S.market]||S.market)+'</span>'+oddsBadge+'</div>'+
-      _jBar('Season',r.season,r.seasonN)+_jBar('L5',r.l5,r.l5N)+_jBar('H2H',r.h2h,r.h2hN)+_jBar('Venue',r.venue,r.venueN)+
+      _jBar('Season',r.season,r.seasonN)+_jBar('L5',r.l5,r.l5N)+(r.h2hN?_jBar('H2H',r.h2h,r.h2hN):'')+(r.venueN?_jBar('Venue',r.venue,r.venueN):'')+
       '<div class="j-chips">'+chip('DVP',d.dvp)+scChip+chip('Def',d.def)+'</div>'+
       '<div class="j-actions"><button class="j-add2" data-n="'+_attrEsc(d.p.name)+'" onclick="_jAddSingle(this.dataset.n)"><i class="ti ti-receipt"></i> Add single'+(price!=null?' \u00b7 $'+price.toFixed(2):'')+'</button>'+
       '<button class="j-add'+(on?' on':'')+'" data-n="'+_attrEsc(d.p.name)+'" onclick="_jToggle(this.dataset.n)">'+(on?'<i class="ti ti-check"></i> In multi':'<i class="ti ti-stack-2"></i> Add to multi')+'</button></div></div>';
