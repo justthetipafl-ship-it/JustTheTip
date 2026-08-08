@@ -17,6 +17,7 @@ window.JTTSignals = (function () {
     var byName = deps.byName || function () { return null; };
     var logsFor = deps.logsFor || function () { return []; };
     var oddsFor = deps.oddsFor || function () { return null; };
+    var degRow = deps.degRow || function () { return ''; };
     var players = deps.players || [];
     var JS = deps.JTTScoring || window.JTTScoring;
 
@@ -24,23 +25,23 @@ window.JTTSignals = (function () {
       var teams = _fixtureSet();
       return (players || []).filter(function (p) { return p.role === 'bat' && teams.has(p.team) && (p.matches || 0) >= 15; });
     }
-    function oddsBadge(name, mkt) {
+    function _oddsStr(name, mkt) {
       if (!mkt) return '';
       var o = oddsFor(name, mkt);
-      if (!o || o.over == null) return '';
-      return '<span class="lc-odds">$' + (+o.over).toFixed(2) + (o.book ? ' ' + esc(o.book) : '') + '</span>';
+      return (o && o.over != null) ? '$' + (+o.over).toFixed(2) + (o.book ? ' ' + esc(o.book) : '') : '';
     }
-    function card(c) {
-      var q = esc(c.p.name).replace(/'/g, "\\'");
-      return '<div class="lc-card" onclick="openPlayer(\'' + q + '\')">' +
-        '<div class="lc-hd"><span class="lc-nm">' + esc(c.p.name) + '</span>' + _degBadges(c.p.name) +
-        '<span class="lc-meta">' + posShort(c.p.position) + ' \u00b7 ' + abbr(c.p.team) + (c.opp ? ' v ' + abbr(c.opp) : '') + oddsBadge(c.p.name, c.mkt) + '</span></div>' +
-        '<div class="tp-body-meta" style="border:0;padding:2px 0 6px"><b>' + c.headline + '</b> \u00b7 ' + c.detail + '</div></div>';
+    // render each signal as the shell's standard degRow (same look as AFL/NFL; $odds auto-highlighted)
+    function card(c, col) {
+      var od = _oddsStr(c.p.name, c.mkt);
+      var sub = posShort(c.p.position) + ' \u00b7 ' + abbr(c.p.team) + (c.opp ? ' v ' + abbr(c.opp) : '') + ' \u00b7 <b>' + c.headline + '</b> \u00b7 ' + c.detail;
+      var right = od || c.headline;
+      return degRow(c.p.name, col || '#22c55e', right, sub, c.p.name);
     }
     function wrap(icon, title, out, cls, emptyMsg) {
       out.sort(function (a, b) { return b.sc - a.sc; });
       if (!out.length) return emptyState(icon, title, emptyMsg);
-      return degWrap(icon, title, out.slice(0, 12).map(card), cls);
+      var col = (cls === 'c-tough' || cls === 'c-red') ? '#ef4444' : (cls === 'c-fav' ? '#eab308' : '#22c55e');
+      return degWrap(icon, title, out.slice(0, 12).map(function (c) { return card(c, col); }), cls);
     }
     var d3 = function (v) { return v.toFixed(3).replace(/^0/, ''); };
     // most-recent-first gamelog for a batter (sorted by date desc when present)
@@ -102,7 +103,7 @@ window.JTTSignals = (function () {
         out.push({ p: p, opp: kp.opp, sc: kp.proj - kp.line, mkt: 'K', headline: kp.line + '+ Ks',
           detail: 'proj ' + kp.proj.toFixed(1) + ' \u00b7 K/9 ' + kp.k9.toFixed(1) + ' \u00b7 vs ' + (kp.opp || '?') });
       });
-      return wrap('ti-target-arrow', 'K Targets', out, 'c-fav', 'No standout strikeout spots on the slate.');
+      return wrap('ti-ball-baseball', 'Strike Time', out, 'c-fav', 'No standout strikeout spots on the slate.');
     }
 
     function longball() {
@@ -115,7 +116,7 @@ window.JTTSignals = (function () {
         out.push({ p: p, opp: JS.oppOfTeam(p.team), sc: prob, mkt: 'HR', headline: 'Home Run',
           detail: Math.round(prob * 100) + '% to go yard \u00b7 park HR ' + (pk.hrFactor || 1).toFixed(2) + 'x' + pitTag });
       });
-      return wrap('ti-ball-baseball', 'Long Ball', out, 'c-soft', 'No standout home-run spots on the slate.');
+      return wrap('ti-bolt', 'Homers', out, 'c-soft', 'No standout home-run spots on the slate.');
     }
 
     function platoon() {
@@ -128,7 +129,7 @@ window.JTTSignals = (function () {
         out.push({ p: p, opp: JS.oppOfTeam(p.team), sc: ratio, mkt: 'H', headline: 'vs ' + pit.throws + 'HP',
           detail: 'SLG ' + d3(sp.SLG) + ' vs ' + pit.throws + 'HP (season ' + d3(p.SLG) + ') \u00b7 +' + Math.round((ratio - 1) * 100) + '%' });
       });
-      return wrap('ti-arrows-shuffle', 'Platoon Edge', out, 'c-fav', 'No big handedness mismatches on the slate.');
+      return wrap('ti-arrows-left-right', 'Sluggers', out, 'c-fav', 'No big handedness mismatches on the slate.');
     }
 
     function coldarm() {
@@ -156,7 +157,7 @@ window.JTTSignals = (function () {
         out.push({ p: p, opp: JS.oppOfTeam(p.team), sc: prob, mkt: 'R', headline: '1+ Run',
           detail: Math.round(prob * 100) + '% to score \u00b7 bats ' + (p.order || '?') + ' vs ' + esc(pit.name) + ' (WHIP ' + (pit.WHIP || 0).toFixed(2) + ', BB/9 ' + (pit.BB9 || 0).toFixed(1) + ')' });
       });
-      return wrap('ti-arrow-up-right', 'Table Setters', out, 'c-soft', 'No standout run-scorer spots on the slate.');
+      return wrap('ti-arrow-up-right', 'Runners', out, 'c-soft', 'No standout run-scorer spots on the slate.');
     }
 
     // Bunnies / Bogeys — batter's history vs today's starter (bvp)
@@ -186,7 +187,7 @@ window.JTTSignals = (function () {
         out.push({ p: p, opp: JS.oppOfTeam(p.team), sc: sbRate, mkt: 'SB', headline: 'Stolen Base',
           detail: (p.SB || 0) + ' SB in ' + p.matches + ' G (' + sbRate.toFixed(2) + '/G)' + (sb1 ? ' \u00b7 1+ SB ' + Math.round(sb1.rate * 100) + '%' : '') });
       });
-      return wrap('ti-run', 'Wheels', out, 'c-fav', 'No standout steal threats on the slate.');
+      return wrap('ti-run', 'Sneaky Buggers', out, 'c-fav', 'No standout steal threats on the slate.');
     }
 
     // Statcast — Due (unlucky, back) & Running Hot (overperforming, fade). Dark until the data build carries statcast.
