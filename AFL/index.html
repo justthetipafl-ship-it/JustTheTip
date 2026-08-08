@@ -3361,10 +3361,26 @@
   // ===== Déjà Vu SGM — legs that hit the last 3 H2H meetings, all on one book =====
   let DV_MARKETS;  // from SPORT_CONFIG
   const DV_MIN_DEFAULT=1.25;
-  function _dvState(){ return state.view.dejaVu || (state.view.dejaVu={tier:3,minOdds:DV_MIN_DEFAULT,maxOdds:0,hail:false,sel:null,book:null,home:null,away:null,meets:3,markets:null}); }
+  function _dvState(){ return state.view.dejaVu || (state.view.dejaVu={tier:3,minOdds:DV_MIN_DEFAULT,maxOdds:0,hail:false,sel:null,book:null,home:null,away:null,meets:3,markets:null,sameSP:false}); }
   function _dvMktOn(k){ const m=_dvState().markets; return !Array.isArray(m)||m.indexOf(k)>=0; }
+  // MLB: meetings come from h2h dates (no MatchId); Same SP anchors to today's two starters' shared dates
+  function _dvMeetingsMLB(home,away,n){
+    const S=_dvState();
+    const g=(state.data.fixture||[]).find(x=>(x.home===home&&x.away===away)||(x.home===away&&x.away===home));
+    const dates=new Set();
+    [].concat(playersOnTeam(home),playersOnTeam(away)).forEach(p=>{ const opp=(p.team===home?away:home); ((p.h2h&&p.h2h[opp])||[]).forEach(r=>{ if(r.date) dates.add(r.date); }); });
+    let arr=[...dates].sort().reverse();
+    if(S.sameSP && g){
+      const spH=g.homePitcher?state.idx.byName[g.homePitcher]:null, spA=g.awayPitcher?state.idx.byName[g.awayPitcher]:null;
+      const hd=new Set(((spH&&spH.h2h&&spH.h2h[away])||[]).map(r=>r.date));
+      const ad=new Set(((spA&&spA.h2h&&spA.h2h[home])||[]).map(r=>r.date));
+      arr=arr.filter(d=>hd.has(d)&&ad.has(d));
+    }
+    return arr.slice(0,n);
+  }
   function _dvMeetings(home,away,n){
     n=n||3;
+    if(SPORT.key==='mlb') return _dvMeetingsMLB(home,away,n);
     const mt=state.idx.matchTeams||{};
     const cand=Object.keys(mt).filter(m=>{const ts=Object.keys(mt[m]);return ts.includes(home)&&ts.includes(away);});
     // Some matches appear under two MatchIds (a date-style id and a slug). Collapse
@@ -3375,7 +3391,30 @@
     cand.forEach(m=>{ const x=meta[m]; if(!x)return; const key=x.y+'|'+x.r; if(!byMeet[key]||x.n>byMeet[key].n) byMeet[key]={m,y:x.y,r:x.r}; });
     return Object.values(byMeet).sort((a,b)=>(b.y-a.y)||(b.r-a.r)).slice(0,n).map(d=>d.m);
   }
+  function _dvLegsMLB(home,away){
+    const meets=_dvState().meets||3;
+    const meetings=_dvMeetings(home,away,meets);
+    if(meetings.length<meets) return {meetings,legs:[]};
+    const mset=new Set(meetings);
+    const onSide=new Set([].concat(playersOnTeam(home),playersOnTeam(away)).filter(p=>isPlaying(p.name,p.team)).map(p=>p.name));
+    const legs=[];
+    [].concat(playersOnTeam(home),playersOnTeam(away)).forEach(p=>{
+      if(!onSide.has(p.name)) return;
+      const opp=(p.team===home?away:home);
+      const rows=((p.h2h&&p.h2h[opp])||[]).filter(r=>mset.has(r.date));
+      if(rows.length<meets) return;
+      DV_MARKETS.forEach(([k,l,floor])=>{
+        if(!_dvMktOn(k)) return;
+        const vals=rows.map(r=>+(r[k]||0));
+        const lineV=Math.min.apply(null,vals);
+        if(lineV<floor) return;
+        legs.push({name:p.name,team:p.team,opp,market:k,marketLabel:l,line:lineV,vals,pos:p.position,strength:lineV-floor});
+      });
+    });
+    return {meetings,legs};
+  }
   function _dvLegs(home,away){
+    if(SPORT.key==='mlb') return _dvLegsMLB(home,away);
     const meets=_dvState().meets||3;
     const meetings=_dvMeetings(home,away,meets);
     if(meetings.length<meets) return {meetings,legs:[]};
@@ -3440,13 +3479,14 @@
     const title='<div class="tp-sec"><div class="sec-title"><i class="ti ti-versions"></i> Déjà Vu SGM</div></div>';
     const mktChips='<div class="dv-mkts">'+DV_MARKETS.map(([k,l])=>'<button class="dv-mkt'+(_dvMktOn(k)?' on':'')+'" onclick="_dvMkt(\''+k+'\')">'+l+'</button>').join('')+'</div>';
     const meetsStep='<span class="dv-step" title="How many of the most recent meetings the player must have cleared the line in"><span class="dv-step-lbl">Hit streak</span><button onclick="_dvMeets(-1)">−</button><b>'+meets+'</b><button onclick="_dvMeets(1)">+</button></span>';
+    const sameSPToggle=(SPORT.key==='mlb')?'<button class="dv-tier'+(_dvState().sameSP?' on':'')+'" onclick="_dvSameSP()" title="Only count meetings where today\'s two starting pitchers both faced off"><i class="ti ti-ball-baseball"></i> Same SP</button>':'';
     const dvHelp='<div class="dv-help"><i class="ti ti-info-circle"></i><span>Hit streak — only players who cleared their line in each of the last '+meets+' straight meetings between '+abbr(home)+' and '+abbr(away)+' qualify. Lower it to widen the pool.</span></div>';
     const meetings=_dvMeetings(home,away,meets);
-    if(meetings.length<meets) return title+'<div class="dv-steps">'+meetsStep+'</div>'+dvHelp+mktChips+'<div class="tp-body-meta" style="border:0">Need at least '+meets+' prior meetings between '+abbr(home)+' and '+abbr(away)+' — lower the hit streak to widen the pool.</div>';
+    if(meetings.length<meets) return title+'<div class="dv-steps">'+meetsStep+sameSPToggle+'</div>'+dvHelp+mktChips+'<div class="tp-body-meta" style="border:0">Need at least '+meets+' prior meetings between '+abbr(home)+' and '+abbr(away)+' — lower the hit streak to widen the pool.</div>';
     // no live per-book odds yet -> preview the qualifying players (one row each)
     if(!(state.idx.bookIdx&&Object.keys(state.idx.bookIdx).length)){
       const {legs}=_dvLegs(home,away);
-      const ctrls='<div class="dv-steps">'+meetsStep+'</div>'+dvHelp+mktChips;
+      const ctrls='<div class="dv-steps">'+meetsStep+sameSPToggle+'</div>'+dvHelp+mktChips;
       if(!legs.length) return title+ctrls+'<div class="tp-body-meta" style="border:0">No player cleared a market line in all '+meets+' meetings.</div>';
       const seen=new Set(),top=[];
       legs.slice().sort((a,b)=>b.strength-a.strength).forEach(l=>{ if(top.length<10&&!seen.has(l.name)){ seen.add(l.name); top.push(l); } });
@@ -3503,6 +3543,7 @@
   };
   window._dvRestore=function(){ const S=_dvState(); S.removed=[]; _renderApp(); };
   window._dvMeets=function(d){ const S=_dvState(); const cur=S.meets||3; S.meets=Math.max(2,Math.min(6,cur+d)); S.sel=null; S.removed=[]; _renderApp(); };
+  window._dvSameSP=function(){ const S=_dvState(); S.sameSP=!S.sameSP; S.sel=null; _renderApp(); };
   window._dvMkt=function(k){ const S=_dvState(); let m=S.markets; if(!Array.isArray(m)) m=DV_MARKETS.map(x=>x[0]); const i=m.indexOf(k); if(i>=0){ if(m.length>1) m.splice(i,1); } else m.push(k); S.markets=m; S.sel=null; S.removed=[]; _renderApp(); };
   window._dvSwap=function(slot,dir){
     const S=_dvState(); if(!S.sel) return;
