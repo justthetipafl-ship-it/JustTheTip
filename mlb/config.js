@@ -44,7 +44,7 @@ window.SPORT_CONFIG = {
   teamCols: [['R','R'],['H','H'],['HR','HR'],['TB','TB'],['BB','BB'],['SO','SO'],['SB','SB']],
 
   // ---- markets across features ----
-  oddsMkts: [['H','Hits'],['TB','Total Bases'],['HR','Home Runs'],['RBI','RBIs'],['R','Runs'],['SB','Stolen Bases'],['K','Strikeouts']],
+  oddsMkts: [['H','Hits'],['TB','Total Bases'],['HR','Home Runs'],['RBI','RBIs'],['R','Runs'],['K','Strikeouts']],   // SB has no odds market in RapidOddsAPI
   multiMkts: [['H','Hits'],['TB','Total Bases'],['HR','Home Runs'],['RBI','RBIs'],['R','Runs'],['K','Strikeouts']],
   nerdMkts: [['H','Hits'],['TB','Total Bases'],['HR','Home Runs'],['RBI','RBIs'],['K','Strikeouts']],
   settingsMkts: [['H','Hits'],['TB','Total Bases'],['HR','Home Runs'],['RBI','RBIs'],['R','Runs'],['SB','Stolen Bases'],['K','Strikeouts']],
@@ -88,6 +88,10 @@ window.SPORT_CONFIG = {
     { k:'greenlights', n:'Green Lights',   i:'ti-circle-check',     d:'Best batter matchups on the slate' },
     { k:'platoon',     n:'Sluggers',       i:'ti-arrows-left-right',d:'Big handedness-split power edges' },
     { k:'runners',     n:'Runners',        i:'ti-arrow-up-right',   d:'Top-of-order run scorers vs wild arms' },
+    { k:'rbimen',      n:'RBI Men',        i:'ti-target',           d:'Run-producing bats in RBI spots' },
+    { k:'freepasses',  n:'Free Passes',    i:'ti-walk',             d:'Patient hitters vs wild arms' },
+    { k:'grinders',    n:'Grinders',       i:'ti-flame',            d:'Starters in tough spots — fade' },
+    { k:'inningseaters',n:'Innings Eaters',i:'ti-clock-hour-9',     d:'Efficient starters who go deep' },
     { k:'due',         n:'Due / Unlucky',  i:'ti-trending-up',      d:'Underperforming their Statcast — back' },
     { k:'ktargets',    n:'Strike Time',    i:'ti-ball-baseball',    d:'Pitchers into whiff-prone lineups' },
     { k:'longball',    n:'Homers',         i:'ti-bolt',             d:'HR spots — power into hitter parks' },
@@ -100,5 +104,5 @@ window.SPORT_CONFIG = {
     { k:'deathriders', n:'Death Riders',   i:'ti-skull',            d:'Worst batter matchups — fade' },
     { k:'bogey',       n:'Bogey',          i:'ti-mood-sad',         d:"Batters owned by today's starter" }
   ],
-  tileOrder: ['greenlights','platoon','runners','due','ktargets','longball','wheels','streakers','bunny','whiff','hothand','cold','deathriders','bogey']
+  tileOrder: ['greenlights','platoon','runners','rbimen','freepasses','longball','wheels','streakers','bunny','due','ktargets','grinders','inningseaters','whiff','hothand','cold','deathriders','bogey']
 };
