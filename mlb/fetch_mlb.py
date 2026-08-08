@@ -18,6 +18,8 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 SLEEP = 0.10                     # polite throttle between calls
 LG_OPPAVG, LG_KRATE, LG_HR9 = .245, .225, 1.15
 
+# teamId -> home park NAME (populated in main once parks+teams load; used to tag gamelogs with venue)
+PARK_NAME = {}
 # MLBAM teamId -> park-factor key (matches park_factors.json). Home park drives factors.
 TEAM_PARK = {
     108:"LAA",109:"ARI",110:"BAL",111:"BOS",112:"CHC",113:"CIN",114:"CLE",115:"COL",
@@ -173,23 +175,26 @@ def hand_splits_bat(pid, season):
     # fall back to season-ish numbers if a split is missing
     return res
 
-def gamelog_bat_rows(pid, season, idmap):
+def gamelog_bat_rows(pid, season, idmap, team_id=None):
     d = api(f"people/{pid}/stats", stats="gameLog", group="hitting", season=season)
     rows = []
     try: splits = d["stats"][0]["splits"]
     except Exception: splits = []
     for sp in reversed(splits):  # API is oldest-first; we want newest-first
         st = sp["stat"]; opp = (sp.get("opponent") or {}).get("id")
+        home = sp.get("isHome")
+        vtid = team_id if home else opp          # game played at the home team's park
+        venue = PARK_NAME.get(vtid, "") if vtid else ""
         rows.append({
-            "date": sp.get("date", ""), "opp": idmap.get(opp, "?"),
+            "date": sp.get("date", ""), "opp": idmap.get(opp, "?"), "venue": venue, "home": bool(home),
             "H": i(st.get("hits")), "TB": i(st.get("totalBases")), "HR": i(st.get("homeRuns")),
             "RBI": i(st.get("rbi")), "R": i(st.get("runs")), "SB": i(st.get("stolenBases")),
             "BB": i(st.get("baseOnBalls")), "SO": i(st.get("strikeOuts")),
         })
     return rows
 
-def gamelog_bat(pid, season, idmap, limit=20):
-    return gamelog_bat_rows(pid, season, idmap)[:limit]
+def gamelog_bat(pid, season, idmap, limit=20, team_id=None):
+    return gamelog_bat_rows(pid, season, idmap, team_id)[:limit]
 
 # Deeper head-to-head history feeds the Déjà Vu Multis feature (consecutive
 # meetings between two specific teams). Pull this many prior seasons in
@@ -197,12 +202,12 @@ def gamelog_bat(pid, season, idmap, limit=20):
 H2H_EXTRA_SEASONS = 1
 H2H_FIELDS = ("date", "H", "TB", "HR", "RBI", "R", "SB", "BB", "SO")
 
-def h2h_bat(pid, season, idmap, current_rows):
+def h2h_bat(pid, season, idmap, current_rows, team_id=None):
     """Bucket every game (current + prior seasons) by opponent abbr, newest-first."""
     rows = list(current_rows or [])
     for back in range(1, H2H_EXTRA_SEASONS + 1):
         try:
-            rows += gamelog_bat_rows(pid, season - back, idmap)
+            rows += gamelog_bat_rows(pid, season - back, idmap, team_id)
         except Exception:
             pass
     h = {}
@@ -255,7 +260,7 @@ def hand_splits_pit(pid, season):
         pass
     return res
 
-def gamelog_pit_rows(pid, season, idmap):
+def gamelog_pit_rows(pid, season, idmap, team_id=None):
     d = api(f"people/{pid}/stats", stats="gameLog", group="pitching", season=season)
     rows = []
     try: splits = d["stats"][0]["splits"]
@@ -263,25 +268,27 @@ def gamelog_pit_rows(pid, season, idmap):
     for sp in reversed(splits):
         st = sp["stat"]; opp = (sp.get("opponent") or {}).get("id")
         outs, ip = parse_ip(st.get("inningsPitched", "0"))
+        home = sp.get("isHome"); vtid = team_id if home else opp
+        venue = PARK_NAME.get(vtid, "") if vtid else ""
         rows.append({
-            "date": sp.get("date", ""), "opp": idmap.get(opp, "?"), "IP": ip,
+            "date": sp.get("date", ""), "opp": idmap.get(opp, "?"), "venue": venue, "home": bool(home), "IP": ip,
             "K": i(st.get("strikeOuts")), "BB": i(st.get("baseOnBalls")), "H": i(st.get("hits")),
             "ER": i(st.get("earnedRuns")), "HR": i(st.get("homeRuns")),
             "outs": outs, "win": i(st.get("wins")) == 1,
         })
     return rows
 
-def gamelog_pit(pid, season, idmap, limit=20):
-    return gamelog_pit_rows(pid, season, idmap)[:limit]
+def gamelog_pit(pid, season, idmap, limit=20, team_id=None):
+    return gamelog_pit_rows(pid, season, idmap, team_id)[:limit]
 
 H2H_PIT_FIELDS = ("date", "K", "IP", "outs", "ER", "H", "BB", "HR")
 
-def h2h_pit(pid, season, idmap, current_rows):
+def h2h_pit(pid, season, idmap, current_rows, team_id=None):
     """Bucket a pitcher's starts (current + prior seasons) by opponent abbr, newest-first."""
     rows = list(current_rows or [])
     for back in range(1, H2H_EXTRA_SEASONS + 1):
         try:
-            rows += gamelog_pit_rows(pid, season - back, idmap)
+            rows += gamelog_pit_rows(pid, season - back, idmap, team_id)
         except Exception:
             pass
     h = {}
@@ -534,6 +541,9 @@ def main():
         parks = {k: v for k, v in json.load(fh).items() if not k.startswith("_")}
 
     teams = load_teams()
+    # teamId -> home park name, so gamelogs can be tagged with the venue they were played at
+    for _tid, _t in teams.items():
+        PARK_NAME[_tid] = (parks.get(TEAM_PARK.get(_tid, ""), {}) or {}).get("name", "")
     idmap = {tid: t["abbr"] for tid, t in teams.items()}
     TEAM_ABBR.update(idmap)
 
@@ -633,8 +643,8 @@ def main():
                 "season": season_s,
                 "splitVsL": splits["splitVsL"] or seas_eq,
                 "splitVsR": splits["splitVsR"] or seas_eq,
-                "gameLog": (_bat_rows := gamelog_bat_rows(pid, season, idmap))[:20],
-                "h2h": h2h_bat(pid, season, idmap, _bat_rows),
+                "gameLog": (_bat_rows := gamelog_bat_rows(pid, season, idmap, tid))[:20],
+                "h2h": h2h_bat(pid, season, idmap, _bat_rows, tid),
                 "bvp": {},
                 "statcast": STATCAST_BAT.get(pid),
             }
@@ -671,8 +681,8 @@ def main():
             "season": season_s,
             "splitVsL": splits["splitVsL"] or seas_eq,
             "splitVsR": splits["splitVsR"] or seas_eq,
-            "gameLog": (_pit_rows := gamelog_pit_rows(pid, season, idmap))[:20],
-            "h2h": h2h_pit(pid, season, idmap, _pit_rows),
+            "gameLog": (_pit_rows := gamelog_pit_rows(pid, season, idmap, tid))[:20],
+            "h2h": h2h_pit(pid, season, idmap, _pit_rows, tid),
             "statcast": STATCAST_PIT.get(pid),
         }
     print(f"[JTT MLB]   {len(pitchers)} probable starters profiled")
