@@ -66,6 +66,18 @@
   .rdr-row{display:flex !important;align-items:center;gap:10px;}
   .rdr-score{flex:0 0 auto;min-width:36px;height:36px;display:flex;align-items:center;justify-content:center;border-radius:9px;border:1px solid;font-family:var(--font-mono);font-weight:800;font-size:15px;}
   .rdr-pos{font-size:9px;color:var(--text-3);font-weight:700;}
+  .io-cols{display:grid;grid-template-columns:1fr 1fr;gap:10px;}
+  .io-col{min-width:0;}
+  .io-team{font-family:var(--font-display);font-weight:800;font-size:13px;margin-bottom:6px;color:var(--text-1);}
+  .io-grp{margin-bottom:8px;}
+  .io-hd{font-size:9px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;margin-bottom:3px;}
+  .io-hd-in{color:#22c55e;} .io-hd-out{color:#ef4444;}
+  .io-row{display:flex;align-items:center;gap:5px;padding:3px 6px;border-radius:6px;font-size:12px;cursor:pointer;line-height:1.25;}
+  .io-row span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .io-in{background:color-mix(in srgb,#22c55e 10%,transparent);} .io-in i{color:#22c55e;}
+  .io-out{background:color-mix(in srgb,#ef4444 10%,transparent);} .io-out i{color:#ef4444;}
+  .io-meta{margin-left:auto;font-size:9px;color:var(--text-3);white-space:nowrap;}
+  .io-none,.io-empty{font-size:11px;color:var(--text-3);padding:2px 6px;}
   .rdr-spread{display:inline-block;font-family:var(--font-mono);font-size:9px;font-weight:700;color:var(--accent);background:color-mix(in srgb,var(--accent) 12%,transparent);border-radius:4px;padding:0 4px;margin-left:2px;}
   .rdr-grade{flex:0 0 auto;text-align:center;font-family:var(--font-display);font-weight:800;font-size:19px;line-height:1;min-width:30px;}
   .rdr-grade span{display:block;font-size:7.5px;font-weight:700;letter-spacing:.03em;text-transform:uppercase;color:var(--text-3);margin-top:2px;white-space:nowrap;}
@@ -1920,6 +1932,37 @@
     const q=esc(r.player).replace(/\x27/g,"\\\\\\x27");
     return '<div class="lu-cell" onclick="openPlayer(\''+q+'\')"><span class="nm">'+esc(r.player)+'</span><span class="pos">'+esc(r.position||'')+'</span></div>';
   }
+  // ===== INS / OUTS — this week's named lineup vs who played the team's last game =====
+  function _insOuts(team){
+    const lu=(state.data.lineups||[]).filter(r=>r.team===team && r.player && !/UNCONFIRMED/i.test(r.status||'') && !/^NA\b/i.test(r.player||''));
+    if(!lu.length) return null;                                       // lineup not out yet
+    const thisWeek=lu.map(r=>r.player.trim());
+    const twKeys=new Set(); thisWeek.forEach(n=>_nmKeys(n).forEach(k=>twKeys.add(k)));
+    const logs=(state.data.gamelogs||[]).filter(r=>r.Team===team);
+    if(!logs.length) return null;
+    let maxY=-1, maxR=-1;
+    logs.forEach(r=>{ const y=+r.Year||0, rn=_roundNum(r.RoundName); if(y>maxY||(y===maxY&&rn>maxR)){ maxY=y; maxR=rn; } });
+    const lastWeek=[...new Set(logs.filter(r=>(+r.Year||0)===maxY && _roundNum(r.RoundName)===maxR).map(r=>r.Player))];
+    const lwKeys=new Set(); lastWeek.forEach(n=>_nmKeys(n).forEach(k=>lwKeys.add(k)));
+    const ins=thisWeek.filter(n=>!_nmKeys(n).some(k=>lwKeys.has(k)));
+    const outs=lastWeek.filter(n=>!_nmKeys(n).some(k=>twKeys.has(k)));
+    return { ins, outs, lastRound:maxR };
+  }
+  function _ioMeta(n){ const p=(state.idx&&state.idx.byName)?state.idx.byName[n]:null; if(!p) return ''; const inj=_injuryFor?_injuryFor(n):null; return '<span class="io-meta">'+posShort(p.position||'')+(inj?' \u00b7 '+esc((''+inj).slice(0,22)):'')+'</span>'; }
+  function insOutsSection(home, away){
+    const ho=_insOuts(home), ao=_insOuts(away);
+    const has=x=>x&&(x.ins.length||x.outs.length);
+    if(!has(ho)&&!has(ao)) return '';
+    const col=(team,io)=>{
+      if(!io) return '<div class="io-col"><div class="io-team">'+esc(abbr(team))+'</div><div class="io-empty">Lineup not out</div></div>';
+      const ins=io.ins.length?io.ins.map(n=>'<div class="io-row io-in" onclick="openPlayer(\''+esc(n).replace(/\x27/g,"\\\x27")+'\')"><i class="ti ti-arrow-up-right"></i><span>'+esc(n)+'</span>'+_ioMeta(n)+'</div>').join(''):'<div class="io-none">\u2014</div>';
+      const outs=io.outs.length?io.outs.map(n=>'<div class="io-row io-out" onclick="openPlayer(\''+esc(n).replace(/\x27/g,"\\\x27")+'\')"><i class="ti ti-arrow-down-right"></i><span>'+esc(n)+'</span>'+_ioMeta(n)+'</div>').join(''):'<div class="io-none">\u2014</div>';
+      return '<div class="io-col"><div class="io-team">'+esc(abbr(team))+'</div>'+
+        '<div class="io-grp"><div class="io-hd io-hd-in">IN \u00b7 '+io.ins.length+'</div>'+ins+'</div>'+
+        '<div class="io-grp"><div class="io-hd io-hd-out">OUT \u00b7 '+io.outs.length+'</div>'+outs+'</div></div>';
+    };
+    return '<details class="tp-collapse" open><summary class="tp-collapse-sum"><i class="ti ti-arrows-exchange"></i><span class="tp-collapse-title">Ins &amp; Outs</span><i class="ti ti-chevron-down tp-collapse-chev"></i></summary><div class="tp-collapse-body"><div class="tp-body-meta">Team changes from last week\u2019s side.</div><div class="io-cols">'+col(home,ho)+col(away,ao)+'</div></div></details>';
+  }
   function fxLineup(team){
     const lu=(state.data.lineups||[]).filter(r=>r.team===team);
     if(!lu.length) return '';
@@ -2271,6 +2314,7 @@
       '<button class="fxm-btn'+(fxMode==='nerd'?' on':'')+'" onclick="setFxMode(\'nerd\')"><i class="ti ti-math-function"></i> Nerd Mode</button></div>';
     if(fxMode==='nerd') h+=nerdFilterBar();
     h+='<div class="team-cols">'+teamSignals(g.home,g.away,true)+teamSignals(g.away,g.home,false)+'</div>';
+    if(!_fxHid('sec','insouts')) h+=insOutsSection(g.home,g.away);
     if(!_fxHid('sec','radar')) h+=radarSection(g.home,g.away,g.venue||(g.park&&g.park.name));
     if(fxMode!=='nerd' && !_fxHid('sec','jupiter')) h+=jupiter(g);
     if(fxMode!=='nerd' && !_fxHid('sec','deja')) h+=dejaVuSGM(g.home,g.away);
