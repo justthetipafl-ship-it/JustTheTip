@@ -25,22 +25,30 @@ window.JTTSignals = (function () {
       var teams = _fixtureSet();
       return (players || []).filter(function (p) { return p.role === 'bat' && teams.has(p.team) && (p.matches || 0) >= 15; });
     }
-    function _oddsStr(name, mkt) {
-      if (!mkt) return '';
-      var o = oddsFor(name, mkt);
-      return (o && o.over != null) ? '$' + (+o.over).toFixed(2) + (o.book ? ' ' + esc(o.book) : '') : '';
+    var MKT_LBL = { H:'Hits', TB:'Total Bases', HR:'Home Runs', RBI:'RBIs', R:'Runs', SB:'Stolen Bases', K:'Strikeouts', BB:'Walks', ER:'Earned Runs', HA:'Hits Allowed', OUTS:'Outs', '1B':'Singles' };
+    var MIN_ODDS = 1.60;
+    // the bettable bet for a signal: over for backs, under for fades — only if a real market prices it above MIN_ODDS
+    function _bet(c) {
+      if (!c.mkt) return null;
+      var o = oddsFor(c.p.name, c.mkt); if (!o) return null;
+      var side = c.side || 'over';
+      var price = (side === 'over') ? o.over : o.under;
+      if (price == null || price <= MIN_ODDS) return null;
+      var lbl = (side === 'over' ? 'O ' : 'U ') + (o.line != null ? o.line + ' ' : '') + (MKT_LBL[c.mkt] || c.mkt);
+      return { side: side, line: o.line, price: price, book: o.book, label: lbl };
     }
-    // render each signal as the shell's standard degRow (same look as AFL/NFL; $odds auto-highlighted)
+    // render each signal as the shell's standard degRow — market + line in the sub, price on the right
     function card(c, col) {
-      var od = _oddsStr(c.p.name, c.mkt);
-      var sub = posShort(c.p.position) + ' \u00b7 ' + abbr(c.p.team) + (c.opp ? ' v ' + abbr(c.opp) : '') + ' \u00b7 <b>' + c.headline + '</b> \u00b7 ' + c.detail;
-      var right = od || c.headline;
-      return degRow(c.p.name, col || '#22c55e', right, sub, c.p.name);
+      var b = c._bet;
+      var priceTxt = '$' + (+b.price).toFixed(2) + (b.book ? ' ' + esc(b.book) : '');
+      var sub = posShort(c.p.position) + ' \u00b7 ' + abbr(c.p.team) + (c.opp ? ' v ' + abbr(c.opp) : '') + ' \u00b7 <b>' + esc(b.label) + '</b> \u00b7 ' + c.detail;
+      return degRow(c.p.name, col || '#22c55e', priceTxt, sub, c.p.name);
     }
     function wrap(icon, title, out, cls, emptyMsg) {
+      // only bettable suggestions: a real market priced above MIN_ODDS
+      out = out.filter(function (c) { c._bet = _bet(c); return !!c._bet; });
       out.sort(function (a, b) { return b.sc - a.sc; });
       var col = (cls === 'c-tough' || cls === 'c-red') ? '#ef4444' : (cls === 'c-fav' ? '#eab308' : '#22c55e');
-      // defer empties to degWrap: hidden in the focused fixture, standard empty-state in the Degen Crew tab
       return degWrap(icon, title, out.length ? out.slice(0, 12).map(function (c) { return card(c, col); }) : [], cls);
     }
     var d3 = function (v) { return v.toFixed(3).replace(/^0/, ''); };
@@ -70,7 +78,7 @@ window.JTTSignals = (function () {
         var lg = recentLogs(p.name); if (lg.length < 5) return;
         var n = 0; for (var i = 0; i < lg.length; i++) { if ((+(lg[i].H || 0)) < 1) n++; else break; }
         if (n < 4) return;
-        out.push({ p: p, opp: JS.oppOfTeam(p.team), sc: n, mkt: 'H', headline: n + '-game skid',
+        out.push({ p: p, opp: JS.oppOfTeam(p.team), sc: n, mkt: 'H', side: 'under', headline: n + '-game skid',
           detail: 'hitless in last ' + n + ' games' + (p.AVG != null ? ' \u00b7 ' + d3(p.AVG) + ' AVG' : '') });
       });
       return wrap('ti-snowflake', 'Cold Bats', out, 'c-tough', 'No notable hitless skids on the slate.');
@@ -169,7 +177,7 @@ window.JTTSignals = (function () {
         if (dir === 'bunny' && v.AVG < 0.350) return;
         if (dir === 'bogey' && v.AVG > 0.150) return;
         out.push({ p: p, opp: JS.oppOfTeam(p.team), sc: dir === 'bunny' ? v.AVG : (1 - v.AVG),
-          mkt: 'H', headline: dir === 'bunny' ? 'Owns the arm' : 'Owned by the arm',
+          mkt: 'H', side: dir === 'bunny' ? 'over' : 'under', headline: dir === 'bunny' ? 'Owns the arm' : 'Owned by the arm',
           detail: d3(v.AVG) + ' (' + (v.H || 0) + '/' + v.PA + ', ' + (v.HR || 0) + ' HR) vs ' + esc(pit.name) });
       });
       return dir === 'bunny'
@@ -209,7 +217,7 @@ window.JTTSignals = (function () {
       var out = [];
       slateBats().forEach(function (p) {
         var gap = statcastGap(p); if (gap == null || gap > -0.032) return;
-        out.push({ p: p, opp: JS.oppOfTeam(p.team), sc: -gap, mkt: 'H', headline: 'Running Hot',
+        out.push({ p: p, opp: JS.oppOfTeam(p.team), sc: -gap, mkt: 'H', side: 'under', headline: 'Running Hot',
           detail: (gap * 1000).toFixed(0) + ' xwOBA gap (overperforming \u2014 fade) \u00b7 ' + d3(p.statcast.xwoba) + ' xwOBA' });
       });
       return wrap('ti-trending-down', 'Running Hot', out, 'c-tough', 'No standout fade candidates on the slate.');
@@ -244,7 +252,7 @@ window.JTTSignals = (function () {
         var mu = _muScore(p); if (!mu.pit) return;
         var prob = JS.batProb(p, 'H', 0.5);
         if (prob == null || prob > 0.45 || mu.score > -8) return;
-        out.push({ p: p, opp: JS.oppOfTeam(p.team), sc: -(prob * 100 + mu.score), mkt: 'H', headline: 'Fade',
+        out.push({ p: p, opp: JS.oppOfTeam(p.team), sc: -(prob * 100 + mu.score), mkt: 'H', side: 'under', headline: 'Fade',
           detail: Math.round(prob * 100) + '% to hit \u00b7 tough vs ' + esc(mu.pit.name) + ' (K/9 ' + (mu.pit.K9 || 0).toFixed(1) + ', ERA ' + (mu.pit.ERA || 0).toFixed(2) + ')' });
       });
       return wrap('ti-skull', 'Death Riders', out, 'c-tough', 'No standout fade spots on the slate.');
