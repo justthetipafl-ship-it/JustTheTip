@@ -66,6 +66,9 @@
   .rdr-row{display:flex !important;align-items:center;gap:10px;}
   .rdr-score{flex:0 0 auto;min-width:36px;height:36px;display:flex;align-items:center;justify-content:center;border-radius:9px;border:1px solid;font-family:var(--font-mono);font-weight:800;font-size:15px;}
   .rdr-pos{font-size:9px;color:var(--text-3);font-weight:700;}
+  .mlb-day-tabs{display:flex;gap:8px;margin:10px 0 4px;flex-wrap:wrap;}
+  .mlb-day-tab{padding:7px 14px;border-radius:999px;border:1px solid var(--border);background:var(--surface-2);color:var(--text-2);font-size:12px;font-weight:700;cursor:pointer;white-space:nowrap;}
+  .mlb-day-tab.on{background:var(--accent);border-color:var(--accent);color:#04120a;}
   .io-cols{display:grid;grid-template-columns:1fr 1fr;gap:10px;}
   .io-col{min-width:0;}
   .io-team{font-family:var(--font-display);font-weight:800;font-size:13px;margin-bottom:6px;color:var(--text-1);}
@@ -1394,6 +1397,7 @@
         under:toNum(o.under!=null?o.under:o.underOdds),
         book:o.book||o.bookmaker||null
       };
+      if(o.market && o.market!==mk) idx[name][o.market]=idx[name][mk];   // also key by the original market case (MLB uses 'H', not 'h')
       count++;
     });
     state.idx.oddsIdx=idx;
@@ -1744,6 +1748,8 @@
   }
   function gameDone(g){ const t=gameStart(g); return t!=null && Date.now() > t + 150*60*1000; }   // ~150 min after bounce = completed
   window._sHideCompleted=function(){ SETTINGS.hideCompleted=!SETTINGS.hideCompleted; saveSettings(); _renderApp(); };
+  function _mlbToday(){ const d=new Date(); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
+  window._mlbSetDay=function(d){ state.view.mlbDay=d; _renderApp(); window.scrollTo({top:0}); };
   function pips(team){const f=teamForm(team,5);return f.length?'<div class="form-pips">'+f.map(r=>'<span class="pip '+r+'">'+r+'</span>').join('')+'</div>':'';}
   function _wxIcon(code){
     if(code==null) return 'ti-cloud';
@@ -1774,10 +1780,27 @@
     let games=fx.map((g,i)=>({g,i}));
     if(SETTINGS.hideCompleted) games=games.filter(x=>!gameDone(x.g));
     const toggle=doneCount>0?'<button class="fx-hidebtn'+(SETTINGS.hideCompleted?' on':'')+'" onclick="_sHideCompleted()"><i class="ti ti-'+(SETTINGS.hideCompleted?'eye-off':'eye')+'"></i> '+(SETTINGS.hideCompleted?'Completed hidden ('+doneCount+')':'Hide completed ('+doneCount+')')+'</button>':'';
+    // MLB: Today / Tomorrow day tabs (like the standalone tool)
+    let mlbDayNav='';
+    if(SPORT.key==='mlb'){
+      const dates=[...new Set(games.map(x=>x.g.date).filter(Boolean))].sort();
+      if(dates.length>1){
+        const today=new Date(); today.setHours(0,0,0,0);
+        const dayLabel=(d)=>{ const dt=new Date(d+'T12:00:00'); const dd=new Date(dt); dd.setHours(0,0,0,0);
+          const diff=Math.round((dd-today)/86400000);
+          const rel=diff===0?'Today':diff===1?'Tomorrow':diff===-1?'Yesterday':'';
+          const wk=dt.toLocaleDateString([],{weekday:'short',day:'numeric',month:'short'});
+          return (rel?rel+' \u00b7 ':'')+wk; };
+        let sel=state.view.mlbDay; if(!sel||dates.indexOf(sel)<0) sel=(dates.indexOf(_mlbToday())>=0?_mlbToday():dates[0]);
+        mlbDayNav='<div class="mlb-day-tabs">'+dates.map(d=>'<button class="mlb-day-tab'+(d===sel?' on':'')+'" onclick="_mlbSetDay(\''+d+'\')">'+dayLabel(d)+'</button>').join('')+'</div>';
+        games=games.filter(x=>x.g.date===sel);
+      }
+    }
     const _fxTitle=SPORT.key==='mlb'?'Focused Fixtures':('Round '+(state.data.meta&&state.data.meta.round||''));
     const _fxSub=SPORT.key==='mlb'?(games.length+' game'+(games.length!==1?'s':'')+' \u00b7 tap for the matchup breakdown'):'Tap a match for the matchup breakdown';
     let h='<div class="page-header"><div style="display:flex;align-items:flex-start;justify-content:space-between;gap:10px"><div><div class="page-title">'+_fxTitle+'</div><div class="page-sub">'+_fxSub+'</div></div>'+toggle+'</div></div>';
-    if(!games.length) return h+emptyState('ti-calendar-check','All games completed','Every game this round has finished. Toggle off to see results.');
+    h+=mlbDayNav;
+    if(!games.length) return h+emptyState('ti-calendar-check','No games','No games scheduled for this day.');
     games.forEach(({g,i})=>{
       if(SPORT.key==='mlb'){ h+=_mlbFxRow(g,i); return; }
       h+='<div class="fixture-row'+(gameDone(g)?' fxr-done':'')+'" onclick="state.view.fixtureId='+i+';_renderApp();window.scrollTo({top:0})">'+
