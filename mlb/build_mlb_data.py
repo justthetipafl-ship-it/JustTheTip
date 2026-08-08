@@ -1,109 +1,93 @@
-#!/usr/bin/env python3
-"""JTT MLB data adapter — reshapes mlb_bundle.json into the unified shell's split data files.
-Runs in the GitHub Actions pipeline after fetch_mlb.py produces mlb_bundle.json.
-Batters + pitchers merge into one `players` pool (role: 'bat'|'pitch'); platoon splits,
-batter-vs-pitcher (bvp) and h2h are preserved for mlb/scoring.js."""
-import json, sys, os, hashlib
+/* JTT MLB — config.js  (window.SPORT_CONFIG)
+   Sport vocabulary for the unified shell. Batters + pitchers share one player pool
+   (role: 'bat'|'pitch'); markets and display sets are role/position aware. */
+window.SPORT_CONFIG = {
+  key: 'mlb', dir: 'mlb', name: 'MLB', logoExt: '.svg',
 
-SRC = sys.argv[1] if len(sys.argv) > 1 else 'mlb_bundle.json'
-OUT = sys.argv[2] if len(sys.argv) > 2 else 'data'
-os.makedirs(OUT, exist_ok=True)
-B = json.load(open(SRC, encoding='utf-8'))
-season = B.get('season', 2026)
+  // ---- markets / stat labels ----
+  // bettable player-prop markets (Clash / Last Meeting / Matchup / Stat Leaders)
+  betStats: [['H','Hits'],['TB','Total Bases'],['HR','Home Runs'],['RBI','RBIs'],['R','Runs'],['SB','Stolen Bases'],['BB','Walks']],
+  mktNames: { H:'Hits', TB:'Total Bases', HR:'Home Runs', RBI:'RBIs', R:'Runs', SB:'Stolen Bases', BB:'Walks', K:'Strikeouts', IP:'Innings', ERA:'ERA' },
+  roundWord: 'Game',
+  lowCount: ['AVG','OBP','SLG','OPS','ERA','WHIP','K9','BB9','HR9','oppAVG'],  // shown to 2dp
 
-def ymd(d):  # "2026-08-01" -> 20260801 (sortable), and year
-    try:
-        p = d.split('-'); return int(p[0]), int(p[0]) * 10000 + int(p[1]) * 100 + int(p[2])
-    except Exception:
-        return season, 0
+  // ---- positions ----
+  posOrder: ['SP','RP','C','1B','2B','3B','SS','LF','CF','RF','DH'],
+  posColors: { SP:'#ef4444', RP:'#f97316', C:'#a855f7', '1B':'#3b82f6', '2B':'#22c55e', '3B':'#eab308', SS:'#06b6d4', LF:'#8b5cf6', CF:'#14b8a6', RF:'#ec4899', DH:'#64748b' },
+  posShort: null,  // MLB positions already short — passthrough
 
-players, logs = [], []
+  // ---- display columns (scanner table + player modal), per-position ----
+  display: [['H','H'],['TB','TB'],['HR','HR'],['RBI','RBI'],['R','R'],['AVG','AVG'],['OBP','OBP'],['SLG','SLG'],['SB','SB'],['BB','BB'],['SO','K']],
+  displaySets: {
+    All: [['H','H'],['TB','TB'],['HR','HR'],['RBI','RBI'],['R','R'],['AVG','AVG'],['OBP','OBP'],['SLG','SLG'],['SB','SB'],['BB','BB'],['SO','K']],
+    SP:  [['K','K'],['IP','IP'],['ERA','ERA'],['WHIP','WHIP'],['K9','K/9'],['BB9','BB/9'],['HR9','HR/9'],['oppAVG','oAVG'],['H','H'],['BB','BB']],
+    RP:  [['K','K'],['IP','IP'],['ERA','ERA'],['WHIP','WHIP'],['K9','K/9'],['BB9','BB/9'],['HR9','HR/9'],['oppAVG','oAVG'],['H','H'],['BB','BB']]
+  },
 
-# ---- batters ----
-for b in B.get('batters', {}).values():
-    s = b.get('season', {})
-    p = {'name': b['name'], 'team': b.get('abbr'), 'position': b.get('pos') or 'DH', 'role': 'bat',
-         'id': b.get('id'), 'teamId': b.get('teamId'), 'bats': b.get('bats'),
-         'order': b.get('order'), 'tier': b.get('tier'), 'matches': s.get('G', 0),
-         'splitVsL': b.get('splitVsL'), 'splitVsR': b.get('splitVsR'),
-         'bvp': b.get('bvp'), 'h2h': b.get('h2h'), 'statcast': b.get('statcast')}
-    for k, v in s.items(): p[k] = v
-    players.append(p)
-    for gl in (b.get('gameLog') or []):
-        yr, sk = ymd(gl.get('date', ''))
-        row = {'Player': b['name'], 'Team': b.get('abbr'), 'Opp': gl.get('opp'),
-               'Year': yr, 'Date': gl.get('date'), 'RoundName': str(sk), 'Week': sk, 'role': 'bat'}
-        for k in ('H', 'TB', 'HR', 'RBI', 'R', 'SB', 'BB', 'SO'):
-            if k in gl: row[k] = gl[k]
-        logs.append(row)
+  // ---- Check My Bet parser ----
+  cmpAliases: {
+    'strikeouts':'K','strikeout':'K','punchouts':'K','punch outs':'K','ks':'K','k':'K',
+    'total bases':'TB','total base':'TB','tb':'TB','bases':'TB',
+    'home runs':'HR','home run':'HR','hr':'HR','homer':'HR','homers':'HR','dinger':'HR','bomb':'HR',
+    'rbis':'RBI','rbi':'RBI','runs batted in':'RBI','runs batted':'RBI',
+    'stolen bases':'SB','stolen base':'SB','steals':'SB','sb':'SB','steal':'SB',
+    'walks':'BB','walk':'BB','bb':'BB','base on balls':'BB','free pass':'BB',
+    'runs':'R','run':'R',
+    'hits':'H','hit':'H'
+  },
+  cmpLabels: { H:'Hits', TB:'Total Bases', HR:'Home Runs', RBI:'RBIs', R:'Runs', SB:'Stolen Bases', BB:'Walks', K:'Strikeouts' },
 
-# ---- pitchers ----
-for pt in B.get('pitchers', {}).values():
-    s = pt.get('season', {})
-    p = {'name': pt['name'], 'team': pt.get('abbr'), 'position': pt.get('role') or 'SP', 'role': 'pitch',
-         'id': pt.get('id'), 'teamId': pt.get('teamId'), 'throws': pt.get('throws'),
-         'tier': pt.get('tier'), 'matches': s.get('GS', s.get('G', 0)),
-         'splitVsL': pt.get('splitVsL'), 'splitVsR': pt.get('splitVsR'), 'h2h': pt.get('h2h'), 'statcast': pt.get('statcast')}
-    for k, v in s.items(): p[k] = v
-    players.append(p)
-    for gl in (pt.get('gameLog') or []):
-        yr, sk = ymd(gl.get('date', ''))
-        row = {'Player': pt['name'], 'Team': pt.get('abbr'), 'Opp': gl.get('opp'),
-               'Year': yr, 'Date': gl.get('date'), 'RoundName': str(sk), 'Week': sk, 'role': 'pitch'}
-        for k in ('IP', 'K', 'BB', 'H', 'ER', 'HR', 'outs', 'win'):
-            if k in gl: row[k] = gl[k]
-        logs.append(row)
+  // ---- head-to-head season averages (focused fixture bar chart) uses team stats ----
+  h2hKeys: [['R','Runs'],['H','Hits'],['HR','Home Runs'],['TB','Total Bases'],['BB','Walks'],['SO','Strikeouts']],
 
-# ---- teams + dvp (vsStats = what a team allows) + results (from recent) ----
-teams, dvp, results, seen_g = [], [], [], set()
-for t in B.get('teams', {}).values():
-    ab = t.get('abbr')
-    teams.append({'team': ab, 'name': t.get('name'), 'div': t.get('div'), 'park': t.get('park'),
-                  'kRate': t.get('kRate'), 'forStats': t.get('forStats'), 'vsStats': t.get('vsStats')})
-    vs = t.get('vsStats') or {}
-    dvp.append({'team': ab, 'pos': 'ALL', **{k: vs.get(k) for k in ('R', 'H', 'HR', 'BB', 'SO')}})
-    for r in (t.get('recent') or []):
-        key = tuple(sorted([ab, r.get('opp', '')])) + (r.get('date', ''),)
-        if key in seen_g: continue
-        seen_g.add(key)
-        yr, sk = ymd(r.get('date', ''))
-        # r is from this team's perspective: rf (runs for), ra (runs against), res W/L
-        results.append({'home': ab, 'away': r.get('opp'), 'hs': r.get('rf'), 'as': r.get('ra'),
-                        'season': yr, 'date': r.get('date'), 'week': sk})
+  // ---- team stats table columns (from team forStats) ----
+  teamCols: [['R','R'],['H','H'],['HR','HR'],['TB','TB'],['BB','BB'],['SO','SO'],['SB','SB']],
 
-# ---- fixture (slate) + lineups + weather ----
-fixture, lineups = [], []
-for g in B.get('slate', []):
-    hm, aw = g.get('home', {}), g.get('away', {})
-    parks = B.get('parks', {})
-    pk = parks.get(g.get('parkId'), {})
-    fixture.append({'home': hm.get('abbr'), 'away': aw.get('abbr'), 'homeAbbr': hm.get('abbr'), 'awayAbbr': aw.get('abbr'),
-                    'date': g.get('date'), 'time': g.get('time'), 'gameTimeUTC': g.get('gameTimeUTC'),
-                    'venue': pk.get('name') or g.get('parkId'), 'parkId': g.get('parkId'),
-                    'status': g.get('status'), 'gamePk': g.get('gamePk'),
-                    'homePitcher': (hm.get('probablePitcher') or {}).get('name'),
-                    'awayPitcher': (aw.get('probablePitcher') or {}).get('name'),
-                    'park': pk, 'weather': g.get('weather'), 'lines': g.get('lines')})
-    if g.get('lineups'): lineups.append({'gamePk': g.get('gamePk'), 'home': g['lineups'].get('home'), 'away': g['lineups'].get('away')})
+  // ---- markets across features ----
+  oddsMkts: [['H','Hits'],['TB','Total Bases'],['HR','Home Runs'],['RBI','RBIs'],['R','Runs'],['SB','Stolen Bases'],['K','Strikeouts']],
+  multiMkts: [['H','Hits'],['TB','Total Bases'],['HR','Home Runs'],['RBI','RBIs'],['R','Runs'],['K','Strikeouts']],
+  nerdMkts: [['H','Hits'],['TB','Total Bases'],['HR','Home Runs'],['RBI','RBIs'],['K','Strikeouts']],
+  settingsMkts: [['H','Hits'],['TB','Total Bases'],['HR','Home Runs'],['RBI','RBIs'],['R','Runs'],['SB','Stolen Bases'],['K','Strikeouts']],
+  compareStats: [['H','Hits'],['TB','Total Bases'],['HR','Home Runs'],['RBI','RBIs'],['R','Runs'],['AVG','AVG'],['OPS','OPS']],
+  boxCols: [['H','H'],['TB','TB'],['HR','HR'],['RBI','RBI'],['R','R'],['BB','BB'],['SO','K']],
+  cmbPick: [['H','Hits',1.5],['TB','Total Bases',1.5],['HR','Home Runs',0.5],['RBI','RBIs',0.5],['R','Runs',0.5],['SB','Stolen Bases',0.5],['K','Strikeouts',5.5]],
+  fxpMarkets: [['H','Hits'],['TB','Total Bases'],['HR','HR'],['RBI','RBI'],['R','Runs'],['K','Ks']],
+  dvMarkets: [['H','Hits',1.5],['TB','Total Bases',1.5],['HR','Home Runs',0.5],['RBI','RBIs',0.5],['R','Runs',0.5],['K','Strikeouts',5.5]],
 
-meta = {'currentSeason': str(season), 'season': season, 'asOf': B.get('asOf'), 'generated': B.get('generated'),
-        'parks': B.get('parks'), 'trends': B.get('trends'), 'standings': B.get('standings'), 'leagueLeaders': B.get('leagueLeaders'),
-        'summary': {'players': len(players), 'gamelogs': len(logs), 'batters': len(B.get('batters', {})), 'pitchers': len(B.get('pitchers', {}))}}
+  // ---- DVP (team allowance) options ----
+  dvpStats: [['H','Hits'],['HR','Home Runs'],['R','Runs'],['BB','Walks'],['SO','Strikeouts']],
+  dvpsOpts: [['H','Hits'],['HR','Home Runs'],['R','Runs'],['SO','Strikeouts']],
 
-# Auth: the unified shell reads meta.password_hash for the weekly gate. Match the browser's
-# TextEncoder hash (UTF-8, no trailing newline) exactly as AFL/NFL builds do.
-_pw = (os.environ.get('MLB_PASSWORD') or '').strip()
-if _pw:
-    meta['password_hash'] = hashlib.sha256(_pw.encode('utf-8')).hexdigest()
+  // ---- Jupiter scatter (batter markets) ----
+  jupiter: {
+    markets: [['H','Hits'],['TB','Total Bases'],['HR','HR'],['RBI','RBI'],['R','Runs']],
+    mlab: { H:'hits', TB:'total bases', HR:'home runs', RBI:'RBIs', R:'runs' },
+    base: { H:1, TB:1.5, HR:0.5, RBI:0.5, R:0.5 }
+  },
 
-def w(name, obj):
-    json.dump(obj, open(os.path.join(OUT, name), 'w', encoding='utf-8'), separators=(',', ':'))
+  // ---- view defaults ----
+  viewDefaults: { sortKey: 'H', statsStat: 'H', teamsSort: 'R' },
 
-w('players.json', players); w('gamelogs.json', logs); w('teams.json', teams)
-w('dvp.json', dvp); w('results.json', results); w('fixture.json', fixture)
-w('lineups.json', lineups); w('meta.json', meta)
-w('teams_form.json', teams)   # shell computes WWWLW from results; teams carries the rest
-for empty in ('injury.json', 'odds.json', 'weather.json'):
-    w(empty, [])
-print('players=%d (bat+pitch)  gamelogs=%d  fixture=%d  teams=%d  results=%d  dvp=%d' % (
-    len(players), len(logs), len(fixture), len(teams), len(results), len(dvp)))
+  // ---- per-sport extra data files (beyond the common set) ----
+  dataFiles: {},
+
+  // ---- Degen Crew catalog (game-centric — MLB signals live in mlb/signals.js) ----
+  crew: [
+    { k:'board',   n:"Today's Board", i:'ti-clipboard-list', d:'Best plays ranked' },
+    { k:'multi',   n:'Multi Builder', i:'ti-stack-2',        d:'Stacked legs' },
+    { k:'hot',     n:'Hot Bats',      i:'ti-flame',          d:'Hitters trending up' },
+    { k:'cold',    n:'Cold Bats',     i:'ti-snowflake',      d:'Hitless skids — fade or avoid' },
+    { k:'whiff',   n:'Whiff Risk',    i:'ti-circle-x',       d:'Bats likely to strike out vs high-K arms' },
+    { k:'ktargets',n:'K Targets',     i:'ti-target-arrow',   d:'Pitchers into whiff-prone lineups' },
+    { k:'longball',n:'Long Ball',     i:'ti-ball-baseball',  d:'HR spots — power into hitter parks' },
+    { k:'platoon', n:'Platoon Edge',  i:'ti-arrows-shuffle', d:'Big handedness-split mismatches' },
+    { k:'coldarm', n:'Hittable Arms', i:'ti-temperature',    d:'Bats vs contact-prone starters' },
+    { k:'runners', n:'Table Setters', i:'ti-arrow-up-right', d:'Top-of-order run scorers vs wild arms' },
+    { k:'bunny',   n:'Bunnies',       i:'ti-mood-happy',     d:'Batters who own today\'s starter' },
+    { k:'bogey',   n:'Bogeys',        i:'ti-mood-sad',       d:'Batters owned by today\'s starter' },
+    { k:'wheels',  n:'Wheels',        i:'ti-run',            d:'Steal spots vs slow-to-plate arms' },
+    { k:'due',     n:'Due / Unlucky', i:'ti-trending-up',    d:'Underperforming their Statcast — back' },
+    { k:'hothand', n:'Running Hot',   i:'ti-trending-down',  d:'Overperforming their Statcast — fade' }
+  ],
+  tileOrder: ['hot','cold','whiff','ktargets','longball','platoon','coldarm','runners','bunny','bogey','wheels','due','hothand']
+};
