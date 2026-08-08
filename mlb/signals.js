@@ -327,7 +327,29 @@ window.JTTSignals = (function () {
 
     function playStyles(p, pg) { return [pg]; }
     function collectOU() { return []; }
-    function matchupLegs() { return []; }
+    function matchupLegs(players, opp) {
+      var out = [], best = {};
+      if (!opp) return out;
+      var MK = [['H',0.55,'Hit'],['TB',0.9,'Bases'],['RBI',0.4,'RBI'],['R',0.4,'Run'],['HR',0.10,'HR']];
+      (players || []).forEach(function (p) {
+        if (p.role !== 'bat' || (p.matches || 0) < 12) return;
+        var mu = _muScore(p); if (!mu.pit || mu.score < 8) return;         // favourable pitcher matchup only
+        MK.forEach(function (mk) {
+          var avg = (p[mk[0]] || 0) / (p.matches || 1); if (avg < mk[1]) return;
+          var o = oddsFor(p.name, mk[0]); if (!o || o.over == null || o.line == null) return;
+          var prob = JS.batProb(p, mk[0], o.line) || 0.5;   // display/sort only — matchup + avg already qualify the leg
+          var line = o.line;
+          var leg = { p: p, opp: opp, statKey: mk[0], market: mk[0], line: line, side: 'over',
+            type: mk[0], avg: avg, betLabel: Math.ceil(line) + '+ ' + mk[2], lineType: 'twoway',
+            prob: prob, probReal: true, probN: p.matches,
+            _odds: { price: o.over, book: o.book, label: Math.ceil(line) + '+' }, _dvp: mu.score, score: mu.score,
+            reasons: [{ label: abbr(opp) + ' \u2014 weak arm / park edge', pct: mu.score }] };
+          if (!best[p.name] || leg._dvp > best[p.name]._dvp || (leg._dvp === best[p.name]._dvp && leg._odds.price > best[p.name]._odds.price)) best[p.name] = leg;
+        });
+      });
+      Object.keys(best).forEach(function (n) { out.push(best[n]); });
+      return out.sort(function (a, b) { return (b._dvp - a._dvp) || (b._odds.price - a._odds.price); });
+    }
     function captureOU() { return null; }
     function captureMatchup() { return null; }
 
