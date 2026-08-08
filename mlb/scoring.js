@@ -198,7 +198,7 @@ window.JTTScoring = (function () {
 
   return {
     configure: configure, verdict: verdict, scoreCMP: scoreCMP, drLine: drLine,
-    getHitRate: getHitRate, getRecentAvg: getRecentAvg, getDVPPct: getDVPPct,
+    getHitRate: getHitRate, getRecentAvg: getRecentAvg, getL5Avg: function(name, stat){ return getRecentAvg(name, stat, 5); }, getDVPPct: getDVPPct,
     muInfo: muInfo, getContextSignals: getContextSignals, cmpFactors: cmpFactors,
     getL: getL, POS: POS, POS_TO_DVP: POS_TO_DVP,
     // MLB extras used by mlb/signals.js
