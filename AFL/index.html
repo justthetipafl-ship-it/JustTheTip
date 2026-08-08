@@ -2295,8 +2295,7 @@
     }
     // Defence vs Play Style (how the opponent concedes vs this team's playstyles)
     h+=fxLineup(team);
-    h+=fxDvpByPos(team,opp);
-    h+=fxDvPS(team,opp);
+    if(!(window.SPORT_CONFIG&&SPORT_CONFIG.hideDvp)){ h+=fxDvpByPos(team,opp); h+=fxDvPS(team,opp); }
     h+=fxCmbPicks(team,opp);
     h+='</div>';
     return h;
@@ -2343,7 +2342,7 @@
   }
 
   /* ---------- STATS ---------- */
-  const STATS_SUBS=[['scanner','Scanner','ti-table'],['teams','Teams','ti-shield'],['dvp','DVP','ti-shield-half'],['compare','Compare','ti-users']];
+  const STATS_SUBS=[['scanner','Scanner','ti-table'],['teams','Teams','ti-shield'],['dvp','DVP','ti-shield-half'],['compare','Compare','ti-users']].filter(x=>!(x[0]==='dvp'&&window.SPORT_CONFIG&&SPORT_CONFIG.hideDvp));
   // stats offered in the DVP grid + Teams sort (key -> label)
   let DVP_STATS;  // from SPORT_CONFIG
   let POS_ORDER;  // from SPORT_CONFIG
@@ -2360,7 +2359,7 @@
   function statsBody(){
     const v=state.view;
     if(v.statsSub==='teams') return teamsView();
-    if(v.statsSub==='dvp')   return dvpView();
+    if(v.statsSub==='dvp')   return (window.SPORT_CONFIG&&SPORT_CONFIG.hideDvp)?scannerView():dvpView();
     if(v.statsSub==='compare') return comparePage();
     return scannerView();
   }
@@ -3991,7 +3990,7 @@
     return '<div class="j-detail"><div class="j-dhd"><span class="j-dnm" data-n="'+_attrEsc(d.p.name)+'" onclick="openPlayer(this.dataset.n)">'+esc(d.p.name)+'</span>'+
       '<span class="j-dsub">'+abbr(d.p.team)+' v '+abbr(d.opp)+' \u00b7 '+d.line+'+ '+(J_MLAB[S.market]||S.market)+'</span>'+oddsBadge+'</div>'+
       _jBar('Season',r.season,r.seasonN)+_jBar('L5',r.l5,r.l5N)+(r.h2hN?_jBar('H2H',r.h2h,r.h2hN):'')+(r.venueN?_jBar('Venue',r.venue,r.venueN):'')+
-      '<div class="j-chips">'+chip('DVP',d.dvp)+scChip+chip('Def',d.def)+'</div>'+
+      '<div class="j-chips">'+((window.SPORT_CONFIG&&SPORT_CONFIG.hideDvp)?'':chip('DVP',d.dvp))+scChip+chip('Def',d.def)+'</div>'+
       '<div class="j-actions"><button class="j-add2" data-n="'+_attrEsc(d.p.name)+'" onclick="_jAddSingle(this.dataset.n)"><i class="ti ti-receipt"></i> Add single'+(price!=null?' \u00b7 $'+price.toFixed(2):'')+'</button>'+
       '<button class="j-add'+(on?' on':'')+'" data-n="'+_attrEsc(d.p.name)+'" onclick="_jToggle(this.dataset.n)">'+(on?'<i class="ti ti-check"></i> In multi':'<i class="ti ti-stack-2"></i> Add to multi')+'</button></div></div>';
   }
