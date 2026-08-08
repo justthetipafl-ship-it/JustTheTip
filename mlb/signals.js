@@ -214,9 +214,56 @@ window.JTTSignals = (function () {
       return wrap('ti-trending-down', 'Running Hot', out, 'c-tough', 'No standout fade candidates on the slate.');
     }
 
-    var tiles = { hot: hot, cold: cold, whiff: whiff, ktargets: ktargets, longball: longball,
-      platoon: platoon, coldarm: coldarm, runners: runners, bunny: bunny, bogey: bogey,
-      wheels: wheels, due: due, hothand: hothand };
+    // matchup score approximating the standalone's mu: weak arm + platoon edge + park
+    function _muScore(p) {
+      var pit = JS.starterFacing(p); if (!pit) return { score: 0, pit: null };
+      var sc = 0;
+      if (pit.ERA != null) sc += (pit.ERA - 4.0) * 6;
+      if (pit.WHIP != null) sc += (pit.WHIP - 1.25) * 40;
+      if (pit.K9 != null) sc -= (pit.K9 - 8.5) * 3;
+      var sp = pit.throws === 'L' ? p.splitVsL : p.splitVsR;
+      if (sp && sp.SLG && p.SLG) sc += (sp.SLG / p.SLG - 1) * 60;
+      var pk = JS.parkFor(p.team); if (pk && pk.hrFactor) sc += (pk.hrFactor - 1) * 30;
+      return { score: sc, pit: pit };
+    }
+    function greenlights() {
+      var out = [];
+      slateBats().forEach(function (p) {
+        var mu = _muScore(p); if (!mu.pit) return;
+        var prob = JS.batProb(p, 'H', 0.5);
+        if (prob == null || prob < 0.55 || mu.score < 8) return;
+        out.push({ p: p, opp: JS.oppOfTeam(p.team), sc: prob * 100 + mu.score, mkt: 'H', headline: '1+ Hit',
+          detail: Math.round(prob * 100) + '% \u00b7 strong spot vs ' + esc(mu.pit.name) + ' (ERA ' + (mu.pit.ERA || 0).toFixed(2) + ', WHIP ' + (mu.pit.WHIP || 0).toFixed(2) + ')' });
+      });
+      return wrap('ti-circle-check', 'Green Lights', out, 'c-soft', 'No standout green-light spots on the slate.');
+    }
+    function deathriders() {
+      var out = [];
+      slateBats().forEach(function (p) {
+        var mu = _muScore(p); if (!mu.pit) return;
+        var prob = JS.batProb(p, 'H', 0.5);
+        if (prob == null || prob > 0.45 || mu.score > -8) return;
+        out.push({ p: p, opp: JS.oppOfTeam(p.team), sc: -(prob * 100 + mu.score), mkt: 'H', headline: 'Fade',
+          detail: Math.round(prob * 100) + '% to hit \u00b7 tough vs ' + esc(mu.pit.name) + ' (K/9 ' + (mu.pit.K9 || 0).toFixed(1) + ', ERA ' + (mu.pit.ERA || 0).toFixed(2) + ')' });
+      });
+      return wrap('ti-skull', 'Death Riders', out, 'c-tough', 'No standout fade spots on the slate.');
+    }
+    function streakers() {
+      var out = [];
+      slateBats().forEach(function (p) {
+        var lg = recentLogs(p.name); if (lg.length < 5) return;
+        var hs = 0; for (var i = 0; i < lg.length; i++) { if ((+(lg[i].H || 0)) >= 1) hs++; else break; }
+        var ts = 0; for (var j = 0; j < lg.length; j++) { if ((+(lg[j].TB || 0)) >= 2) ts++; else break; }
+        if (hs >= 5) out.push({ p: p, opp: JS.oppOfTeam(p.team), sc: hs, mkt: 'H', headline: hs + '-game hit streak', detail: '1+ hit in ' + hs + ' straight' });
+        else if (ts >= 5) out.push({ p: p, opp: JS.oppOfTeam(p.team), sc: ts, mkt: 'TB', headline: ts + '-game 2+ TB', detail: '2+ bases in ' + ts + ' straight' });
+      });
+      return wrap('ti-flame', 'Streakers', out, 'c-soft', 'No hot streaks on the slate.');
+    }
+
+    var tiles = { greenlights: greenlights, platoon: platoon, runners: runners, due: due,
+      ktargets: ktargets, longball: longball, wheels: wheels, streakers: streakers,
+      bunny: bunny, whiff: whiff, hothand: hothand, cold: cold, deathriders: deathriders,
+      bogey: bogey, hot: hot, coldarm: coldarm };
 
     function playStyles(p, pg) { return [pg]; }
     function collectOU() { return []; }
