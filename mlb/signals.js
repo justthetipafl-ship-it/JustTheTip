@@ -39,9 +39,9 @@ window.JTTSignals = (function () {
     }
     function wrap(icon, title, out, cls, emptyMsg) {
       out.sort(function (a, b) { return b.sc - a.sc; });
-      if (!out.length) return emptyState(icon, title, emptyMsg);
       var col = (cls === 'c-tough' || cls === 'c-red') ? '#ef4444' : (cls === 'c-fav' ? '#eab308' : '#22c55e');
-      return degWrap(icon, title, out.slice(0, 12).map(function (c) { return card(c, col); }), cls);
+      // defer empties to degWrap: hidden in the focused fixture, standard empty-state in the Degen Crew tab
+      return degWrap(icon, title, out.length ? out.slice(0, 12).map(function (c) { return card(c, col); }) : [], cls);
     }
     var d3 = function (v) { return v.toFixed(3).replace(/^0/, ''); };
     // most-recent-first gamelog for a batter (sorted by date desc when present)
@@ -194,7 +194,7 @@ window.JTTSignals = (function () {
     function statcastGap(p) { var s = p.statcast; if (!s || s.xwoba == null || s.woba == null) return null; return s.xwoba - s.woba; }
     function hasStatcast() { return slateBats().some(function (p) { return p.statcast && p.statcast.xwoba != null; }); }
     function due() {
-      if (!hasStatcast()) return emptyState('ti-trending-up', 'Due / Unlucky', 'Statcast (xwOBA) lands with the next MLB data build.');
+      if (!hasStatcast()) return wrap('ti-trending-up', 'Due / Unlucky', [], 'c-soft', 'Statcast lands with the next data build.');
       var out = [];
       slateBats().forEach(function (p) {
         var gap = statcastGap(p), s = p.statcast;
@@ -205,7 +205,7 @@ window.JTTSignals = (function () {
       return wrap('ti-trending-up', 'Due / Unlucky', out, 'c-soft', 'No standout bounce-back candidates on the slate.');
     }
     function hothand() {
-      if (!hasStatcast()) return emptyState('ti-trending-down', 'Running Hot', 'Statcast (xwOBA) lands with the next MLB data build.');
+      if (!hasStatcast()) return wrap('ti-trending-down', 'Running Hot', [], 'c-tough', 'Statcast lands with the next data build.');
       var out = [];
       slateBats().forEach(function (p) {
         var gap = statcastGap(p); if (gap == null || gap > -0.032) return;
