@@ -1477,6 +1477,7 @@
     const mo=(src&&src.matchOdds)||[]; const moIdx={};
     mo.forEach(g=>{ if(!g||!g.home||!g.away) return; moIdx[[g.home,g.away].sort().join('|')]=g; });
     state.idx.matchOddsIdx=moIdx;
+    try{ _snapClosingLines(); }catch(e){}
     // alternate line ladders (e.g. disposals 20+/25+/30+): altIdx[name][market] = [{line,over,book}] asc
     const altArr=altArr0; const altIdx={};
     altArr.forEach(a=>{ const n=RS(a.player); if(!n)return; (altIdx[n]=altIdx[n]||{}); (altIdx[n][a.market]=altIdx[n][a.market]||[]).push({line:+a.line,over:a.over!=null?+a.over:null,book:a.book}); });
@@ -1941,9 +1942,7 @@
   function _liveOrd(n){ const s=['th','st','nd','rd'],v=n%100; return n+(s[(v-20)%10]||s[v]||s[0]); }
   function _liveInningTxt(d){ return (d.half==='top'?'top ':'bot ')+_liveOrd(d.inning||0); }
   function _livePaceTracker(d, g){
-    const go=(state.idx.matchOddsIdx||{})[[g.home,g.away].sort().join('|')];
-    const total=go&&go.total?go.total.points:null;
-    const rl=go&&go.line&&go.line.home!=null?go.line.home:null;
+    const _lt=_gameLineTotal(g); const total=_lt.total, rl=_lt.line;
     if(total==null && rl==null) return '';
     const hr=(d.linescore.home||{}).runs||0, ar=(d.linescore.away||{}).runs||0, R=hr+ar;
     const inning=d.inning||0;
@@ -1969,7 +1968,7 @@
       blocks+='<div class="pace-blk"><div class="pace-top"><span>Run line <b>'+esc(favAbbr||'')+' '+(rl<0?rl:'+'+rl)+'</b></span><span class="pace-trend" style="color:'+(cover?'#22c55e':'#ef4444')+'">'+(cover?'COVERING':'NOT YET')+'</span></div>'+
         '<div class="pace-sub">'+esc(homeAbbr||'')+' '+(margin>=0?'+'+margin:margin)+' \u00b7 '+esc(awayAbbr||'')+' '+(margin<=0?'+'+(-margin):'-'+margin)+' now</div></div>';
     }
-    return '<div class="live-card"><div class="live-hd">Line &amp; total tracker</div>'+blocks+'</div>';
+    return '<div class="live-card"><div class="live-hd">Closing line &amp; total</div>'+blocks+'</div>';
   }
   function _liveLeaders(d){
     const bats=[].concat(d.batters.home||[],d.batters.away||[]);
@@ -2026,6 +2025,39 @@
     if(state.view.aflLive && document.getElementById('afllive-body'))_renderApp();
   }
   function _aflScore(rows){ let g=0,b=0; (rows||[]).forEach(p=>{ g+=+p.G||0; b+=+p.B||0; }); return {g,b,pts:g*6+b}; }
+  // ---- closing line/total: odds feeds drop games at start, so freeze the last pre-game number ----
+  const CLOSING_KEY='jtt_closing_lines';
+  function _closingLines(){ try{ return JSON.parse(localStorage.getItem(CLOSING_KEY)||'{}'); }catch(e){ return {}; } }
+  function _snapClosingLines(){
+    let store; try{ store=JSON.parse(localStorage.getItem(CLOSING_KEY)||'{}'); }catch(e){ store={}; }
+    let changed=false;
+    (state.data.fixture||[]).forEach(g=>{ const t=gameStart(g); if(t==null||Date.now()>=t) return;   // only update while still pre-game
+      const key=[g.home,g.away].sort().join('|');
+      const go=(state.idx.matchOddsIdx||{})[key];
+      if(go && (go.total||go.line)){ store[key]={ total:go.total?go.total.points:null, line:(go.line&&go.line.home!=null)?go.line.home:null, at:Date.now() }; changed=true; }
+    });
+    if(changed){ try{ localStorage.setItem(CLOSING_KEY, JSON.stringify(store)); }catch(e){} }
+  }
+  function _gameLineTotal(g){
+    const key=[g.home,g.away].sort().join('|');
+    const go=(state.idx.matchOddsIdx||{})[key];
+    let total=go&&go.total?go.total.points:null, line=(go&&go.line&&go.line.home!=null)?go.line.home:null;
+    if(total==null&&line==null){ const cl=_closingLines()[key]; if(cl){ total=cl.total; line=cl.line; } }
+    return { total, line };
+  }
+  // ---- AFL team score: prefer the feed's real score (counts rushed behinds); else compute from players ----
+  function _aflTeamScore(side, rows){
+    const d=_aflLive.data||{}, lg=_aflLive.liveGame||{};
+    const pick=(o,keys)=>{ if(!o) return null; for(let i=0;i<keys.length;i++){ if(o[keys[i]]!=null) return o[keys[i]]; } return null; };
+    const cap=side.charAt(0).toUpperCase()+side.slice(1);
+    let pts=pick(d,[side+'Score',side+'_score',side+'Points','score'+cap]); if(pts==null) pts=pick(lg,[side+'Score',side+'_score',side+'Points','score'+cap]);
+    let g=pick(d,[side+'Goals',side+'_goals']); if(g==null) g=pick(lg,[side+'Goals',side+'_goals']);
+    let b=pick(d,[side+'Behinds',side+'_behinds']); if(b==null) b=pick(lg,[side+'Behinds',side+'_behinds']);
+    const so=(d.score||d.scores||lg.score||{})[side]; if(so&&typeof so==='object'){ if(so.points!=null)pts=so.points; if(so.goals!=null)g=so.goals; if(so.behinds!=null)b=so.behinds; }
+    if(pts!=null) return { g:(g!=null?+g:null), b:(b!=null?+b:null), pts:+pts, real:true };
+    if(g!=null&&b!=null) return { g:+g, b:+b, pts:+g*6+(+b), real:true };
+    return Object.assign(_aflScore(rows), {real:false});   // fallback: players only (no rushed behinds)
+  }
   function _aflQuarter(lg,d){
     const raw=(d&&(d.quarter||d.period||d.q))||(lg&&(lg.quarter||lg.period))||(d&&d.status)||(lg&&lg.status)||'';
     if(/final|full ?time|\bft\b|complete/i.test(''+raw)) return {label:'Full Time', frac:1};
@@ -2034,8 +2066,7 @@
     return {label:'Q'+qn, frac:Math.min(1,(qn-0.5)/4), qn};
   }
   function _aflLivePace(g,hs,as,q){
-    const go=(state.idx.matchOddsIdx||{})[[g.home,g.away].sort().join('|')];
-    const total=go&&go.total?go.total.points:null, rl=go&&go.line&&go.line.home!=null?go.line.home:null;
+    const _lt=_gameLineTotal(g); const total=_lt.total, rl=_lt.line;
     if(total==null&&rl==null) return '';
     const T=hs.pts+as.pts; const c=q?Math.max(0.12,q.frac):null; let blocks='';
     if(total!=null){
@@ -2050,7 +2081,7 @@
     }
     if(rl!=null){ const margin=hs.pts-as.pts; const favAbbr=rl<0?abbr(g.home):abbr(g.away), favMargin=rl<0?margin:-margin, cover=favMargin>Math.abs(rl);
       blocks+='<div class="pace-blk"><div class="pace-top"><span>Line <b>'+esc(favAbbr)+' '+(rl<0?rl:'+'+rl)+'</b></span><span class="pace-trend" style="color:'+(cover?'#22c55e':'#ef4444')+'">'+(cover?'COVERING':'NOT YET')+'</span></div><div class="pace-sub">'+esc(abbr(g.home))+' '+(margin>=0?'+'+margin:margin)+' now</div></div>'; }
-    return '<div class="live-card"><div class="live-hd">Line &amp; total tracker</div>'+blocks+'</div>';
+    return '<div class="live-card"><div class="live-hd">Closing line &amp; total</div>'+blocks+'</div>';
   }
   function _aflLiveCard(g){
     const rows={}; [].concat(_aflLive.home||[],_aflLive.away||[]).forEach(p=>{ rows[_normName(p.name)]=p; });
@@ -2086,7 +2117,7 @@
     if(!_aflLive.data && _aflLive.loading) return h+emptyState('ti-live-photo','Loading live\u2026','Pulling the feed.')+'</div>';
     if(!_aflLive.data && _aflLive.err) return h+emptyState('ti-plug-connected-x',_aflLive.err,'')+'</div>';
     if(!_aflLive.data) return h+emptyState('ti-live-photo','No live data','')+'</div>';
-    const hs=_aflScore(_aflLive.home), as=_aflScore(_aflLive.away), q=_aflQuarter(_aflLive.liveGame,_aflLive.data);
+    const hs=_aflTeamScore('home',_aflLive.home), as=_aflTeamScore('away',_aflLive.away), q=_aflQuarter(_aflLive.liveGame,_aflLive.data);
     const live=!(q&&q.frac>=1);
     const staleS=Math.round((Date.now()-(_aflLive.at||Date.now()))/1000);
     h+='<div class="afl-score"><div class="afl-tm">'+teamLogo(g.home,30)+'<div class="afl-ab">'+esc(abbr(g.home))+'</div><div class="afl-pts">'+hs.pts+'</div><div class="afl-gb">'+hs.g+'.'+hs.b+'</div></div>'+
