@@ -1784,9 +1784,9 @@
   }
   function _mlbFocusHeader(g){
     const pk=(g.park&&g.park.name)||g.venue||'TBC';
-    const _st=(g.status||'').toLowerCase();
-    const _isLive=/progress|in progress|live|delayed|warmup/.test(_st);
-    const _isDone=/final|game over|completed/.test(_st);
+    const _rs=_mlbGameState(g); let _isLive, _isDone;
+    if(_rs){ _isLive=(_rs==='Live'); _isDone=(_rs==='Final'); }
+    else { const _t=gameStart(g), _started=_t!=null&&Date.now()>=_t; _isDone=_started&&gameDone(g); _isLive=_started&&!_isDone; }
     const _liveBtn=(g.gamePk&&(_isLive||_isDone))?'<button class="live-open-btn'+(_isLive?' live':'')+'" onclick="_mlbLiveOpen('+g.gamePk+')"><span class="live-dot'+(_isLive?' on':'')+'"></span>'+(_isLive?'Watch Live':'Box Score')+'</button>':'';
     const hr=g.park&&(g.park.hrFactor!=null?g.park.hrFactor:(g.park.hr!=null?g.park.hr:null));
     const rf=g.park&&(g.park.runFactor!=null?g.park.runFactor:(g.park.runs!=null?g.park.runs:null));
@@ -1821,7 +1821,12 @@
       return isNaN(t)?null:t; }
     return null;
   }
-  function gameDone(g){ const t=gameStart(g); return t!=null && Date.now() > t + 150*60*1000; }   // ~150 min after bounce = completed
+  function gameDone(g){
+    if(SPORT.key==='mlb'){ const st=_mlbGameState(g); if(st==='Final') return true; if(st==='Live'||st==='Preview') return false; }
+    const t=gameStart(g); if(t==null) return false;
+    const win=({mlb:240,nfl:225}[SPORT.key]||150)*60*1000;
+    return Date.now() > t + win;
+  }
   window._sHideCompleted=function(){ SETTINGS.hideCompleted=!SETTINGS.hideCompleted; saveSettings(); _renderApp(); };
   function _mlbToday(){ const d=new Date(); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
   window._mlbSetDay=function(d){ state.view.mlbDay=d; _renderApp(); window.scrollTo({top:0}); };
@@ -1849,6 +1854,18 @@
   }
   // ============ MLB LIVE — gamePk -> linescore + boxscore + card overlay ============
   let _mlbLive = { pk:null, data:null, at:0, loading:false, err:null, timer:null };
+  let _mlbStatus = { map:null, at:0, loading:false };
+  function _mlbStatusEnsure(){
+    const w=(window.SPORT_CONFIG&&SPORT_CONFIG.liveWorker)||SPORT.liveWorker||''; if(!w) return;
+    if(_mlbStatus.loading || (_mlbStatus.map && Date.now()-_mlbStatus.at<60000)) return;
+    _mlbStatus.loading=true;
+    fetch(w.replace(/\/+$/,'')+'/live').then(r=>r.json()).then(j=>{
+      const m={}; ((j&&j.games)||[]).forEach(g=>{ if(g.pk!=null) m[g.pk]={state:g.state, status:g.status}; });
+      _mlbStatus.map=m; _mlbStatus.at=Date.now(); _mlbStatus.loading=false;
+      if(SPORT.key==='mlb' && state.view.mlbLive==null) _renderApp();
+    }).catch(()=>{ _mlbStatus.loading=false; _mlbStatus.at=Date.now(); });
+  }
+  function _mlbGameState(g){ if(!g||g.gamePk==null||!_mlbStatus.map) return null; const s=_mlbStatus.map[g.gamePk]; return s?s.state:null; }
   const _LIVE_MKT_LBL = { H:'Hits', TB:'Total Bases', HR:'Home Runs', RBI:'RBIs', R:'Runs', SB:'Steals', K:'Strikeouts', BB:'Walks', ER:'Earned Runs', HA:'Hits Allowed', OUTS:'Outs' };
   function _mlbLiveUrl(pk){ const w=(window.SPORT_CONFIG&&SPORT_CONFIG.liveWorker)||SPORT.liveWorker||''; return w?(w.replace(/\/+$/,'')+'/game?pk='+pk):''; }
   async function _mlbLiveFetch(pk){
@@ -2112,7 +2129,7 @@
     h+=mlbDayNav;
     if(!games.length) return h+emptyState('ti-calendar-check','No games','No games scheduled for this day.');
     games.forEach(({g,i})=>{
-      if(SPORT.key==='mlb'){ h+=_mlbFxRow(g,i); return; }
+      if(SPORT.key==='mlb'){ _mlbStatusEnsure(); h+=_mlbFxRow(g,i); return; }
       h+='<div class="fixture-row'+(gameDone(g)?' fxr-done':'')+'" onclick="state.view.fixtureId='+i+';_renderApp();window.scrollTo({top:0})">'+
         '<div class="fxr-team">'+teamLogo(g.home,40)+'<div class="fxr-name">'+g.home+'</div>'+pips(g.home)+'</div>'+
         '<div class="fxr-center"><div class="fxr-kickoff">'+esc(_localTime(g))+'</div><div class="fxr-vs">'+(gameDone(g)?'<span class="fxr-ft">FT</span>':'v')+'</div><div class="fxr-venue">'+(g.venue||'TBC')+'</div>'+weatherChip(g.home,g.away)+'</div>'+
