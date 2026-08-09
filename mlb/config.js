@@ -69,6 +69,7 @@ window.SPORT_CONFIG = {
   pcStats: [['H','Hits'],['TB','TB'],['HR','HR'],['RBI','RBI'],['R','R'],['SB','SB'],['K','K']],
 
   // ---- logos via MLB Stats CDN by team id ----
+  liveWorker: 'https://jtt-mlb-live.justthetipafl.workers.dev',   // MLB Stats API proxy Worker (deploy jtt-mlb-live-worker.js)
   hideDvp: true,
   logoCdn: 'https://www.mlbstatic.com/team-logos/',
   teamIds: { ATH:133, ATL:144, AZ:109, BAL:110, BOS:111, CHC:112, CIN:113, CLE:114, COL:115, CWS:145,
