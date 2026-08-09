@@ -1691,7 +1691,7 @@
     }
     if(!fx.length) return head+emptyState('ti-calendar-off','No fixtures','Run the data build.');
     const g=fx[gi];
-    const title=esc(g.home)+' vs '+esc(g.away)+(g.time?' &middot; '+esc(g.time):'');
+    const title=esc(g.home)+' vs '+esc(g.away)+(g.time?' &middot; '+esc(_localTime(g)):'');
     const titleSec='<div class="tp-sec"><div class="sec-title"><i class="ti ti-coins"></i> '+title+'</div></div>';
     const search='<div class="ob-filter ob-search-wrap"><span class="ob-fl">Player</span><input class="ob-search" id="ob-search" type="search" placeholder="Search player…" value="'+esc(state.view.oddsSearch||'')+'" oninput="state.view.oddsSearch=this.value;rerenderOdds()"></div>';
     return head+filters+titleSec+_oddsRefreshLine()+search+'<div id="ob-mount">'+_oddsBoardTable()+'</div>';
@@ -1804,12 +1804,16 @@
   function _mlbFxRow(g,i){
     return '<div class="fixture-row mlb-fxr'+(gameDone(g)?' fxr-done':'')+'" onclick="state.view.fixtureId='+i+';_renderApp();window.scrollTo({top:0})">'+
       '<div class="fxr-team">'+teamLogo(g.away,38)+'<div class="fxr-name">'+esc(g.away)+'</div>'+_mlbSP(g.awayPitcher)+'</div>'+
-      '<div class="fxr-center"><div class="fxr-kickoff">'+esc(g.time||'')+'</div><div class="fxr-vs">'+(gameDone(g)?'<span class="fxr-ft">FINAL</span>':'@')+'</div><div class="fxr-venue">'+esc(g.venue||'TBC')+'</div>'+weatherChip(g.home,g.away)+'</div>'+
+      '<div class="fxr-center"><div class="fxr-kickoff">'+esc(_localTime(g))+'</div><div class="fxr-vs">'+(gameDone(g)?'<span class="fxr-ft">FINAL</span>':'@')+'</div><div class="fxr-venue">'+esc(g.venue||'TBC')+'</div>'+weatherChip(g.home,g.away)+'</div>'+
       '<div class="fxr-team">'+teamLogo(g.home,38)+'<div class="fxr-name">'+esc(g.home)+'</div>'+_mlbSP(g.homePitcher)+'</div></div>';
   }
+  // display the game time/date in the USER's timezone (games ship in venue/source tz)
+  function _localTime(g){ const ms=gameStart(g); if(ms==null) return (g&&g.time)||''; return new Date(ms).toLocaleTimeString([], {hour:'numeric', minute:'2-digit'}); }
+  function _localDate(g){ const ms=gameStart(g); if(ms==null) return (g&&g.date)||''; const d=new Date(ms); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
   // best-effort kickoff instant: prefer raw utc; else parse date+time (current data is UTC 24h, post-rebuild is venue-local 12h)
   function gameStart(g){
-    if(g&&g.utc){ const s=g.utc.length<=19?g.utc+'Z':g.utc; const t=Date.parse(s); if(!isNaN(t)) return t; }
+    const _u=g&&(g.utc||g.gameTimeUTC||g.startTimeUTC);
+    if(_u){ const s=/[zZ]|[+-]\d\d:?\d\d$/.test(_u)?_u:(_u+'Z'); const t=Date.parse(s); if(!isNaN(t)) return t; }
     if(g&&g.date&&g.time){ const ap=g.time.match(/(am|pm)/i), mm=g.time.match(/(\d{1,2}):(\d{2})/);
       if(!mm) return null; let h=+mm[1]; const m=+mm[2];
       if(ap){ const pm=/pm/i.test(ap[1]); if(pm&&h<12)h+=12; if(!pm&&h===12)h=0; }
@@ -2083,7 +2087,7 @@
     // MLB: Today / Tomorrow day tabs (like the standalone tool)
     let mlbDayNav='';
     if(SPORT.key==='mlb'){
-      const dates=[...new Set(games.map(x=>x.g.date).filter(Boolean))].sort();
+      const dates=[...new Set(games.map(x=>_localDate(x.g)).filter(Boolean))].sort();
       if(dates.length>1){
         const today=new Date(); today.setHours(0,0,0,0);
         const dayLabel=(d)=>{ const dt=new Date(d+'T12:00:00'); const dd=new Date(dt); dd.setHours(0,0,0,0);
@@ -2093,7 +2097,7 @@
           return (rel?rel+' \u00b7 ':'')+wk; };
         let sel=state.view.mlbDay; if(!sel||dates.indexOf(sel)<0) sel=(dates.indexOf(_mlbToday())>=0?_mlbToday():dates[0]);
         mlbDayNav='<div class="mlb-day-tabs">'+dates.map(d=>'<button class="mlb-day-tab'+(d===sel?' on':'')+'" onclick="_mlbSetDay(\''+d+'\')">'+dayLabel(d)+'</button>').join('')+'</div>';
-        games=games.filter(x=>x.g.date===sel);
+        games=games.filter(x=>_localDate(x.g)===sel);
       }
     }
     const _fxTitle=SPORT.key==='mlb'?'Focused Fixtures':('Round '+(state.data.meta&&state.data.meta.round||''));
@@ -2105,7 +2109,7 @@
       if(SPORT.key==='mlb'){ h+=_mlbFxRow(g,i); return; }
       h+='<div class="fixture-row'+(gameDone(g)?' fxr-done':'')+'" onclick="state.view.fixtureId='+i+';_renderApp();window.scrollTo({top:0})">'+
         '<div class="fxr-team">'+teamLogo(g.home,40)+'<div class="fxr-name">'+g.home+'</div>'+pips(g.home)+'</div>'+
-        '<div class="fxr-center"><div class="fxr-kickoff">'+(g.date||'')+'<br>'+(g.time||'')+'</div><div class="fxr-vs">'+(gameDone(g)?'<span class="fxr-ft">FT</span>':'v')+'</div><div class="fxr-venue">'+(g.venue||'TBC')+'</div>'+weatherChip(g.home,g.away)+'</div>'+
+        '<div class="fxr-center"><div class="fxr-kickoff">'+esc(_localTime(g))+'</div><div class="fxr-vs">'+(gameDone(g)?'<span class="fxr-ft">FT</span>':'v')+'</div><div class="fxr-venue">'+(g.venue||'TBC')+'</div>'+weatherChip(g.home,g.away)+'</div>'+
         '<div class="fxr-team">'+teamLogo(g.away,40)+'<div class="fxr-name">'+g.away+'</div>'+pips(g.away)+'</div></div>';
     });
     return h;
@@ -2626,7 +2630,7 @@
     if(SPORT.key==='mlb'){ h+=_mlbFocusHeader(g); }
     else h+='<div class="fixture-header">'+
       '<div class="fixture-team">'+teamLogo(g.home,52)+'<div class="fxr-name">'+g.home+'</div>'+pips(g.home)+'</div>'+
-      '<div class="fixture-center"><div class="kickoff">'+(g.date||'')+' '+(g.time||'')+'</div><div class="vs-big">v</div><div class="venue">'+(g.venue||'TBC')+'</div>'+weatherChip(g.home,g.away)+'</div>'+
+      '<div class="fixture-center"><div class="kickoff">'+esc(_localDate(g))+' '+esc(_localTime(g))+'</div><div class="vs-big">v</div><div class="venue">'+(g.venue||'TBC')+'</div>'+weatherChip(g.home,g.away)+'</div>'+
       '<div class="fixture-team">'+teamLogo(g.away,52)+'<div class="fxr-name">'+g.away+'</div>'+pips(g.away)+'</div></div>';
     if(SPORT.key==='afl' && LIVE_WORKER) h+='<button class="live-open-btn" onclick="_aflLiveOpenCurrent()"><span class="live-dot on"></span>Watch Live</button>';
     h+=(_fxHid('sec','matchOdds')?'':gameMatchOdds(g.home,g.away))+(_fxHid('sec','h2h')?'':gameHeadToHead(g.home,g.away))+(_fxHid('sec','clash')?'':gameClash(g.home,g.away))+(_fxHid('sec','lastMeeting')?'':gameLastMeeting(g.home,g.away));
@@ -4194,7 +4198,7 @@
     _mbActiveBook=M.book||null;                                   // constrain all leg pricing to the chosen book
     try{
       let fixtures=(state.data.fixture||[]).filter(g=>g.home&&g.away);
-      if(M.today){ const t=_todayStr(); fixtures=fixtures.filter(g=>(g.date||'')===t); }
+      if(M.today){ const t=_todayStr(); fixtures=fixtures.filter(g=>_localDate(g)===t); }
       if(_mbFocusGame){ fixtures=fixtures.filter(g=>g.home===_mbFocusGame.home&&g.away===_mbFocusGame.away); }
       const banned=new Set(M.banned||[]);
       const pl=t=>(state.idx.players||[]).filter(p=>p.team===t&&(p.matches||0)>=3&&!banned.has(p.name));
@@ -5318,7 +5322,7 @@
   function _gkey(a,b){ return [a,b].sort().join(' | '); }
   function todaysBoard(){
     const fx=state.data.fixture||[]; const today=_todayStr();
-    let dayGames=fx.filter(g=>(g.date||'')===today), label='Today';
+    let dayGames=fx.filter(g=>_localDate(g)===today), label='Today';
     if(!dayGames.length){ const nd=[...new Set(fx.map(g=>g.date).filter(d=>d&&d>=today))].sort()[0]||[...new Set(fx.map(g=>g.date).filter(Boolean))].sort()[0]; dayGames=fx.filter(g=>(g.date||'')===nd); label=nd?_niceDate(nd):'Next slate'; }
     const dayTeams=new Set(dayGames.flatMap(g=>[g.home,g.away]));
     const teams=[...dayTeams];
