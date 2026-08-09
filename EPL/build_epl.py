@@ -86,6 +86,9 @@ def merge_row(p, f, a, dy):
     return {
         "Player": p.get("name"), "Team": team, "Opp": opp, "home": home,
         "Year": year_of(dy), "Date": dy, "date": dy, "MatchId": match_id(dy, team, opp),
+        # YYYYMMDD round so the shell's dedupe keys each match-day distinctly (EPL has no AFL-style rounds,
+        # and the same two clubs meet twice a season — without this, home+away fixtures would collapse into one)
+        "RoundName": (dy or "").replace("-", ""),
         "min": pick("min", "min"),
         # FPL-first fields (API-Football fallback for last-season rows)
         "goals": pick("G", "goals"), "assists": pick("A", "assists"),
