@@ -143,7 +143,10 @@ def build_teams(fpl_players, boot):
     # fpl_players carries a {teams: {id:{name,short}}} map; enrich from bootstrap if present
     tmap = {}
     for t in (boot or {}).get("teams", []):
-        tmap[t["name"]] = {"team": t["name"], "short": t.get("short_name"), "id": t.get("id")}
+        code = t.get("code")
+        # official Premier League club badge (the PL's own CDN, same one FPL serves), keyed by club code
+        logo = ("https://resources.premierleague.com/premierleague/badges/70/t%d.png" % code) if code else None
+        tmap[t["name"]] = {"team": t["name"], "short": t.get("short_name"), "id": t.get("id"), "code": code, "logo": logo}
     for tid, t in (fpl_players.get("teams") or {}).items():
         nm = t.get("name")
         if nm and nm not in tmap:
