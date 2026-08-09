@@ -99,6 +99,22 @@
   .live-leg-bot{display:flex;justify-content:space-between;font-size:11px;color:var(--text-3);}
   .live-tag{font-weight:800;}
   .live-leg.live-cashed .live-tag{color:#22c55e;} .live-leg.live-busted .live-tag{color:#ef4444;} .live-leg.live-open .live-tag{color:#f59e0b;}
+  .pace-blk{padding:8px 0;border-top:1px solid var(--border);}
+  .pace-blk:first-of-type{border-top:0;padding-top:2px;}
+  .pace-top{display:flex;justify-content:space-between;font-size:13px;margin-bottom:6px;}
+  .pace-trend{font-weight:800;font-size:11px;letter-spacing:.03em;}
+  .pace-bar{position:relative;height:10px;border-radius:5px;background:var(--surface-3);overflow:visible;margin:4px 0 6px;}
+  .pace-fill{height:100%;border-radius:5px;background:var(--accent);}
+  .pace-mark{position:absolute;top:-3px;width:2px;height:16px;}
+  .pace-total{background:var(--text-1);}
+  .pace-proj{background:#f59e0b;width:0;border-left:2px dashed #f59e0b;}
+  .pace-sub{font-size:11px;color:var(--text-3);}
+  .lead-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:8px;}
+  @media(min-width:560px){.lead-grid{grid-template-columns:repeat(4,1fr);}}
+  .lead-cell{background:var(--surface-3);border-radius:9px;padding:8px;text-align:center;cursor:pointer;}
+  .lead-v{font-family:var(--font-mono);font-weight:800;font-size:20px;color:var(--accent);}
+  .lead-nm{font-size:11px;font-weight:700;color:var(--text-1);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .lead-lbl{font-size:9px;color:var(--text-3);text-transform:uppercase;letter-spacing:.04em;}
   .live-box-cols{display:grid;grid-template-columns:1fr;gap:12px;}
   @media(min-width:760px){.live-box-cols{grid-template-columns:1fr 1fr;}}
   .bx-block{overflow-x:auto;}
@@ -1885,6 +1901,50 @@
     pits.forEach(p=>{ ph+='<tr onclick="openPlayer(\''+esc(p.name).replace(/'/g,"\\'")+'\')"><td class="bx-nm">'+esc(p.name)+'</td><td>'+p.ip+'</td><td>'+p.h+'</td><td>'+p.er+'</td><td>'+p.bb+'</td><td><b>'+p.k+'</b></td><td colspan="2"></td></tr>'; });
     return '<div class="bx-block"><table class="bx">'+bh+ph+'</table></div>';
   }
+  function _liveOrd(n){ const s=['th','st','nd','rd'],v=n%100; return n+(s[(v-20)%10]||s[v]||s[0]); }
+  function _liveInningTxt(d){ return (d.half==='top'?'top ':'bot ')+_liveOrd(d.inning||0); }
+  function _livePaceTracker(d, g){
+    const go=(state.idx.matchOddsIdx||{})[[g.home,g.away].sort().join('|')];
+    const total=go&&go.total?go.total.points:null;
+    const rl=go&&go.line&&go.line.home!=null?go.line.home:null;
+    if(total==null && rl==null) return '';
+    const hr=(d.linescore.home||{}).runs||0, ar=(d.linescore.away||{}).runs||0, R=hr+ar;
+    const inning=d.inning||0;
+    const elapsedOuts=Math.max(3,(inning-1)*6+(d.half==='bottom'?3:0)+(d.outs||0));
+    const c=Math.min(1,elapsedOuts/54);   // fraction of the game complete (by outs)
+    let blocks='';
+    if(total!=null){
+      // blend: remaining innings score at the live rate (weighted by how far in we are) or the pre-game rate (early)
+      const liveRemaining=(R/c)*(1-c), preRemaining=total*(1-c);
+      const proj=R + (c*liveRemaining + (1-c)*preRemaining);
+      const trend=proj>total+0.4?['OVER','#22c55e']:proj<total-0.4?['UNDER','#ef4444']:['ON THE NUMBER','var(--text-2)'];
+      const barMax=Math.max(total,proj,R,1)*1.12;
+      blocks+='<div class="pace-blk"><div class="pace-top"><span>Total <b>'+total+'</b></span><span class="pace-trend" style="color:'+trend[1]+'">'+trend[0]+(trend[0]==='ON THE NUMBER'?'':' trending')+'</span></div>'+
+        '<div class="pace-bar"><div class="pace-fill" style="width:'+Math.round(R/barMax*100)+'%"></div>'+
+        '<div class="pace-mark pace-total" style="left:'+Math.round(total/barMax*100)+'%"></div>'+
+        '<div class="pace-mark pace-proj" style="left:'+Math.round(proj/barMax*100)+'%"></div></div>'+
+        '<div class="pace-sub"><b>'+R+'</b> runs through '+_liveInningTxt(d)+' \u00b7 projecting <b>'+proj.toFixed(1)+'</b> \u00b7 <span style="opacity:.7">line '+total+'</span></div></div>';
+    }
+    if(rl!=null){
+      const margin=hr-ar;
+      const homeAbbr=(d.linescore.home||{}).abbr, awayAbbr=(d.linescore.away||{}).abbr;
+      const favAbbr=rl<0?homeAbbr:awayAbbr, favMargin=rl<0?margin:-margin, cover=favMargin>Math.abs(rl);
+      blocks+='<div class="pace-blk"><div class="pace-top"><span>Run line <b>'+esc(favAbbr||'')+' '+(rl<0?rl:'+'+rl)+'</b></span><span class="pace-trend" style="color:'+(cover?'#22c55e':'#ef4444')+'">'+(cover?'COVERING':'NOT YET')+'</span></div>'+
+        '<div class="pace-sub">'+esc(homeAbbr||'')+' '+(margin>=0?'+'+margin:margin)+' \u00b7 '+esc(awayAbbr||'')+' '+(margin<=0?'+'+(-margin):'-'+margin)+' now</div></div>';
+    }
+    return '<div class="live-card"><div class="live-hd">Line &amp; total tracker</div>'+blocks+'</div>';
+  }
+  function _liveLeaders(d){
+    const bats=[].concat(d.batters.home||[],d.batters.away||[]);
+    const pits=[].concat(d.pitchers.home||[],d.pitchers.away||[]);
+    const top=(arr,k)=>arr.slice().sort((a,b)=>(b[k]||0)-(a[k]||0))[0];
+    const items=[]; const add=(lbl,p,k)=>{ if(p&&(p[k]||0)>0) items.push([lbl,p.name,p[k]]); };
+    add('Total bases', top(bats,'tb'),'tb'); add('Hits', top(bats,'h'),'h');
+    add('RBIs', top(bats,'rbi'),'rbi'); add('Strikeouts', top(pits,'k'),'k');
+    if(!items.length) return '';
+    return '<div class="live-card"><div class="live-hd">Game leaders</div><div class="lead-grid">'+
+      items.map(it=>'<div class="lead-cell" onclick="openPlayer(\''+esc(it[1]).replace(/\x27/g,"\\\x27")+'\')"><div class="lead-v">'+it[2]+'</div><div class="lead-nm">'+esc(it[1])+'</div><div class="lead-lbl">'+it[0]+'</div></div>').join('')+'</div></div>';
+  }
   function renderMlbLive(g){
     const d=_mlbLive.data;
     const back='<button class="fx-back" onclick="_mlbLiveClose()"><i class="ti ti-arrow-left"></i> Back to matchup</button>';
@@ -1899,7 +1959,9 @@
       ' \u00b7 <button class="live-refresh" onclick="_mlbLiveRefresh()">refresh</button>'+(staleS>75?' \u00b7 <span class="live-stale">updated '+staleS+'s ago</span>':'')+'</div></div>';
     if(d.winPct&&(d.winPct.home!=null)) h+='<div class="live-wp"><span>'+esc((d.linescore.away||{}).abbr)+' '+Math.round(d.winPct.away)+'%</span><div class="live-wp-bar"><div style="width:'+Math.round(d.winPct.home)+'%"></div></div><span>'+Math.round(d.winPct.home)+'% '+esc((d.linescore.home||{}).abbr)+'</span></div>';
     h+=_liveLinescore(d);
+    h+=_livePaceTracker(d, g);
     h+=_liveCardOverlay(d);
+    h+=_liveLeaders(d);
     h+='<div class="live-box-cols">'+_liveBoxTeam(d,'away')+_liveBoxTeam(d,'home')+'</div>';
     return h+'</div>';
   }
