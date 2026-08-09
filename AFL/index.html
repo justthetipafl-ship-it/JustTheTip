@@ -115,6 +115,15 @@
   .lead-v{font-family:var(--font-mono);font-weight:800;font-size:20px;color:var(--accent);}
   .lead-nm{font-size:11px;font-weight:700;color:var(--text-1);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
   .lead-lbl{font-size:9px;color:var(--text-3);text-transform:uppercase;letter-spacing:.04em;}
+  .afl-score{display:grid;grid-template-columns:1fr auto 1fr;gap:10px;align-items:center;background:var(--surface-2);border:1px solid var(--border);border-radius:12px;padding:14px;margin:8px 0 10px;}
+  .afl-tm{text-align:center;}
+  .afl-ab{font-family:var(--font-display);font-weight:800;font-size:13px;margin-top:4px;}
+  .afl-pts{font-family:var(--font-mono);font-weight:800;font-size:32px;line-height:1;margin-top:2px;}
+  .afl-gb{font-size:11px;color:var(--text-3);font-family:var(--font-mono);}
+  .afl-mid{text-align:center;display:flex;flex-direction:column;align-items:center;gap:3px;min-width:70px;}
+  .afl-q{font-weight:800;font-size:13px;}
+  .afl-marg{font-size:11px;color:var(--text-2);white-space:nowrap;}
+  .bx .bx-hi{color:var(--text-1);font-weight:700;}
   .live-box-cols{display:grid;grid-template-columns:1fr;gap:12px;}
   @media(min-width:760px){.live-box-cols{grid-template-columns:1fr 1fr;}}
   .bx-block{overflow-x:auto;}
@@ -1965,9 +1974,106 @@
     h+='<div class="live-box-cols">'+_liveBoxTeam(d,'away')+_liveBoxTeam(d,'home')+'</div>';
     return h+'</div>';
   }
+  // ============ AFL LIVE — Champion Data feed -> scoreboard + box + card + line/total ============
+  let _aflLive = { g:null, data:null, home:[], away:[], liveGame:null, at:0, loading:false, err:null, timer:null };
+  const _AFL_BOX = [['D','Disp'],['K','Kicks'],['H','HB'],['M','Marks'],['T','Tack'],['G','Goals'],['B','Beh'],['AF','Fant']];
+  window._aflLiveOpen=function(g){ _aflLive.g=g; _aflLive.data=null; _aflLive.err=null; state.view.aflLive=1; _renderApp(); window.scrollTo({top:0}); _aflLiveFetch(g).then(_aflLivePoll); };
+  window._aflLiveOpenCurrent=function(){ const g=(state.data.fixture||[])[state.view.fixtureId]; if(g) _aflLiveOpen(g); };
+  window._aflLiveClose=function(){ clearTimeout(_aflLive.timer); state.view.aflLive=null; _renderApp(); };
+  window._aflLiveRefresh=function(){ if(_aflLive.g) _aflLiveFetch(_aflLive.g); };
+  function _aflLivePoll(){ clearTimeout(_aflLive.timer); _aflLive.timer=setTimeout(function(){ if(state.view.aflLive && _aflLive.g && document.getElementById('afllive-body')){ _aflLiveFetch(_aflLive.g).then(_aflLivePoll); } }, 30000); }
+  async function _aflLiveFetch(g){
+    if(!LIVE_WORKER){ _aflLive.err='Live feed not configured'; _aflLive.loading=false; if(document.getElementById('afllive-body'))_renderApp(); return; }
+    _aflLive.loading=true; if(document.getElementById('afllive-body')&&!_aflLive.data)_renderApp();
+    try{
+      if(!_liveState.games || Date.now()-_liveState.gamesAt>300000){ const j=await fetch(LIVE_WORKER+'/fixtures').then(r=>r.json()); _liveState.games=(j&&j.matches)||[]; _liveState.gamesAt=Date.now(); }
+      const lg=_liveState.games.find(x=>(_liveTeamEq(x.home,g.home)&&_liveTeamEq(x.away,g.away))||(_liveTeamEq(x.home,g.away)&&_liveTeamEq(x.away,g.home)));
+      if(!lg){ _aflLive.err='This game is not in the live feed yet.'; _aflLive.loading=false; _aflLive.at=Date.now(); if(document.getElementById('afllive-body'))_renderApp(); return; }
+      _aflLive.liveGame=lg;
+      const j=await fetch(LIVE_WORKER+'/match?id='+lg.matchId).then(r=>r.json());
+      if(j&&j.ok){ const swap=_liveTeamEq(lg.home,g.away); _aflLive.home=(swap?j.away:j.home)||[]; _aflLive.away=(swap?j.home:j.away)||[]; _aflLive.data=j; _aflLive.err=null; }
+      else _aflLive.err='No live data for this game yet.';
+    }catch(e){ _aflLive.err='Live feed unavailable'; }
+    _aflLive.loading=false; _aflLive.at=Date.now();
+    if(state.view.aflLive && document.getElementById('afllive-body'))_renderApp();
+  }
+  function _aflScore(rows){ let g=0,b=0; (rows||[]).forEach(p=>{ g+=+p.G||0; b+=+p.B||0; }); return {g,b,pts:g*6+b}; }
+  function _aflQuarter(lg,d){
+    const raw=(d&&(d.quarter||d.period||d.q))||(lg&&(lg.quarter||lg.period))||(d&&d.status)||(lg&&lg.status)||'';
+    if(/final|full ?time|\bft\b|complete/i.test(''+raw)) return {label:'Full Time', frac:1};
+    let qn=null; const m=/(?:q|quarter|period)\s*([1-4])/i.exec(''+raw); if(m)qn=+m[1]; else if(typeof raw==='number'&&raw>=1&&raw<=4)qn=raw;
+    if(qn==null){ const pc=(d&&(d.percentComplete||d.pct)); if(pc!=null) return {label:Math.round(pc)+'%', frac:Math.min(1,pc/100)}; return null; }
+    return {label:'Q'+qn, frac:Math.min(1,(qn-0.5)/4), qn};
+  }
+  function _aflLivePace(g,hs,as,q){
+    const go=(state.idx.matchOddsIdx||{})[[g.home,g.away].sort().join('|')];
+    const total=go&&go.total?go.total.points:null, rl=go&&go.line&&go.line.home!=null?go.line.home:null;
+    if(total==null&&rl==null) return '';
+    const T=hs.pts+as.pts; const c=q?Math.max(0.12,q.frac):null; let blocks='';
+    if(total!=null){
+      let sub, trend;
+      if(c&&c<1){ const proj=T+(c*((T/c)*(1-c))+(1-c)*(total*(1-c)));
+        trend=proj>total+4?['OVER','#22c55e']:proj<total-4?['UNDER','#ef4444']:['ON THE NUMBER','var(--text-2)'];
+        sub='<b>'+T+'</b> pts \u00b7 projecting <b>'+Math.round(proj)+'</b> \u00b7 line '+total; }
+      else { trend=[T>total?'OVER':'UNDER','var(--text-2)']; sub='<b>'+T+'</b> pts \u00b7 line '+total; }
+      const barMax=Math.max(total,T,1)*1.15;
+      blocks+='<div class="pace-blk"><div class="pace-top"><span>Total <b>'+total+'</b></span><span class="pace-trend" style="color:'+trend[1]+'">'+trend[0]+(trend[0]==='ON THE NUMBER'?'':' trending')+'</span></div>'+
+        '<div class="pace-bar"><div class="pace-fill" style="width:'+Math.round(T/barMax*100)+'%"></div><div class="pace-mark pace-total" style="left:'+Math.round(total/barMax*100)+'%"></div></div><div class="pace-sub">'+sub+'</div></div>';
+    }
+    if(rl!=null){ const margin=hs.pts-as.pts; const favAbbr=rl<0?abbr(g.home):abbr(g.away), favMargin=rl<0?margin:-margin, cover=favMargin>Math.abs(rl);
+      blocks+='<div class="pace-blk"><div class="pace-top"><span>Line <b>'+esc(favAbbr)+' '+(rl<0?rl:'+'+rl)+'</b></span><span class="pace-trend" style="color:'+(cover?'#22c55e':'#ef4444')+'">'+(cover?'COVERING':'NOT YET')+'</span></div><div class="pace-sub">'+esc(abbr(g.home))+' '+(margin>=0?'+'+margin:margin)+' now</div></div>'; }
+    return '<div class="live-card"><div class="live-hd">Line &amp; total tracker</div>'+blocks+'</div>';
+  }
+  function _aflLiveCard(g){
+    const rows={}; [].concat(_aflLive.home||[],_aflLive.away||[]).forEach(p=>{ rows[_normName(p.name)]=p; });
+    const legs=(_CARD||[]).filter(e=>e&&e.type==='single'&&e.name&&e.mkt&&e.line!==''&&e.line!=null);
+    let out='';
+    legs.forEach(e=>{
+      const row=rows[_normName(e.name)]; if(!row) return; const field=_LIVE_FIELD[e.mkt]; if(!field||row[field]==null) return;
+      const v=+row[field]||0, line=+e.line, side=e.side||'over', need=Math.ceil(line); let cls,tag,pct=Math.min(1,need?v/need:0);
+      if(side==='over'){ cls=v>=need?'live-cashed':'live-open'; tag=v>=need?'CASHED':(v+' / '+need); }
+      else { const bust=v>=need; cls=bust?'live-busted':'live-open'; tag=bust?'BUSTED':(v+' / '+need+' allowed'); }
+      out+='<div class="live-leg '+cls+'"><div class="live-leg-top"><span class="live-nm">'+esc(e.name)+'</span><span class="live-bet">'+(side==='over'?'O ':'U ')+e.line+' '+esc((_LIVE_MLAB[e.mkt]||e.mkt))+'</span></div><div class="live-bar"><div class="live-bar-fill" style="width:'+Math.round(pct*100)+'%"></div></div><div class="live-leg-bot"><span class="live-have">'+v+' so far</span><span class="live-tag">'+tag+'</span></div></div>';
+    });
+    if(!out) return '<div class="live-card"><div class="live-hd">Your card \u00b7 this game</div><div class="live-none">No card legs in this matchup.</div></div>';
+    return '<div class="live-card"><div class="live-hd">Your card \u00b7 this game</div>'+out+'</div>';
+  }
+  function _aflLiveLeaders(){
+    const all=[].concat(_aflLive.home||[],_aflLive.away||[]);
+    const top=(k)=>all.slice().sort((a,b)=>(+b[k]||0)-(+a[k]||0))[0];
+    const items=[]; const add=(lbl,k)=>{ const p=top(k); if(p&&(+p[k]||0)>0) items.push([lbl,p.name,+p[k]]); };
+    add('Disposals','D'); add('Goals','G'); add('Marks','M'); add('Tackles','T');
+    if(!items.length) return '';
+    return '<div class="live-card"><div class="live-hd">Game leaders</div><div class="lead-grid">'+items.map(it=>'<div class="lead-cell" onclick="openPlayer(\''+esc(it[1]).replace(/\x27/g,"\\\x27")+'\')"><div class="lead-v">'+it[2]+'</div><div class="lead-nm">'+esc(it[1])+'</div><div class="lead-lbl">'+it[0]+'</div></div>').join('')+'</div></div>';
+  }
+  function _aflLiveBox(team,rows){
+    const sorted=(rows||[]).slice().sort((a,b)=>(+b.D||0)-(+a.D||0));
+    let head='<tr><th class="bx-nm">'+esc(abbr(team))+'</th>'; _AFL_BOX.forEach(c=>head+='<th>'+c[1]+'</th>'); head+='</tr>';
+    let body=''; sorted.forEach(p=>{ body+='<tr onclick="openPlayer(\''+esc(p.name).replace(/\x27/g,"\\\x27")+'\')"><td class="bx-nm">'+esc(p.name)+'</td>'; _AFL_BOX.forEach(c=>{ const v=p[c[0]]; body+='<td'+(c[0]==='D'?' class="bx-hi"':'')+'>'+(v==null?'':v)+'</td>'; }); body+='</tr>'; });
+    return '<div class="bx-block"><table class="bx">'+head+body+'</table></div>';
+  }
+  function renderAflLive(g){
+    const back='<button class="fx-back" onclick="_aflLiveClose()"><i class="ti ti-arrow-left"></i> Back to matchup</button>';
+    let h='<div id="afllive-body">'+back;
+    if(!_aflLive.data && _aflLive.loading) return h+emptyState('ti-live-photo','Loading live\u2026','Pulling the feed.')+'</div>';
+    if(!_aflLive.data && _aflLive.err) return h+emptyState('ti-plug-connected-x',_aflLive.err,'')+'</div>';
+    if(!_aflLive.data) return h+emptyState('ti-live-photo','No live data','')+'</div>';
+    const hs=_aflScore(_aflLive.home), as=_aflScore(_aflLive.away), q=_aflQuarter(_aflLive.liveGame,_aflLive.data);
+    const live=!(q&&q.frac>=1);
+    const staleS=Math.round((Date.now()-(_aflLive.at||Date.now()))/1000);
+    h+='<div class="afl-score"><div class="afl-tm">'+teamLogo(g.home,30)+'<div class="afl-ab">'+esc(abbr(g.home))+'</div><div class="afl-pts">'+hs.pts+'</div><div class="afl-gb">'+hs.g+'.'+hs.b+'</div></div>'+
+      '<div class="afl-mid"><span class="live-dot'+(live?' on':'')+'"></span><div class="afl-q">'+(q?q.label:'\u2014')+'</div><div class="afl-marg">'+(hs.pts>as.pts?esc(abbr(g.home))+' by '+(hs.pts-as.pts):as.pts>hs.pts?esc(abbr(g.away))+' by '+(as.pts-hs.pts):'level')+'</div><button class="live-refresh" onclick="_aflLiveRefresh()">refresh</button>'+(staleS>75?'<div class="live-stale">updated '+staleS+'s ago</div>':'')+'</div>'+
+      '<div class="afl-tm">'+teamLogo(g.away,30)+'<div class="afl-ab">'+esc(abbr(g.away))+'</div><div class="afl-pts">'+as.pts+'</div><div class="afl-gb">'+as.g+'.'+as.b+'</div></div></div>';
+    h+=_aflLivePace(g,hs,as,q);
+    h+=_aflLiveCard(g);
+    h+=_aflLiveLeaders();
+    h+='<div class="live-box-cols">'+_aflLiveBox(g.home,_aflLive.home)+_aflLiveBox(g.away,_aflLive.away)+'</div>';
+    return h+'</div>';
+  }
   function renderFixture(){
     const fx=state.data.fixture||[];
     if(SPORT.key==='mlb' && state.view.mlbLive!=null){ const _lg=(fx||[]).find(x=>x.gamePk==state.view.mlbLive); if(_lg) return renderMlbLive(_lg); }
+    if(SPORT.key==='afl' && state.view.aflLive && _aflLive.g) return renderAflLive(_aflLive.g);
     if(state.view.fixtureId!=null) return renderFocusedFixture(fx[state.view.fixtureId]);
     if(!fx.length) return emptyState('ti-calendar-off','No fixtures loaded','Fixtures refresh with the weekly data build.');
     const doneCount=fx.filter(gameDone).length;
@@ -2522,6 +2628,7 @@
       '<div class="fixture-team">'+teamLogo(g.home,52)+'<div class="fxr-name">'+g.home+'</div>'+pips(g.home)+'</div>'+
       '<div class="fixture-center"><div class="kickoff">'+(g.date||'')+' '+(g.time||'')+'</div><div class="vs-big">v</div><div class="venue">'+(g.venue||'TBC')+'</div>'+weatherChip(g.home,g.away)+'</div>'+
       '<div class="fixture-team">'+teamLogo(g.away,52)+'<div class="fxr-name">'+g.away+'</div>'+pips(g.away)+'</div></div>';
+    if(SPORT.key==='afl' && LIVE_WORKER) h+='<button class="live-open-btn" onclick="_aflLiveOpenCurrent()"><span class="live-dot on"></span>Watch Live</button>';
     h+=(_fxHid('sec','matchOdds')?'':gameMatchOdds(g.home,g.away))+(_fxHid('sec','h2h')?'':gameHeadToHead(g.home,g.away))+(_fxHid('sec','clash')?'':gameClash(g.home,g.away))+(_fxHid('sec','lastMeeting')?'':gameLastMeeting(g.home,g.away));
     h+='<div class="team-cols">'+teamPanel(g.home,g.away,true)+teamPanel(g.away,g.home,false)+'</div>';
     // mode toggle now sits directly above the signals it controls
