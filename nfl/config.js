@@ -1,7 +1,5 @@
 /* JTT sport config — NFL. Loaded by the unified shell as window.SPORT_CONFIG. */
 window.SPORT_CONFIG = {
-  // official team logos — ESPN CDN by lowercase abbreviation (onerror falls back to the jersey)
-  logoCdn: 'https://a.espncdn.com/i/teamlogos/nfl/500/', logoCdnExt: '.png', teamIds: { LA:'lar', WAS:'wsh' },
   key: 'nfl',
   name: 'NFL',
   jupiter: {
@@ -30,10 +28,9 @@ window.SPORT_CONFIG = {
   teamCols: [['points','Pts'],['plays','Plays'],['passYds','PaYd'],['passAtt','PaAtt'],['passComp','Cmp'],['passTds','PaTD'],['passInt','INT'],['sacks','Sck'],['rushYds','RuYd'],['rushAtt','RuAtt'],['rushTds','RuTD'],['receptions','Rec'],['targets','Tgt']],
   viewDefaults: { sortKey:'fanPts', statsStat:'receptions', teamsSort:'points' },
   oddsMkts: [['passYds','Pass Yds'],['passTds','Pass TDs'],['passAtt','Pass Att'],['rushYds','Rush Yds'],['rushAtt','Rush Att'],['receptions','Receptions'],['recYds','Rec Yds'],['rushRecYds','Rush+Rec'],['anytimeTd','Anytime TD'],['tackles','Tackles+Ast']],
-  tileOrder: ['ledger','paydirt','elite','bunnies','bogey','streak','chunk','wrap','usage','next','stack','wx','push','clamp','form'],
+  tileOrder: ['paydirt','elite','bunnies','bogey','streak','chunk','wrap','usage','next','stack','wx','push','clamp','form'],
   posColors: {'QB':'#ef4444','RB':'#22c55e','WR':'#3b82f6','TE':'#f59e0b','LB':'#a855f7','DL':'#f97316','DB':'#06b6d4'},
-  crew: [{k:'ledger',n:'Signal Ledger',i:'ti-notebook',d:'Track record'},
-    {k:'multi',n:'Multi Builder',i:'ti-stack-2',d:'Stacked legs'},
+  crew: [{k:'multi',n:'Multi Builder',i:'ti-stack-2',d:'Stacked legs'},
     {k:'green',n:'Green Lights',i:'ti-traffic-lights',d:'Strong OVER'},
     {k:'paydirt',n:'Tuddy Targets',i:'ti-ball-american-football',d:'Redzone royalty'},
     {k:'elite',n:'Elite Matchups',i:'ti-trophy',d:'Top v soft'},
