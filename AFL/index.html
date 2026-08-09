@@ -66,6 +66,48 @@
   .rdr-row{display:flex !important;align-items:center;gap:10px;}
   .rdr-score{flex:0 0 auto;min-width:36px;height:36px;display:flex;align-items:center;justify-content:center;border-radius:9px;border:1px solid;font-family:var(--font-mono);font-weight:800;font-size:15px;}
   .rdr-pos{font-size:9px;color:var(--text-3);font-weight:700;}
+  .live-open-btn{display:inline-flex;align-items:center;gap:7px;padding:8px 16px;border-radius:999px;border:1px solid var(--border);background:var(--surface-2);color:var(--text-1);font-weight:800;font-size:13px;cursor:pointer;margin:0 0 10px;}
+  .live-open-btn.live{border-color:#ef4444;color:#ef4444;}
+  .live-dot{width:8px;height:8px;border-radius:50%;background:var(--text-3);display:inline-block;}
+  .live-dot.on{background:#ef4444;animation:livePulse 1.4s infinite;}
+  @keyframes livePulse{0%,100%{opacity:1}50%{opacity:.35}}
+  .fx-back{background:none;border:0;color:var(--accent);font-weight:700;font-size:13px;cursor:pointer;padding:6px 0;margin-bottom:6px;display:inline-flex;align-items:center;gap:4px;}
+  .live-refresh{background:none;border:0;color:var(--accent);font-weight:700;cursor:pointer;font-size:12px;padding:0;}
+  .live-stale{color:#f59e0b;font-size:11px;}
+  .live-wp{display:flex;align-items:center;gap:8px;font-size:11px;font-weight:700;color:var(--text-2);margin:6px 0 10px;}
+  .live-wp-bar{flex:1;height:6px;border-radius:3px;background:var(--surface-3);overflow:hidden;}
+  .live-wp-bar>div{height:100%;background:var(--accent);}
+  .lsc-wrap{overflow-x:auto;margin:8px 0 12px;}
+  .lsc{border-collapse:collapse;font-family:var(--font-mono);font-size:12px;width:100%;}
+  .lsc th,.lsc td{text-align:center;padding:5px 7px;border-bottom:1px solid var(--border);min-width:22px;color:var(--text-2);}
+  .lsc thead th{color:var(--text-3);font-weight:700;font-size:10px;}
+  .lsc .lsc-tm{text-align:left;font-weight:800;color:var(--text-1);min-width:44px;}
+  .lsc .lsc-rhe{border-left:1px solid var(--border);color:var(--text-1);}
+  .live-card{background:var(--surface-2);border:1px solid var(--border);border-radius:12px;padding:12px;margin:10px 0;}
+  .live-hd{font-family:var(--font-display);font-weight:800;font-size:13px;margin-bottom:8px;}
+  .live-none{font-size:12px;color:var(--text-3);}
+  .live-leg{padding:8px 0;border-top:1px solid var(--border);}
+  .live-leg:first-of-type{border-top:0;}
+  .live-leg-top{display:flex;justify-content:space-between;gap:8px;font-size:13px;}
+  .live-nm{font-weight:700;color:var(--text-1);}
+  .live-bet{color:var(--text-2);font-size:12px;white-space:nowrap;}
+  .live-bar{height:7px;border-radius:4px;background:var(--surface-3);overflow:hidden;margin:5px 0 4px;}
+  .live-bar-fill{height:100%;background:var(--text-3);transition:width .3s;}
+  .live-leg.live-open .live-bar-fill{background:#f59e0b;}
+  .live-leg.live-cashed .live-bar-fill{background:#22c55e;}
+  .live-leg.live-busted .live-bar-fill{background:#ef4444;}
+  .live-leg-bot{display:flex;justify-content:space-between;font-size:11px;color:var(--text-3);}
+  .live-tag{font-weight:800;}
+  .live-leg.live-cashed .live-tag{color:#22c55e;} .live-leg.live-busted .live-tag{color:#ef4444;} .live-leg.live-open .live-tag{color:#f59e0b;}
+  .live-box-cols{display:grid;grid-template-columns:1fr;gap:12px;}
+  @media(min-width:760px){.live-box-cols{grid-template-columns:1fr 1fr;}}
+  .bx-block{overflow-x:auto;}
+  .bx{border-collapse:collapse;font-size:11px;width:100%;font-family:var(--font-mono);}
+  .bx th,.bx td{padding:4px 6px;text-align:center;border-bottom:1px solid var(--border);color:var(--text-2);}
+  .bx th{color:var(--text-3);font-weight:700;font-size:9px;}
+  .bx .bx-nm{text-align:left;color:var(--text-1);white-space:nowrap;min-width:120px;}
+  .bx tr[onclick]{cursor:pointer;}
+  .bx-pos{color:var(--text-3);font-size:9px;}
   .mlb-day-tabs{display:flex;gap:8px;margin:10px 0 4px;flex-wrap:wrap;}
   .mlb-day-tab{padding:7px 14px;border-radius:999px;border:1px solid var(--border);background:var(--surface-2);color:var(--text-2);font-size:12px;font-weight:700;cursor:pointer;white-space:nowrap;}
   .mlb-day-tab.on{background:var(--accent);border-color:var(--accent);color:#04120a;}
@@ -1717,6 +1759,10 @@
   }
   function _mlbFocusHeader(g){
     const pk=(g.park&&g.park.name)||g.venue||'TBC';
+    const _st=(g.status||'').toLowerCase();
+    const _isLive=/progress|in progress|live|delayed|warmup/.test(_st);
+    const _isDone=/final|game over|completed/.test(_st);
+    const _liveBtn=(g.gamePk&&(_isLive||_isDone))?'<button class="live-open-btn'+(_isLive?' live':'')+'" onclick="_mlbLiveOpen('+g.gamePk+')"><span class="live-dot'+(_isLive?' on':'')+'"></span>'+(_isLive?'Watch Live':'Box Score')+'</button>':'';
     const hr=g.park&&(g.park.hrFactor!=null?g.park.hrFactor:(g.park.hr!=null?g.park.hr:null));
     const rf=g.park&&(g.park.runFactor!=null?g.park.runFactor:(g.park.runs!=null?g.park.runs:null));
     let meta='<div class="mlb-meta-bar">'+
@@ -1725,7 +1771,7 @@
       (rf!=null?'<div class="mlb-meta"><i class="ti ti-activity"></i><span class="mm-k">Runs</span><span class="mm-v">'+(+rf).toFixed(2)+'x</span></div>':'')+
       (g.time?'<div class="mlb-meta"><i class="ti ti-clock"></i><span class="mm-k">First pitch</span><span class="mm-v">'+esc(g.time)+'</span></div>':'')+
       '</div>';
-    return '<div class="fixture-header mlb-fxh">'+
+    return ''+_liveBtn+'<div class="fixture-header mlb-fxh">'+
       '<div class="fixture-team">'+teamLogo(g.away,52)+'<div class="fxr-name">'+esc(g.away)+'</div>'+_mlbSP(g.awayPitcher)+'</div>'+
       '<div class="fixture-center"><div class="vs-big">@</div><div class="venue">'+esc(pk)+'</div></div>'+
       '<div class="fixture-team">'+teamLogo(g.home,52)+'<div class="fxr-name">'+esc(g.home)+'</div>'+_mlbSP(g.homePitcher)+'</div></div>'+meta;
@@ -1772,8 +1818,94 @@
       (w.rainProb!=null?'<span class="wx-x"><i class="ti ti-droplet"></i>'+w.rainProb+'%</span>':'')+
       (w.wind!=null?'<span class="wx-x"><i class="ti ti-wind"></i>'+w.wind+'</span>':'')+'</div>';
   }
+  // ============ MLB LIVE — gamePk -> linescore + boxscore + card overlay ============
+  let _mlbLive = { pk:null, data:null, at:0, loading:false, err:null, timer:null };
+  const _LIVE_MKT_LBL = { H:'Hits', TB:'Total Bases', HR:'Home Runs', RBI:'RBIs', R:'Runs', SB:'Steals', K:'Strikeouts', BB:'Walks', ER:'Earned Runs', HA:'Hits Allowed', OUTS:'Outs' };
+  function _mlbLiveUrl(pk){ const w=(window.SPORT_CONFIG&&SPORT_CONFIG.liveWorker)||SPORT.liveWorker||''; return w?(w.replace(/\/+$/,'')+'/game?pk='+pk):''; }
+  async function _mlbLiveFetch(pk){
+    const url=_mlbLiveUrl(pk); if(!url){ _mlbLive.err='Live feed not configured'; _mlbLive.loading=false; if(document.getElementById('mlblive-body'))_renderApp(); return; }
+    _mlbLive.loading=true; if(document.getElementById('mlblive-body')&&!_mlbLive.data) _renderApp();
+    try{ const j=await fetch(url).then(r=>r.json()); if(j&&!j.error){ _mlbLive.data=j; _mlbLive.err=null; } else { _mlbLive.err=(j&&j.error)||'Live feed error'; } }
+    catch(e){ _mlbLive.err='Live feed unavailable'; }
+    _mlbLive.loading=false; _mlbLive.at=Date.now();
+    if(state.view.mlbLive!=null && document.getElementById('mlblive-body')) _renderApp();
+  }
+  function _mlbLivePoll(){ clearTimeout(_mlbLive.timer); _mlbLive.timer=setTimeout(function(){
+    if(_mlbLive.pk!=null && state.view.mlbLive!=null && _mlbLive.data && _mlbLive.data.state!=='Final'){ _mlbLiveFetch(_mlbLive.pk).then(_mlbLivePoll); }
+  }, 30000); }
+  window._mlbLiveOpen=function(pk){ _mlbLive.pk=pk; _mlbLive.data=null; _mlbLive.err=null; state.view.mlbLive=pk; _renderApp(); window.scrollTo({top:0}); _mlbLiveFetch(pk).then(_mlbLivePoll); };
+  window._mlbLiveClose=function(){ clearTimeout(_mlbLive.timer); state.view.mlbLive=null; _renderApp(); };
+  window._mlbLiveRefresh=function(){ if(_mlbLive.pk!=null) _mlbLiveFetch(_mlbLive.pk); };
+
+  function _liveLinescore(d){
+    const ls=d.linescore||{}, inn=ls.innings||[];
+    const shown=Math.max(9, inn.length, d.inning||0);
+    let head='<th class="lsc-tm"></th>'; for(let i=1;i<=shown;i++) head+='<th>'+i+'</th>'; head+='<th class="lsc-rhe">R</th><th class="lsc-rhe">H</th><th class="lsc-rhe">E</th>';
+    const row=(side)=>{ const t=ls[side]||{}; let r='<td class="lsc-tm">'+esc(t.abbr||side)+'</td>';
+      for(let i=1;i<=shown;i++){ const ing=inn[i-1]; const v=ing?ing[side]:null; r+='<td>'+(v==null?(i<=(d.inning||0)?'0':''):v)+'</td>'; }
+      r+='<td class="lsc-rhe"><b>'+(t.runs||0)+'</b></td><td class="lsc-rhe">'+(t.hits||0)+'</td><td class="lsc-rhe">'+(t.errors||0)+'</td>'; return '<tr>'+r+'</tr>'; };
+    return '<div class="lsc-wrap"><table class="lsc"><thead><tr>'+head+'</tr></thead><tbody>'+row('away')+row('home')+'</tbody></table></div>';
+  }
+  function _liveFindPlayer(d, name, kind){
+    const nk=(typeof _nmKeys==='function')?_nmKeys(name):[(name||'').toLowerCase()];
+    const arr=kind==='pit'?[].concat(d.pitchers.home||[],d.pitchers.away||[]):[].concat(d.batters.home||[],d.batters.away||[]);
+    return arr.find(p=>((typeof _nmKeys==='function')?_nmKeys(p.name):[(p.name||'').toLowerCase()]).some(k=>nk.indexOf(k)>=0))||null;
+  }
+  function _liveStatFor(d, name, mkt){
+    const BAT={H:'h',TB:'tb',HR:'hr',RBI:'rbi',R:'r',BB:'bb',K:'k',SB:'sb'};
+    const PIT={K:'k',ER:'er',OUTS:'outs',HA:'h',BB:'bb'};
+    if(mkt==='ER'||mkt==='OUTS'||mkt==='HA'){ const p=_liveFindPlayer(d,name,'pit'); return p?{v:+p[PIT[mkt]]||0,pitcher:true}:null; }
+    const b=_liveFindPlayer(d,name,'bat'); if(b&&BAT[mkt]!=null) return {v:+b[BAT[mkt]]||0,pitcher:false};
+    const p=_liveFindPlayer(d,name,'pit'); if(p&&PIT[mkt]!=null) return {v:+p[PIT[mkt]]||0,pitcher:true};
+    return null;
+  }
+  function _liveCardOverlay(d){
+    const legs=(typeof _CARD!=='undefined'?_CARD:[]).filter(e=>e&&e.type==='single'&&e.name&&e.mkt&&e.line!=='');
+    let rows='';
+    legs.forEach(e=>{
+      const st=_liveStatFor(d, e.name, e.mkt); if(!st) return;
+      const line=parseFloat(e.line); if(isNaN(line)) return;
+      const side=e.side||'over', need=Math.ceil(line), have=st.v;
+      let cls, tag, pct=Math.min(1, need? have/need : 0);
+      if(side==='over'){ cls=have>=need?'live-cashed':'live-open'; tag=have>=need?'CASHED':(have+' / '+need); }
+      else { const busted=have>=need; cls=busted?'live-busted':'live-open'; tag=busted?'BUSTED':(have+' / '+need+' allowed'); }
+      rows+='<div class="live-leg '+cls+'"><div class="live-leg-top"><span class="live-nm">'+esc(e.name)+'</span>'+
+        '<span class="live-bet">'+(side==='over'?'O ':'U ')+e.line+' '+(_LIVE_MKT_LBL[e.mkt]||e.mkt)+'</span></div>'+
+        '<div class="live-bar"><div class="live-bar-fill" style="width:'+Math.round(pct*100)+'%"></div></div>'+
+        '<div class="live-leg-bot"><span class="live-have">'+have+' so far</span><span class="live-tag">'+tag+'</span></div></div>';
+    });
+    if(!rows) return '<div class="live-card"><div class="live-hd">Your card · this game</div><div class="live-none">No card legs in this matchup. Add bets from The Radar or Degen Signals.</div></div>';
+    return '<div class="live-card"><div class="live-hd">Your card · this game</div>'+rows+'</div>';
+  }
+  function _liveBoxTeam(d, side){
+    const bats=d.batters[side]||[], pits=d.pitchers[side]||[]; const t=(d.linescore[side]||{});
+    let bh='<tr><th class="bx-nm">'+esc(t.abbr||side)+' Batters</th><th>AB</th><th>H</th><th>R</th><th>RBI</th><th>HR</th><th>BB</th><th>K</th></tr>';
+    bats.forEach(b=>{ bh+='<tr onclick="openPlayer(\''+esc(b.name).replace(/'/g,"\\'")+'\')"><td class="bx-nm">'+esc(b.name)+' <span class="bx-pos">'+esc(b.pos||'')+'</span></td><td>'+b.ab+'</td><td><b>'+b.h+'</b></td><td>'+b.r+'</td><td>'+b.rbi+'</td><td>'+b.hr+'</td><td>'+b.bb+'</td><td>'+b.k+'</td></tr>'; });
+    let ph='<tr><th class="bx-nm">Pitchers</th><th>IP</th><th>H</th><th>ER</th><th>BB</th><th>K</th><th colspan="2"></th></tr>';
+    pits.forEach(p=>{ ph+='<tr onclick="openPlayer(\''+esc(p.name).replace(/'/g,"\\'")+'\')"><td class="bx-nm">'+esc(p.name)+'</td><td>'+p.ip+'</td><td>'+p.h+'</td><td>'+p.er+'</td><td>'+p.bb+'</td><td><b>'+p.k+'</b></td><td colspan="2"></td></tr>'; });
+    return '<div class="bx-block"><table class="bx">'+bh+ph+'</table></div>';
+  }
+  function renderMlbLive(g){
+    const d=_mlbLive.data;
+    const back='<button class="fx-back" onclick="_mlbLiveClose()"><i class="ti ti-arrow-left"></i> Back to matchup</button>';
+    let h='<div id="mlblive-body">'+back;
+    if(!d && _mlbLive.loading) return h+emptyState('ti-live-photo','Loading live…','Pulling the box score.')+'</div>';
+    if(!d && _mlbLive.err) return h+emptyState('ti-plug-connected-x',_mlbLive.err,'Live feed needs the MLB live Worker set in config (liveWorker).')+'</div>';
+    if(!d) return h+emptyState('ti-live-photo','No live data','')+'</div>';
+    const live=d.state==='Live';
+    const staleS=Math.round((Date.now()-(_mlbLive.at||Date.now()))/1000);
+    h+='<div class="page-header"><div class="page-title">'+esc((d.linescore.away||{}).abbr||g.away)+' @ '+esc((d.linescore.home||{}).abbr||g.home)+'</div>'+
+      '<div class="page-sub"><span class="live-dot'+(live?' on':'')+'"></span>'+esc(d.status||'')+(live?' \u00b7 '+d.half+' '+d.inning+' \u00b7 '+d.outs+' out':'')+
+      ' \u00b7 <button class="live-refresh" onclick="_mlbLiveRefresh()">refresh</button>'+(staleS>75?' \u00b7 <span class="live-stale">updated '+staleS+'s ago</span>':'')+'</div></div>';
+    if(d.winPct&&(d.winPct.home!=null)) h+='<div class="live-wp"><span>'+esc((d.linescore.away||{}).abbr)+' '+Math.round(d.winPct.away)+'%</span><div class="live-wp-bar"><div style="width:'+Math.round(d.winPct.home)+'%"></div></div><span>'+Math.round(d.winPct.home)+'% '+esc((d.linescore.home||{}).abbr)+'</span></div>';
+    h+=_liveLinescore(d);
+    h+=_liveCardOverlay(d);
+    h+='<div class="live-box-cols">'+_liveBoxTeam(d,'away')+_liveBoxTeam(d,'home')+'</div>';
+    return h+'</div>';
+  }
   function renderFixture(){
     const fx=state.data.fixture||[];
+    if(SPORT.key==='mlb' && state.view.mlbLive!=null){ const _lg=(fx||[]).find(x=>x.gamePk==state.view.mlbLive); if(_lg) return renderMlbLive(_lg); }
     if(state.view.fixtureId!=null) return renderFocusedFixture(fx[state.view.fixtureId]);
     if(!fx.length) return emptyState('ti-calendar-off','No fixtures loaded','Fixtures refresh with the weekly data build.');
     const doneCount=fx.filter(gameDone).length;
