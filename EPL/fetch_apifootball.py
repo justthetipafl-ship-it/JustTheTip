@@ -69,12 +69,18 @@ def player_stat(statistics):
     t = s.get("tackles") or {}
     fl = s.get("fouls") or {}
     g = s.get("games") or {}
+    go = s.get("goals") or {}
+    cd = s.get("cards") or {}
     return {
         "min": g.get("minutes"),
         "shots": sh.get("total"), "sot": sh.get("on"),
         "fouls": fl.get("committed"), "fouls_drawn": fl.get("drawn"),
         "passes": p.get("total"), "key_passes": p.get("key"),
         "tackles": t.get("total"),
+        # also captured (same call, free) so the last-season backfill is a complete gamelog
+        "goals": go.get("total"), "assists": go.get("assists"),
+        "saves": go.get("saves"), "conceded": go.get("conceded"),
+        "yellow": cd.get("yellow"), "red": cd.get("red"),
     }
 
 
