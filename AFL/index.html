@@ -2095,7 +2095,13 @@
           const rel=diff===0?'Today':diff===1?'Tomorrow':diff===-1?'Yesterday':'';
           const wk=dt.toLocaleDateString([],{weekday:'short',day:'numeric',month:'short'});
           return (rel?rel+' \u00b7 ':'')+wk; };
-        let sel=state.view.mlbDay; if(!sel||dates.indexOf(sel)<0) sel=(dates.indexOf(_mlbToday())>=0?_mlbToday():dates[0]);
+        let sel=state.view.mlbDay;
+        if(!sel||dates.indexOf(sel)<0){
+          // default to the CURRENT slate: earliest local date that still has a live/upcoming game
+          // (AU users watch US games in the morning, so the live slate is often the local 'tomorrow')
+          const liveDates=[...new Set(games.filter(x=>!gameDone(x.g)).map(x=>_localDate(x.g)))].sort();
+          sel = liveDates[0] || (dates.indexOf(_mlbToday())>=0?_mlbToday():dates[dates.length-1]);
+        }
         mlbDayNav='<div class="mlb-day-tabs">'+dates.map(d=>'<button class="mlb-day-tab'+(d===sel?' on':'')+'" onclick="_mlbSetDay(\''+d+'\')">'+dayLabel(d)+'</button>').join('')+'</div>';
         games=games.filter(x=>_localDate(x.g)===sel);
       }
