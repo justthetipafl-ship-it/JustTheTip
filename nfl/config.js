@@ -1,5 +1,7 @@
 /* JTT sport config — NFL. Loaded by the unified shell as window.SPORT_CONFIG. */
 window.SPORT_CONFIG = {
+  // official team logos — ESPN CDN by lowercase abbreviation (onerror falls back to the jersey)
+  logoCdn: 'https://a.espncdn.com/i/teamlogos/nfl/500/', logoCdnExt: '.png', teamIds: { LA:'lar', WAS:'wsh' },
   key: 'nfl',
   name: 'NFL',
   jupiter: {
