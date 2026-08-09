@@ -1,0 +1,46 @@
+name: Understat Data
+
+on:
+  workflow_dispatch:
+    inputs:
+      season:
+        description: 'Season start year (e.g. 2025 for 2025/26). Blank = current season.'
+        required: false
+        default: ''
+  schedule:
+    - cron: '0 4 * * 2'     # Tuesday 04:00 UTC — after the weekend + midweek rounds
+
+permissions:
+  contents: write
+
+concurrency:
+  group: understat-data
+  cancel-in-progress: false
+
+jobs:
+  understat:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120     # a full-season backfill is ~40 min; runs resume if cut short
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Pull Understat data
+        env:
+          UNDERSTAT_SEASON: ${{ github.event.inputs.season }}
+        run: python EPL/fetch_understat.py
+
+      - name: Commit data
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add EPL/data/understat_shots.json
+          if git diff --staged --quiet; then
+            echo "No changes."
+          else
+            git commit -m "Understat data $(date -u +%Y-%m-%dT%H:%MZ)"
+            git push
+          fi
