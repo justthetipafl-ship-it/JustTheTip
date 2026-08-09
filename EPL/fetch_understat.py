@@ -13,6 +13,7 @@ Resumable: skips matches already stored, so it backfills a season then maintains
 Season is the START year: 2025 = 2025/26. Set UNDERSTAT_SEASON in the workflow (default = current).
 Runs in a GitHub Action — Understat blocks CORS and rate-limits, so ~6s between match pages.
 """
+import gzip
 import json
 import os
 import re
@@ -21,7 +22,13 @@ import unicodedata
 import urllib.request
 
 BASE = "https://understat.com"
-UA = {"User-Agent": "Mozilla/5.0 (JTT Understat data pull; contact justthetipafl)"}
+HDRS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.9",
+    "Accept-Encoding": "gzip, deflate",
+    "Referer": "https://understat.com/",
+}
 THROTTLE = 6.0  # seconds between match pages (Understat's empirically safe rate)
 
 _SPECIAL = str.maketrans({
@@ -42,9 +49,12 @@ def fetch(url, tries=4):
     last = None
     for i in range(tries):
         try:
-            req = urllib.request.Request(url, headers=UA)
+            req = urllib.request.Request(url, headers=HDRS)
             with urllib.request.urlopen(req, timeout=30) as r:
-                return r.read().decode("utf-8", "replace")
+                data = r.read()
+                if (r.headers.get("Content-Encoding") or "").lower() == "gzip":
+                    data = gzip.decompress(data)
+                return data.decode("utf-8", "replace")
         except Exception as e:  # noqa: BLE001
             last = e
             time.sleep(3 * (i + 1))
@@ -125,6 +135,15 @@ def main():
 
     league = fetch("%s/league/EPL/%s" % (BASE, season))
     dates = parse_var(league, "datesData") or []
+    if not dates:
+        low = league.lower()
+        print("!! No datesData parsed from the league page. Diagnostics:")
+        print("   html length      :", len(league))
+        print("   has 'datesData'  :", "datesData" in league)
+        print("   has 'JSON.parse' :", "JSON.parse" in league)
+        print("   looks blocked    :", any(x in low for x in ("just a moment", "cf-chl", "captcha", "access denied", "cloudflare", "enable javascript")))
+        print("   first 300 chars  :", " ".join(league[:300].split()))
+        raise SystemExit("understat: no match data (see diagnostics) - likely an IP block or a page-format change")
     todo = [d for d in dates if d.get("isResult") and str(d.get("id")) not in done]
     print("season %s: %d completed matches, %d already stored, %d to fetch" % (season, sum(1 for d in dates if d.get("isResult")), len(done), len(todo)))
 
