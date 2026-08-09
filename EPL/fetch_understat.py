@@ -22,14 +22,16 @@ import unicodedata
 import urllib.request
 
 BASE = "https://understat.com"
-HDRS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-    "Accept-Language": "en-US,en;q=0.9",
-    "Accept-Encoding": "gzip, deflate",
-    "Referer": "https://understat.com/",
-}
-THROTTLE = 6.0  # seconds between match pages (Understat's empirically safe rate)
+# Understat serves the full server-rendered page (data inline) to simple clients, but a JS shell
+# to browser-like UAs. Probe these in order and keep whichever returns the inline data.
+PROFILES = [
+    {"User-Agent": "python-requests/2.31.0"},
+    {"User-Agent": "curl/8.4.0"},
+    {},
+    {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"},
+]
+WORKING = None            # set once we know which profile returns data
+THROTTLE = 6.0            # seconds between match pages (Understat's empirically safe rate)
 
 _SPECIAL = str.maketrans({
     "\u00f8": "o", "\u00d8": "o", "\u00e6": "ae", "\u00c6": "ae", "\u0142": "l", "\u0141": "l",
@@ -45,11 +47,11 @@ def nmkey(name):
     return " ".join("".join(c for c in s.lower() if c.isalnum() or c == " ").split())
 
 
-def fetch(url, tries=4):
+def fetch(url, headers=None, tries=4):
     last = None
     for i in range(tries):
         try:
-            req = urllib.request.Request(url, headers=HDRS)
+            req = urllib.request.Request(url, headers=(headers if headers is not None else (WORKING or {})))
             with urllib.request.urlopen(req, timeout=30) as r:
                 data = r.read()
                 if (r.headers.get("Content-Encoding") or "").lower() == "gzip":
@@ -59,6 +61,27 @@ def fetch(url, tries=4):
             last = e
             time.sleep(3 * (i + 1))
     raise RuntimeError("fetch failed after %d tries: %s (%s)" % (tries, url, last))
+
+
+def fetch_league(season):
+    """Probe header profiles until one returns a page containing datesData; remember it."""
+    global WORKING
+    url = "%s/league/EPL/%s" % (BASE, season)
+    last_html = ""
+    for prof in PROFILES:
+        ua = prof.get("User-Agent", "(none)")
+        try:
+            html = fetch(url, headers=prof)
+        except Exception as e:  # noqa: BLE001
+            print("  profile %-22s -> error %s" % (ua, e))
+            continue
+        last_html = html
+        if "datesData" in html:
+            print("  profile %-22s -> OK (len %d, has datesData)" % (ua, len(html)))
+            WORKING = prof
+            return html
+        print("  profile %-22s -> len %d, no datesData" % (ua, len(html)))
+    return last_html
 
 
 def parse_var(html, var):
@@ -133,7 +156,7 @@ def main():
             store = {"updated": 0, "season": season, "rows": {}}
     store.setdefault("rows", {})
 
-    league = fetch("%s/league/EPL/%s" % (BASE, season))
+    league = fetch_league(season)
     dates = parse_var(league, "datesData") or []
     if not dates:
         low = league.lower()
