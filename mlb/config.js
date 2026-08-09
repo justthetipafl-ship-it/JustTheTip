@@ -2,6 +2,8 @@
    Sport vocabulary for the unified shell. Batters + pitchers share one player pool
    (role: 'bat'|'pitch'); markets and display sets are role/position aware. */
 window.SPORT_CONFIG = {
+  // prop-calculator stat chips — MLB's own markets (else it falls back to AFL disposals/marks)
+  pcStats: [['H','Hits'],['TB','Total Bases'],['HR','Home Runs'],['RBI','RBIs'],['R','Runs'],['K','Strikeouts']],
   key: 'mlb', dir: 'mlb', name: 'MLB', logoExt: '.svg',
 
   // ---- markets / stat labels ----
@@ -44,7 +46,7 @@ window.SPORT_CONFIG = {
   teamCols: [['R','R'],['H','H'],['HR','HR'],['TB','TB'],['BB','BB'],['SO','SO'],['SB','SB']],
 
   // ---- markets across features ----
-  oddsMkts: [['H','Hits'],['TB','Total Bases'],['HR','Home Runs'],['RBI','RBIs'],['R','Runs'],['K','Strikeouts']],   // SB has no odds market in RapidOddsAPI
+  oddsMkts: [['H','Hits'],['TB','Total Bases'],['HR','Home Runs'],['RBI','RBIs'],['R','Runs'],['SB','Stolen Bases'],['K','Strikeouts']],
   multiMkts: [['H','Hits'],['TB','Total Bases'],['HR','Home Runs'],['RBI','RBIs'],['R','Runs'],['K','Strikeouts']],
   nerdMkts: [['H','Hits'],['TB','Total Bases'],['HR','Home Runs'],['RBI','RBIs'],['K','Strikeouts']],
   settingsMkts: [['H','Hits'],['TB','Total Bases'],['HR','Home Runs'],['RBI','RBIs'],['R','Runs'],['SB','Stolen Bases'],['K','Strikeouts']],
@@ -65,45 +67,29 @@ window.SPORT_CONFIG = {
     base: { H:1, TB:1.5, HR:0.5, RBI:0.5, R:0.5 }
   },
 
-  // ---- prop calculator markets ----
-  pcStats: [['H','Hits'],['TB','TB'],['HR','HR'],['RBI','RBI'],['R','R'],['SB','SB'],['K','K']],
-
-  // ---- logos via MLB Stats CDN by team id ----
-  liveWorker: 'https://jtt-mlb-live.justthetipafl.workers.dev',   // MLB Stats API proxy Worker (deploy jtt-mlb-live-worker.js)
-  hideDvp: true,
-  logoCdn: 'https://www.mlbstatic.com/team-logos/',
-  teamIds: { ATH:133, ATL:144, AZ:109, BAL:110, BOS:111, CHC:112, CIN:113, CLE:114, COL:115, CWS:145,
-    DET:116, HOU:117, KC:118, LAA:108, LAD:119, MIA:146, MIL:158, MIN:142, NYM:121, NYY:147,
-    PHI:143, PIT:134, SD:135, SEA:136, SF:137, STL:138, TB:139, TEX:140, TOR:141, WSH:120 },
-
   // ---- view defaults ----
   viewDefaults: { sortKey: 'H', statsStat: 'H', teamsSort: 'R' },
 
   // ---- per-sport extra data files (beyond the common set) ----
   dataFiles: {},
 
-  // ---- Degen Crew catalog — matches the standalone /mlb/ tool's 14 signals ----
+  // ---- Degen Crew catalog (game-centric — MLB signals live in mlb/signals.js) ----
   crew: [
-    { k:'board',       n:"Today's Board", i:'ti-clipboard-list',   d:'Best plays ranked' },
-    { k:'multi',       n:'Multi Builder',  i:'ti-stack-2',          d:'Stacked legs' },
-    { k:'greenlights', n:'Green Lights',   i:'ti-circle-check',     d:'Best batter matchups on the slate' },
-    { k:'platoon',     n:'Sluggers',       i:'ti-arrows-left-right',d:'Big handedness-split power edges' },
-    { k:'runners',     n:'Runners',        i:'ti-arrow-up-right',   d:'Top-of-order run scorers vs wild arms' },
-    { k:'rbimen',      n:'RBI Men',        i:'ti-target',           d:'Run-producing bats in RBI spots' },
-    { k:'freepasses',  n:'Free Passes',    i:'ti-walk',             d:'Patient hitters vs wild arms' },
-    { k:'grinders',    n:'Grinders',       i:'ti-flame',            d:'Starters in tough spots — fade' },
-    { k:'inningseaters',n:'Innings Eaters',i:'ti-clock-hour-9',     d:'Efficient starters who go deep' },
-    { k:'due',         n:'Due / Unlucky',  i:'ti-trending-up',      d:'Underperforming their Statcast — back' },
-    { k:'ktargets',    n:'Strike Time',    i:'ti-ball-baseball',    d:'Pitchers into whiff-prone lineups' },
-    { k:'longball',    n:'Homers',         i:'ti-bolt',             d:'HR spots — power into hitter parks' },
-    { k:'wheels',      n:'Sneaky Buggers', i:'ti-run',              d:'Steal spots vs slow-to-plate arms' },
-    { k:'streakers',   n:'Streakers',      i:'ti-flame',            d:'Live hitting streaks (5+ games)' },
-    { k:'bunny',       n:'Bunnies',        i:'ti-mood-happy',       d:"Batters who own today's starter" },
-    { k:'whiff',       n:'Whiff Risk',     i:'ti-circle-x',         d:'Bats likely to K vs high-K arms' },
-    { k:'hothand',     n:'Running Hot',    i:'ti-trending-down',    d:'Overperforming their Statcast — fade' },
-    { k:'cold',        n:'Cold Bats',      i:'ti-snowflake',        d:'Hitless skids — fade or avoid' },
-    { k:'deathriders', n:'Death Riders',   i:'ti-skull',            d:'Worst batter matchups — fade' },
-    { k:'bogey',       n:'Bogey',          i:'ti-mood-sad',         d:"Batters owned by today's starter" }
+    { k:'board',   n:"Today's Board", i:'ti-clipboard-list', d:'Best plays ranked' },
+    { k:'multi',   n:'Multi Builder', i:'ti-stack-2',        d:'Stacked legs' },
+    { k:'hot',     n:'Hot Bats',      i:'ti-flame',          d:'Hitters trending up' },
+    { k:'cold',    n:'Cold Bats',     i:'ti-snowflake',      d:'Hitless skids — fade or avoid' },
+    { k:'whiff',   n:'Whiff Risk',    i:'ti-circle-x',       d:'Bats likely to strike out vs high-K arms' },
+    { k:'ktargets',n:'K Targets',     i:'ti-target-arrow',   d:'Pitchers into whiff-prone lineups' },
+    { k:'longball',n:'Long Ball',     i:'ti-ball-baseball',  d:'HR spots — power into hitter parks' },
+    { k:'platoon', n:'Platoon Edge',  i:'ti-arrows-shuffle', d:'Big handedness-split mismatches' },
+    { k:'coldarm', n:'Hittable Arms', i:'ti-temperature',    d:'Bats vs contact-prone starters' },
+    { k:'runners', n:'Table Setters', i:'ti-arrow-up-right', d:'Top-of-order run scorers vs wild arms' },
+    { k:'bunny',   n:'Bunnies',       i:'ti-mood-happy',     d:'Batters who own today\'s starter' },
+    { k:'bogey',   n:'Bogeys',        i:'ti-mood-sad',       d:'Batters owned by today\'s starter' },
+    { k:'wheels',  n:'Wheels',        i:'ti-run',            d:'Steal spots vs slow-to-plate arms' },
+    { k:'due',     n:'Due / Unlucky', i:'ti-trending-up',    d:'Underperforming their Statcast — back' },
+    { k:'hothand', n:'Running Hot',   i:'ti-trending-down',  d:'Overperforming their Statcast — fade' }
   ],
-  tileOrder: ['greenlights','platoon','runners','rbimen','freepasses','longball','wheels','streakers','bunny','due','ktargets','grinders','inningseaters','whiff','hothand','cold','deathriders','bogey']
+  tileOrder: ['hot','cold','whiff','ktargets','longball','platoon','coldarm','runners','bunny','bogey','wheels','due','hothand']
 };
