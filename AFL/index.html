@@ -1965,8 +1965,10 @@
     if(rl!=null){
       const margin=hr-ar;
       const homeAbbr=(d.linescore.home||{}).abbr, awayAbbr=(d.linescore.away||{}).abbr;
-      const favAbbr=rl<0?homeAbbr:awayAbbr, favMargin=rl<0?margin:-margin, cover=favMargin>Math.abs(rl);
-      blocks+='<div class="pace-blk"><div class="pace-top"><span>Run line <b>'+esc(favAbbr||'')+' '+(rl<0?rl:'+'+rl)+'</b></span><span class="pace-trend" style="color:'+(cover?'#22c55e':'#ef4444')+'">'+(cover?'COVERING':'NOT YET')+'</span></div>'+
+      const absL=Math.abs(rl), homeIsFav=rl<0;
+      const favAbbr=homeIsFav?homeAbbr:awayAbbr, dogAbbr=homeIsFav?awayAbbr:homeAbbr;
+      const favMargin=homeIsFav?margin:-margin, favAdj=favMargin-absL, covering=favAdj>=0, who=covering?favAbbr:dogAbbr, by=Math.abs(favAdj);
+      blocks+='<div class="pace-blk"><div class="pace-top"><span>Run line <b>'+esc(favAbbr||'')+' -'+absL+'</b></span><span class="pace-trend" style="color:'+(covering?'#22c55e':'#ef4444')+'">'+esc(who||'')+(by?' covers by '+by:' on the line')+'</span></div>'+
         '<div class="pace-sub">'+esc(homeAbbr||'')+' '+(margin>=0?'+'+margin:margin)+' \u00b7 '+esc(awayAbbr||'')+' '+(margin<=0?'+'+(-margin):'-'+margin)+' now</div></div>';
     }
     return '<div class="live-card"><div class="live-hd">Closing line &amp; total</div>'+blocks+'</div>';
@@ -2121,8 +2123,11 @@
       blocks+='<div class="pace-blk"><div class="pace-top"><span>Total <b>'+total+'</b></span><span class="pace-trend" style="color:'+trend[1]+'">'+trend[0]+(trend[0]==='ON THE NUMBER'?'':' trending')+'</span></div>'+
         '<div class="pace-bar"><div class="pace-fill" style="width:'+Math.round(T/barMax*100)+'%"></div><div class="pace-mark pace-total" style="left:'+Math.round(total/barMax*100)+'%"></div></div><div class="pace-sub">'+sub+'</div></div>';
     }
-    if(rl!=null){ const margin=hs.pts-as.pts; const favAbbr=rl<0?abbr(g.home):abbr(g.away), favMargin=rl<0?margin:-margin, cover=favMargin>Math.abs(rl);
-      blocks+='<div class="pace-blk"><div class="pace-top"><span>Line <b>'+esc(favAbbr)+' '+(rl<0?rl:'+'+rl)+'</b></span><span class="pace-trend" style="color:'+(cover?'#22c55e':'#ef4444')+'">'+(cover?'COVERING':'NOT YET')+'</span></div><div class="pace-sub">'+esc(abbr(g.home))+' '+(margin>=0?'+'+margin:margin)+' now</div></div>'; }
+    if(rl!=null){ const margin=hs.pts-as.pts; const absL=Math.abs(rl), homeIsFav=rl<0;
+      const favAbbr=homeIsFav?abbr(g.home):abbr(g.away), dogAbbr=homeIsFav?abbr(g.away):abbr(g.home);
+      const favMargin=homeIsFav?margin:-margin, favAdj=favMargin-absL;        // +ve: fav covers ; -ve: the +line (head start) holds
+      const covering=favAdj>=0, who=covering?favAbbr:dogAbbr, by=Math.abs(favAdj);
+      blocks+='<div class="pace-blk"><div class="pace-top"><span>Line <b>'+esc(favAbbr)+' -'+absL+'</b></span><span class="pace-trend" style="color:'+(covering?'#22c55e':'#ef4444')+'">'+esc(who)+(by?' covers by '+by:' on the line')+'</span></div><div class="pace-sub">'+esc(abbr(g.home))+' '+(margin>=0?'+'+margin:margin)+' now</div></div>'; }
     return '<div class="live-card"><div class="live-hd">Closing line &amp; total</div>'+blocks+'</div>';
   }
   function _aflLiveCard(g){
