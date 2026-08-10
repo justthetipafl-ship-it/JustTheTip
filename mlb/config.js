@@ -2,6 +2,7 @@
    Sport vocabulary for the unified shell. Batters + pitchers share one player pool
    (role: 'bat'|'pitch'); markets and display sets are role/position aware. */
 window.SPORT_CONFIG = {
+  hideDvp: true,   // DVP (defence-vs-position / play-style) is AFL/NFL-specific — not meaningful for this sport
   // prop-calculator stat chips — MLB's own markets (else it falls back to AFL disposals/marks)
   pcStats: [['H','Hits'],['TB','Total Bases'],['HR','Home Runs'],['RBI','RBIs'],['R','Runs'],['K','Strikeouts']],
   key: 'mlb', dir: 'mlb', name: 'MLB', logoExt: '.svg',
