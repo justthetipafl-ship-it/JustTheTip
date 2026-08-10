@@ -2061,9 +2061,12 @@
   }
   function _gameLineTotal(g){
     const key=[g.home,g.away].sort().join('|');
+    const cl=_closingLines()[key], st=gameStart(g);
+    // once the game has started, lock to the pre-game closing line — the live feed drifts to in-play handicaps
+    if(st!=null && Date.now()>=st && cl && (cl.total!=null||cl.line!=null)) return { total:cl.total, line:cl.line };
     const go=(state.idx.matchOddsIdx||{})[key];
     let total=go&&go.total?go.total.points:null, line=(go&&go.line&&go.line.home!=null)?go.line.home:null;
-    if(total==null&&line==null){ const cl=_closingLines()[key]; if(cl){ total=cl.total; line=cl.line; } }
+    if(total==null&&line==null&&cl){ total=cl.total; line=cl.line; }
     return { total, line };
   }
   // ---- AFL team score: prefer the feed's real score (counts rushed behinds); else compute from players ----
