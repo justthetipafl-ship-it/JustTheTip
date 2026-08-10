@@ -2739,10 +2739,68 @@
     return h;
   }
 
+  // ---- MLB focused-fixture panels ported from the standalone tool (render-only; uses unified data) ----
+  function _mlbTeamRec(t){ const m=state.idx.teamMap||{}; return m[t]||Object.values(m).find(x=>x.team===t||x.name===t||x.abbr===t)||null; }
+  function _mlbFindPitcher(name){ if(!name) return null;
+    const bn=(state.idx.byName||{})[name]; if(bn&&bn.role==='pitch') return bn;
+    return (state.idx.players||[]).find(p=>p.name===name&&p.role==='pitch')||null; }
+  function _mlbMatchPanel(g){
+    const aT=_mlbTeamRec(g.away), hT=_mlbTeamRec(g.home);
+    if(!aT||!hT||!aT.forStats||!hT.forStats) return '';
+    const rf=(g.park&&g.park.runFactor)||1;
+    const aRA=(hT.vsStats&&hT.vsStats.R!=null)?hT.vsStats.R:hT.forStats.R;   // runs the HOME staff allows
+    const hRA=(aT.vsStats&&aT.vsStats.R!=null)?aT.vsStats.R:aT.forStats.R;   // runs the AWAY staff allows
+    const awayExp=(aT.forStats.R+aRA)/2, homeExp=(hT.forStats.R+hRA)/2;      // away offence vs home staff, & vice-versa
+    const projTotal=(awayExp+homeExp)*rf;
+    const line=(g.lines&&g.lines.total!=null)?g.lines.total:8.5;
+    const lean=projTotal>line+0.4?'OVER '+line:projTotal<line-0.4?'UNDER '+line:'on the line';
+    const leanCol=projTotal>line+0.4?'#22c55e':projTotal<line-0.4?'#ef4444':'var(--text-2)';
+    return '<details class="tp-collapse c-green" open><summary class="tp-collapse-sum"><i class="ti ti-target"></i>'+
+      '<span class="tp-collapse-title">Match Total \u2014 '+projTotal.toFixed(1)+' projected runs</span><i class="ti ti-chevron-down tp-collapse-chev"></i></summary>'+
+      '<div class="tp-collapse-body"><div class="statgrid">'+
+      '<div class="statcell"><div class="v">'+projTotal.toFixed(1)+'</div><div class="k">Projected \u00b7 <span style="color:'+leanCol+';font-weight:700">'+lean+'</span></div></div>'+
+      '<div class="statcell"><div class="v">'+(awayExp*rf).toFixed(1)+'</div><div class="k">'+abbr(g.away)+' total</div></div>'+
+      '<div class="statcell"><div class="v">'+(homeExp*rf).toFixed(1)+'</div><div class="k">'+abbr(g.home)+' total</div></div>'+
+      ((g.lines&&g.lines.total!=null)?'<div class="statcell"><div class="v">'+g.lines.total+'</div><div class="k">Book O/U</div></div>':'')+
+      '</div></div></details>';
+  }
+  function _mlbStarterPanel(g, battingTeam, facingPitcherName){
+    const st=_mlbFindPitcher(facingPitcherName); if(!st) return '';
+    const av3=v=>(v==null?'\u2014':(+v).toFixed(3).replace(/^0/,''));
+    const bats=(state.idx.players||[]).filter(p=>p.team===battingTeam&&p.role!=='pitch');
+    const LG_OPPAVG=0.245;
+    const exploit=bats.map(b=>{
+      const sw=(((b.bats==='L')?st.splitVsL:st.splitVsR)||{}).oppAVG;          // starter's AVG allowed to this hand
+      const bs=((st.throws==='L')?b.splitVsL:b.splitVsR)||{};                  // batter's own split vs this hand
+      const swD=(sw!=null?sw:LG_OPPAVG)-LG_OPPAVG, bq=((bs.OPS!=null?bs.OPS:0.72)-0.72);
+      return { b, score:Math.round(swD*500+bq*40), hand:b.bats||'' };
+    }).filter(x=>isFinite(x.score)).sort((a,b)=>b.score-a.score).slice(0,4);
+    const sp=st.splitVsL||{}, sr=st.splitVsR||{};
+    let h='<details class="tp-collapse c-green"><summary class="tp-collapse-sum"><i class="ti ti-shield"></i>'+
+      '<span class="tp-collapse-title">'+abbr(battingTeam)+' \u2014 Starter Matchup</span><i class="ti ti-chevron-down tp-collapse-chev"></i></summary>'+
+      '<div class="tp-collapse-body"><div class="tp-body-meta">vs '+esc(st.name)+' \u00b7 '+(st.throws||'')+'HP</div>'+
+      '<div class="tp-body-meta" style="border:0">'+[st.K9!=null?st.K9.toFixed(1)+' K/9':'',st.ERA!=null?st.ERA.toFixed(2)+' ERA':'',st.oppAVG!=null?av3(st.oppAVG)+' oppAVG':''].filter(Boolean).join(' \u00b7 ')+'</div>'+
+      '<div class="statgrid">'+
+        '<div class="statcell"><div class="v">'+av3(sp.oppAVG)+'</div><div class="k">vs LHB oppAVG</div></div>'+
+        '<div class="statcell"><div class="v">'+av3(sr.oppAVG)+'</div><div class="k">vs RHB oppAVG</div></div></div>';
+    if(exploit.length){ h+='<div class="section-title" style="margin-top:10px"><i class="ti ti-target-arrow"></i> Top Exploiters</div>';
+      exploit.forEach(x=>{ const q=esc(x.b.name).replace(/\x27/g,"\\\x27");
+        const tag=x.score>=12?['SOFT','#22c55e']:x.score<=-8?['TOUGH','#ef4444']:['NEU','var(--text-2)'];
+        h+='<div class="fixture-row deg-row" style="cursor:pointer" onclick="openPlayer(\''+q+'\')"><div class="deg-main"><span class="fxr-name">'+esc(x.b.name)+' <span class="fxr-venue">'+x.hand+'</span></span></div>'+
+          '<div class="deg-val" style="color:'+tag[1]+'"><div>'+tag[0]+' '+(x.score>0?'+':'')+x.score+'</div></div></div>'; }); }
+    h+='</div></details>'; return h;
+  }
+  function _mlbMatchPanels(g){
+    let h=_mlbMatchPanel(g);
+    h+=_mlbStarterPanel(g, g.home, g.awayPitcher);   // home bats vs the away starter
+    h+=_mlbStarterPanel(g, g.away, g.homePitcher);   // away bats vs the home starter
+    return h;
+  }
+
   function renderFocusedFixture(g){
     if(!g) return emptyState('ti-alert-triangle','Match not found','');
     let h='<button class="back-btn" onclick="state.view.fixtureId=null;_renderApp()"><i class="ti ti-arrow-left"></i> Back to fixtures</button>';
-    if(SPORT.key==='mlb'){ h+=_mlbFocusHeader(g); }
+    if(SPORT.key==='mlb'){ h+=_mlbFocusHeader(g); h+=_mlbMatchPanels(g); }
     else h+='<div class="fixture-header">'+
       '<div class="fixture-team">'+teamLogo(g.home,52)+'<div class="fxr-name">'+g.home+'</div>'+pips(g.home)+'</div>'+
       '<div class="fixture-center"><div class="kickoff">'+esc(_localDate(g))+' '+esc(_localTime(g))+'</div><div class="vs-big">v</div><div class="venue">'+(g.venue||'TBC')+'</div>'+weatherChip(g.home,g.away)+'</div>'+
