@@ -3105,7 +3105,9 @@
     const _def=(p.position==='LB'||p.position==='DL'||p.position==='DB');
     const _pmPrimary=(SPORT.key==='afl')
       ? ((p.position==='Key Forward'||p.position==='Gen. Forward'||p.position==='Mid-Forward')?'goals':'disposals')
-      : (_def?'tackles':p.position==='QB'?'passYds':p.position==='RB'?'rushYds':'recYds');
+      : (SPORT.key==='nfl')
+        ? (_def?'tackles':p.position==='QB'?'passYds':p.position==='RB'?'rushYds':'recYds')
+        : (((DISPLAY_FOR(p.position)||[])[0]||[])[0] || (BET_STATS&&BET_STATS[0]&&BET_STATS[0][0]) || 'disposals');
     const MODES=[['season','Season'],['l5','L5'],['l10','L10']].concat(opp?[['h2h','H2H']]:[]);
     const seg=MODES.map(([m,l])=>'<button class="seg'+(m===_pmMode?' on':'')+'" onclick="_pmSetMode(\''+m+'\')">'+l+(m==='h2h'?' '+abbr(opp):'')+'</button>').join('');
     const cells=DISPLAY_FOR(p.position).map(([k,l])=>'<div class="statcell"><div class="v">'+fmt(pmAvg(name,k,_pmMode),_pmDec(k))+'</div><div class="k">'+l+'</div></div>').join('');
@@ -3117,10 +3119,10 @@
         : ((JTTScoring.drLine?(JTTScoring.drLine(p[primary]||0,primary)||JTTScoring.drLine(p[primary]||0)):0)||Math.max(1,Math.round(p[primary]||0)));
       const v=JTTScoring.verdict(p,primary,pLine,opp||undefined);
       const mk=(SPORT.key==='afl')?[['disposals','Disp'],['marks','Marks'],['tackles','Tack'],['goals','Goals']]
-        :(_def?[['tackles','Tk+A'],['soloTk','Solo'],['defSacks','Sack'],['tfl','TFL']]
+        :(SPORT.key==='nfl')?(_def?[['tackles','Tk+A'],['soloTk','Solo'],['defSacks','Sack'],['tfl','TFL']]
           :p.position==='QB'?[['passYds','PaYd'],['passTds','PaTD'],['passInt','INT'],['rushYds','RuYd']]
           :p.position==='RB'?[['rushYds','RuYd'],['rushAtt','Car'],['receptions','Rec'],['rushTds','RuTD']]
-          :[['receptions','Rec'],['recYds','ReYd'],['recTds','ReTD'],['targets','Tgt']]);
+          :[['receptions','Rec'],['recYds','ReYd'],['recTds','ReTD'],['targets','Tgt']]):[];
       const strip=opp?mk.map(([k,l])=>{const pct=JTTScoring.getDVPPct(opp,JTTScoring.POS_TO_DVP[p.position]||p.position,k);const mi=JTTScoring.muInfo(pct);
         return '<div class="statcell"><div class="v" style="color:'+(mi?mi.c:'#888')+';font-size:15px">'+(pct==null?'—':(pct>0?'+':'')+pct.toFixed(0)+'%')+'</div><div class="k">'+l+(mi?' '+mi.t:'')+'</div></div>';}).join(''):'';
       const qstr=esc(p.name).replace(/\x27/g,"\\\x27");
