@@ -94,7 +94,7 @@ window.SPORT_CONFIG = {
 
   // extra per-sport data files (merged with the shell's common set)
   dataFiles: { fpl_players: 'data/fpl_players.json', fpl_gamelogs: 'data/fpl_gamelogs.json',
-               apifootball: 'data/apifootball_stats.json' },
+               apifootball: 'data/apifootball_stats.json', referees: 'data/referees.json' },
 
   // ---- Degen Crew tiles (ported from the WC tool's CREW_TABS) ----
   crew: [
