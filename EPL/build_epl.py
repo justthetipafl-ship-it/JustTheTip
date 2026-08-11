@@ -136,23 +136,34 @@ def team_stats_and_venues(meta, stats, players):
         for team, is_home in ((h, True), (a, False)):
             if not team:
                 continue
-            d = agg.setdefault(canon(team), {"name": team, "gf": 0, "ga": 0, "cards": 0, "games": 0, "ven": {}})
+            d = agg.setdefault(canon(team), {"name": team, "gf": 0, "ga": 0, "cards": 0, "games": 0, "ven": {}, "form": [], "cf": 0, "ca": 0, "cn": 0})
             gfor = gh if is_home else ga
             gagn = ga if is_home else gh
             if gfor is not None:
                 d["gf"] += gfor
             if gagn is not None:
                 d["ga"] += gagn
+            if gfor is not None and gagn is not None:
+                d["form"].append((fx.get("date") or "", "W" if gfor > gagn else ("L" if gfor < gagn else "D")))
             d["cards"] += fx_side_cards.get((fid, is_home), 0)
             d["games"] += 1
+            corn = fx.get("corners") or {}
+            cf = corn.get("home") if is_home else corn.get("away")
+            ca = corn.get("away") if is_home else corn.get("home")
+            if cf is not None and ca is not None:
+                d["cf"] += cf; d["ca"] += ca; d["cn"] += 1
             if is_home and ven:
                 d["ven"][ven] = d["ven"].get(ven, 0) + 1
     out = {}
     for ck, d in agg.items():
         n = max(1, d["games"])
         venue = max(d["ven"], key=d["ven"].get) if d["ven"] else None
+        form = "".join(r for _, r in sorted(d["form"], key=lambda x: x[0])[-6:])  # last 6 results, oldest->newest
+        cn = max(1, d["cn"])
         out[ck] = {"gfPG": round(d["gf"] / n, 2), "gaPG": round(d["ga"] / n, 2),
-                   "cardsPG": round(d["cards"] / n, 2), "venue": venue, "games": d["games"]}
+                   "cardsPG": round(d["cards"] / n, 2), "venue": venue, "games": d["games"], "form": form,
+                   "cornersFor": (round(d["cf"] / cn, 2) if d["cn"] else None),
+                   "cornersAgainst": (round(d["ca"] / cn, 2) if d["cn"] else None)}
     return out
 
 
@@ -249,6 +260,8 @@ def build_teams(fpl_players, boot, tstats):
         if st:
             row["gf"], row["ga"] = st.get("gfPG"), st.get("gaPG")
             row["cardsPG"], row["venue"] = st.get("cardsPG"), st.get("venue")
+            row["form"] = st.get("form")
+            row["cornersFor"], row["cornersAgainst"] = st.get("cornersFor"), st.get("cornersAgainst")
     return list(tmap.values())
 
 
