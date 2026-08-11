@@ -2853,7 +2853,68 @@
       '<div class="statcell"><div class="v">'+projCards.toFixed(1)+'</div><div class="k">proj. cards'+(refCards!=null?' (ref-adj)':'')+'</div></div></div>';
     return _eplWrap('Match Markets','ti-target',body,'c-green');
   }
-  function _eplFocusPanels(g){ return _eplMarketsPanel(g)+_eplRefereePanel(g)+_eplLineupPanel(g)+_eplVenuePanel(g); }
+  // ---- WC-style Match panel for EPL: result probabilities + goals O/U + BTTS from team gf/ga (Poisson) ----
+  function _pois(k,lam){ let p=Math.exp(-lam); for(let i=1;i<=k;i++) p*=lam/i; return p; }
+  function _eplForm(t){ if(!t||!t.form) return ''; return '<div style="display:inline-flex;gap:2px;margin-top:4px">'+String(t.form).slice(-6).split('').map(c=>{const col=c==='W'?'#22c55e':c==='L'?'#ef4444':'#94a3b8';return '<span style="width:14px;height:14px;border-radius:3px;background:'+col+';color:#fff;font-size:9px;font-weight:700;display:inline-flex;align-items:center;justify-content:center">'+c+'</span>';}).join('')+'</div>'; }
+  function _eplLineupDropPanel(g){
+    const lu=g.lineups||{}; let body='',any=false;
+    [['home',g.home],['away',g.away]].forEach(function(pair){ const side=pair[0],team=pair[1],l=lu[side];
+      if(!l||!l.startXI||!l.startXI.length) return;
+      const confirmed=new Set(l.startXI), pred=_eplPredictedXI(team).map(p=>p.name);
+      const benched=pred.filter(n=>!confirmed.has(n)), surprises=l.startXI.filter(n=>pred.indexOf(n)<0);
+      if(!benched.length&&!surprises.length) return; any=true;
+      body+='<div class="section-title" style="margin-top:8px">'+esc(abbr(team))+'</div><div style="display:flex;flex-wrap:wrap;gap:5px">'+
+        benched.map(n=>'<span style="font-size:11px;padding:3px 8px;border-radius:20px;background:rgba(239,68,68,.15);border:1px solid #ef4444">'+esc(n)+' <b>BENCH</b></span>').join('')+
+        surprises.map(n=>'<span style="font-size:11px;padding:3px 8px;border-radius:20px;background:rgba(34,197,94,.15);border:1px solid #22c55e">'+esc(n)+' <b>IN</b></span>').join('')+'</div>';
+    });
+    if(!any) return '';
+    return _eplWrap('Lineup Drop \u2014 surprises vs expected XI','ti-arrows-shuffle','<div class="tp-body-meta">Expected starters benched, and unexpected inclusions, vs the predicted XI.</div>'+body,'c-amber');
+  }
+  function _eplStrength(){
+    const ts=Object.values(state.idx.teamMap||{}).filter(t=>t.gf!=null&&t.ga!=null);
+    ts.forEach(t=>t._gd=(t.gf||0)-(t.ga||0));
+    ts.sort((a,b)=>b._gd-a._gd); ts.forEach((t,i)=>t._rank=i+1);
+    return ts.length;
+  }
+  function _eplStyle(t){
+    const tags=[]; if(t.gf>=1.7) tags.push('All-Out Attack'); else if(t.gf<=1.0) tags.push('Low Block');
+    if(t.ga<=1.0) tags.push('Solid Back'); else if(t.ga>=1.8) tags.push('Leaky');
+    if(!tags.length) tags.push('Balanced'); return tags;
+  }
+  function _eplRankLabel(t,n){ if(!t._rank) return ''; const r=t._rank; const tier=r<=6?'Strong':r<=14?'Mid':'Weak'; return '#'+r+' \u00b7 '+tier; }
+  function _eplMatchPanel(g){
+    const hT=(state.idx.teamMap||{})[g.home]||{}, aT=(state.idx.teamMap||{})[g.away]||{};
+    if(hT.gf==null||aT.gf==null) return '';
+    const n=_eplStrength();
+    // expected goals with a modest home tilt
+    const lamH=Math.max(0.2,((hT.gf||0)+(aT.ga||0))/2*1.10);
+    const lamA=Math.max(0.2,((aT.gf||0)+(hT.ga||0))/2*0.92);
+    let hW=0,dr=0,aW=0,ou=0; const p0h=_pois(0,lamH),p0a=_pois(0,lamA);
+    for(let h=0;h<=9;h++){ for(let a=0;a<=9;a++){ const p=_pois(h,lamH)*_pois(a,lamA); if(h>a)hW+=p; else if(h===a)dr+=p; else aW+=p; if(h+a>=3)ou+=p; } }
+    const btts=(1-p0h)*(1-p0a), projTot=lamH+lamA;
+    const pct=x=>Math.round(x*100);
+    const bar=(lbl,v,col)=>'<div style="margin:3px 0"><div style="display:flex;justify-content:space-between;font-size:11px"><span>'+lbl+'</span><b>'+pct(v)+'%</b></div><div style="height:7px;border-radius:4px;background:var(--surface-2);overflow:hidden"><div style="height:100%;width:'+pct(v)+'%;background:'+col+'"></div></div></div>';
+    const lean=hW>Math.max(dr,aW)?abbr(g.home)+' favoured':aW>Math.max(dr,hW)?abbr(g.away)+' favoured':'Line-ball';
+    // Match Result
+    let res='<div class="section-title" style="margin:2px 0 6px">Match Result \u00b7 '+esc(lean)+'</div>'+
+      bar(abbr(g.home),hW,'#38bdf8')+bar('Draw',dr,'#94a3b8')+bar(abbr(g.away),aW,'#fb7185');
+    // strength + styles row
+    const hStyle=_eplStyle(hT).join(' \u00b7 '), aStyle=_eplStyle(aT).join(' \u00b7 ');
+    res+='<div class="statgrid" style="margin-top:8px">'+
+      '<div class="statcell"><div class="v" style="font-size:13px">'+esc(abbr(g.home))+'</div><div class="k">'+_eplRankLabel(hT,n)+'<br>'+hStyle+'</div>'+_eplForm(hT)+'</div>'+
+      '<div class="statcell"><div class="v" style="font-size:13px">'+esc(abbr(g.away))+'</div><div class="k">'+_eplRankLabel(aT,n)+'<br>'+aStyle+'</div>'+_eplForm(aT)+'</div></div>';
+    // Goals
+    const ouLean=ou>=0.5?'Lean OVER':'Lean UNDER', bttsLean=btts>=0.5?'Lean YES':'Lean NO';
+    let goals='<div class="section-title" style="margin:2px 0 6px">Goals</div>'+
+      '<div class="statgrid">'+
+      '<div class="statcell"><div class="v">'+projTot.toFixed(1)+'</div><div class="k">proj. total goals</div></div>'+
+      '<div class="statcell"><div class="v">'+pct(ou)+'%</div><div class="k">O 2.5 \u00b7 '+ouLean+'</div></div>'+
+      '<div class="statcell"><div class="v">'+pct(btts)+'%</div><div class="k">BTTS \u00b7 '+bttsLean+'</div></div>'+((hT.cornersFor!=null&&aT.cornersFor!=null)?'<div class="statcell"><div class="v">'+(((hT.cornersFor+aT.cornersAgainst)/2+(aT.cornersFor+hT.cornersAgainst)/2)).toFixed(1)+'</div><div class="k">proj. corners</div></div>':'')+'</div>'+
+      '<div class="tp-body-meta" style="border:0;margin-top:6px">'+abbr(g.home)+' xG '+lamH.toFixed(2)+' \u00b7 '+abbr(g.away)+' xG '+lamA.toFixed(2)+' (from season GF/GA)</div>';
+    return _eplWrap('Match',' ti-chart-arcs',res,'c-green')+_eplWrap('Goals','ti-ball-football',goals);
+  }
+
+  function _eplFocusPanels(g){ return _eplMatchPanel(g)+_eplLineupDropPanel(g)+_eplRefereePanel(g)+_eplLineupPanel(g)+_eplVenuePanel(g); }
 
   function renderFocusedFixture(g){
     if(!g) return emptyState('ti-alert-triangle','Match not found','');
