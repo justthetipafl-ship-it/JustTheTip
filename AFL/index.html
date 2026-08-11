@@ -3975,7 +3975,7 @@
   // ===== Déjà Vu SGM — legs that hit the last 3 H2H meetings, all on one book =====
   let DV_MARKETS;  // from SPORT_CONFIG
   const DV_MIN_DEFAULT=1.25;
-  function _dvState(){ return state.view.dejaVu || (state.view.dejaVu={tier:3,minOdds:DV_MIN_DEFAULT,maxOdds:0,hail:false,sel:null,book:null,home:null,away:null,meets:3,markets:null,sameSP:false}); }
+  function _dvState(){ return state.view.dejaVu || (state.view.dejaVu={tier:3,minOdds:DV_MIN_DEFAULT,maxOdds:0,hail:false,sel:null,book:null,home:null,away:null,meets:1,markets:null,sameSP:false}); }
   function _dvMktOn(k){ const m=_dvState().markets; return !Array.isArray(m)||m.indexOf(k)>=0; }
   // MLB: meetings come from h2h dates (no MatchId); Same SP anchors to today's two starters' shared dates
   function _dvMeetingsMLB(home,away,n){
@@ -4089,11 +4089,12 @@
   function _dvSel1pp(pool,need){ const seen=new Set(),idx=[]; for(let i=0;i<pool.length&&idx.length<need;i++){ if(!seen.has(pool[i].name)){ seen.add(pool[i].name); idx.push(i); } } return idx; }
   function dejaVuSGM(home,away){
     const S=_dvState(); S.home=home; S.away=away;
-    const meets=S.meets||3;
+    const avail=Math.max(1,_dvMeetings(home,away,999).length);   // total H2H meetings available (respects the Same Team/Same SP filter)
+    const meets=Math.min(Math.max(1,S.meets||1),avail);
     const title='<div class="tp-sec"><div class="sec-title"><i class="ti ti-versions"></i> Déjà Vu SGM</div></div>';
     const mktChips='<div class="dv-mkts">'+DV_MARKETS.map(([k,l])=>'<button class="dv-mkt'+(_dvMktOn(k)?' on':'')+'" onclick="_dvMkt(\''+k+'\')">'+l+'</button>').join('')+'</div>';
-    const meetsStep='<span class="dv-step" title="How many of the most recent meetings the player must have cleared the line in"><span class="dv-step-lbl">Hit streak</span><button onclick="_dvMeets(-1)">−</button><b>'+meets+'</b><button onclick="_dvMeets(1)">+</button></span>';
-    const sameSPToggle=(SPORT.key==='mlb')?'<button class="dv-tier'+(_dvState().sameSP?' on':'')+'" onclick="_dvSameSP()" title="Only count meetings where today\'s two starting pitchers both faced off"><i class="ti ti-ball-baseball"></i> Same SP</button>':'';
+    const meetsStep='<span class="dv-step" title="Player must have cleared the line in this many of the most recent H2H meetings ('+avail+' available)"><span class="dv-step-lbl">Hit streak</span><button onclick="_dvMeets(-1)"'+(meets<=1?' disabled':'')+'>−</button><b>'+meets+'</b><button onclick="_dvMeets(1)"'+(meets>=avail?' disabled':'')+'>+</button><span class="dv-step-lbl" style="opacity:.55">/ '+avail+'</span></span>';
+    const sameSPToggle=(SPORT.key==='mlb')?'<span class="dv-seg" style="display:inline-flex" title="Same Team = any prior meeting between these clubs; Same SP = only meetings where today\'s two starters both faced off"><button class="dv-tier'+(!S.sameSP?' on':'')+'" onclick="_dvSameSP(0)">Same Team</button><button class="dv-tier'+(S.sameSP?' on':'')+'" onclick="_dvSameSP(1)"><i class="ti ti-ball-baseball"></i> Same SP</button></span>':'';
     const dvHelp='<div class="dv-help"><i class="ti ti-info-circle"></i><span>Hit streak — only players who cleared their line in each of the last '+meets+' straight meetings between '+abbr(home)+' and '+abbr(away)+' qualify. Lower it to widen the pool.</span></div>';
     const meetings=_dvMeetings(home,away,meets);
     if(meetings.length<meets) return title+'<div class="dv-steps">'+meetsStep+sameSPToggle+'</div>'+dvHelp+mktChips+'<div class="tp-body-meta" style="border:0">Need at least '+meets+' prior meetings between '+abbr(home)+' and '+abbr(away)+' — lower the hit streak to widen the pool.</div>';
@@ -4156,8 +4157,8 @@
     _renderApp();
   };
   window._dvRestore=function(){ const S=_dvState(); S.removed=[]; _renderApp(); };
-  window._dvMeets=function(d){ const S=_dvState(); const cur=S.meets||3; S.meets=Math.max(2,Math.min(6,cur+d)); S.sel=null; S.removed=[]; _renderApp(); };
-  window._dvSameSP=function(){ const S=_dvState(); S.sameSP=!S.sameSP; S.sel=null; _renderApp(); };
+  window._dvMeets=function(d){ const S=_dvState(); const av=Math.max(1,_dvMeetings(S.home,S.away,999).length); const cur=S.meets||1; S.meets=Math.max(1,Math.min(av,cur+d)); S.sel=null; S.removed=[]; _renderApp(); };
+  window._dvSameSP=function(v){ const S=_dvState(); S.sameSP=(arguments.length?!!v:!S.sameSP); S.sel=null; S.removed=[]; _renderApp(); };
   window._dvMkt=function(k){ const S=_dvState(); let m=S.markets; if(!Array.isArray(m)) m=DV_MARKETS.map(x=>x[0]); const i=m.indexOf(k); if(i>=0){ if(m.length>1) m.splice(i,1); } else m.push(k); S.markets=m; S.sel=null; S.removed=[]; _renderApp(); };
   window._dvSwap=function(slot,dir){
     const S=_dvState(); if(!S.sel) return;
@@ -4805,7 +4806,9 @@
       '<div class="j-slipacts"><button class="j-slipcard" onclick="_jToCard()"><i class="ti ti-receipt"></i> Add to card</button><button class="j-slipclr" onclick="_jClear()"><i class="ti ti-trash"></i> Clear</button></div></div>';
   }
   function jupiter(g){
-    if(!g||!_oddsLive()) return '';
+    if(!g) return '';
+    if((window.SPORT_CONFIG||{}).noPlayerOdds) return '';   // sports with no player-prop odds (e.g. EPL) — Jupiter can't run, hide cleanly
+    if(!_oddsLive()) return '<div class="tp-sec"><div class="sec-title"><i class="ti ti-planet"></i> Jupiter</div></div><div class="tp-body-meta" style="border:0">Live player-prop odds aren\'t loaded for this fixture yet \u2014 Jupiter fills in once the odds worker has them.</div>';
     const S=_jS(); const key=abbr(g.home)+'v'+abbr(g.away);
     if(S.key!==key){ S.key=key; S.sel={}; S.focus=null; S.teamHide={}; }
     const data=_jData(g);
