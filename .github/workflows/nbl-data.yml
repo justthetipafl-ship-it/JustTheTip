@@ -1,0 +1,49 @@
+name: NBL Data
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 18 * * *'     # daily 18:00 UTC (~04:00 AEST) — after NBL games finish
+
+permissions:
+  contents: write
+
+concurrency:
+  group: nbl-data
+  cancel-in-progress: false
+
+jobs:
+  nbl:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: r-lib/actions/setup-r@v2
+        with:
+          use-public-rspm: true          # precompiled Linux binaries via RSPM (fast install)
+
+      - name: Install nblR
+        run: Rscript -e 'install.packages("nblR")'   # no repos= — let RSPM serve it
+
+      - name: Fetch NBL data (R / nblR)
+        run: Rscript NBL/fetch_nbl.R
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Build NBL data (Python)
+        run: python NBL/build_nbl.py
+
+      - name: Commit data
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add NBL/data/*.json
+          if git diff --staged --quiet; then
+            echo "No changes."
+          else
+            git commit -m "NBL data $(date -u +%Y-%m-%dT%H:%MZ)"
+            git push
+          fi
