@@ -114,7 +114,9 @@ def main():
 
     # ---- players aggregate (from the most recent 2 seasons) ----
     seasons = sorted(by_season.keys())
-    recent = seasons[-2:] if len(seasons) >= 2 else seasons
+    GL_N, AGG_N = 3, 2
+    gl_seasons = seasons[-GL_N:] if len(seasons) >= GL_N else seasons   # gamelog history (>= 2 seasons)
+    recent = seasons[-AGG_N:] if len(seasons) >= AGG_N else seasons     # player/team aggregates = current form
     pacc = {}
     for yr in recent:
         for r in by_season[yr]:
@@ -166,7 +168,7 @@ def main():
 
     # ---- results + fixtures ----
     results, fixtures = [], []
-    rec_set = set(recent)
+    rec_set = set(gl_seasons)
     for r in res:
         if r.get("match_status") == "COMPLETE":
             if end_year(r.get("season")) not in rec_set:   # keep completed results to recent seasons only
@@ -183,20 +185,20 @@ def main():
 
     # ---- write ----
     os.makedirs(DATA, exist_ok=True)
-    cur = recent[-1] if recent else "0"
+    cur = gl_seasons[-1] if gl_seasons else "0"
     gl_files = []
-    for yr in recent:
+    for yr in gl_seasons:
         n = "gamelogs_%s.json" % yr
         json.dump(by_season[yr], open(os.path.join(DATA, n), "w"), separators=(",", ":"))
         gl_files.append(n)
-    meta = {"league": "nbl", "label": "NBL", "sportKey": "nbl", "seasons": recent, "currentSeason": cur,
+    meta = {"league": "nbl", "label": "NBL", "sportKey": "nbl", "seasons": gl_seasons, "currentSeason": cur,
             "gamelogFiles": gl_files, "day": None,
             "summary": {"players": len(players), "teams": len(teams), "results": len(results), "fixtures": len(fixtures)}}
     for n, obj in [("players.json", players), ("teams.json", teams),
                    ("results.json", results), ("fixture.json", fixtures), ("meta.json", meta)]:
         json.dump(obj, open(os.path.join(DATA, n), "w"), separators=(",", ":"))
     print("NBL build: seasons %s | players %d | teams %d | gamelogs %s | results %d | fixtures %d"
-          % (recent, len(players), len(teams), {y: len(by_season[y]) for y in recent}, len(results), len(fixtures)))
+          % (gl_seasons, len(players), len(teams), {y: len(by_season[y]) for y in gl_seasons}, len(results), len(fixtures)))
 
 
 if __name__ == "__main__":
