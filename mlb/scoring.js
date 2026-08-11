@@ -109,12 +109,22 @@ window.JTTScoring = (function () {
     if (stat === 'K') { return (avg >= 4) ? Math.max(3.5, Math.round((avg - 0.5) * 2) / 2) : null; }
     var l = DR_LINE[stat != null ? stat : 'H']; return l != null ? l : 0.5;
   }
+  var _FIELD_ALIAS = { K:'SO', SO:'K', HA:'H', OUTS:'outs' };   // market key -> gamelog field (batter/pitcher naming)
+  function _hrField(games, stat) {
+    if (games.some(function (g) { return g[stat] != null; })) return stat;
+    var a = _FIELD_ALIAS[stat];
+    if (a && games.some(function (g) { return g[a] != null; })) return a;
+    return null;                                   // stat genuinely absent for this player
+  }
   function getHitRate(name, stat, line, curOnly) {
     var games = logsOf(name);
     if (curOnly) games = games.filter(function (g) { return String(g.Year) === String(curSeason); });
-    if (games.length < 3) return null;
-    var hits = games.filter(function (g) { return (g[stat] || 0) >= line; }).length;
-    return { rate: hits / games.length, n: games.length };
+    var f = _hrField(games, stat);
+    if (!f) return null;                           // no data for this market -> caller skips (was falsely 0%)
+    var present = games.filter(function (g) { return g[f] != null; });   // ignore games missing the stat
+    if (present.length < 3) return null;
+    var hits = present.filter(function (g) { return g[f] >= line; }).length;
+    return { rate: hits / present.length, n: present.length };
   }
   function getRecentAvg(name, stat, n) {
     var a = logsOf(name).slice(-(n || RECENT_WIN)).map(function (r) { return r[stat]; }).filter(function (v) { return v != null; });
