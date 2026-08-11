@@ -93,6 +93,7 @@ window.SPORT_CONFIG = {
   viewDefaults: { sortKey: 'shots', statsStat: 'shots', teamsSort: 'goals' },
 
   // extra per-sport data files (merged with the shell's common set)
+  noPlayerOdds: true,   // RapidOdds soccer = team markets only; Jupiter (player props) can't run
   dataFiles: { fpl_players: 'data/fpl_players.json', fpl_gamelogs: 'data/fpl_gamelogs.json',
                apifootball: 'data/apifootball_stats.json', referees: 'data/referees.json' },
 
