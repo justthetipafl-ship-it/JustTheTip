@@ -175,7 +175,12 @@ def hand_splits_bat(pid, season):
     # fall back to season-ish numbers if a split is missing
     return res
 
+_GL_CACHE = {}   # memoize per (kind, pid, season, team_id) so gameLog + H2H share one API call
+
 def gamelog_bat_rows(pid, season, idmap, team_id=None):
+    _ck = ("bat", pid, season, team_id)
+    if _ck in _GL_CACHE:
+        return _GL_CACHE[_ck]
     d = api(f"people/{pid}/stats", stats="gameLog", group="hitting", season=season)
     rows = []
     try: splits = d["stats"][0]["splits"]
@@ -191,6 +196,7 @@ def gamelog_bat_rows(pid, season, idmap, team_id=None):
             "RBI": i(st.get("rbi")), "R": i(st.get("runs")), "SB": i(st.get("stolenBases")),
             "BB": i(st.get("baseOnBalls")), "SO": i(st.get("strikeOuts")),
         })
+    _GL_CACHE[_ck] = rows
     return rows
 
 def gamelog_bat(pid, season, idmap, limit=20, team_id=None):
@@ -199,7 +205,29 @@ def gamelog_bat(pid, season, idmap, limit=20, team_id=None):
 # Deeper head-to-head history feeds the Déjà Vu Multis feature (consecutive
 # meetings between two specific teams). Pull this many prior seasons in
 # addition to the current one. Set to 0 to keep it current-season only.
-H2H_EXTRA_SEASONS = 1
+H2H_EXTRA_SEASONS = 2                 # current + 2 prior seasons of H2H depth (Déjà Vu)
+GAMELOG_SEASONS = 3                   # main gamelogs span current + 2 prior seasons
+PER_SEASON_CAP = 30                   # recent games kept per season in the main gamelogs
+
+def prior_bat_rows(pid, season, idmap, team_id=None):
+    """Prior seasons of batter game logs (capped per season) for a 3-season history."""
+    rows = []
+    for back in range(1, GAMELOG_SEASONS):
+        try:
+            rows += gamelog_bat_rows(pid, season - back, idmap, team_id)[:PER_SEASON_CAP]
+        except Exception:
+            pass
+    return rows
+
+def prior_pit_rows(pid, season, idmap, team_id=None):
+    """Prior seasons of pitcher game logs (capped per season) for a 3-season history."""
+    rows = []
+    for back in range(1, GAMELOG_SEASONS):
+        try:
+            rows += gamelog_pit_rows(pid, season - back, idmap, team_id)[:PER_SEASON_CAP]
+        except Exception:
+            pass
+    return rows
 H2H_FIELDS = ("date", "H", "TB", "HR", "RBI", "R", "SB", "BB", "SO")
 
 def h2h_bat(pid, season, idmap, current_rows, team_id=None):
@@ -261,6 +289,9 @@ def hand_splits_pit(pid, season):
     return res
 
 def gamelog_pit_rows(pid, season, idmap, team_id=None):
+    _ck = ("pit", pid, season, team_id)
+    if _ck in _GL_CACHE:
+        return _GL_CACHE[_ck]
     d = api(f"people/{pid}/stats", stats="gameLog", group="pitching", season=season)
     rows = []
     try: splits = d["stats"][0]["splits"]
@@ -276,6 +307,7 @@ def gamelog_pit_rows(pid, season, idmap, team_id=None):
             "ER": i(st.get("earnedRuns")), "HR": i(st.get("homeRuns")),
             "outs": outs, "win": i(st.get("wins")) == 1,
         })
+    _GL_CACHE[_ck] = rows
     return rows
 
 def gamelog_pit(pid, season, idmap, limit=20, team_id=None):
@@ -643,7 +675,7 @@ def main():
                 "season": season_s,
                 "splitVsL": splits["splitVsL"] or seas_eq,
                 "splitVsR": splits["splitVsR"] or seas_eq,
-                "gameLog": (_bat_rows := gamelog_bat_rows(pid, season, idmap, tid))[:20],
+                "gameLog": (_bat_rows := gamelog_bat_rows(pid, season, idmap, tid))[:PER_SEASON_CAP] + prior_bat_rows(pid, season, idmap, tid),
                 "h2h": h2h_bat(pid, season, idmap, _bat_rows, tid),
                 "bvp": {},
                 "statcast": STATCAST_BAT.get(pid),
@@ -681,7 +713,7 @@ def main():
             "season": season_s,
             "splitVsL": splits["splitVsL"] or seas_eq,
             "splitVsR": splits["splitVsR"] or seas_eq,
-            "gameLog": (_pit_rows := gamelog_pit_rows(pid, season, idmap, tid))[:20],
+            "gameLog": (_pit_rows := gamelog_pit_rows(pid, season, idmap, tid))[:PER_SEASON_CAP] + prior_pit_rows(pid, season, idmap, tid),
             "h2h": h2h_pit(pid, season, idmap, _pit_rows, tid),
             "statcast": STATCAST_PIT.get(pid),
         }
