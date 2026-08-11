@@ -28,7 +28,7 @@ import urllib.request
 
 BASE = "https://v3.football.api-sports.io"
 LEAGUE = 39
-PACE = 4.0          # seconds between calls (free tier per-minute rate limit)
+PACE = float(os.environ.get("APIFOOTBALL_PACE") or 4.0)   # seconds between calls; free tier ~4.0, paid plans can drop to ~0.5
 QUOTA_FLOOR = 3     # stop when this few daily requests remain
 
 _SPECIAL = str.maketrans({
@@ -113,122 +113,113 @@ def main():
     if not key:
         raise SystemExit("APIFOOTBALL_KEY not set (add it as a repo secret)")
     g = time.gmtime()
-    season = os.environ.get("APIFOOTBALL_SEASON") or str(g.tm_year - (0 if g.tm_mon >= 7 else 1))
+    season_env = os.environ.get("APIFOOTBALL_SEASON") or str(g.tm_year - (0 if g.tm_mon >= 7 else 1))
+    seasons = [s.strip() for s in season_env.split(",") if s.strip()]   # comma list, e.g. "2024,2025" = both last seasons
     max_run = int(os.environ.get("APIFOOTBALL_MAX_PER_RUN") or 90)
 
     out_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
     os.makedirs(out_dir, exist_ok=True)
     out_path = os.path.join(out_dir, "apifootball_stats.json")
-
-    store = {"updated": 0, "season": season, "rows": {}}
-    done = set()
-    if os.path.exists(out_path):
-        try:
-            store = json.load(open(out_path))
-            if str(store.get("season")) != str(season):
-                store = {"updated": 0, "season": season, "rows": {}}
-            for rows in store.get("rows", {}).values():
-                for r in rows:
-                    done.add(str(r.get("fixture_id")))
-        except Exception:  # noqa: BLE001
-            store = {"updated": 0, "season": season, "rows": {}}
-    store.setdefault("rows", {})
-
     meta_path = os.path.join(out_dir, "apifootball_meta.json")
-    meta = {"updated": 0, "season": season, "fixtures": {}, "lineups": {}}
-    if os.path.exists(meta_path):
-        try:
-            meta = json.load(open(meta_path))
-            if str(meta.get("season")) != str(season):
-                meta = {"updated": 0, "season": season, "fixtures": {}, "lineups": {}}
-        except Exception:  # noqa: BLE001
-            meta = {"updated": 0, "season": season, "fixtures": {}, "lineups": {}}
+
+    def _load(path, empty):
+        # accumulate across seasons; only wipe if a previously-stored season is no longer requested
+        obj = dict(empty)
+        if os.path.exists(path):
+            try:
+                obj = json.load(open(path))
+                stored = obj.get("seasons") or ([str(obj.get("season"))] if obj.get("season") else [])
+                if not set(stored).issubset(set(seasons)):
+                    obj = dict(empty)
+                else:
+                    obj["seasons"] = sorted(set(stored) | set(seasons))
+            except Exception:  # noqa: BLE001
+                obj = dict(empty)
+        obj["seasons"] = obj.get("seasons") or list(seasons)
+        obj.pop("season", None)   # migrate the old single-season field
+        return obj
+
+    store = _load(out_path, {"updated": 0, "seasons": list(seasons), "rows": {}})
+    store.setdefault("rows", {})
+    meta = _load(meta_path, {"updated": 0, "seasons": list(seasons), "fixtures": {}, "lineups": {}})
     meta.setdefault("fixtures", {}); meta.setdefault("lineups", {})
 
-    fx, rem = api("/fixtures?league=%d&season=%s" % (LEAGUE, season), key)
-    if fx.get("errors"):
-        raise SystemExit("api-football error on fixtures list: %s" % fx["errors"])
-    fixtures = fx.get("response") or []
-    for f in fixtures:
-        fo = f.get("fixture") or {}
-        fid_all = str(fo.get("id"))
-        ven = fo.get("venue") or {}
-        tm = f.get("teams") or {}
-        gl = f.get("goals") or {}
-        meta["fixtures"][fid_all] = {
-            "referee": fo.get("referee"),
-            "venue": ven.get("name"), "city": ven.get("city"),
-            "home": (tm.get("home") or {}).get("name"), "away": (tm.get("away") or {}).get("name"),
-            "date": fo.get("date"), "gh": gl.get("home"), "ga": gl.get("away"),
-            "round": (f.get("league") or {}).get("round"),
-            "status": ((fo.get("status") or {}).get("short")),
-        }
-    finished = [f for f in fixtures
-                if (((f.get("fixture") or {}).get("status") or {}).get("short") in ("FT", "AET", "PEN"))
-                and str((f.get("fixture") or {}).get("id")) not in done]
-    total_fin = sum(1 for f in fixtures if (((f.get("fixture") or {}).get("status") or {}).get("short") in ("FT", "AET", "PEN")))
-    print("season %s: %d finished total, %d stored, %d to pull this run (daily remaining ~%s)" % (season, total_fin, len(done), len(finished), rem))
+    done = set()
+    for rows in store.get("rows", {}).values():
+        for r in rows:
+            done.add(str(r.get("fixture_id")))
 
-    n = 0
-    for f in finished:
-        if n >= max_run:
-            print("hit per-run cap (%d); resume next run" % max_run)
+    n = 0            # fixtures pulled this run, shared across seasons (respects the per-run cap)
+    rem = None
+    for season in seasons:
+        if n >= max_run or (rem is not None and rem <= QUOTA_FLOOR):
             break
-        if rem is not None and rem <= QUOTA_FLOOR:
-            print("near daily quota (%s left); resume next run" % rem)
-            break
-        fx_o = f.get("fixture") or {}
-        fid = str(fx_o.get("id"))
-        date = fx_o.get("date")
-        home = ((f.get("teams") or {}).get("home") or {}).get("name")
-        away = ((f.get("teams") or {}).get("away") or {}).get("name")
-        if fid not in meta["lineups"]:
+        fx, rem = api("/fixtures?league=%d&season=%s" % (LEAGUE, season), key)
+        if fx.get("errors"):
+            print("api-football error on fixtures list (season %s): %s" % (season, fx["errors"]))
+            continue
+        fixtures = fx.get("response") or []
+        for f in fixtures:   # referee/venue/goals for every fixture (free — already fetched)
+            fo = f.get("fixture") or {}
+            ven = fo.get("venue") or {}; tm = f.get("teams") or {}; gl = f.get("goals") or {}
+            meta["fixtures"][str(fo.get("id"))] = {
+                "referee": fo.get("referee"), "venue": ven.get("name"), "city": ven.get("city"),
+                "home": (tm.get("home") or {}).get("name"), "away": (tm.get("away") or {}).get("name"),
+                "date": fo.get("date"), "gh": gl.get("home"), "ga": gl.get("away"),
+                "round": (f.get("league") or {}).get("round"), "status": ((fo.get("status") or {}).get("short")),
+            }
+        finished = [f for f in fixtures
+                    if (((f.get("fixture") or {}).get("status") or {}).get("short") in ("FT", "AET", "PEN"))
+                    and str((f.get("fixture") or {}).get("id")) not in done]
+        total_fin = sum(1 for f in fixtures if (((f.get("fixture") or {}).get("status") or {}).get("short") in ("FT", "AET", "PEN")))
+        print("season %s: %d finished total, %d to pull this run (daily remaining ~%s)" % (season, total_fin, len(finished), rem))
+        for f in finished:
+            if n >= max_run:
+                print("hit per-run cap (%d); resume next run" % max_run); break
+            if rem is not None and rem <= QUOTA_FLOOR:
+                print("near daily quota (%s left); resume next run" % rem); break
+            fx_o = f.get("fixture") or {}
+            fid = str(fx_o.get("id")); date = fx_o.get("date")
+            home = ((f.get("teams") or {}).get("home") or {}).get("name")
+            away = ((f.get("teams") or {}).get("away") or {}).get("name")
+            if fid not in meta["lineups"]:
+                try:
+                    lu, rem = fetch_lineup(fid, key)
+                    if lu:
+                        meta["lineups"][fid] = lu
+                    time.sleep(PACE)
+                except urllib.error.HTTPError as e:
+                    if e.code == 429:
+                        print("rate/quota hit (lineups); resume next run"); break
             try:
-                lu, rem = fetch_lineup(fid, key)
-                if lu:
-                    meta["lineups"][fid] = lu
-                time.sleep(PACE)
+                pj, rem = api("/fixtures/players?fixture=%s" % fid, key)
             except urllib.error.HTTPError as e:
                 if e.code == 429:
-                    print("rate/quota hit (lineups); resume next run"); break
-        try:
-            pj, rem = api("/fixtures/players?fixture=%s" % fid, key)
-        except urllib.error.HTTPError as e:
-            if e.code == 429:
-                print("rate/quota hit; resume next run")
-                break
-            raise
-        if pj.get("errors"):
-            print("  fixture %s error: %s" % (fid, pj["errors"]))
+                    print("rate/quota hit; resume next run"); break
+                raise
+            if pj.get("errors"):
+                print("  fixture %s error: %s" % (fid, pj["errors"])); time.sleep(PACE); continue
+            for tb in (pj.get("response") or []):
+                tname = ((tb.get("team")) or {}).get("name")
+                is_home = (tname == home); opp = away if is_home else home
+                for pl in (tb.get("players") or []):
+                    name = ((pl.get("player")) or {}).get("name"); k = nmkey(name)
+                    if not k:
+                        continue
+                    row = {"fixture_id": fid, "date": date, "opp": opp, "home": is_home}
+                    row.update(player_stat(pl.get("statistics")))
+                    store["rows"].setdefault(k, []).append(row)
+            done.add(fid); n += 1
+            if n % 10 == 0:
+                store["updated"] = int(time.time()); json.dump(store, open(out_path, "w"), separators=(",", ":"))
+                print("  ...%d fixtures this run, %d players stored" % (n, len(store["rows"])))
             time.sleep(PACE)
-            continue
-        for tb in (pj.get("response") or []):
-            tname = ((tb.get("team")) or {}).get("name")
-            is_home = (tname == home)
-            opp = away if is_home else home
-            for pl in (tb.get("players") or []):
-                name = ((pl.get("player")) or {}).get("name")
-                k = nmkey(name)
-                if not k:
-                    continue
-                row = {"fixture_id": fid, "date": date, "opp": opp, "home": is_home}
-                row.update(player_stat(pl.get("statistics")))
-                store["rows"].setdefault(k, []).append(row)
-        n += 1
-        if n % 10 == 0:
-            store["updated"] = int(time.time())
-            json.dump(store, open(out_path, "w"), separators=(",", ":"))
-            print("  ...%d fixtures this run, %d players stored" % (n, len(store["rows"])))
-        time.sleep(PACE)
 
-    store["updated"] = int(time.time())
-    json.dump(store, open(out_path, "w"), separators=(",", ":"))
-    meta["updated"] = int(time.time())
-    json.dump(meta, open(meta_path, "w"), separators=(",", ":"))
+    store["updated"] = int(time.time()); json.dump(store, open(out_path, "w"), separators=(",", ":"))
+    meta["updated"] = int(time.time()); json.dump(meta, open(meta_path, "w"), separators=(",", ":"))
     n_rows = sum(len(v) for v in store["rows"].values())
-    print("wrote apifootball_meta.json: %d fixtures (referee/venue), %d lineups"
-          % (len(meta["fixtures"]), len(meta["lineups"])))
-    print("wrote apifootball_stats.json: %d players, %d match rows (%d fixtures pulled this run)" % (len(store["rows"]), n_rows, n))
+    print("seasons %s | apifootball_meta.json: %d fixtures (referee/venue), %d lineups" % (",".join(seasons), len(meta["fixtures"]), len(meta["lineups"])))
+    print("apifootball_stats.json: %d players, %d match rows (%d fixtures pulled this run)" % (len(store["rows"]), n_rows, n))
 
 
 if __name__ == "__main__":
