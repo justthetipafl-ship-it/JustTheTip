@@ -357,11 +357,12 @@ window.JTTSignals = (function () {
             var ex = byPlayer[p.name];
             if (ex && (kind === 'over' ? ex.score >= sc : ex.score <= sc)) return;
             var hr = JS.getHitRate(p.name, mk[0], od.line, false);
+            if (!hr) return;                       // no real hit-rate history -> skip (was a bogus 0% Death Rider)
             byPlayer[p.name] = {
               p: p, market: mk[0], mktLabel: mk[1], line: od.line, odds: price, book: od.book,
               score: sc, verdictCol: v.col, verdictLabel: v.label,
-              l5: JS.getRecentAvg(p.name, mk[0], 5) || 0, hitRate: hr ? hr.rate : 0,
-              games2026: hr ? hr.n : ((logsForFn(p.name) || []).length), team: team, oppName: opp
+              l5: JS.getRecentAvg(p.name, mk[0], 5) || 0, hitRate: hr.rate,
+              games2026: hr.n, team: team, oppName: opp
             };
           });
         });
