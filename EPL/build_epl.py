@@ -13,7 +13,9 @@ Emits (the shapes epl/scoring.js + signals.js + the shell consume):
   EPL/data/players.json   [{name, team, position, pos, matches, price, pens_order, ..., nmkey}]
   EPL/data/gamelogs.json  flat list of merged rows, grouped by the shell on Player
   EPL/data/teams.json     [{team, short}]
-  EPL/data/fixture.json   [{home, away, date, gw}]  (next unfinished gameweek)
+  EPL/data/fixture.json   [{home, away, date, gw, venue, referee, lineups}]  (next unfinished GW; venue/ref/lineups when API-Football meta present)
+  EPL/data/referees.json  {refStats: {name: {matches, cardsPG, foulsPG, ydsPG, redPG}}}   [when meta present]
+  (teams.json rows gain {gf, ga, cardsPG, venue} when API-Football meta present)
 
 The join: FPL gamelogs are THIS season; API-Football backfill is LAST season. We union both by
 player (nmkey) and match-day, preferring FPL for goals/assists/tackles/cards/saves and taking
@@ -61,6 +63,97 @@ def match_id(dy, team, opp):
 
 def _num(v):
     return v if isinstance(v, (int, float)) else None
+
+
+# canonical club key so FPL names and API-Football names line up
+_CANON = {
+    "wolves": "wolverhampton", "wolverhamptonwanderers": "wolverhampton",
+    "brightonhovealbion": "brighton", "spurs": "tottenham", "tottenhamhotspur": "tottenham",
+    "manchesterunited": "manutd", "manchesterutd": "manutd", "manutd": "manutd",
+    "manchestercity": "mancity", "mancity": "mancity",
+    "newcastleunited": "newcastle", "westhamunited": "westham",
+    "nottinghamforest": "nottingham", "nottmforest": "nottingham",
+    "afcbournemouth": "bournemouth", "lutontown": "luton", "ipswichtown": "ipswich",
+    "leicestercity": "leicester", "leedsunited": "leeds",
+}
+def canon(name):
+    k = "".join(c for c in (name or "").lower() if c.isalnum())
+    return _CANON.get(k, k)
+
+
+def build_referees(meta, stats, players):
+    """Referee card/foul tendencies from finished fixtures (referee per fixture x cards/fouls in it)."""
+    if not meta:
+        return None
+    team_by_nm = {p.get("nmkey"): p.get("team") for p in players.get("players", [])}
+    # per-fixture card + foul totals from the player rows
+    fx_cards, fx_fouls, fx_red = {}, {}, {}
+    for nm, rows in (stats or {}).get("rows", {}).items():
+        for r in rows:
+            fid = str(r.get("fixture_id"))
+            fx_cards[fid] = fx_cards.get(fid, 0) + (r.get("yellow") or 0) + (r.get("red") or 0)
+            fx_red[fid] = fx_red.get(fid, 0) + (r.get("red") or 0)
+            fx_fouls[fid] = fx_fouls.get(fid, 0) + (r.get("fouls") or 0)
+    agg = {}
+    for fid, fx in (meta.get("fixtures") or {}).items():
+        ref = fx.get("referee")
+        if not ref or fx.get("status") not in ("FT", "AET", "PEN"):
+            continue
+        d = agg.setdefault(ref, {"matches": 0, "cards": 0, "fouls": 0, "red": 0})
+        d["matches"] += 1
+        d["cards"] += fx_cards.get(fid, 0)
+        d["fouls"] += fx_fouls.get(fid, 0)
+        d["red"] += fx_red.get(fid, 0)
+    refStats = {}
+    for ref, d in agg.items():
+        n = max(1, d["matches"])
+        refStats[ref] = {
+            "matches": d["matches"],
+            "cardsPG": round(d["cards"] / n, 2),
+            "foulsPG": round(d["fouls"] / n, 2),
+            "redPG": round(d["red"] / n, 3),
+        }
+    return {"refStats": refStats}
+
+
+def team_stats_and_venues(meta, stats, players):
+    """Per-team goals for/against, cards per game, and home venue — from the fixture meta + player rows."""
+    if not meta:
+        return {}
+    team_by_nm = {p.get("nmkey"): p.get("team") for p in players.get("players", [])}
+    # per-fixture, per-side cards (side derived from the player's 'home' flag)
+    fx_side_cards = {}   # (fid, is_home) -> cards
+    for nm, rows in (stats or {}).get("rows", {}).items():
+        for r in rows:
+            key = (str(r.get("fixture_id")), bool(r.get("home")))
+            fx_side_cards[key] = fx_side_cards.get(key, 0) + (r.get("yellow") or 0) + (r.get("red") or 0)
+    agg = {}   # canon(team) -> {name, gf, ga, cards, games, venue counts}
+    for fid, fx in (meta.get("fixtures") or {}).items():
+        if fx.get("status") not in ("FT", "AET", "PEN"):
+            continue
+        h, a, gh, ga = fx.get("home"), fx.get("away"), fx.get("gh"), fx.get("ga")
+        ven = fx.get("venue")
+        for team, is_home in ((h, True), (a, False)):
+            if not team:
+                continue
+            d = agg.setdefault(canon(team), {"name": team, "gf": 0, "ga": 0, "cards": 0, "games": 0, "ven": {}})
+            gfor = gh if is_home else ga
+            gagn = ga if is_home else gh
+            if gfor is not None:
+                d["gf"] += gfor
+            if gagn is not None:
+                d["ga"] += gagn
+            d["cards"] += fx_side_cards.get((fid, is_home), 0)
+            d["games"] += 1
+            if is_home and ven:
+                d["ven"][ven] = d["ven"].get(ven, 0) + 1
+    out = {}
+    for ck, d in agg.items():
+        n = max(1, d["games"])
+        venue = max(d["ven"], key=d["ven"].get) if d["ven"] else None
+        out[ck] = {"gfPG": round(d["gf"] / n, 2), "gaPG": round(d["ga"] / n, 2),
+                   "cardsPG": round(d["cards"] / n, 2), "venue": venue, "games": d["games"]}
+    return out
 
 
 def merge_row(p, f, a, dy):
@@ -139,7 +232,7 @@ def build_players(fpl_players, match_counts):
     return out
 
 
-def build_teams(fpl_players, boot):
+def build_teams(fpl_players, boot, tstats):
     # fpl_players carries a {teams: {id:{name,short}}} map; enrich from bootstrap if present
     tmap = {}
     for t in (boot or {}).get("teams", []):
@@ -151,10 +244,15 @@ def build_teams(fpl_players, boot):
         nm = t.get("name")
         if nm and nm not in tmap:
             tmap[nm] = {"team": nm, "short": t.get("short")}
+    for nm, row in tmap.items():
+        st = (tstats or {}).get(canon(nm))
+        if st:
+            row["gf"], row["ga"] = st.get("gfPG"), st.get("gaPG")
+            row["cardsPG"], row["venue"] = st.get("cardsPG"), st.get("venue")
     return list(tmap.values())
 
 
-def build_fixtures(boot, fixtures, boot_teams):
+def build_fixtures(boot, fixtures, boot_teams, meta, tstats):
     id2name = {t["id"]: t["name"] for t in (boot or {}).get("teams", [])}
     # next unfinished gameweek
     nxt = None
@@ -165,6 +263,13 @@ def build_fixtures(boot, fixtures, boot_teams):
     if nxt is None:
         unfinished = [f for f in (fixtures or []) if not f.get("finished")]
         nxt = min((f.get("event") for f in unfinished if f.get("event")), default=None)
+    # index the API-Football fixture meta by (canon home, canon away, date10) for matching
+    mfx = (meta or {}).get("fixtures", {})
+    mlu = (meta or {}).get("lineups", {})
+    by_key = {}
+    for fid, fx in mfx.items():
+        k = (canon(fx.get("home")), canon(fx.get("away")), day(fx.get("date")))
+        by_key[k] = fid
     out = []
     for f in (fixtures or []):
         if nxt is not None and f.get("event") != nxt:
@@ -172,7 +277,24 @@ def build_fixtures(boot, fixtures, boot_teams):
         h, a = id2name.get(f.get("team_h")), id2name.get(f.get("team_a"))
         if not h or not a:
             continue
-        out.append({"home": h, "away": a, "date": f.get("kickoff_time"), "gw": f.get("event")})
+        row = {"home": h, "away": a, "date": f.get("kickoff_time"), "gw": f.get("event")}
+        # venue = home club's stadium (known from the team stats), always available
+        hv = (tstats or {}).get(canon(h))
+        if hv and hv.get("venue"):
+            row["venue"] = hv["venue"]
+        # referee + lineups from the matched API-Football fixture (may be absent until assigned/posted)
+        fid = by_key.get((canon(h), canon(a), day(f.get("kickoff_time"))))
+        if fid:
+            fx = mfx.get(fid) or {}
+            if fx.get("referee"):
+                row["referee"] = fx["referee"]
+            if not row.get("venue") and fx.get("venue"):
+                row["venue"] = fx["venue"]
+            lu = mlu.get(fid)
+            if lu:
+                hn, an = fx.get("home"), fx.get("away")
+                row["lineups"] = {"home": lu.get(hn), "away": lu.get(an)}
+        out.append(row)
     return out
 
 
@@ -182,6 +304,7 @@ def main():
         raise SystemExit("EPL/data/fpl_players.json missing — run the FPL workflow first")
     fpl_logs = load("fpl_gamelogs.json") or {"logs": {}}
     api = load("apifootball_stats.json")  # may be None until the paid key runs
+    meta = load("apifootball_meta.json")  # referee/venue/lineups; None until the paid key runs
 
     boot = fetch(FPL + "/bootstrap-static/")
     fixtures = fetch(FPL + "/fixtures/")
@@ -191,15 +314,22 @@ def main():
     for r in gamelogs:
         counts[r["Player"]] = counts.get(r["Player"], 0) + 1
     players = build_players(fpl_players, counts)
-    teams = build_teams(fpl_players, boot)
-    fixture = build_fixtures(boot, fixtures, boot.get("teams", []))
+    referees = build_referees(meta, api, fpl_players)
+    tstats = team_stats_and_venues(meta, api, fpl_players)
+    teams = build_teams(fpl_players, boot, tstats)
+    fixture = build_fixtures(boot, fixtures, boot.get("teams", []), meta, tstats)
 
     os.makedirs(DATA, exist_ok=True)
-    for name, obj in [("players.json", players), ("gamelogs.json", gamelogs),
-                      ("teams.json", teams), ("fixture.json", fixture)]:
+    outputs = [("players.json", players), ("gamelogs.json", gamelogs),
+               ("teams.json", teams), ("fixture.json", fixture)]
+    if referees is not None:
+        outputs.append(("referees.json", referees))
+    for name, obj in outputs:
         json.dump(obj, open(os.path.join(DATA, name), "w"), separators=(",", ":"))
-    print("built: players %d | gamelogs %d rows | teams %d | fixture %d (next GW) | api-football: %s"
-          % (len(players), len(gamelogs), len(teams), len(fixture), "merged" if api else "not present yet"))
+    print("built: players %d | gamelogs %d | teams %d | fixture %d | referees %s | meta: %s"
+          % (len(players), len(gamelogs), len(teams), len(fixture),
+             (len((referees or {}).get("refStats", {})) if referees else "-"),
+             "merged" if meta else "not present yet"))
 
 
 if __name__ == "__main__":
