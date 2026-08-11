@@ -2798,10 +2798,65 @@
     return h;
   }
 
+  // ---- EPL focused-fixture panels (Match Markets, Referee, Lineups, Venue) — ported from the WC tool ----
+  function _eplWrap(title, icon, body, cls){ return '<details class="tp-collapse '+(cls||'')+'"><summary class="tp-collapse-sum"><i class="ti '+icon+'"></i><span class="tp-collapse-title">'+title+'</span><i class="ti ti-chevron-down tp-collapse-chev"></i></summary><div class="tp-collapse-body">'+body+'</div></details>'; }
+  function _eplRefKey(g){ return 'jtt_epl_ref_'+[g.home,g.away].join('_'); }
+  function _eplRefFor(g){ let r=g.referee||null; try{ const o=localStorage.getItem(_eplRefKey(g)); if(o) r=o; }catch(e){} return r; }
+  window._eplSetRef=function(k,v){ try{ if(v){localStorage.setItem(k,v);}else{localStorage.removeItem(k);} }catch(e){} if(typeof _renderApp==='function')_renderApp(); };
+  function _eplTeam(t){ return (state.idx.teamMap||{})[t]||{}; }
+  function _eplRefereePanel(g){
+    const rs=((state.data.referees||{}).refStats)||{}, ref=_eplRefFor(g), known=Object.keys(rs).sort();
+    let opts='<option value="">'+(g.referee?'Assigned: '+esc(g.referee):'\u2014 pick referee \u2014')+'</option>';
+    known.forEach(n=>{ opts+='<option value="'+esc(n).replace(/"/g,'&quot;')+'"'+(n===ref?' selected':'')+'>'+esc(n)+'</option>'; });
+    let body='<select onchange="_eplSetRef(\''+_eplRefKey(g)+'\',this.value)" style="width:100%;margin-bottom:8px;padding:7px 9px;border-radius:7px;background:var(--surface-2);color:var(--text);border:1px solid var(--border);font-size:12px">'+opts+'</select>';
+    if(ref && rs[ref]){ const r=rs[ref];
+      body+='<div class="statgrid"><div class="statcell"><div class="v">'+r.cardsPG+'</div><div class="k">cards / game</div></div>'+
+        '<div class="statcell"><div class="v">'+r.foulsPG+'</div><div class="k">fouls / game</div></div>'+
+        '<div class="statcell"><div class="v">'+r.matches+'</div><div class="k">matches</div></div></div>';
+    } else { body+='<div class="tp-body-meta" style="border:0">'+(ref?esc(ref)+' \u2014 no tendency data yet':'No referee assigned \u2014 pick one to load their card/foul profile')+'</div>'; }
+    return _eplWrap('Referee'+(ref?' \u2014 '+esc(ref):''),'ti-whistle',body,'c-red');
+  }
+  function _eplPredictedXI(team){
+    return (state.idx.players||[]).filter(p=>p.team===team && (p.status==='a'||p.status==null))
+      .sort((a,b)=>(+b.price||0)-(+a.price||0)).slice(0,11);
+  }
+  function _eplLineupPanel(g){
+    const lu=g.lineups||{}, hHas=lu.home&&lu.home.startXI&&lu.home.startXI.length, aHas=lu.away&&lu.away.startXI&&lu.away.startXI.length, confirmed=hHas||aHas;
+    let body='<div class="tp-body-meta">'+(confirmed?'\u2705 Confirmed XI posted':'\u23f3 Predicted XI \u2014 confirmed lineups post ~1hr before kickoff')+'</div>';
+    [['home',g.home],['away',g.away]].forEach(([side,team])=>{
+      const l=lu[side], real=l&&l.startXI&&l.startXI.length, xi=real?l.startXI:_eplPredictedXI(team).map(p=>p.name), form=(l&&l.formation)?' \u00b7 '+l.formation:'';
+      body+='<div class="section-title" style="margin-top:8px">'+esc(abbr(team))+form+' <span class="fxr-venue">'+(real?'confirmed':'predicted')+'</span></div>'+
+        '<div style="display:flex;flex-wrap:wrap;gap:5px">'+xi.map(n=>'<span onclick="openPlayer(\''+esc(n).replace(/'/g,"\\'")+'\')" style="cursor:pointer;font-size:11px;padding:3px 8px;border-radius:20px;background:var(--surface-2);border:1px solid var(--border)">'+esc(n)+'</span>').join('')+'</div>';
+    });
+    return _eplWrap('Lineups'+(confirmed?' \u2014 confirmed':' \u2014 predicted'),'ti-clipboard-list',body,confirmed?'c-green':'');
+  }
+  function _eplVenuePanel(g){
+    const hT=_eplTeam(g.home), venue=g.venue||hT.venue; if(!venue) return '';
+    let body='<div class="tp-body-meta" style="border:0">'+esc(venue)+' \u00b7 '+esc(abbr(g.home))+' home</div>';
+    if(hT.gf!=null){ const aT=_eplTeam(g.away);
+      body+='<div class="statgrid"><div class="statcell"><div class="v">'+hT.gf+'</div><div class="k">'+abbr(g.home)+' GF/game</div></div>'+
+        '<div class="statcell"><div class="v">'+(aT.ga!=null?aT.ga:'\u2014')+'</div><div class="k">'+abbr(g.away)+' GA/game</div></div></div>'; }
+    return _eplWrap('Venue','ti-map-pin',body);
+  }
+  function _eplMarketsPanel(g){
+    const hT=_eplTeam(g.home), aT=_eplTeam(g.away); if(hT.gf==null||aT.gf==null) return '';
+    const homeExp=((hT.gf||0)+(aT.ga||0))/2, awayExp=((aT.gf||0)+(hT.ga||0))/2, projGoals=homeExp+awayExp;
+    const rs=((state.data.referees||{}).refStats)||{}, ref=_eplRefFor(g), refCards=(ref&&rs[ref])?rs[ref].cardsPG:null;
+    const teamCards=(hT.cardsPG||0)+(aT.cardsPG||0), projCards=refCards!=null?((teamCards+refCards)/2):teamCards;
+    let body='<div class="statgrid">'+
+      '<div class="statcell"><div class="v">'+projGoals.toFixed(1)+'</div><div class="k">proj. total goals</div></div>'+
+      '<div class="statcell"><div class="v">'+homeExp.toFixed(1)+'</div><div class="k">'+abbr(g.home)+' goals</div></div>'+
+      '<div class="statcell"><div class="v">'+awayExp.toFixed(1)+'</div><div class="k">'+abbr(g.away)+' goals</div></div>'+
+      '<div class="statcell"><div class="v">'+projCards.toFixed(1)+'</div><div class="k">proj. cards'+(refCards!=null?' (ref-adj)':'')+'</div></div></div>';
+    return _eplWrap('Match Markets','ti-target',body,'c-green');
+  }
+  function _eplFocusPanels(g){ return _eplMarketsPanel(g)+_eplRefereePanel(g)+_eplLineupPanel(g)+_eplVenuePanel(g); }
+
   function renderFocusedFixture(g){
     if(!g) return emptyState('ti-alert-triangle','Match not found','');
     let h='<button class="back-btn" onclick="state.view.fixtureId=null;_renderApp()"><i class="ti ti-arrow-left"></i> Back to fixtures</button>';
     if(SPORT.key==='mlb'){ h+=_mlbFocusHeader(g); h+=_mlbMatchPanels(g); }
+    if(SPORT.key==='epl'){ h+=_eplFocusPanels(g); }
     else h+='<div class="fixture-header">'+
       '<div class="fixture-team">'+teamLogo(g.home,52)+'<div class="fxr-name">'+g.home+'</div>'+pips(g.home)+'</div>'+
       '<div class="fixture-center"><div class="kickoff">'+esc(_localDate(g))+' '+esc(_localTime(g))+'</div><div class="vs-big">v</div><div class="venue">'+(g.venue||'TBC')+'</div>'+weatherChip(g.home,g.away)+'</div>'+
