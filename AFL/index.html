@@ -1187,7 +1187,8 @@
   const ODDS_REFRESH_MS = 150000;   // re-pull live odds every 2.5 min while the page is open (only when ODDS_LIVE_URL is set)
 
   // Per-signal minimum decimal odds. null = no minimum (fires on any priced line).
-  const SIGNAL_MIN_ODDS = { over: 1.70 /*Green Lights — best over must be >= $1.70*/, under: null /*Death Riders*/ };
+  const SIG_ODDS_FLOOR = 1.60;   // minimum decimal odds for ANY Degen signal suggestion (all tools)
+  const SIGNAL_MIN_ODDS = { over: SIG_ODDS_FLOOR, under: SIG_ODDS_FLOOR };   // Green Lights / Death Riders drop sub-floor picks
 
   // book market name -> internal stat key
   const ODDS_MARKET_ALIAS = {
@@ -1537,7 +1538,9 @@
     const m=(state.idx.oddsIdx[name]||{})[market];
     return (m&&m.under!=null)?{line:m.line,under:m.under,book:m.book}:null;
   }
-  function underTag(name,market){ const o=bestUnder(name,market); if(!o||o.under==null) return ''; return ' \u00b7 U '+o.line+' $'+o.under.toFixed(2)+' ('+bookName(o.book)+')'; }
+  function underTag(name,market){ const o=bestUnder(name,market); if(!o||o.under==null) return '';
+    if(o.under>=SIG_ODDS_FLOOR) return ' \u00b7 U '+o.line+' $'+o.under.toFixed(2)+' ('+bookName(o.book)+')';
+    return ' \u00b7 U '+o.line; }
   function altLines(player, market){
     // Best available OVER price per line across all books (or the chosen books filter).
     const rows=(((state.idx.bookIdx||{})[player]||{})[market]||[]).filter(r=>_bookOK(r.book)&&r.over!=null);
@@ -5206,7 +5209,11 @@
       '<div class="deg-val" style="color:'+col+'">'+_degRight(right,hl)+'</div></div>';
   }
   function muTag(pct){ const mi=JTTScoring.muInfo(pct); return mi?'<span style="color:'+mi.c+'">'+(pct>0?'+':'')+pct.toFixed(0)+'% '+mi.t+'</span>':''; }
-  function lineTag(name,market){ const o=postedLine(name,market); if(!o||o.over==null||!o.book) return o&&o.line!=null?' · O '+o.line:''; return ' · O '+o.line+' $'+o.over.toFixed(2)+' ('+bookName(o.book)+')'; }
+  function lineTag(name,market){ const o=postedLine(name,market); if(!o||o.over==null||!o.book) return o&&o.line!=null?' · O '+o.line:'';
+    if(o.over>=SIG_ODDS_FLOOR) return ' · O '+o.line+' $'+o.over.toFixed(2)+' ('+bookName(o.book)+')';
+    const up=altLines(name,market).filter(a=>a.over!=null).sort((a,b)=>a.line-b.line).find(a=>a.over>=SIG_ODDS_FLOOR);   // main line too short -> first rung paying $1.60
+    if(up) return ' · O '+Math.ceil(up.line)+' $'+up.over.toFixed(2)+' ('+bookName(up.book)+')';
+    return ' · O '+o.line; }
   // Elite Matchups ladder: start at the first rung paying ~$1.60+ (skip the cramped chalk), then the next two up,
   // e.g. " · 19+ $1.62 · 20+ $2.10 · 21+ $2.70"
   function multiLineTag(name,market){
