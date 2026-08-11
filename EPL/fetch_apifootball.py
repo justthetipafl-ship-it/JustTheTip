@@ -11,8 +11,13 @@ daily runs, then maintains it. One /fixtures/players call per match = ~380 calls
 
 Auth: header x-apisports-key = your api-sports.io key (GitHub secret APIFOOTBALL_KEY).
 Season = START year (2025 = 2025/26). Set APIFOOTBALL_SEASON in the workflow.
-Output (EPL/data/): apifootball_stats.json
-  {updated, season, rows: {nmkey: [ {fixture_id,date,opp,home,min,shots,sot,fouls,fouls_drawn,passes,key_passes,tackles} ]}}
+Output (EPL/data/):
+  apifootball_stats.json  {updated, season, rows: {nmkey: [ {fixture_id,date,...stats} ]}}
+  apifootball_meta.json   {updated, season,
+     fixtures: {fid: {referee, venue, city, home, away, date, gh, ga, round, status}},
+     lineups:  {fid: {home:{formation,startXI:[name],subs:[name],coach}, away:{...}}} }
+Referee + venue come free from the /fixtures list (already fetched). Lineups cost one extra
+call per fixture (/fixtures/lineups) — pulled for finished + imminent-upcoming matches.
 """
 import json
 import os
@@ -84,6 +89,25 @@ def player_stat(statistics):
     }
 
 
+def fetch_lineup(fid, key):
+    """/fixtures/lineups -> {home:{...}, away:{...}} by side, or None."""
+    lj, rem = api("/fixtures/lineups?fixture=%s" % fid, key)
+    if lj.get("errors"):
+        return None, rem
+    out = {}
+    for tb in (lj.get("response") or []):
+        side = "home" if ((tb.get("team") or {}).get("name")) else None
+        nm = (tb.get("team") or {}).get("name")
+        entry = {
+            "team": nm, "formation": tb.get("formation"),
+            "startXI": [((x.get("player") or {}).get("name")) for x in (tb.get("startXI") or [])],
+            "subs": [((x.get("player") or {}).get("name")) for x in (tb.get("substitutes") or [])],
+            "coach": (tb.get("coach") or {}).get("name"),
+        }
+        out[nm] = entry  # keyed by team name; build_epl maps to home/away
+    return (out or None), rem
+
+
 def main():
     key = os.environ.get("APIFOOTBALL_KEY")
     if not key:
@@ -110,10 +134,35 @@ def main():
             store = {"updated": 0, "season": season, "rows": {}}
     store.setdefault("rows", {})
 
+    meta_path = os.path.join(out_dir, "apifootball_meta.json")
+    meta = {"updated": 0, "season": season, "fixtures": {}, "lineups": {}}
+    if os.path.exists(meta_path):
+        try:
+            meta = json.load(open(meta_path))
+            if str(meta.get("season")) != str(season):
+                meta = {"updated": 0, "season": season, "fixtures": {}, "lineups": {}}
+        except Exception:  # noqa: BLE001
+            meta = {"updated": 0, "season": season, "fixtures": {}, "lineups": {}}
+    meta.setdefault("fixtures", {}); meta.setdefault("lineups", {})
+
     fx, rem = api("/fixtures?league=%d&season=%s" % (LEAGUE, season), key)
     if fx.get("errors"):
         raise SystemExit("api-football error on fixtures list: %s" % fx["errors"])
     fixtures = fx.get("response") or []
+    for f in fixtures:
+        fo = f.get("fixture") or {}
+        fid_all = str(fo.get("id"))
+        ven = fo.get("venue") or {}
+        tm = f.get("teams") or {}
+        gl = f.get("goals") or {}
+        meta["fixtures"][fid_all] = {
+            "referee": fo.get("referee"),
+            "venue": ven.get("name"), "city": ven.get("city"),
+            "home": (tm.get("home") or {}).get("name"), "away": (tm.get("away") or {}).get("name"),
+            "date": fo.get("date"), "gh": gl.get("home"), "ga": gl.get("away"),
+            "round": (f.get("league") or {}).get("round"),
+            "status": ((fo.get("status") or {}).get("short")),
+        }
     finished = [f for f in fixtures
                 if (((f.get("fixture") or {}).get("status") or {}).get("short") in ("FT", "AET", "PEN"))
                 and str((f.get("fixture") or {}).get("id")) not in done]
@@ -133,6 +182,15 @@ def main():
         date = fx_o.get("date")
         home = ((f.get("teams") or {}).get("home") or {}).get("name")
         away = ((f.get("teams") or {}).get("away") or {}).get("name")
+        if fid not in meta["lineups"]:
+            try:
+                lu, rem = fetch_lineup(fid, key)
+                if lu:
+                    meta["lineups"][fid] = lu
+                time.sleep(PACE)
+            except urllib.error.HTTPError as e:
+                if e.code == 429:
+                    print("rate/quota hit (lineups); resume next run"); break
         try:
             pj, rem = api("/fixtures/players?fixture=%s" % fid, key)
         except urllib.error.HTTPError as e:
@@ -165,7 +223,11 @@ def main():
 
     store["updated"] = int(time.time())
     json.dump(store, open(out_path, "w"), separators=(",", ":"))
+    meta["updated"] = int(time.time())
+    json.dump(meta, open(meta_path, "w"), separators=(",", ":"))
     n_rows = sum(len(v) for v in store["rows"].values())
+    print("wrote apifootball_meta.json: %d fixtures (referee/venue), %d lineups"
+          % (len(meta["fixtures"]), len(meta["lineups"])))
     print("wrote apifootball_stats.json: %d players, %d match rows (%d fixtures pulled this run)" % (len(store["rows"]), n_rows, n))
 
 
