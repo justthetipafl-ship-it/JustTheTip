@@ -16,8 +16,7 @@ Output (EPL/data/):
   apifootball_meta.json   {updated, season,
      fixtures: {fid: {referee, venue, city, home, away, date, gh, ga, round, status}},
      lineups:  {fid: {home:{formation,startXI:[name],subs:[name],coach}, away:{...}}} }
-Referee + venue come free from the /fixtures list (already fetched). Lineups cost one extra
-call per fixture (/fixtures/lineups) — pulled for finished + imminent-upcoming matches.
+Referee + venue come free from the /fixtures list (already fetched). Lineups + corner stats cost two extra calls per fixture (/fixtures/lineups, /fixtures/statistics).
 """
 import json
 import os
@@ -108,6 +107,23 @@ def fetch_lineup(fid, key):
     return (out or None), rem
 
 
+def fetch_stats(fid, key):
+    """/fixtures/statistics -> {team_name: corner_kicks}, or None."""
+    sj, rem = api("/fixtures/statistics?fixture=%s" % fid, key)
+    if sj.get("errors"):
+        return None, rem
+    out = {}
+    for tb in (sj.get("response") or []):
+        nm = (tb.get("team") or {}).get("name")
+        c = None
+        for st in (tb.get("statistics") or []):
+            if st.get("type") == "Corner Kicks":
+                c = st.get("value"); break
+        if nm is not None:
+            out[nm] = c
+    return (out or None), rem
+
+
 def main():
     key = os.environ.get("APIFOOTBALL_KEY")
     if not key:
@@ -191,6 +207,17 @@ def main():
                 except urllib.error.HTTPError as e:
                     if e.code == 429:
                         print("rate/quota hit (lineups); resume next run"); break
+            fxm = meta["fixtures"].get(fid) or {}
+            if not fxm.get("corners"):
+                try:
+                    sc, rem = fetch_stats(fid, key)
+                    if sc:
+                        fxm["corners"] = {"home": sc.get(fxm.get("home")), "away": sc.get(fxm.get("away"))}
+                        meta["fixtures"][fid] = fxm
+                    time.sleep(PACE)
+                except urllib.error.HTTPError as e:
+                    if e.code == 429:
+                        print("rate/quota hit (stats); resume next run"); break
             try:
                 pj, rem = api("/fixtures/players?fixture=%s" % fid, key)
             except urllib.error.HTTPError as e:
