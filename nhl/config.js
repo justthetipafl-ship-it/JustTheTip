@@ -31,7 +31,7 @@ window.SPORT_CONFIG = {
   compareStats: [["shots","Shots"],["points","Points"],["goals","Goals"],["assists","Assists"]],
   h2hKeys: [["shots","Shots"],["points","Points"],["goals","Goals"],["assists","Assists"]],
 
-  oddsMkts: [["shots","Shots"],["points","Points"],["goals","Goals"],["assists","Assists"],["ppPoints","PP Points"]],
+  oddsMkts: [["shots","Shots"],["points","Points"],["goals","Goals"],["assists","Assists"],["ppPoints","PP Points"],["saves","Saves"]],
   multiMkts: [["shots","Shots"],["points","Points"],["goals","Goals"],["assists","Assists"]],
   nerdMkts: [["shots","Shots"],["points","Points"],["goals","Goals"],["assists","Assists"]],
   settingsMkts: [["shots","Shots"],["points","Points"],["goals","Goals"],["assists","Assists"],["ppPoints","PP Points"]],
@@ -62,7 +62,8 @@ window.SPORT_CONFIG = {
     { k:"streak",  n:"Streakers",      i:"ti-flame",          d:"Hot form",          odds:false },
     { k:"form",    n:"Form Alerts",    i:"ti-trending-up",    d:"Trend shifts",      odds:false },
     { k:"pp",      n:"Power Play",     i:"ti-bolt",           d:"PP-point value",    odds:false },
-    { k:"usage",   n:"Ice Time Trend", i:"ti-activity",       d:"TOI shifts",        odds:false }
+    { k:"usage",   n:"Ice Time Trend", i:"ti-activity",       d:"TOI shifts",        odds:false },
+    { k:"goalies", n:"Goalie Watch",   i:"ti-shield-half",    d:"Saves v shot volume", odds:false }
   ],
-  tileOrder: ["multi","green","death","snipers","producers","playmakers","finishers","bunnies","bogey","streak","form","pp","usage"]
+  tileOrder: ["multi","green","death","snipers","producers","playmakers","finishers","bunnies","bogey","streak","form","pp","usage","goalies"]
 };
