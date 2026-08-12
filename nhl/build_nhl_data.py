@@ -123,6 +123,33 @@ def fetch_gamelogs(roster, seasons):
                         by_season[yr].append(row)
     return by_season
 
+def fetch_boxscores(game_ids):
+    """Per-game boxscore -> {(gameId, playerId): {hits, blocks}}. Blocks/hits aren't in the
+    player game-log endpoint, so we pull them here (current season only to bound API calls)."""
+    bx = {}
+    ids = sorted(set(g for g in game_ids if g is not None))
+    for i, gid in enumerate(ids):
+        j = api(f"{WEB}/gamecenter/{gid}/boxscore"); time.sleep(PACE)
+        if not j:
+            continue
+        pbs = j.get("playerByGameStats") or {}
+        for side in ("homeTeam", "awayTeam"):
+            grp = pbs.get(side) or {}
+            for cat in ("forwards", "defense", "goalies"):
+                for p in (grp.get(cat) or []):
+                    pid = p.get("playerId")
+                    if pid is None:
+                        continue
+                    bx[(gid, pid)] = {"hits": num(p.get("hits")), "blocks": num(p.get("blockedShots"))}
+    print(f"  boxscores: {len(ids)} games -> {len(bx)} player-game block/hit rows")
+    return bx
+
+def merge_boxscores(by_season, cur_yr, bx):
+    for r in by_season.get(cur_yr, []):
+        b = bx.get((r.get("MatchId"), r.get("PlayerId")))
+        if b:
+            r["blocks"] = b.get("blocks"); r["hits"] = b.get("hits")
+
 def fetch_schedule(seasons):
     results, fixtures = [], []
     today = time.strftime("%Y-%m-%d", time.gmtime())
@@ -169,7 +196,7 @@ def fetch_team_summary(current):
     return out
 
 # ---------------- transform ----------------
-SK_STATS = ("goals", "assists", "points", "shots", "ppPoints", "ppGoals", "pim", "toiMin")
+SK_STATS = ("goals", "assists", "points", "shots", "ppPoints", "ppGoals", "pim", "blocks", "hits", "toiMin")
 GO_STATS = ("saves", "shotsAgainst", "goalsAgainst", "shutouts", "toiMin")
 
 def build(by_season, results, current):
@@ -278,11 +305,11 @@ def selftest():
             by[yr].append({"Year": yr, "Date": f"{yr}-11-{i+1:02d}", "MatchId": 100 + i,
                            "PlayerId": 1, "Player": "Test Skater", "Team": "TOR", "Opp": "MTL",
                            "home": 1, "pos": "C", "goals": 1, "assists": 1, "points": 2,
-                           "shots": 4, "ppPoints": 1, "ppGoals": 0, "pim": 0, "toiMin": 20.0})
+                           "shots": 4, "ppPoints": 1, "ppGoals": 0, "pim": 0, "blocks": 1, "hits": 2, "toiMin": 20.0})
             by[yr].append({"Year": yr, "Date": f"{yr}-11-{i+1:02d}", "MatchId": 100 + i,
                            "PlayerId": 2, "Player": "Test Skater 2", "Team": "MTL", "Opp": "TOR",
                            "home": 0, "pos": "D", "goals": 0, "assists": 1, "points": 1,
-                           "shots": 2, "ppPoints": 0, "ppGoals": 0, "pim": 2, "toiMin": 24.0})
+                           "shots": 2, "ppPoints": 0, "ppGoals": 0, "pim": 2, "blocks": 3, "hits": 4, "toiMin": 24.0})
     gl_seasons, players, teams, dvp = build(by, [], "20252026")
     assert players and teams and dvp, "transform produced empty output"
     assert any(p["shots"] for p in players), "shots not aggregated"
@@ -293,6 +320,7 @@ def main():
     ap.add_argument("--out", default="nhl/data")
     ap.add_argument("--seasons", default="20232024,20242025,20252026")
     ap.add_argument("--current", default="20252026")
+    ap.add_argument("--skip-boxscore", action="store_true", help="skip per-game block/hit fetch (faster)")
     ap.add_argument("--selftest", action="store_true")
     a = ap.parse_args()
     if a.selftest:
@@ -304,6 +332,11 @@ def main():
     print(f"  rosters: {sum(len(v) for v in roster.values())} players across {len(roster)} teams")
     by_season = fetch_gamelogs(roster, seasons)
     print(f"  gamelogs: {sum(len(v) for v in by_season.values())} rows")
+    cur_yr = end_year(a.current)
+    if not a.skip_boxscore and cur_yr in by_season:
+        gids = [r.get("MatchId") for r in by_season[cur_yr]]
+        bx = fetch_boxscores(gids)
+        merge_boxscores(by_season, cur_yr, bx)
     results, fixtures = fetch_schedule(seasons)
     gl_seasons, players, teams, dvp = build(by_season, results, a.current)
     write_all(a.out, gl_seasons, by_season, players, teams, dvp, results, fixtures, a.current)
