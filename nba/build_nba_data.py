@@ -658,7 +658,7 @@ def main():
     ap.add_argument("--league", default="both", choices=["nba", "wnba", "both"])
     ap.add_argument("--nba-seasons", default="2024,2025,2026")
     ap.add_argument("--nba-current", default="2026")
-    ap.add_argument("--wnba-seasons", default="2025,2026")
+    ap.add_argument("--wnba-seasons", default="2024,2025,2026")
     ap.add_argument("--wnba-current", default="2026")
     ap.add_argument("--password", default="")
     ap.add_argument("--src-local", default=None,
