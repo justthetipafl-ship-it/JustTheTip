@@ -281,6 +281,8 @@ def _team_game_rows(tb):
     t["Year"]    = tb["season"].astype(int).astype(str)
     t["Team"]    = tb["team_abbreviation"].astype(str)
     t["TeamFull"]= tb["team_display_name"].astype(str)
+    _lgc = "team_logo" if "team_logo" in tb.columns else ("team_logo_url" if "team_logo_url" in tb.columns else None)
+    t["TeamLogo"] = tb[_lgc].astype(str) if _lgc else ""
     t["Opp"]     = tb["opponent_team_abbreviation"].astype(str)
     t["points"]  = pd.to_numeric(tb["team_score"], errors="coerce")
     src = {"rebounds":"total_rebounds","assists":"assists",
@@ -314,6 +316,9 @@ def build_teams(tb_frames, cfg, current, form_only=False):
     for team, d in g.groupby("Team"):
         row = dict(team=team, teamFull=d["TeamFull"].iloc[-1], games=len(d),
                    conference=("East" if team in cfg["east"] else "West"))
+        _logo = str(d["TeamLogo"].iloc[-1]) if "TeamLogo" in d.columns else ""
+        if _logo and _logo.lower() != "nan":
+            row["logo"] = _logo
         for k in TEAM_KEYS + ["pace"]:
             row[k] = round(float(d[k].mean()), 2)
             row[k + "_a"] = (round(float(d[k + "_a"].mean()), 2)
@@ -461,8 +466,7 @@ def wjson(outdir, name, obj):
 
 def run_league(lg, seasons, current, outroot, password, src_local):
     cfg = LEAGUES[lg]
-    # shell layout: each sport loads /{sport}/data/ — NBA -> nba/data, WNBA -> wnba/data
-    outdir = {"nba": "nba/data", "wnba": "wnba/data"}.get(lg, os.path.join(outroot, lg))
+    outdir = os.path.join(outroot, lg)
     os.makedirs(outdir, exist_ok=True)
     print(f"[{cfg['label']}] seasons={seasons} current={current}")
 
@@ -658,7 +662,7 @@ def main():
     ap.add_argument("--league", default="both", choices=["nba", "wnba", "both"])
     ap.add_argument("--nba-seasons", default="2024,2025,2026")
     ap.add_argument("--nba-current", default="2026")
-    ap.add_argument("--wnba-seasons", default="2024,2025,2026")
+    ap.add_argument("--wnba-seasons", default="2025,2026")
     ap.add_argument("--wnba-current", default="2026")
     ap.add_argument("--password", default="")
     ap.add_argument("--src-local", default=None,
