@@ -1295,6 +1295,16 @@
       }
       catch(e){console.warn('load fail',k,e);}
     }));
+    // per-season gamelogs: if meta lists gamelogFiles (basketball etc.), load + combine into state.data.gamelogs
+    try {
+      var _glf = (state.data.meta && state.data.meta.gamelogFiles) || null;
+      if (_glf && _glf.length) {
+        var _parts = await Promise.all(_glf.map(function(fn){
+          return fetch(_sportPath('data/'+fn)+cb,{cache:'no-cache'}).then(function(r){return r.ok?r.json():[];}).catch(function(){return [];});
+        }));
+        state.data.gamelogs = [].concat.apply([], _parts); if(state.data.gamelogs.length) any=true;
+      }
+    } catch(_e){ console.warn('per-season gamelog load', _e); }
     if(any){ adaptData(); _bootStatus('Ready'); _updateFreshnessPill(); _renderApp(); startOddsAutoRefresh(); }
     else { showLegacyLoader(); }
     _bootHide();
