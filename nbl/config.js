@@ -99,11 +99,6 @@ window.SPORT_CONFIG = {
     { k:"form",    n:"Form Alerts",    i:"ti-trending-up",    d:"Trend shifts",        odds:false },
     { k:"dd",      n:"Double Trouble", i:"ti-stack-3",        d:"Double-double watch", odds:false },
     { k:"usage",   n:"Usage Trend",    i:"ti-activity",       d:"Role shifts",         odds:false },
-    { k:"next",    n:"Next Man Up",    i:"ti-user-plus",      d:"Injury volume",       odds:false },
-    { k:"spots",   n:"Schedule Spots", i:"ti-calendar-bolt",  d:"B2Bs & rest edges",   odds:false },
-    { k:"pace",    n:"Pace Race",      i:"ti-run",            d:"Pace-up overs",       odds:false },
-    { k:"blowout", n:"Garbage Time",   i:"ti-trash",          d:"Minutes risk",        odds:false }
   ],
-  tileOrder: ["multi","green","death","slash","splash","dish","board","bunnies","bogey",
-              "streak","form","dd","usage","next","spots","pace","blowout"]
+  tileOrder: ["multi","green","death","slash","splash","dish","board","bunnies","bogey","streak","form","dd","usage"]
 };
