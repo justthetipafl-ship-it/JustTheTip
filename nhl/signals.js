@@ -19,6 +19,7 @@ window.JTTSignals = (function () {
     var degRow     = deps.degRow || function () { return ''; };
     var degWrap    = deps.degWrap || function () { return ''; };
     var SIGNAL     = deps.SIGNAL_MIN_ODDS || deps.SIGNAL || { over: 1.60, under: 1.60 };
+    var teamMap    = deps.teamMap || {};
     var _fixtureSet = deps._fixtureSet || function () { return { has: function () { return true; } }; };
     var MIN_GAMES = 5;
 
@@ -187,6 +188,21 @@ window.JTTSignals = (function () {
       return legs.sort(function (a, b) { return b.score - a.score; });
     }
 
+    // ---- Goalie Watch: goalies facing high-shot opponents project for more saves ----
+    function goalies() {
+      var fs = _fixtureSet(), out = [];
+      (players || []).filter(function (p) { return p.position === 'G' && fs.has(p.team) && (p.games || p.matches || 0) >= 5; })
+        .forEach(function (p) {
+          var opp = nextOpp(p.team); if (!opp) return;
+          var oppSF = ((teamMap || {})[opp] || {}).shotsFor;   // opp shots-for/g = volume this goalie faces
+          var sv = p.saves || 0;
+          out.push({ p: p, opp: opp, mkt: 'saves', side: 'over', sc: sv + ((oppSF || 0) * 0.4),
+            headline: sv.toFixed(1) + ' saves/g',
+            detail: 'v ' + abbr(opp) + (oppSF ? ' \u00b7 ' + oppSF.toFixed(0) + ' SOG/g faced' : '') });
+        });
+      return wrap('ti-shield-half', 'Goalie Watch', out, 'c-soft', 'No starting goalies on the slate.');
+    }
+
     var tiles = {
       green: function () { return ouTile('over'); },
       death: function () { return ouTile('under'); },
@@ -196,7 +212,7 @@ window.JTTSignals = (function () {
       finishers: function () { return specialist('goals', 'ti-ball-hockey', 'Finishers'); },
       bunnies: function () { return h2hEngine(true); },
       bogey: function () { return h2hEngine(false); },
-      streak: streak, form: form, pp: pp, usage: usage
+      streak: streak, form: form, pp: pp, usage: usage, goalies: goalies
     };
 
     function playStyles(p, pg) { return [pg]; }
