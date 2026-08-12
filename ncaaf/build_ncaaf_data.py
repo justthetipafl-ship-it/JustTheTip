@@ -241,13 +241,13 @@ def schedules_from_espn(season, identity, conf_hint):
                 home_pregame_elo=None, away_pregame_elo=None))
     for wk in range(1, 17):
         try:
-            _ev_rows(fetch_json(f"{ESPN_SITE}/scoreboard?groups=80&year={season}"
+            _ev_rows(fetch_json(f"{ESPN_SITE}/scoreboard?groups=80&dates={season}"
                                 f"&seasontype=2&week={wk}&limit=400", timeout=45), "regular")
         except Exception as e:
             print(f"    (scoreboard {season} wk{wk} failed: {e})")
         time.sleep(0.3)
     try:
-        _ev_rows(fetch_json(f"{ESPN_SITE}/scoreboard?groups=80&year={season}"
+        _ev_rows(fetch_json(f"{ESPN_SITE}/scoreboard?groups=80&dates={season}"
                             f"&seasontype=3&limit=400", timeout=45), "postseason")
     except Exception:
         pass
@@ -435,7 +435,7 @@ def fetch_scoreboard_odds(season, week):
     """gameId -> {spread(home-neg), total, homeRank, awayRank}. week is the
     canonical week; postseason maps back to seasontype=3."""
     stype, wk = (3, week - 15) if week > 15 else (2, week)
-    j = fetch_json(f"{ESPN_SITE}/scoreboard?groups=80&year={season}"
+    j = fetch_json(f"{ESPN_SITE}/scoreboard?groups=80&dates={season}"
                    f"&seasontype={stype}&week={wk}&limit=400")
     events = j.get("events")
     if events is None:
