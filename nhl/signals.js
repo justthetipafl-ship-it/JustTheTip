@@ -125,11 +125,11 @@ window.JTTSignals = (function () {
     function usage() {
       var out = [];
       slate().forEach(function (p) {
-        var l5 = JS && JS.getRecentAvg ? JS.getRecentAvg(p.name, 'minutes', 5) : null, season = p.minutes;
-        if (l5 == null || season == null || season < 15) return;
+        var l5 = JS && JS.getRecentAvg ? JS.getRecentAvg(p.name, 'toiMin', 5) : null, season = p.toiMin;
+        if (l5 == null || season == null || season < 12) return;
         var delta = (l5 - season) / season * 100;
         if (delta >= 12) out.push({ p: p, opp: nextOpp(p.team), mkt: 'points', sc: delta,
-          headline: 'L5 ' + l5.toFixed(1) + ' min', detail: '+' + Math.round(delta) + '% minutes' });
+          headline: 'L5 ' + l5.toFixed(1) + ' TOI', detail: '+' + Math.round(delta) + '% minutes' });
       });
       return wrap('ti-activity', 'Usage Trend', out, 'c-soft', 'No role shifts on the slate.');
     }
