@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-build_ncaaf_data.py — JTT NCAAF split-data generator (advanced tool, NFL-port).
+build_ncaaf_data.py - JTT NCAAF split-data generator (advanced tool, NFL-port).
 
 Mirrors nfl/build_nfl_data.py's role: one script writes the split
 ncaaf/data/*.json files the shell + scoring.js consume. College has no bulk
@@ -8,21 +8,21 @@ player-box release, so this pipeline BUILDS AND OWNS its own box store:
 
   SOURCES (validated 2026-07):
     schedules   cfbfastR-data parquet (raw.githubusercontent.com, no key)
-    rosters     cfbfastR-data parquet — position, class year, headshot
+    rosters     cfbfastR-data parquet - position, class year, headshot
     player box  ESPN summary API, one call per COMPLETED game, cached in
                 ncaaf/data/raw/player_box_{yyyy}.json (committed = the store).
-                PRIMARY source for all box lines incl. TDs — the free
+                PRIMARY source for all box lines incl. TDs - the free
                 player_stats parquet undercounts TD flags (validated).
     enrichment  cfbfastR-data player_stats parquet (play-level, ESPN athlete
                 ids, 795/798 2024 FBS games present): red-zone/goal-line
-                usage, longest + explosive plays. YARDAGE-based fields only —
+                usage, longest + explosive plays. YARDAGE-based fields only -
                 TD flags in this file are NOT trusted.
-    first TD    ESPN summary scoringPlays (ordered) — not the parquet.
+    first TD    ESPN summary scoringPlays (ordered) - not the parquet.
     closing ln  ESPN summary pickcenter (per-game, stored in the box cache)
     calibration betting/cfb_line_odds.parquet (2006-2019 only!) joined to
                 schedule margins -> blowout_calib.json for Garbage Time.
     fixtures+   ESPN scoreboard (odds, AP ranks, venue) for the upcoming week
-    injuries    ESPN injuries endpoint, guarded — old file kept on failure
+    injuries    ESPN injuries endpoint, guarded - old file kept on failure
 
   OUTPUT FILES (ncaaf/data/):
     meta.json             version, week, gamelogFiles, password_hash, summary
@@ -50,7 +50,7 @@ player-box release, so this pipeline BUILDS AND OWNS its own box store:
   16 = Army-Navy); postseason week n -> 16 + n (all FBS bowls/CFP = 17).
 
   SANDBOX / FIRST-RUN NOTE: ESPN endpoints are unreachable from the dev
-  sandbox — the parser is built against the documented summary schema with
+  sandbox - the parser is built against the documented summary schema with
   STRICT, LOUD assertions (SchemaError lists exactly what was missing) and a
   --selftest that runs synthetic summaries through the full pipeline. First
   live ESPN validation happens on the first Actions run; failures are
@@ -61,7 +61,7 @@ Run (GitHub Actions):
     python ncaaf/build_ncaaf_data.py --out ncaaf/data \
         --seasons 2024,2025,2026 --current 2026 --password "$PW"
 
-Backfill (chunkable/resumable — fetches at most --max-fetch new games, the
+Backfill (chunkable/resumable - fetches at most --max-fetch new games, the
 committed raw cache is the resume point):
     python ncaaf/build_ncaaf_data.py --out ncaaf/data --backfill 2024 \
         --weeks 1-8 --max-fetch 120
@@ -73,7 +73,7 @@ Self-test (no network; every transform on synthetic frames + summaries):
 import argparse, datetime as dt, hashlib, io, json, math, os, re, sys, time
 from collections import defaultdict
 
-# ── constants ────────────────────────────────────────────────────────────────
+# -- constants ----------------------------------------------------------------
 POSITIONS = ["QB", "RB", "WR", "TE"]
 POS_MAP = {"QB": "QB", "RB": "RB", "FB": "RB", "HB": "RB", "TB": "RB",
            "WR": "WR", "SE": "WR", "FL": "WR", "TE": "TE", "H": "TE"}
@@ -107,9 +107,9 @@ DOME_VENUES = {"jma wireless dome","carrier dome","alamodome","caesars superdome
 
 class SchemaError(RuntimeError):
     """ESPN payload didn't look like the schema this parser was built against.
-    The message says exactly what was expected vs found — fix from the run log."""
+    The message says exactly what was expected vs found - fix from the run log."""
 
-# ── generic helpers ──────────────────────────────────────────────────────────
+# -- generic helpers ----------------------------------------------------------
 def col(df, *cands, default=None):
     for c in cands:
         if c in df.columns:
@@ -171,7 +171,7 @@ def fan_pts(r):
               + (r["rushYds"]+r["recYds"])*0.1 + (r["rushTds"]+r["recTds"])*6
               + r["receptions"])
 
-# ── network (parquet via raw.githubusercontent, ESPN via site API) ───────────
+# -- network (parquet via raw.githubusercontent, ESPN via site API) -----------
 def fetch_bytes(url, tries=3, timeout=90, headers=None):
     import urllib.request
     last = None
@@ -200,7 +200,7 @@ def load_schedules(seasons):
         except Exception as e:
             print(f"  (schedules {s} unavailable: {e})")
     if not out:
-        raise RuntimeError("no schedules loaded — cannot build anything")
+        raise RuntimeError("no schedules loaded - cannot build anything")
     return out
 
 def schedules_from_espn(season, identity, conf_hint):
@@ -272,10 +272,10 @@ def load_player_stats(seasons):
             out[s] = load_parquet(f"{CFBDATA}/player_stats/parquet/player_stats_{s}.parquet")
             print(f"  player_stats {s}: {len(out[s])} rows")
         except Exception as e:
-            print(f"  (player_stats {s} unavailable — enrichment skipped: {e})")
+            print(f"  (player_stats {s} unavailable - enrichment skipped: {e})")
     return out
 
-# ── schedules → canonical game index / results / fixture ────────────────────
+# -- schedules -> canonical game index / results / fixture --------------------
 def canon_week(week, season_type):
     """Regular week as-is (source: 1-16, wk16 = Army-Navy); postseason week
     n -> 16+n. FBS bowls/CFP are all postseason week 1 -> canonical 17."""
@@ -382,7 +382,7 @@ def build_fixture(games, scoreboard_odds=None):
         fx.append(row)
     return fx, week, season
 
-# ── ESPN team identity (id -> abbr / displayName / logo), cached ─────────────
+# -- ESPN team identity (id -> abbr / displayName / logo), cached -------------
 def _synth_abbr(name):
     """Deterministic placeholder abbr until the ESPN teams cache exists."""
     words = re.sub(r"[^A-Za-z ]", "", str(name or "")).split()
@@ -414,13 +414,13 @@ def load_team_identity(raw_dir, skip_espn):
                           "displayName": t.get("displayName") or "",
                           "logo": (t.get("logos") or [{}])[0].get("href", "")}
         if len(fresh) < 100:
-            raise SchemaError(f"teams endpoint returned only {len(fresh)} FBS teams — "
+            raise SchemaError(f"teams endpoint returned only {len(fresh)} FBS teams - "
                               "expected ~134; refusing to overwrite the cache")
         cache = fresh
         wjson(path, cache)
         return cache, True
     except Exception as e:
-        print(f"  (ESPN teams identity refresh failed — keeping cache of {len(cache)}: {e})")
+        print(f"  (ESPN teams identity refresh failed - keeping cache of {len(cache)}: {e})")
         return cache, False
 
 def team_meta(identity, tid, school):
@@ -430,7 +430,7 @@ def team_meta(identity, tid, school):
             "displayName": m.get("displayName") or school,
             "logo": m.get("logo") or ""}
 
-# ── ESPN scoreboard → upcoming odds / ranks ─────────────────────────────────
+# -- ESPN scoreboard -> upcoming odds / ranks ---------------------------------
 def fetch_scoreboard_odds(season, week):
     """gameId -> {spread(home-neg), total, homeRank, awayRank}. week is the
     canonical week; postseason maps back to seasontype=3."""
@@ -475,7 +475,7 @@ def fetch_scoreboard_odds(season, week):
                        "state": addr.get("state") or "", "indoor": bool(v.get("indoor"))}
     return out, venues
 
-# ── ESPN summary → player box + scoring plays + closing line ────────────────
+# -- ESPN summary -> player box + scoring plays + closing line ----------------
 # Label-driven category parsing: map labels to fields by NAME, never position.
 CAT_LABELS = {
     "passing":   {"C/ATT": "catt", "YDS": "passYds", "TD": "passTds", "INT": "passInt",
@@ -490,7 +490,7 @@ REQUIRED_LABELS = {"passing": {"C/ATT", "YDS", "TD", "INT"},
                    "receiving": {"REC", "YDS", "TD"}}
 
 def parse_espn_summary(j, game_id):
-    """-> {gameId, players:{athleteId:{id,name,teamId,stats…}}, scoring:[…],
+    """-> {gameId, players:{athleteId:{id,name,teamId,stats...}}, scoring:[...],
     line:{spread,total,provider}|None}. Raises SchemaError loudly on shape drift."""
     box = j.get("boxscore") or {}
     pteams = box.get("players")
@@ -517,7 +517,7 @@ def parse_espn_summary(j, game_id):
             unknown = [lb for lb in labels if lb not in lmap
                        and lb not in ("AVG", "RTG", "QBR", "LONG", "TGTS")]
             if unknown:
-                print(f"    (summary {game_id}: '{cname}' unrecognised labels {unknown} — ignored)")
+                print(f"    (summary {game_id}: '{cname}' unrecognised labels {unknown} - ignored)")
             for a in aths:
                 ath = a.get("athlete") or {}
                 aid = str(ath.get("id", ""))
@@ -570,7 +570,7 @@ def parse_espn_summary(j, game_id):
 
 def update_box_store(raw_dir, season, games, max_fetch, weeks=None):
     """Fetch ESPN summaries for completed FBS-involved games missing from the
-    cache. Commits nothing itself — the workflow commits raw/. Resumable."""
+    cache. Commits nothing itself - the workflow commits raw/. Resumable."""
     path = os.path.join(raw_dir, f"player_box_{season}.json")
     store = rjson(path, {}) or {}
     want = [gm for (s, _), gm in sorted(games.items())
@@ -591,8 +591,8 @@ def update_box_store(raw_dir, season, games, max_fetch, weeks=None):
             rec["week"] = gm["week"]; rec["fetchedAt"] = _now()
             store[gid] = rec; n += 1
             if n % 25 == 0:
-                wjson(path, store)         # checkpoint — resumable mid-run
-                print(f"    …{n} fetched (checkpoint)")
+                wjson(path, store)         # checkpoint - resumable mid-run
+                print(f"    ...{n} fetched (checkpoint)")
         except SchemaError:
             raise                          # loud by design: fix from the log
         except Exception as e:
@@ -605,7 +605,7 @@ def update_box_store(raw_dir, season, games, max_fetch, weeks=None):
 def _now():
     return dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
-# ── box store → gamelogs ─────────────────────────────────────────────────────
+# -- box store -> gamelogs -----------------------------------------------------
 def box_to_gamelogs(stores, games, by_team, roster_idx):
     """stores: {season: {gameId: rec}} -> NFL-shaped gamelog rows."""
     gamelogs = []
@@ -642,10 +642,10 @@ def box_to_gamelogs(stores, games, by_team, roster_idx):
     gamelogs.sort(key=lambda x: (x["Year"], x["Week"], x["MatchId"], x["Player"]))
     return gamelogs
 
-# ── enrichment: player_stats parquet → rz/gl usage + long/explosive ─────────
+# -- enrichment: player_stats parquet -> rz/gl usage + long/explosive ---------
 def build_enrichment(ps_frames):
     """-> per-game {(season, gameId, athleteId): {longRec,longRush,longComp,
-    expRec,expRush, rzTgt,rzCarry,glCarry}}. Yardage/position fields only —
+    expRec,expRush, rzTgt,rzCarry,glCarry}}. Yardage/position fields only -
     TD flags in this file are unreliable (validated) and never read."""
     per_game = {}
     for season, df in sorted(ps_frames.items()):
@@ -654,7 +654,7 @@ def build_enrichment(ps_frames):
                 "completion_yds","target_player_id"]
         missing = [c for c in need if c not in df.columns]
         if missing:
-            print(f"  (player_stats {season}: columns {missing} missing — enrichment skipped)")
+            print(f"  (player_stats {season}: columns {missing} missing - enrichment skipped)")
             continue
         gid_a = df["game_id"].astype(str)
         ytg_a = df["yards_to_goal"]
@@ -722,7 +722,7 @@ def merge_enrichment(gamelogs, enrich):
               f"({hit/len(gamelogs)*100:.0f}%)")
     return gamelogs
 
-# ── first TD from scoringPlays ───────────────────────────────────────────────
+# -- first TD from scoringPlays -----------------------------------------------
 _TD_RX = re.compile(r"touchdown", re.I)
 _NAME_RX = re.compile(r"^([A-Z][\w'.-]+(?: [A-Z][\w'.-]+){0,3}?) "
                       r"(?:\d+ ?(?:Yd|Yrd|Yard))", re.I)
@@ -750,7 +750,7 @@ def build_firsttd(stores, games):
                 game_first = True
     return out
 
-# ── players / teams / dvp (NFL parity, college keys) ─────────────────────────
+# -- players / teams / dvp (NFL parity, college keys) -------------------------
 def build_roster_idx(ros):
     """athleteId -> {pos, classYear, headshot, team(school)}."""
     idx = {}
@@ -872,7 +872,7 @@ def build_teams(gamelogs, results, current, confs, identity, form_n=None):
     return out
 
 def build_dvp(gamelogs, players, current, confs):
-    """defense teamId × pos → per-game allowed. FBS-vs-FBS games only."""
+    """defense teamId x pos -> per-game allowed. FBS-vs-FBS games only."""
     pos_by_id = {p["playerId"]: p["position"] for p in players}
     sums = defaultdict(lambda: defaultdict(float)); games = defaultdict(set)
     for r in gamelogs:
@@ -907,7 +907,7 @@ def build_dvp(gamelogs, players, current, confs):
         out.append(rec)
     return out
 
-# ── blowout calibration (2006-2019 closing spreads × schedule margins) ───────
+# -- blowout calibration (2006-2019 closing spreads x schedule margins) -------
 CALIB_BUCKETS = [(0, 3), (3, 7), (7, 10), (10, 14), (14, 17), (17, 21),
                  (21, 28), (28, 99)]
 
@@ -941,7 +941,7 @@ def build_blowout_calib(bet_df, old_sched_frames):
     print(f"  blowout calib: {len(rows)} joined games -> {len(out)} buckets")
     return out
 
-# ── injuries (ESPN, guarded) ─────────────────────────────────────────────────
+# -- injuries (ESPN, guarded) -------------------------------------------------
 def fetch_injuries(identity):
     j = fetch_json(f"{ESPN_SITE}/injuries", timeout=45)
     blocks = j.get("injuries")
@@ -960,7 +960,7 @@ def fetch_injuries(identity):
                         "Status": it.get("status") or ""})
     return out
 
-# ── weather (Open-Meteo, geocode cache, guarded) ─────────────────────────────
+# -- weather (Open-Meteo, geocode cache, guarded) -----------------------------
 def build_weather(fixture, venues, raw_dir):
     coords_path = os.path.join(raw_dir, "venue_coords.json")
     coords = rjson(coords_path, {}) or {}
@@ -1004,7 +1004,7 @@ def build_weather(fixture, venues, raw_dir):
         wjson(coords_path, coords)
     return out
 
-# ── main build ───────────────────────────────────────────────────────────────
+# -- main build ---------------------------------------------------------------
 def run_build(out_dir, seasons, current, password, args, frames=None):
     raw_dir = os.path.join(out_dir, "raw")
     os.makedirs(raw_dir, exist_ok=True)
@@ -1036,12 +1036,12 @@ def run_build(out_dir, seasons, current, password, args, frames=None):
         if not args.skip_calib:
             calib_path = os.path.join(out_dir, "blowout_calib.json")
             if os.path.exists(calib_path) and not args.rebuild_calib:
-                print("  blowout_calib.json exists — skipping (use --rebuild-calib to redo)")
+                print("  blowout_calib.json exists - skipping (use --rebuild-calib to redo)")
             else:
                 try:
                     bet_df = load_parquet(f"{CFBDATA}/betting/parquet/cfb_line_odds.parquet")
                 except Exception as e:
-                    print(f"  (betting parquet unavailable — calib skipped: {e})")
+                    print(f"  (betting parquet unavailable - calib skipped: {e})")
         stores = None
 
     games, by_team = build_game_index(sch_frames)
@@ -1096,11 +1096,11 @@ def run_build(out_dir, seasons, current, password, args, frames=None):
                                     and (gm["homeDiv"] == "fbs" or gm["awayDiv"] == "fbs")),
                                    key=lambda x: x["date"])])}
         except Exception as e:
-            print(f"  (scoreboard odds unavailable — fixture ships without lines: {e})")
+            print(f"  (scoreboard odds unavailable - fixture ships without lines: {e})")
 
     # Aggregate teams/DVP over the latest season actually in the gamelogs. In the off-season
     # `current` (calendar) can be a season with no games yet (e.g. 2026 before kickoff), which
-    # would zero out teams/DVP — so fall back to the newest season the data actually has.
+    # would zero out teams/DVP - so fall back to the newest season the data actually has.
     _gl_years = [int(r["Year"]) for r in gamelogs if r.get("Year")]
     agg_current = max(_gl_years) if _gl_years else current
     if agg_current != current:
@@ -1115,13 +1115,13 @@ def run_build(out_dir, seasons, current, password, args, frames=None):
         try:
             injuries = fetch_injuries(identity)
         except Exception as e:
-            print(f"  (injuries fetch failed — keeping existing file: {e})")
+            print(f"  (injuries fetch failed - keeping existing file: {e})")
     weather = []
     if fixture and not args.skip_weather and not args.skip_espn:
         try:
             weather = build_weather(fixture, sb_venues, raw_dir)
         except Exception as e:
-            print(f"  (weather failed — shipping empty: {e})")
+            print(f"  (weather failed - shipping empty: {e})")
     calib = None
     if frames:
         calib = build_blowout_calib(bet_df, sch_frames)
@@ -1189,11 +1189,11 @@ def run_build(out_dir, seasons, current, password, args, frames=None):
     print("done.", meta["summary"])
     return meta
 
-# ── selftest ─────────────────────────────────────────────────────────────────
+# -- selftest -----------------------------------------------------------------
 def selftest():
     import pandas as pd
-    print("SELFTEST — synthetic frames + synthetic ESPN summaries, full pipeline")
-    ok = lambda c, m: (_ for _ in ()).throw(AssertionError(m)) if not c else print(f"  ok — {m}")
+    print("SELFTEST - synthetic frames + synthetic ESPN summaries, full pipeline")
+    ok = lambda c, m: (_ for _ in ()).throw(AssertionError(m)) if not c else print(f"  ok - {m}")
 
     # -- synthetic schedule: 4 FBS teams (ids 1..4), 1 FCS (id 99), season 2025
     def S(gid, wk, st, hid, aid, hn, an, hdv, adv, hc, ac, hs, as_, done, dt_, ne=False):
@@ -1371,7 +1371,7 @@ def selftest():
             ok(True, f"{fn} valid NaN-free JSON")
     print("SELFTEST PASSED")
 
-# ── cli ──────────────────────────────────────────────────────────────────────
+# -- cli ----------------------------------------------------------------------
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", default="ncaaf/data")
