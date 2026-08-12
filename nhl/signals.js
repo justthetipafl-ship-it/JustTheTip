@@ -142,7 +142,7 @@ window.JTTSignals = (function () {
       var minOdds = (SIGNAL || {})[side];
       var GREEN = 4.5, DEATH = -8.0, byPlayer = {};   // hockey-calibrated (was 5.5/-3.5 basketball)
       var MARKETS = [['shots', 'Shots'], ['points', 'Points'], ['goals', 'Goals'],
-                     ['assists', 'Assists'], ['ppPoints', 'PP Points']];
+                     ['assists', 'Assists'], ['ppPoints', 'PP Points'], ['blocks', 'Blocks'], ['hits', 'Hits']];
       (teamList || []).forEach(function (team) {
         var opp = nextOpp(team); if (!opp) return;
         (playersOnTeam(team) || []).forEach(function (p) {
@@ -188,6 +188,28 @@ window.JTTSignals = (function () {
       return legs.sort(function (a, b) { return b.score - a.score; });
     }
 
+    // ---- Shot Blockers: blocks weighted by opponent shot volume ----
+    function blockers() {
+      var out = [];
+      slate().forEach(function (p) {
+        if ((p.blocks || 0) < 1) return; var opp = nextOpp(p.team); if (!opp) return;
+        var oppSF = ((teamMap || {})[opp] || {}).shotsFor;
+        out.push({ p: p, opp: opp, mkt: 'blocks', side: 'over', sc: (p.blocks || 0) + ((oppSF || 0) * 0.05),
+          headline: (p.blocks).toFixed(1) + ' blk/g', detail: 'v ' + abbr(opp) + (oppSF ? ' \u00b7 ' + oppSF.toFixed(0) + ' SOG/g' : '') });
+      });
+      return wrap('ti-shield', 'Shot Blockers', out, 'c-soft', 'No shot blockers on the slate.');
+    }
+    // ---- Enforcers: big-hit forwards/defense ----
+    function hitters() {
+      var out = [];
+      slate().forEach(function (p) {
+        if ((p.hits || 0) < 1.5) return; var opp = nextOpp(p.team); if (!opp) return;
+        out.push({ p: p, opp: opp, mkt: 'hits', side: 'over', sc: p.hits,
+          headline: (p.hits).toFixed(1) + ' hits/g', detail: 'v ' + abbr(opp) });
+      });
+      return wrap('ti-karate', 'Enforcers', out, 'c-soft', 'No big hitters on the slate.');
+    }
+
     // ---- Goalie Watch: goalies facing high-shot opponents project for more saves ----
     function goalies() {
       var fs = _fixtureSet(), out = [];
@@ -212,7 +234,7 @@ window.JTTSignals = (function () {
       finishers: function () { return specialist('goals', 'ti-ball-hockey', 'Finishers'); },
       bunnies: function () { return h2hEngine(true); },
       bogey: function () { return h2hEngine(false); },
-      streak: streak, form: form, pp: pp, usage: usage, goalies: goalies
+      streak: streak, form: form, pp: pp, usage: usage, goalies: goalies, blockers: blockers, hitters: hitters
     };
 
     function playStyles(p, pg) { return [pg]; }
