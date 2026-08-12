@@ -16,10 +16,10 @@ window.SPORT_CONFIG = {
   posColors: { C:"#38bdf8", L:"#22c55e", R:"#f59e0b", D:"#a78bfa", G:"#fb7185" },
   posShort: null, dvpStylePos: ["C","L","R","D"],
 
-  display: [["minutes","TOI"],["goals","G"],["assists","A"],["points","Pts"],["shots","SOG"],
+  display: [["toiMin","TOI"],["goals","G"],["assists","A"],["points","Pts"],["shots","SOG"],
             ["ppPoints","PPP"],["ppGoals","PPG"],["pim","PIM"],["plusMinus","+/-"]],
-  displaySets: { All: [["minutes","TOI"],["goals","G"],["assists","A"],["points","Pts"],["shots","SOG"],["ppPoints","PPP"]] },
-  boxCols: [["minutes","TOI"],["goals","G"],["assists","A"],["points","PTS"],["shots","SOG"],["ppPoints","PPP"]],
+  displaySets: { All: [["toiMin","TOI"],["goals","G"],["assists","A"],["points","Pts"],["shots","SOG"],["ppPoints","PPP"]] },
+  boxCols: [["toiMin","TOI"],["goals","G"],["assists","A"],["points","PTS"],["shots","SOG"],["ppPoints","PPP"]],
   teamCols: [["goalsFor","GF"],["goalsAgainst","GA"],["shotsFor","SF"],["shotsAgainst","SA"]],
 
   cmpAliases: { sog:"shots", shot:"shots", shots:"shots", s:"shots",
