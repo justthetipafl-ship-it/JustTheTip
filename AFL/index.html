@@ -1861,6 +1861,8 @@
   window._sHideCompleted=function(){ SETTINGS.hideCompleted=!SETTINGS.hideCompleted; saveSettings(); _renderApp(); };
   function _mlbToday(){ const d=new Date(); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
   window._mlbSetDay=function(d){ state.view.mlbDay=d; _renderApp(); window.scrollTo({top:0}); };
+  // daily-schedule sports show Today/Tomorrow tabs; weekly sports show the round/week slate
+  function _dailySched(){ var c=window.SPORT_CONFIG||{}; if(c.dailySchedule!=null) return !!c.dailySchedule; return ['mlb','nba','wnba','nhl'].indexOf(SPORT.key)>=0; }
   function pips(team){const f=teamForm(team,5);return f.length?'<div class="form-pips">'+f.map(r=>'<span class="pip '+r+'">'+r+'</span>').join('')+'</div>':'';}
   function _wxIcon(code){
     if(code==null) return 'ti-cloud';
@@ -2215,8 +2217,12 @@
     const toggle=doneCount>0?'<button class="fx-hidebtn'+(SETTINGS.hideCompleted?' on':'')+'" onclick="_sHideCompleted()"><i class="ti ti-'+(SETTINGS.hideCompleted?'eye-off':'eye')+'"></i> '+(SETTINGS.hideCompleted?'Completed hidden ('+doneCount+')':'Hide completed ('+doneCount+')')+'</button>':'';
     // MLB: Today / Tomorrow day tabs (like the standalone tool)
     let mlbDayNav='';
-    if(SPORT.key==='mlb'){
-      const dates=[...new Set(games.map(x=>_localDate(x.g)).filter(Boolean))].sort();
+    if(_dailySched()){
+      let dates=[...new Set(games.map(x=>_localDate(x.g)).filter(Boolean))].sort();
+      // daily sports can ship a full-season fixture — cap the tab bar to the live slate window (yesterday's late games -> next few days)
+      var _yd=new Date(); _yd.setDate(_yd.getDate()-1);
+      var _yds=_yd.getFullYear()+'-'+String(_yd.getMonth()+1).padStart(2,'0')+'-'+String(_yd.getDate()).padStart(2,'0');
+      var _upd=dates.filter(function(d){return d>=_yds;}); dates=(_upd.length?_upd:dates).slice(0,5);
       if(dates.length>1){
         const today=new Date(); today.setHours(0,0,0,0);
         const dayLabel=(d)=>{ const dt=new Date(d+'T12:00:00'); const dd=new Date(dt); dd.setHours(0,0,0,0);
@@ -2235,8 +2241,8 @@
         games=games.filter(x=>_localDate(x.g)===sel);
       }
     }
-    const _fxTitle=SPORT.key==='mlb'?'Focused Fixtures':('Round '+(state.data.meta&&state.data.meta.round||''));
-    const _fxSub=SPORT.key==='mlb'?(games.length+' game'+(games.length!==1?'s':'')+' \u00b7 tap for the matchup breakdown'):'Tap a match for the matchup breakdown';
+    const _fxTitle=_dailySched()?'Focused Fixtures':((typeof ROUND_WORD!=='undefined'&&ROUND_WORD?ROUND_WORD:'Round')+' '+(state.data.meta&&state.data.meta.round||''));
+    const _fxSub=_dailySched()?(games.length+' game'+(games.length!==1?'s':'')+' \u00b7 tap for the matchup breakdown'):'Tap a match for the matchup breakdown';
     let h='<div class="page-header"><div style="display:flex;align-items:flex-start;justify-content:space-between;gap:10px"><div><div class="page-title">'+_fxTitle+'</div><div class="page-sub">'+_fxSub+'</div></div>'+toggle+'</div></div>';
     h+=mlbDayNav;
     if(!games.length) return h+emptyState('ti-calendar-check','No games','No games scheduled for this day.');
