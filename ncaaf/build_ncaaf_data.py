@@ -838,7 +838,7 @@ def _team_games(gamelogs, results, current):
         meta[key] = {"opp": r["Opp"], "week": r["Week"], "vsFcs": r["vsFcs"]}
     pts = {}
     for x in results:
-        if x["season"] != current: continue
+        if str(x["season"]) != str(current): continue
         pts[(x["home"], x["week"])] = x["hs"]; pts[(x["away"], x["week"])] = x["as"]
     for key, m in meta.items():
         team, _ = key
@@ -1098,9 +1098,16 @@ def run_build(out_dir, seasons, current, password, args, frames=None):
         except Exception as e:
             print(f"  (scoreboard odds unavailable — fixture ships without lines: {e})")
 
-    teams = build_teams(gamelogs, results, current, confs, identity)
-    teams_form = build_teams(gamelogs, results, current, confs, identity, form_n=FORM_N)
-    dvp = build_dvp(gamelogs, players, current, confs)
+    # Aggregate teams/DVP over the latest season actually in the gamelogs. In the off-season
+    # `current` (calendar) can be a season with no games yet (e.g. 2026 before kickoff), which
+    # would zero out teams/DVP — so fall back to the newest season the data actually has.
+    _gl_years = [int(r["Year"]) for r in gamelogs if r.get("Year")]
+    agg_current = max(_gl_years) if _gl_years else current
+    if agg_current != current:
+        print(f"  [teams/dvp] current={current} has no gamelogs; aggregating over {agg_current}")
+    teams = build_teams(gamelogs, results, agg_current, confs, identity)
+    teams_form = build_teams(gamelogs, results, agg_current, confs, identity, form_n=FORM_N)
+    dvp = build_dvp(gamelogs, players, agg_current, confs)
 
     # ---- guarded extras ----
     injuries = None
