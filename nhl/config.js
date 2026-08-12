@@ -7,9 +7,9 @@ window.SPORT_CONFIG = {
   logoExt: ".svg", logoCdn: "https://assets.nhle.com/logos/nhl/svg/", logoCdnExt: "_light.svg",
   teamIds: {}, minutesFloor: 10,
 
-  betStats: [["shots","Shots"],["points","Points"],["goals","Goals"],["assists","Assists"],["ppPoints","PP Points"]],
+  betStats: [["shots","Shots"],["points","Points"],["goals","Goals"],["assists","Assists"],["ppPoints","PP Points"],["blocks","Blocks"],["hits","Hits"]],
   mktNames: { shots:"Shots on Goal", points:"Points", goals:"Goals", assists:"Assists",
-              ppPoints:"PP Points", saves:"Saves", pim:"PIM" },
+              ppPoints:"PP Points", saves:"Saves", blocks:"Blocks", hits:"Hits", pim:"PIM" },
   roundWord: "Game", lowCount: [],
 
   posOrder: ["C","L","R","D","G"],
@@ -31,7 +31,7 @@ window.SPORT_CONFIG = {
   compareStats: [["shots","Shots"],["points","Points"],["goals","Goals"],["assists","Assists"]],
   h2hKeys: [["shots","Shots"],["points","Points"],["goals","Goals"],["assists","Assists"]],
 
-  oddsMkts: [["shots","Shots"],["points","Points"],["goals","Goals"],["assists","Assists"],["ppPoints","PP Points"],["saves","Saves"]],
+  oddsMkts: [["shots","Shots"],["points","Points"],["goals","Goals"],["assists","Assists"],["ppPoints","PP Points"],["saves","Saves"],["blocks","Blocks"],["hits","Hits"]],
   multiMkts: [["shots","Shots"],["points","Points"],["goals","Goals"],["assists","Assists"]],
   nerdMkts: [["shots","Shots"],["points","Points"],["goals","Goals"],["assists","Assists"]],
   settingsMkts: [["shots","Shots"],["points","Points"],["goals","Goals"],["assists","Assists"],["ppPoints","PP Points"]],
@@ -63,7 +63,9 @@ window.SPORT_CONFIG = {
     { k:"form",    n:"Form Alerts",    i:"ti-trending-up",    d:"Trend shifts",      odds:false },
     { k:"pp",      n:"Power Play",     i:"ti-bolt",           d:"PP-point value",    odds:false },
     { k:"usage",   n:"Ice Time Trend", i:"ti-activity",       d:"TOI shifts",        odds:false },
-    { k:"goalies", n:"Goalie Watch",   i:"ti-shield-half",    d:"Saves v shot volume", odds:false }
+    { k:"goalies", n:"Goalie Watch",   i:"ti-shield-half",    d:"Saves v shot volume", odds:false },
+    { k:"blockers",n:"Shot Blockers",  i:"ti-shield",         d:"Blocks v shot volume",odds:false },
+    { k:"hitters", n:"Enforcers",      i:"ti-karate",         d:"Big hitters",         odds:false }
   ],
-  tileOrder: ["multi","green","death","snipers","producers","playmakers","finishers","bunnies","bogey","streak","form","pp","usage","goalies"]
+  tileOrder: ["multi","green","death","snipers","producers","playmakers","finishers","bunnies","bogey","streak","form","pp","usage","goalies","blockers","hitters"]
 };
