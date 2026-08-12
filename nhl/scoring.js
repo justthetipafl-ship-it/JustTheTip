@@ -59,7 +59,7 @@ window.JTTScoring = (function () {
   function _isValidMinGame(r){
     if(!r) return true;
     if(r.dnp) return false;
-    const raw = r.minutes!=null ? r.minutes : null;
+    const raw = r.toiMin!=null ? r.toiMin : null;
     if(raw==null) return true;
     const t = parseFloat(raw);
     if(isNaN(t)) return true;
@@ -153,7 +153,7 @@ window.JTTScoring = (function () {
     const groups = {};
     PD.forEach(p=>{ const pg=POS_TO_DVP[p.position]||p.position||'Unknown'; (groups[pg]=groups[pg]||[]).push(p); });
     const POOL = { threesAtt:'threesAtt', assists:'assists', rebounds:'rebounds',
-                   fga:'fga', oreb:'oreb', minutes:'minutes' };
+                   fga:'fga', oreb:'oreb', minutes:'toiMin' };
     Object.entries(groups).forEach(([pg, players])=>{
       _pdPoolAvgs[pg]={};
       Object.entries(POOL).forEach(([poolKey, field])=>{
@@ -413,7 +413,7 @@ window.JTTScoring = (function () {
   // ---- over / under wrappers (statKey-generic; AFL thresholds intact) ----
   function scoreUnderLine(p, opp, line, statKey){
     statKey=statKey||'points';
-    if(!line || (p.minutes||0)<MIN_FLOOR+3) return null;
+    if(!line || (p.toiMin||0)<MIN_FLOOR+3) return null;
     const gamesCur=dvpByName(p.name).filter(isCurSeason);
     if(gamesCur.length<3) return null;
     const dvpPos=POS_TO_DVP[getPlayerPos(p)]||getPlayerPos(p);
@@ -436,7 +436,7 @@ window.JTTScoring = (function () {
   }
   function scoreOverLine(p, opp, line, statKey){
     statKey=statKey||'points';
-    if(!line || (p.minutes||0)<MIN_FLOOR+3) return null;
+    if(!line || (p.toiMin||0)<MIN_FLOOR+3) return null;
     const gamesCur=dvpByName(p.name).filter(isCurSeason);
     if(gamesCur.length<3) return null;
     const dvpPos=POS_TO_DVP[getPlayerPos(p)]||getPlayerPos(p);
