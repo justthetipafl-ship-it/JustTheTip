@@ -15,7 +15,7 @@ Emits (NBA-tool shapes) into NBL/data/:
   fixture.json        upcoming games [{home,away,date,venue,gw}]
   meta.json           tool meta {league,label,seasons,currentSeason,gamelogFiles,...}
 """
-import csv, json, os, re, unicodedata
+import csv, json, os, re, unicodedata, datetime
 from collections import defaultdict
 
 DATA = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
@@ -190,6 +190,7 @@ def main():
     # ---- results + fixtures ----
     results, fixtures = [], []
     rec_set = set(gl_seasons)
+    fx_cutoff = (datetime.date.today() - datetime.timedelta(days=1)).isoformat()   # drop stale games stuck in SCHEDULED
     for r in res:
         if r.get("match_status") == "COMPLETE":
             if end_year(r.get("season")) not in rec_set:   # keep completed results to recent seasons only
@@ -198,11 +199,12 @@ def main():
                             "date": (r.get("match_time_utc") or "")[:10],
                             "home": r.get("home_team_nickname"), "away": r.get("away_team_nickname"),
                             "hs": num(r.get("home_score_string")), "as": num(r.get("away_score_string"))})
-        elif r.get("match_status") == "SCHEDULED":   # keep ALL upcoming fixtures (may be a future season)
-            fixtures.append({"gameId": r.get("match_id"), "home": r.get("home_team_nickname"), "away": r.get("away_team_nickname"),
-                             "utc": r.get("match_time_utc"),
-                             "date": (r.get("match_time_utc") or "")[:10] or (r.get("match_time_utc") or ""),
-                             "venue": r.get("venue_name"), "gw": r.get("round_number")})
+        elif r.get("match_status") == "SCHEDULED":   # upcoming fixtures — exclude stale games stuck in SCHEDULED (nblR quirk)
+            _fd = (r.get("match_time_utc") or "")[:10]
+            if _fd and _fd >= fx_cutoff:
+                fixtures.append({"gameId": r.get("match_id"), "home": r.get("home_team_nickname"), "away": r.get("away_team_nickname"),
+                                 "utc": r.get("match_time_utc"), "date": _fd,
+                                 "venue": r.get("venue_name"), "gw": r.get("round_number")})
     fixtures.sort(key=lambda x: x["date"] or "")
 
     # ---- write ----
