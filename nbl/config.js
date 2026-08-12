@@ -6,6 +6,7 @@ window.SPORT_CONFIG = {
   dir: "nbl",
   name: "NBL",
   logoExt: ".png",
+  minutesFloor: 12,
   logoCdn: "",                 // logos are per-team absolute URLs carried on teams.json (t.logo)
   logoCdnExt: "",
   teamIds: {},                 // not needed — logo URLs live on the team rows
