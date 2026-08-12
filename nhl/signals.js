@@ -140,7 +140,7 @@ window.JTTSignals = (function () {
       if (!JS) return [];
       var side = kind === 'over' ? 'over' : 'under';
       var minOdds = (SIGNAL || {})[side];
-      var GREEN = 5.5, DEATH = -3.5, byPlayer = {};
+      var GREEN = 4.5, DEATH = -8.0, byPlayer = {};   // hockey-calibrated (was 5.5/-3.5 basketball)
       var MARKETS = [['shots', 'Shots'], ['points', 'Points'], ['goals', 'Goals'],
                      ['assists', 'Assists'], ['ppPoints', 'PP Points']];
       (teamList || []).forEach(function (team) {
