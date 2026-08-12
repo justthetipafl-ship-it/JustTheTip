@@ -11,7 +11,7 @@ format into nhl/data/.
     api.nhle.com/stats/rest/en/team/summary?cayenneExp=...     team for/against
 
   Emits (shell shapes) into nhl/data/:
-    gamelogs_YYYY.json  per-season rows [{Year,Date,MatchId,Player,PlayerId,Team,Opp,home,pos,goals,assists,points,shots,ppPoints,pim,minutes,saves,...}]
+    gamelogs_YYYY.json  per-season rows [{Year,Date,MatchId,Player,PlayerId,Team,Opp,home,pos,goals,assists,points,shots,ppPoints,pim,toiMin,saves,...}]
     players.json        aggregated [{playerId,name,team,teamFull,position,pos5,games,role,goals,assists,points,shots,...}]
     teams.json          per team for/against [{team,teamFull,games,goalsFor,goalsAgainst,shotsFor,shotsAgainst,...}]
     dvp.json            team x position stat allowed per game
@@ -108,7 +108,7 @@ def fetch_gamelogs(roster, seasons):
                            "MatchId": g.get("gameId"), "PlayerId": pid, "Player": name,
                            "Team": g.get("teamAbbrev"), "Opp": g.get("opponentAbbrev"),
                            "home": 1 if g.get("homeRoadFlag") == "H" else 0, "pos": pos,
-                           "minutes": toi_min(g.get("toi"))}
+                           "toiMin": toi_min(g.get("toi"))}
                     if goalie:
                         sa, ga = num(g.get("shotsAgainst")), num(g.get("goalsAgainst"))
                         row.update({"shotsAgainst": sa, "goalsAgainst": ga,
@@ -169,8 +169,8 @@ def fetch_team_summary(current):
     return out
 
 # ---------------- transform ----------------
-SK_STATS = ("goals", "assists", "points", "shots", "ppPoints", "ppGoals", "pim", "minutes")
-GO_STATS = ("saves", "shotsAgainst", "goalsAgainst", "shutouts", "minutes")
+SK_STATS = ("goals", "assists", "points", "shots", "ppPoints", "ppGoals", "pim", "toiMin")
+GO_STATS = ("saves", "shotsAgainst", "goalsAgainst", "shutouts", "toiMin")
 
 def build(by_season, results, current):
     seasons = sorted(by_season.keys())
@@ -278,11 +278,11 @@ def selftest():
             by[yr].append({"Year": yr, "Date": f"{yr}-11-{i+1:02d}", "MatchId": 100 + i,
                            "PlayerId": 1, "Player": "Test Skater", "Team": "TOR", "Opp": "MTL",
                            "home": 1, "pos": "C", "goals": 1, "assists": 1, "points": 2,
-                           "shots": 4, "ppPoints": 1, "ppGoals": 0, "pim": 0, "minutes": 20.0})
+                           "shots": 4, "ppPoints": 1, "ppGoals": 0, "pim": 0, "toiMin": 20.0})
             by[yr].append({"Year": yr, "Date": f"{yr}-11-{i+1:02d}", "MatchId": 100 + i,
                            "PlayerId": 2, "Player": "Test Skater 2", "Team": "MTL", "Opp": "TOR",
                            "home": 0, "pos": "D", "goals": 0, "assists": 1, "points": 1,
-                           "shots": 2, "ppPoints": 0, "ppGoals": 0, "pim": 2, "minutes": 24.0})
+                           "shots": 2, "ppPoints": 0, "ppGoals": 0, "pim": 2, "toiMin": 24.0})
     gl_seasons, players, teams, dvp = build(by, [], "20252026")
     assert players and teams and dvp, "transform produced empty output"
     assert any(p["shots"] for p in players), "shots not aggregated"
