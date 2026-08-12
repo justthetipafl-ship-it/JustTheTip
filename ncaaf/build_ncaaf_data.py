@@ -215,7 +215,8 @@ def schedules_from_espn(season, identity, conf_hint):
     def _ev_rows(j, stype_label):
         for ev in j.get("events") or []:
             comp = (ev.get("competitions") or [{}])[0]
-            wk = _int0(((ev.get("week") or {}).get("number")) or 0) or 1
+            _wn = ((ev.get("week") or {}).get("number")); wk = _int0(_wn) if _wn is not None else 1
+            _st = _int0(((ev.get("season") or {}).get("type"))); _slabel = "postseason" if _st == 3 else ("regular" if _st else stype_label)
             home = away = None
             for c in comp.get("competitors", []):
                 if c.get("homeAway") == "home": home = c
@@ -225,7 +226,7 @@ def schedules_from_espn(season, identity, conf_hint):
             done = bool(((ev.get("status") or {}).get("type") or {}).get("completed"))
             hid, aid = str(ht.get("id", "")), str(at.get("id", ""))
             rows.append(dict(
-                game_id=str(ev.get("id", "")), week=wk, season_type=stype_label,
+                game_id=str(ev.get("id", "")), week=wk, season_type=_slabel,
                 home_id=_int0(hid), away_id=_int0(aid),
                 home_team=ht.get("location") or ht.get("displayName") or "",
                 away_team=at.get("location") or at.get("displayName") or "",
@@ -239,18 +240,21 @@ def schedules_from_espn(season, identity, conf_hint):
                 conference_game=bool(comp.get("conferenceCompetition")),
                 venue=((comp.get("venue") or {}).get("fullName") or ""),
                 home_pregame_elo=None, away_pregame_elo=None))
-    for wk in range(1, 17):
+    # ESPN's week->date calendar may not resolve for a not-yet-kicked-off season, so sweep
+    # the whole season by explicit DATE RANGE (works pre-season and mid-season alike).
+    # CFB runs ~late Aug -> mid Dec regular, with bowls/CFP into early Jan.
+    _cur = dt.date(season, 8, 20)          # Week 0 territory
+    _end = dt.date(season + 1, 1, 25)      # through bowls / CFP
+    while _cur < _end:
+        _nx = _cur + dt.timedelta(days=13)
+        _rng = _cur.strftime("%Y%m%d") + "-" + min(_nx, _end).strftime("%Y%m%d")
         try:
-            _ev_rows(fetch_json(f"{ESPN_SITE}/scoreboard?groups=80&dates={season}"
-                                f"&seasontype=2&week={wk}&limit=400", timeout=45), "regular")
+            _ev_rows(fetch_json(f"{ESPN_SITE}/scoreboard?groups=80&dates={_rng}&limit=400",
+                                timeout=45), "regular")
         except Exception as e:
-            print(f"    (scoreboard {season} wk{wk} failed: {e})")
+            print(f"    (scoreboard {_rng} failed: {e})")
+        _cur = _nx + dt.timedelta(days=1)
         time.sleep(0.3)
-    try:
-        _ev_rows(fetch_json(f"{ESPN_SITE}/scoreboard?groups=80&dates={season}"
-                            f"&seasontype=3&limit=400", timeout=45), "postseason")
-    except Exception:
-        pass
     df = pd.DataFrame(rows).drop_duplicates(subset=["game_id"])
     print(f"  schedules {season}: {len(df)} rows (ESPN scoreboard fallback)")
     return df
