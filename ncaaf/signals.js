@@ -798,7 +798,134 @@
       h += '<div class="tp-body-meta" style="border:0;margin-top:8px">Method notes: no look-ahead \u2014 a Week 9 signal only knew Weeks 1\u20138. Chunk and Tackle grades use the same qualification gates as the live tiles; Tuddy uses the TD-rate \u00d7 soft-defence core. Streakers grade continuation of the streak.</div>';
       return h;
     }
+    // ===== College-native Degen engines (ported from the standalone NCAAF tool) =====
+    function _ncOpen(n){ return "openPlayer('"+String(n||'').replace(/'/g,"\\'")+"')"; }
+    function _ncPos(p){ return posShort(p.position||p.pos||''); }
+    // Tempo Kings — top plays-per-game teams, their volume players get more snaps
+    function tempoKings(){
+      var fs=_fixtureSet(), tm=teamMap||{};
+      var all=Object.keys(tm).map(function(k){return tm[k];}).filter(function(t){return t.plays!=null&&(t.matches||0)>=2;});
+      if(all.length<20) return [];
+      var ranked=all.slice().sort(function(a,b){return (b.plays||0)-(a.plays||0);});
+      var cut=Math.max(3,Math.ceil(ranked.length*0.12)), out=[];
+      ranked.slice(0,cut).forEach(function(t,i){
+        if(!fs.has(t.team)) return; var opp=nextOpp(t.team); if(!opp) return;
+        var to=tm[opp]||{};
+        var vols=(playersOnTeam(t.team)||[]).filter(function(p){return (p.matches||0)>=3&&(p.touchShare||0)>=12;})
+          .sort(function(a,b){return (b.touchShare||0)-(a.touchShare||0);}).slice(0,3);
+        out.push({team:t.team,opp:opp,rank:i+1,plays:t.plays,oppAllows:to.plays_a||null,vols:vols});
+      });
+      return out.sort(function(a,b){return a.rank-b.rank;});
+    }
+    function tempoCard(c){
+      var rows=(c.vols||[]).map(function(p){
+        return '<div style="padding:5px 0;border-top:1px solid var(--line);cursor:pointer;display:flex;justify-content:space-between" onclick="'+_ncOpen(p.name)+'">'+
+          '<span style="font-weight:700;font-size:12px">'+esc(p.name)+' <span style="color:var(--text-3);font-weight:400">'+_ncPos(p)+'</span></span>'+
+          '<span style="font-family:var(--font-mono);font-size:11px;color:var(--text-2)">'+fmt(p.touchShare,0)+'% touch</span></div>';
+      }).join('');
+      return '<div class="lc-card"><div class="lc-hd"><span class="lc-nm"><i class="ti ti-gauge"></i> '+esc(abbr(c.team))+'</span>'+
+        '<span class="lc-meta">'+fmt(c.plays,1)+' plays/g \u00b7 v '+esc(abbr(c.opp))+(c.oppAllows?' (allow '+fmt(c.oppAllows,1)+')':'')+'</span></div>'+rows+'</div>';
+    }
+    // Dual Threat — QBs whose legs are a second prop market
+    function dualThreat(){
+      var fs=_fixtureSet(), out=[];
+      (players||[]).filter(function(p){return fs.has(p.team)&&(p.position==='QB')&&(p.matches||0)>=3;}).forEach(function(p){
+        var ry=p.rushYds||0, ra=p.rushAtt||0;
+        if(!(ry>=30||(ra>=6&&ry>=20))) return;
+        var opp=nextOpp(p.team); if(!opp) return;
+        var dvpPct=(JTTScoring&&JTTScoring.getDVPPct)?JTTScoring.getDVPPct(opp,'QB','rushYds'):null;
+        out.push({p:p,opp:opp,ry:ry,ra:ra,ypc:p.ypc||(ra>0?ry/ra:0),dvpPct:dvpPct});
+      });
+      return out.sort(function(a,b){return b.ry-a.ry;});
+    }
+    function dualCard(c){
+      return '<div class="lc-card"><div class="lc-hd"><span class="lc-nm" style="cursor:pointer" onclick="'+_ncOpen(c.p.name)+'"><i class="ti ti-arrows-split-2"></i> '+esc(c.p.name)+'</span>'+
+        '<span class="lc-meta">'+esc(abbr(c.p.team))+' v '+esc(abbr(c.opp))+' \u00b7 '+fmt(c.ry,0)+' ru yds/g \u00b7 '+fmt(c.ra,1)+' car'+(c.dvpPct!=null?' \u00b7 opp '+(c.dvpPct>0?'+':'')+Math.round(c.dvpPct)+'% v QB rush':'')+'</span></div></div>';
+    }
+    // Freshman Watch — FR/SO with a rising touch share (L3 vs season)
+    function freshmanWatch(){
+      var fs=_fixtureSet(), out=[];
+      (players||[]).filter(function(p){return fs.has(p.team)&&(p.classYear==='FR'||p.classYear==='SO')&&(p.matches||0)>=3;}).forEach(function(p){
+        var logs=(logsFor(p.name)||[]); if(logs.length<3) return;
+        var ts=function(r){return +r.touchShare||0;};
+        var l3=logs.slice(-3), av=function(a){return a.reduce(function(s,r){return s+ts(r);},0)/a.length;};
+        var l3s=av(l3), ses=av(logs), d=l3s-ses;
+        if(d<3||l3s<8) return;
+        out.push({p:p,opp:nextOpp(p.team),l3:l3s,season:ses,delta:d});
+      });
+      return out.sort(function(a,b){return b.delta-a.delta;});
+    }
+    function froshCard(c){
+      return '<div class="lc-card"><div class="lc-hd"><span class="lc-nm" style="cursor:pointer" onclick="'+_ncOpen(c.p.name)+'"><i class="ti ti-seeding"></i> '+esc(c.p.name)+' <span style="color:var(--text-3);font-weight:400">'+esc(c.p.classYear)+'</span></span>'+
+        '<span class="lc-meta">'+esc(abbr(c.p.team))+(c.opp?' v '+esc(abbr(c.opp)):'')+' \u00b7 L3 '+fmt(c.l3,0)+'% touch (+'+Math.round(c.delta)+' vs season)</span></div></div>';
+    }
+    // Garbage Time — calibrated blowout risk
+    function _calibFor(sp){
+      var C=(getData().calib)||[]; var a=Math.abs(+sp||0); if(!C.length) return null;
+      for(var i=0;i<C.length;i++){ var r=C[i]; if(a>=r.spreadLo&&(a<r.spreadHi||i===C.length-1)) return r; }
+      return null;
+    }
+    function garbageTime(){
+      var scope=getScope(), D=getData(), out=[];
+      (D.fixture||[]).forEach(function(g){
+        if(scope && !scope.has(g.home) && !scope.has(g.away)) return;
+        if(g.spread==null||Math.abs(g.spread)<14) return;
+        var cal=_calibFor(g.spread); if(!cal||(cal.pBlowout17||0)<0.45) return;
+        var fav=g.spread<0?g.home:g.away, dog=fav===g.home?g.away:g.home;
+        var stars=(playersOnTeam(fav)||[]).filter(function(p){return (p.matches||0)>=3&&(p.touchShare||0)>=15;})
+          .sort(function(a,b){return (b.touchShare||0)-(a.touchShare||0);}).slice(0,2);
+        out.push({fav:fav,dog:dog,spread:g.spread,p17:cal.pBlowout17,p24:cal.pBlowout24,med:cal.medianMargin,stars:stars});
+      });
+      return out.sort(function(a,b){return b.p17-a.p17;});
+    }
+    function garbageCard(c){
+      var pl=(c.stars||[]).map(function(p){return '<span class="lu-p" style="cursor:pointer" onclick="'+_ncOpen(p.name)+'">'+esc(p.name)+' '+fmt(p.touchShare,0)+'%</span>';}).join(', ');
+      return '<div class="lc-card"><div class="lc-hd"><span class="lc-nm"><i class="ti ti-trash"></i> '+esc(abbr(c.fav))+' -'+Math.abs(c.spread).toFixed(1)+'</span>'+
+        '<span class="lc-meta">'+Math.round(c.p17*100)+'% land 17+ \u00b7 '+Math.round((c.p24||0)*100)+'% land 24+ \u00b7 median '+fmt(c.med,0)+'</span></div>'+
+        (pl?'<div style="padding:6px 0;border-top:1px solid var(--line)"><div class="deg-sub" style="margin-bottom:4px">Starters at 4th-Q minutes risk</div>'+pl+'</div>':'')+'</div>';
+    }
+    // Trap Watch — ranked chalk in a letdown spot
+    function _lastMargin(team){
+      var best=null;
+      ((getData().results)||[]).forEach(function(r){
+        if(r.hs==null||r.as==null) return; if(r.home!==team&&r.away!==team) return;
+        var k=String(r.date||''); if(best&&k<=best.k) return;
+        best={k:k,m:(r.home===team?r.hs-r.as:r.as-r.hs)};
+      });
+      return best?best.m:null;
+    }
+    function trapWatch(){
+      var scope=getScope(), out=[];
+      (getData().fixture||[]).forEach(function(g){
+        if(scope && !scope.has(g.home) && !scope.has(g.away)) return;
+        if(g.spread==null||Math.abs(g.spread)<10) return;
+        var fav=g.spread<0?g.home:g.away, dog=fav===g.home?g.away:g.home;
+        var favRank=fav===g.home?g.homeRank:g.awayRank, dogRank=fav===g.home?g.awayRank:g.homeRank;
+        if(!favRank||dogRank) return;
+        var lm=_lastMargin(fav); if(lm==null||lm<21) return;
+        var star=(playersOnTeam(fav)||[]).filter(function(p){return (p.matches||0)>=3;})
+          .sort(function(a,b){return (b.touchShare||0)-(a.touchShare||0);})[0]||null;
+        out.push({fav:fav,dog:dog,favRank:favRank,spread:g.spread,lastMargin:lm,star:star});
+      });
+      return out.sort(function(a,b){return b.lastMargin-a.lastMargin;});
+    }
+    function trapCard(c){
+      return '<div class="lc-card"><div class="lc-hd"><span class="lc-nm"><i class="ti ti-alert-triangle"></i> #'+c.favRank+' '+esc(abbr(c.fav))+' -'+Math.abs(c.spread).toFixed(1)+'</span>'+
+        '<span class="lc-meta">won last by '+c.lastMargin+' \u00b7 unranked dog \u00b7 letdown shape</span></div>'+
+        '<div style="padding:6px 0;border-top:1px solid var(--line)"><div class="deg-sub">Dog +'+Math.abs(c.spread).toFixed(1)+' and dog-side volume overs are the value'+(c.star?' \u2014 fade '+esc(c.star.name):'')+'.</div></div></div>';
+    }
+    function _ncWrap(icon,title,rows,cardFn,cls,empty){
+      var arr=(rows||[]); if(!arr.length) return isFocused()?'':emptyState(icon,title+' is quiet',empty);
+      return degWrap(icon,title,arr.slice(0,12).map(cardFn),cls||'c-soft');
+    }
+
+
     var tiles = {
+      tempo:  function(){ return _ncWrap('ti-gauge','Tempo Kings',tempoKings(),tempoCard,'c-soft','No fast-tempo teams on the slate.'); },
+      dual:   function(){ return _ncWrap('ti-arrows-split-2','Dual Threat',dualThreat(),dualCard,'c-soft','No dual-threat QBs on the slate.'); },
+      frosh:  function(){ return _ncWrap('ti-seeding','Freshman Watch',freshmanWatch(),froshCard,'c-soft','No rising freshmen on the slate.'); },
+      garbage:function(){ return _ncWrap('ti-trash','Garbage Time',garbageTime(),garbageCard,'c-red','No blowout scripts on the slate.'); },
+      trap:   function(){ return _ncWrap('ti-alert-triangle','Trap Watch',trapWatch(),trapCard,'c-red','No trap spots on the slate.'); },
       ledger: function () { return ledgerPage(); },
       next: function () {
         var arr = _fc(nextManUp(), 6, 30);
