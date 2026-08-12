@@ -251,6 +251,7 @@ def build(by_season, results, current):
         g = max(1, d["g"]); row = {"team": tm, "teamFull": TEAM_FULL.get(tm, tm), "games": d["g"]}
         row["goalsFor"] = round(d["for"]["goals"] / g, 2); row["goalsAgainst"] = round(d["ag"]["goals"] / g, 2)
         row["shotsFor"] = round(d["for"]["shots"] / g, 2); row["shotsAgainst"] = round(d["ag"]["shots"] / g, 2)
+        row["logo"] = "https://assets.nhle.com/logos/nhl/svg/%s_light.svg" % tm   # official tricode CDN
         teams.append(row)
 
     # DVP: per (defending team, position) stat allowed per game, current season
