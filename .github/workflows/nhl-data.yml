@@ -1,0 +1,51 @@
+name: JTT NHL — data refresh
+
+# NHL runs Oct–June. Daily during season; off-season runs are cheap no-ops
+# (identical output → nothing committed). Uses the free official NHL API
+# (api-web.nhle.com + api.nhle.com/stats/rest) — no keys, runner-friendly.
+
+on:
+  schedule:
+    - cron: "0 13 * * *"     # 13:00 UTC daily — after the prior night's games settle
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: nhl-data
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Selftest (transform pipeline, no network)
+        run: python nhl/build_nhl_data.py --selftest
+
+      - name: Build NHL data
+        run: python nhl/build_nhl_data.py --out nhl/data --seasons 20232024,20242025,20252026 --current 20252026
+
+      - name: Commit data
+        run: |
+          git config user.name  "jtt-bot"
+          git config user.email "actions@github.com"
+          git add nhl/data
+          if git diff --cached --quiet; then
+            echo "No changes."
+          else
+            git commit -m "chore(nhl): data refresh $(date -u +%Y-%m-%dT%H:%MZ)"
+            for i in 1 2 3 4 5; do
+              git pull --rebase --autostash origin main && git push && break
+              echo "push contended, retrying ($i)…"; sleep $((RANDOM % 5 + 2))
+            done
+          fi
