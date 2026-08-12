@@ -461,7 +461,8 @@ def wjson(outdir, name, obj):
 
 def run_league(lg, seasons, current, outroot, password, src_local):
     cfg = LEAGUES[lg]
-    outdir = os.path.join(outroot, lg)
+    # shell layout: each sport loads /{sport}/data/ — NBA -> nba/data, WNBA -> wnba/data
+    outdir = {"nba": "nba/data", "wnba": "wnba/data"}.get(lg, os.path.join(outroot, lg))
     os.makedirs(outdir, exist_ok=True)
     print(f"[{cfg['label']}] seasons={seasons} current={current}")
 
