@@ -1,23 +1,20 @@
-name: AFLW data (fitzRoy) - PHASE 1 fetch
+name: AFLW data (fitzRoy)
 
-# PHASE 1: fetch AFLW fixtures + results + lineups + player gamelogs via fitzRoy and
-# commit them, so the true Champion Data column names can be read from
-# scripts/_aflw_*_columns.txt and the Python aggregator built against them.
-# The build/data step is added in PHASE 2 once the columns are known.
-#
-# Run it manually first:  Actions -> "AFLW data (fitzRoy) - PHASE 1 fetch" -> Run workflow
+# Full AFLW pipeline: fitzRoy fetch (fixtures/results/lineups/gamelogs) -> Python
+# aggregate -> split data files the shell reads. AFLW reuses the AFL scoring/signals,
+# so the outputs match the AFL formats exactly.
 
 on:
   workflow_dispatch: {}
-  # AFLW runs ~Aug-Nov, games Thu-Sun. Enable the cron once the aggregator lands (Phase 2).
-  # schedule:
-  #   - cron: "0 12 * * 4"   # Thu 12:00 UTC - Friday-game sides named
-  #   - cron: "0 11 * * 5"   # Fri 11:00 UTC - Saturday-game sides
-  #   - cron: "30 9 * * 6"   # Sat 09:30 UTC - Sunday-game sides
-  #   - cron: "0 9  * * 0"   # Sun 09:00 UTC - post-round results
+  schedule:
+    # AFLW runs ~late Aug - late Nov, games Thu-Sun. AEST/AEDT handled by the fetcher.
+    - cron: "0 12 * * 4"   # Thu 12:00 UTC - Friday-game sides named
+    - cron: "0 11 * * 5"   # Fri 11:00 UTC - Saturday-game sides
+    - cron: "30 9 * * 6"   # Sat 09:30 UTC - Sunday-game sides
+    - cron: "0 9  * * 0"   # Sun 09:00 UTC - post-round results
 
 jobs:
-  fetch:
+  refresh:
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -47,15 +44,25 @@ jobs:
           AFLW_SEASON: "2026"
         run: Rscript scripts/fetch_aflw.R
 
-      - name: Commit fetched data + column dumps
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Build split data
+        run: |
+          python aflw/build_aflw_data.py \
+            --gamelogs aflw/raw_gamelogs.json --bundle aflw/bundle.json --out aflw/data
+
+      - name: Commit refreshed data
         run: |
           git config user.name  "jtt-bot"
           git config user.email "actions@github.com"
-          git add aflw/bundle.json aflw/raw_gamelogs.json scripts/_aflw_*_columns.txt scripts/_aflw_playerstats_sample.json 2>/dev/null || git add aflw/bundle.json
+          git add aflw/data aflw/bundle.json aflw/raw_gamelogs.json scripts/_aflw_*_columns.txt 2>/dev/null || git add aflw/data
           if git diff --cached --quiet; then
             echo "No changes."
           else
-            git commit -m "chore(aflw): phase-1 fitzRoy fetch $(date -u +%Y-%m-%dT%H:%MZ)"
+            git commit -m "chore(aflw): data refresh $(date -u +%Y-%m-%dT%H:%MZ)"
             pushed=0
             for i in 1 2 3 4 5; do
               if git pull --rebase --autostash origin main && git push; then
