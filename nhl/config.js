@@ -18,6 +18,10 @@ window.SPORT_CONFIG = {
 
   display: [["toiMin","TOI"],["goals","G"],["assists","A"],["points","Pts"],["shots","SOG"],
             ["ppPoints","PPP"],["ppGoals","PPG"],["pim","PIM"],["plusMinus","+/-"]],
+  posMarkets: {   // skaters never show saves; goalies show only saves
+    C:['shots','points','goals','assists','ppPoints','blocks','hits'], L:['shots','points','goals','assists','ppPoints','blocks','hits'], R:['shots','points','goals','assists','ppPoints','blocks','hits'], D:['shots','points','goals','assists','ppPoints','blocks','hits'],
+    G:['saves']
+  },
   displaySets: { All: [["toiMin","TOI"],["goals","G"],["assists","A"],["points","Pts"],["shots","SOG"],["ppPoints","PPP"]] },
   boxCols: [["toiMin","TOI"],["goals","G"],["assists","A"],["points","PTS"],["shots","SOG"],["ppPoints","PPP"]],
   teamCols: [["goalsFor","GF"],["goalsAgainst","GA"],["shotsFor","SF"],["shotsAgainst","SA"]],
