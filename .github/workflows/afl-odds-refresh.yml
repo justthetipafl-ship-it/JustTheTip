@@ -1,0 +1,33 @@
+name: AFLW odds refresh
+
+# Warms the jtt-aflw-odds worker's KV cache on a schedule, so we don't need a
+# Cloudflare cron (the free plan caps those at 5 per ACCOUNT, and yours are used).
+# GitHub Actions crons are free + unlimited on public repos. This just pings the
+# worker's /refresh endpoint; the worker does the (credit-guarded) TheOddsAPI fetch.
+#
+# One-time setup: add your TheOddsAPI key as a repo secret named THEODDS_KEY
+#   (repo Settings -> Secrets and variables -> Actions -> New repository secret).
+
+on:
+  workflow_dispatch: {}
+  schedule:
+    # AFLW round runs Thu-Sun. Times are UTC (GitHub crons can lag a few minutes).
+    - cron: "0 8 * * 4"   # Thu 18:00 AEST - lines open + Thursday games
+    - cron: "0 6 * * 5"   # Fri 16:00 AEST - Friday games
+    - cron: "0 0 * * 6"   # Sat 10:00 AEST - Saturday games
+    - cron: "0 3 * * 6"   # Sat 13:00 AEST - Saturday late line moves
+    - cron: "0 0 * * 0"   # Sun 10:00 AEST - Sunday games
+
+jobs:
+  warm:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Warm the AFLW odds cache
+        env:
+          KEY: ${{ secrets.THEODDS_KEY }}   # masked by Actions wherever it appears
+        run: |
+          code=$(curl -s -o resp.json -w "%{http_code}" \
+            "https://jtt-aflw-odds.justthetipafl.workers.dev/refresh?key=$KEY")
+          echo "HTTP $code"
+          python3 -c "import json;d=json.load(open('resp.json'));print('games',d.get('games'),'| spent',d.get('spent'),'| monthUsed',d.get('monthUsed'),'/',d.get('cap'))" || cat resp.json
+          [ "$code" = "200" ] || { echo '::error::refresh failed'; exit 1; }
