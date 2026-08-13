@@ -1096,7 +1096,7 @@
   // here + its folder. Paths are absolute so the shell works at root or any subpath.
   const SPORTS = {
     afl: { key:'afl', dir:'AFL', name:'AFL', oddsUrl:'https://jtt-odds.justthetipafl.workers.dev/odds.json?sport=AFL', liveWorker:'https://health.justthetipafl.workers.dev', resultsWorker:'https://jtt-afl-results.justthetipafl.workers.dev' },
-    aflw: { key:'aflw', dir:'aflw', name:'AFLW', oddsUrl:'https://jtt-odds.justthetipafl.workers.dev/odds.json?sport=AFLW', liveWorker:'', resultsWorker:'' },
+    aflw: { key:'aflw', dir:'aflw', name:'AFLW', oddsUrl:'https://jtt-aflw-odds.justthetipafl.workers.dev/odds.json', liveWorker:'', resultsWorker:'' },
     nfl: { key:'nfl', dir:'nfl', name:'NFL', oddsUrl:'https://jtt-odds.justthetipafl.workers.dev/odds.json?sport=NFL', liveWorker:'' },
     mlb: { key:'mlb', dir:'mlb', name:'MLB', oddsUrl:'https://jtt-odds.justthetipafl.workers.dev/odds.json?sport=MLB', liveWorker:'' },
     epl: { key:'epl', dir:'EPL', name:'EPL', oddsUrl:'https://jtt-odds.justthetipafl.workers.dev/odds.json?sport=EPL', liveWorker:'' },
@@ -1141,6 +1141,7 @@
     CMP_STAT_ALIASES=CFG.cmpAliases||{'disposals':'disposals','disposal':'disposals','disp':'disposals','touches':'disposals','kicks':'kicks','kick':'kicks','handballs':'handballs','handball':'handballs','hb':'handballs','marks':'marks','mark':'marks','tackles':'tackles','tackle':'tackles','tack':'tackles','clearances':'clearances','clearance':'clearances','clear':'clearances','goals':'goals','goal':'goals','behinds':'behinds','behind':'behinds','hitouts':'hitouts','hitout':'hitouts','ho':'hitouts','fantasy points':'dreamteam','fantasy':'dreamteam','dt':'dreamteam','dreamteam':'dreamteam','supercoach pts':'supercoach','supercoach':'supercoach','sc':'supercoach','inside 50s':'inside50s','inside50s':'inside50s','i50s':'inside50s','i50':'inside50s','contested possessions':'contested','cont poss':'contested','contested':'contested','score involvements':'scoreInvolvements','score inv':'scoreInvolvements','shots':'shotsAtGoal','shots at goal':'shotsAtGoal','intercepts':'intercepts','intercept':'intercepts'};
     DISPLAY=CFG.display||[['disposals','Disp'],['kicks','Kick'],['handballs','HB'],['marks','Mark'],['tackles','Tkl'],['goals','Goal'],['behinds','Beh'],['shotsAtGoal','Shot'],['clearances','Clr'],['inside50s','I50'],['contested','Cont'],['intercepts','Int'],['hitouts','HO'],['dreamteam','DT'],['supercoach','SC']];
     DISPLAY_SETS_CFG=CFG.displaySets||null;
+    POS_MARKETS=CFG.posMarkets||null;   // position -> relevant market keys; null => all stats (AFL/NBA stay fluid)
     MULTI_MKTS=CFG.multiMkts||[['disposals','Disposals'],['goals','Goals'],['dreamteam','Fantasy'],['marks','Marks'],['tackles','Tackles'],['clearances','Clearances'],['kicks','Kicks'],['handballs','Handballs']];
     NERD_MARKETS=CFG.nerdMkts||[['disposals','Disposals'],['dreamteam','Fantasy'],['kicks','Kicks'],['handballs','Handballs'],['marks','Marks'],['tackles','Tackles'],['clearances','Clearances']];
     NM_LBL=Object.fromEntries(NERD_MARKETS);
@@ -1212,8 +1213,22 @@
   let H2H_KEYS=[];  // from SPORT_CONFIG
   let LOW_COUNT=new Set(['goals']);  // from SPORT_CONFIG
   // display columns for Stats table + player modal: [key, label]
-  let DISPLAY, DISPLAY_SETS_CFG, POS_SHORT, SETTINGS_MKTS, COMPARE_STATS, BOX_COLS;  // from SPORT_CONFIG
+  let DISPLAY, DISPLAY_SETS_CFG, POS_MARKETS, POS_SHORT, SETTINGS_MKTS, COMPARE_STATS, BOX_COLS;  // from SPORT_CONFIG
   function DISPLAY_FOR(pos){ return (DISPLAY_SETS_CFG&&(DISPLAY_SETS_CFG[pos]||DISPLAY_SETS_CFG.All))||DISPLAY; }
+  // Position-relevant market filter. Explicit config.posMarkets[pos] wins; otherwise, if the
+  // sport ships per-position displaySets (NFL/NCAAF), derive from those. No map => list unchanged,
+  // so fluid sports (AFL/AFLW/NBA/WNBA) keep every stat for every position.
+  function _posAllow(pos){
+    if(!pos) return null;
+    if(POS_MARKETS&&POS_MARKETS[pos]) return POS_MARKETS[pos];
+    if(DISPLAY_SETS_CFG&&DISPLAY_SETS_CFG.All&&DISPLAY_SETS_CFG[pos]) return DISPLAY_SETS_CFG[pos].map(function(x){return x[0];});
+    return null;
+  }
+  function _posMkts(pos,list){
+    var allow=_posAllow(pos); if(!allow||!list||!list.length) return list;
+    var set=new Set(allow), f=list.filter(function(m){return set.has(Array.isArray(m)?m[0]:m);});
+    return f.length?f:list;   // never blank out a surface
+  }
   function _pmDec(k){ var d2=(window.SPORT_CONFIG&&SPORT_CONFIG.dec2)||['goals','behinds']; return d2.indexOf(k)>=0?2:1; }
   const TABS = [
     {name:'fixture', label:'Fixture', icon:'ti-calendar-event'},
@@ -6049,8 +6064,10 @@
     const p=state.idx.byName[name]; if(!p) return '';
     const opp=nextOpp(p.team);
     if(!_pcState) _pcState=_pcInit(p,opp);
-    const S=_pcState, label=(PC_STATS.find(s=>s[0]===S.stat)||[null,S.stat])[1];
-    const chips=PC_STATS.map(([k,l])=>'<button class="pc-chip'+(k===S.stat?' on':'')+'" onclick="_pcStat(\''+k+'\')">'+l+'</button>').join('');
+    const PCS=_posMkts(p.position,PC_STATS);
+    if(_pcState&&!PCS.some(s=>s[0]===_pcState.stat)) _pcState.stat=PCS[0][0];   // selected stat must be position-relevant
+    const S=_pcState, label=(PCS.find(s=>s[0]===S.stat)||[null,S.stat])[1];
+    const chips=PCS.map(([k,l])=>'<button class="pc-chip'+(k===S.stat?' on':'')+'" onclick="_pcStat(\''+k+'\')">'+l+'</button>').join('');
     const SCOPES=[['season','Season'],['l10','L10'],['l5','L5']].concat(opp?[['h2h','v '+abbr(opp)]]:[]);
     const scopes=SCOPES.map(([k,l])=>'<button class="pc-scope'+(k===S.scope?' on':'')+'" onclick="_pcScope(\''+k+'\')">'+l+'</button>').join('');
     const games=_pcGames(name,S.scope,opp);
