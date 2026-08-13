@@ -1,0 +1,67 @@
+name: AFLW data (fitzRoy) - PHASE 1 fetch
+
+# PHASE 1: fetch AFLW fixtures + results + lineups + player gamelogs via fitzRoy and
+# commit them, so the true Champion Data column names can be read from
+# scripts/_aflw_*_columns.txt and the Python aggregator built against them.
+# The build/data step is added in PHASE 2 once the columns are known.
+#
+# Run it manually first:  Actions -> "AFLW data (fitzRoy) - PHASE 1 fetch" -> Run workflow
+
+on:
+  workflow_dispatch: {}
+  # AFLW runs ~Aug-Nov, games Thu-Sun. Enable the cron once the aggregator lands (Phase 2).
+  # schedule:
+  #   - cron: "0 12 * * 4"   # Thu 12:00 UTC - Friday-game sides named
+  #   - cron: "0 11 * * 5"   # Fri 11:00 UTC - Saturday-game sides
+  #   - cron: "30 9 * * 6"   # Sat 09:30 UTC - Sunday-game sides
+  #   - cron: "0 9  * * 0"   # Sun 09:00 UTC - post-round results
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up R
+        uses: r-lib/actions/setup-r@v2
+        with:
+          use-public-rspm: true
+
+      - name: Install R packages (cached)
+        uses: r-lib/actions/setup-r-dependencies@v2
+        with:
+          packages: |
+            cran::fitzRoy
+            cran::jsonlite
+            cran::dplyr
+
+      - name: Fetch AFLW fixtures + results + lineups + gamelogs (fitzRoy)
+        env:
+          AFLW_BUNDLE: aflw/bundle.json
+          AFLW_GAMELOGS: aflw/raw_gamelogs.json
+          AFLW_SEASONS: "2024,2025,2026"
+          AFLW_SEASON: "2026"
+        run: Rscript scripts/fetch_aflw.R
+
+      - name: Commit fetched data + column dumps
+        run: |
+          git config user.name  "jtt-bot"
+          git config user.email "actions@github.com"
+          git add aflw/bundle.json aflw/raw_gamelogs.json scripts/_aflw_*_columns.txt scripts/_aflw_playerstats_sample.json 2>/dev/null || git add aflw/bundle.json
+          if git diff --cached --quiet; then
+            echo "No changes."
+          else
+            git commit -m "chore(aflw): phase-1 fitzRoy fetch $(date -u +%Y-%m-%dT%H:%MZ)"
+            pushed=0
+            for i in 1 2 3 4 5; do
+              if git pull --rebase --autostash origin main && git push; then
+                echo "pushed on attempt $i"; pushed=1; break
+              fi
+              echo "push contended, retrying ($i)..."; sleep $((RANDOM % 5 + 2))
+            done
+            if [ "$pushed" != "1" ]; then echo "::error::push failed after retries"; exit 1; fi
+          fi
