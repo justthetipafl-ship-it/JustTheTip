@@ -1229,6 +1229,10 @@
     var set=new Set(allow), f=list.filter(function(m){return set.has(Array.isArray(m)?m[0]:m);});
     return f.length?f:list;   // never blank out a surface
   }
+  function _statPositions(stat){
+    if(!(POS_MARKETS)&&!(DISPLAY_SETS_CFG&&DISPLAY_SETS_CFG.All)) return POS_ORDER;   // no map => every position
+    return (POS_ORDER||[]).filter(function(pos){ var a=_posAllow(pos); return !a || a.indexOf(stat)>=0; });
+  }
   function _pmDec(k){ var d2=(window.SPORT_CONFIG&&SPORT_CONFIG.dec2)||['goals','behinds']; return d2.indexOf(k)>=0?2:1; }
   const TABS = [
     {name:'fixture', label:'Fixture', icon:'ti-calendar-event'},
@@ -3085,17 +3089,18 @@
   function statsTable(){
     const v=state.view; let ps=state.idx.players.slice();
     if(v.posFilter)ps=ps.filter(p=>p.position===v.posFilter);
+    const COLS=v.posFilter?DISPLAY_FOR(v.posFilter):DISPLAY;   // position-relevant columns when filtered
     if(v.search){const q=v.search.toLowerCase();ps=ps.filter(p=>p.name.toLowerCase().includes(q)||(p.team||'').toLowerCase().includes(q));}
     ps.sort((a,b)=>{const x=a[v.sortKey],y=b[v.sortKey];if(x==null)return 1;if(y==null)return -1;return (x-y)*v.sortDir;});
     ps=ps.slice(0,200);
     const th=(k,l)=>'<th class="'+(v.sortKey===k?'sorted':'')+'" onclick="sortStats(\''+k+'\')">'+l+(v.sortKey===k?(v.sortDir<0?' ▾':' ▴'):'')+'</th>';
     let h='<div class="stbl-wrap"><table class="stbl"><thead><tr><th onclick="sortStats(\'name\')">Player</th><th>Pos</th><th class="'+(v.sortKey==='matches'?'sorted':'')+'" onclick="sortStats(\'matches\')">GP</th>';
-    DISPLAY.forEach(([k,l])=>h+=th(k,l)); h+='</tr></thead><tbody>';
+    COLS.forEach(([k,l])=>h+=th(k,l)); h+='</tr></thead><tbody>';
     ps.forEach(p=>{
       h+='<tr onclick="openPlayer(\''+esc(p.name).replace(/'/g,"\\'")+'\')"><td class="name">'+p.name+'</td>'+
         '<td><span class="pos-dot" style="background:'+(POS_C[p.position]||'#888')+'"></span>'+(posShort(p.position))+'</td>'+
         '<td>'+(p.matches||0)+'</td>';
-      DISPLAY.forEach(([k])=>h+='<td>'+fmt(p[k],k==='goals'||k==='behinds'?2:1)+'</td>');
+      COLS.forEach(([k])=>h+='<td>'+fmt(p[k],k==='goals'||k==='behinds'?2:1)+'</td>');
       h+='</tr>';
     });
     h+='</tbody></table></div>';
@@ -3139,11 +3144,12 @@
   function dvpView(){
     const v=state.view, rows=state.data.dvp||[]; if(!rows.length) return emptyState('ti-shield-off','No DVP data','Run the data build to derive DVP.');
     const stat=v.statsStat;
+    const POSES=_statPositions(stat);   // only positions that actually bet this stat
     // index team -> pos -> value
     const grid={}; rows.forEach(r=>{(grid[r.team]=grid[r.team]||{})[r.pos]=r[stat];});
     let teams=Object.keys(grid);
     // per-position league average (for colour scale)
-    const posAvg={}; POS_ORDER.forEach(pos=>{const vals=teams.map(t=>grid[t][pos]).filter(x=>x!=null);posAvg[pos]=vals.length?vals.reduce((a,b)=>a+b,0)/vals.length:0;});
+    const posAvg={}; POSES.forEach(pos=>{const vals=teams.map(t=>grid[t][pos]).filter(x=>x!=null);posAvg[pos]=vals.length?vals.reduce((a,b)=>a+b,0)/vals.length:0;});
     // sort: by a position's allowed value, or alphabetically by team
     const sp=v.dvpSortPos||'__team', sd=v.dvpSortDir||(sp==='__team'?1:-1);
     if(sp==='__team') teams.sort((a,b)=>a.localeCompare(b)*sd);
@@ -3158,10 +3164,10 @@
       '</select><span class="tt-hint">avg <strong>'+(DVP_STATS.find(x=>x[0]===stat)||[,stat])[1]+'</strong> conceded per position · tap a column to sort · <span style="color:#22c55e">green = soft</span> / <span style="color:#ef4444">red = tough</span></span>'+_winToggle+'</div>';
     h+='<div class="stbl-wrap"><table class="stbl dvp-grid"><thead><tr>'+
        '<th class="dvp-th'+scl('__team')+'" onclick="sortDvp(\'__team\')">Team'+arr('__team')+'</th>'+
-       POS_ORDER.map(p=>'<th class="dvp-th'+scl(p)+'" title="'+p+'" onclick="sortDvp(\''+p+'\')">'+posShort(p)+arr(p)+'</th>').join('')+'</tr></thead><tbody>';
+       POSES.map(p=>'<th class="dvp-th'+scl(p)+'" title="'+p+'" onclick="sortDvp(\''+p+'\')">'+posShort(p)+arr(p)+'</th>').join('')+'</tr></thead><tbody>';
     teams.forEach(t=>{
       h+='<tr><td class="name">'+teamLogo(t,22)+'<span style="margin-left:7px">'+t+'</span></td>';
-      POS_ORDER.forEach(pos=>{
+      POSES.forEach(pos=>{
         const val=grid[t][pos];
         if(val==null){h+='<td class="dvp-na">—</td>';return;}
         const a=posAvg[pos], d=a?((val-a)/a*100):0;
