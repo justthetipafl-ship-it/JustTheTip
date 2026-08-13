@@ -1,0 +1,609 @@
+/* ============================================================================
+ * JTT — signals.js  (shared signal module: browser + Node)
+ * ----------------------------------------------------------------------------
+ * ONE code path for every fired signal. The browser (index.html) and the
+ * pre-slate capture job (Node, in the GitHub Actions pipeline) both import THIS
+ * file, so the ledger grades the exact model the subscriber sees on screen.
+ * Re-implementing signal logic in Python would drift — and a ledger that grades
+ * a different model than it displays destroys the whole "receipts, not vibes"
+ * honesty claim. So the logic lives here, once.
+ *
+ *   Browser:  <script src="signals.js"></script>  ->  window.JTTSignals
+ *   Node:     const JTTSignals = require('./signals.js');
+ *
+ * The generators need tool-internal helpers (oddsFor, nextOpp, JTTScoring, …),
+ * so this module is a DEPENDENCY-INJECTION FACTORY: callers build the deps and
+ * call JTTSignals.create(deps) -> { collectOU, ... }. The browser injects its
+ * live runtime helpers; the Node capture job injects equivalents built from the
+ * frozen data + odds snapshot.
+ * ========================================================================== */
+(function (root, factory) {
+  var mod = factory();
+  if (typeof module !== 'undefined' && module.exports) module.exports = mod;   // Node
+  root.JTTSignals = mod;                                                        // browser
+})(typeof self !== 'undefined' ? self : (typeof globalThis !== 'undefined' ? globalThis : this), function () {
+  'use strict';
+
+  /* ============================================================================
+   * CANONICAL SETTLEABLE-SIGNAL RECORD
+   * ----------------------------------------------------------------------------
+   * Every signal we intend to grade is normalised to this shape and FROZEN
+   * pre-slate into signals/<season>-R<round>.json. The settle step reads box
+   * scores and fills the result fields; it NEVER recomputes the signal, because
+   * the live inputs (form, lines) have moved on by then.
+   *
+   * {
+   *   id,          // stable: season|R<round>|signalType|player|market|line|side
+   *   signalType,  // 'green_light' | 'death_rider' | 'snags' | 'streakers' | …
+   *   season,      // '2026'
+   *   round,       // 16   (numeric round key from _roundNum)
+   *   capturedAt,  // ISO 8601, pre-slate
+   *   player, team, opp,
+   *   market,      // 'disposals' | 'goals' | 'tackles' | …
+   *   line,        // the number graded against (the CAPTURED line, never re-derived)
+   *   lineType,    // 'twoway' (X.5, no push) | 'milestone' (X+, >= semantics)
+   *   side,        // 'over' | 'under'
+   *   price,       // decimal odds at capture (null for an unpriced signal)
+   *   book,        // best-book key at capture
+   *   score,       // engine score at capture (context/debug, not graded)
+   *   closePrice,  // filled at close for CLV (null until the close snapshot)
+   *   // ---- filled by the settle step once results land ----
+   *   result,      // 'win' | 'loss' | 'push' | 'void'   (void = DNP / scratch / 0 TOG)
+   *   actual,      // box-score stat value (null when void)
+   *   settledAt    // ISO 8601
+   * }
+   *
+   * HONESTY RULES (enforced by grade(), below — a sharp subscriber will test all):
+   *   1. DNP / scratch / 0 TOG  -> 'void', never 'loss'. Outs must not tank a record.
+   *   2. Grade the CAPTURED line only. Never a line recomputed at settle time.
+   *   3. Milestone (X+) uses >= ; two-way (X.5) uses strict >/< with push on exact.
+   *   4. Units are flat 1u at the captured price. No compounding, no staking model.
+   * ========================================================================== */
+
+  // Registry of signal types. `priced:true` = carries a real posted line + price
+  // and is graded for both hit-rate AND units. Unpriced/directional signals
+  // (form direction, tag risk) are intentionally NOT registered for grading yet.
+  var SIGNAL_DEFS = {
+    green_light: { label: 'Green Lights', market: 'disposals', side: 'over',  lineType: 'twoway',    priced: true },
+    death_rider: { label: 'Death Riders', market: 'disposals', side: 'under', lineType: 'twoway',    priced: true },
+    snags:         { label: 'Snags',         market: 'goals',     side: 'over',  lineType: 'milestone', priced: true },
+    streakers:     { label: 'Streakers',     market: 'dynamic',   side: 'over',  lineType: 'milestone', priced: true },
+    matchup_multi: { label: 'Matchup Multi', market: 'dynamic',   side: 'over',  lineType: 'twoway',    priced: true },
+    elite:         { label: 'Elite Matchups', market: 'dynamic',   side: 'over',  lineType: 'twoway',    priced: true },
+    bunnies:       { label: 'Bunnies',        market: 'disposals', side: 'over',  lineType: 'twoway',    priced: true },
+    bogey:         { label: 'Bogey',          market: 'disposals', side: 'under', lineType: 'twoway',    priced: true },
+    climb:         { label: "Let's Climb",    market: 'dynamic',   side: 'over',  lineType: 'milestone', priced: true }
+    // more generators register here as they move into this module.
+  };
+
+  function _round(x) { return x == null ? '' : ('R' + x); }
+  function makeId(season, round, signalType, player, market, line, side) {
+    return [season, _round(round), signalType, player, market, line, side].join('|');
+  }
+
+  /* ---- normalise a fired row -> the canonical frozen record ---- */
+  // ctx = { season, round, capturedAt }
+  function toSettleable(signalType, row, ctx) {
+    var def = SIGNAL_DEFS[signalType];
+    if (!def) return null;
+    var player = (row.p && row.p.name) || row.player;
+    if (!player) return null;
+    var market = def.market === 'dynamic' ? (row.market || row.statKey) : def.market;
+    var line = (row.line != null) ? row.line : (row.captureLine != null ? row.captureLine : null);
+    if (line == null) return null;
+    var side = row.side || def.side;
+    return {
+      id: makeId(ctx.season, ctx.round, signalType, player, market, line, side),
+      signalType: signalType,
+      season: String(ctx.season),
+      round: ctx.round,
+      capturedAt: ctx.capturedAt || new Date().toISOString(),
+      player: player,
+      team: row.team || (row.p && row.p.team) || null,
+      opp: row.oppName || row.opp || null,
+      market: market,
+      line: line,
+      lineType: row.lineType || def.lineType,
+      side: side,
+      price: (row.odds != null) ? row.odds : (row.price != null ? row.price : null),
+      book: row.book || null,
+      score: (row.score != null) ? row.score : null,
+      closePrice: null,
+      result: null,
+      actual: null,
+      settledAt: null
+    };
+  }
+
+  /* ---- the grading engine (honesty rules 1-3 live here) ----
+   * played: boolean — was the player in the box score with > 0 TOG this game?
+   * actual: number  — the box-score value of record.market (ignored when !played) */
+  function grade(rec, actual, played) {
+    if (!played || actual == null || !isFinite(actual)) return { result: 'void', actual: null };
+    var L = rec.line, over = rec.side === 'over', hit;
+    if (rec.lineType === 'milestone') {                    // X+  -> >= , no push
+      hit = actual >= L;
+      return { result: over ? (hit ? 'win' : 'loss') : (hit ? 'loss' : 'win'), actual: actual };
+    }
+    if (actual === L) return { result: 'push', actual: actual };   // two-way exact -> push
+    hit = actual > L;
+    return { result: over ? (hit ? 'win' : 'loss') : (hit ? 'loss' : 'win'), actual: actual };
+  }
+
+  /* ---- flat 1u P/L at the captured price (rule 4) ---- */
+  function pnl(rec) {
+    if (rec.result === 'win')  return (rec.price != null ? rec.price - 1 : 0);
+    if (rec.result === 'loss') return -1;
+    return 0;                                              // push / void / ungraded
+  }
+
+  /* ---- rollup a settled ledger slice into a per-signal scorecard ---- */
+  // rows: array of settled records. returns { <signalType>: {n,wins,losses,pushes,voids,hitRate,units,roi} }
+  function rollup(rows) {
+    var by = {};
+    (rows || []).forEach(function (r) {
+      var b = by[r.signalType] || (by[r.signalType] = { n: 0, wins: 0, losses: 0, pushes: 0, voids: 0, units: 0 });
+      if (r.result === 'void' || r.result == null) { b.voids++; return; }      // voids excluded from n
+      b.n++;
+      if (r.result === 'win') b.wins++;
+      else if (r.result === 'loss') b.losses++;
+      else if (r.result === 'push') b.pushes++;
+      b.units += pnl(r);
+    });
+    Object.keys(by).forEach(function (k) {
+      var b = by[k], decided = b.wins + b.losses;
+      b.hitRate = decided ? b.wins / decided : null;       // pushes don't count for/against hit-rate
+      b.roi = b.n ? b.units / b.n : null;                  // units per bet placed
+    });
+    return by;
+  }
+
+  /* ============================================================================
+   * GENERATORS (dependency-injected)
+   * ----------------------------------------------------------------------------
+   * create(deps) -> generator fns bound to the caller's runtime. Deps:
+   *   JTTScoring        the scoring engine (window.JTTScoring / require('./scoring.js'))
+   *   oddsFor(name,mkt) -> {line,over,under,book} | null   (best price, respects book filter)
+   *   nextOpp(team)     -> opponent team name | null
+   *   playersOnTeam(t)  -> [player, …]
+   *   hasAnyOdds()      -> boolean
+   *   SIGNAL_MIN_ODDS   -> { over:Number|null, under:Number|null }
+   * ========================================================================== */
+  function create(deps) {
+    var JTTScoring     = deps.JTTScoring;
+    var oddsFor        = deps.oddsFor;
+    var nextOpp        = deps.nextOpp;
+    var playersOnTeam  = deps.playersOnTeam;
+    var hasAnyOdds     = deps.hasAnyOdds;
+    var SIGNAL_MIN_ODDS = deps.SIGNAL_MIN_ODDS || { over: null, under: null };
+
+    // ---- Green Lights (kind='over') / Death Riders (kind='under') ----
+    // EXTRACTED VERBATIM from index.html so the browser and capture agree byte-for-byte.
+    function collectOU(teamList, kind) {
+      if (!JTTScoring || !hasAnyOdds()) return [];
+      var side = kind === 'over' ? 'over' : 'under';
+      var minOdds = SIGNAL_MIN_ODDS[side];
+      var out = [];
+      teamList.forEach(function (team) {
+        var opp = nextOpp(team); if (!opp) return;
+        playersOnTeam(team).forEach(function (p) {
+          var od = oddsFor(p.name, 'disposals');                 // line must exist…
+          if (!od || od.line == null) return;
+          var price = od[side];
+          if (price == null) return;                             // …and have a price this side
+          if (minOdds != null && price < minOdds) return;        // …above the signal's floor
+          var r = kind === 'over' ? JTTScoring.scoreOverLine(p, opp, od.line) : JTTScoring.scoreUnderLine(p, opp, od.line);
+          if (r) { r.team = team; r.oppName = opp; r.odds = price; r.book = od.book; out.push(r); }
+        });
+      });
+      return out.sort(function (a, b) { return kind === 'over' ? b.score - a.score : a.score - b.score; });
+    }
+
+    // Capture helper: fire OU signals for a team list and normalise to settleable records.
+    function captureOU(teamList, ctx) {
+      var recs = [];
+      collectOU(teamList, 'over').forEach(function (r) {
+        r.lineType = 'twoway'; var s = toSettleable('green_light', r, ctx); if (s) recs.push(s);
+      });
+      collectOU(teamList, 'under').forEach(function (r) {
+        r.lineType = 'twoway'; var s = toSettleable('death_rider', r, ctx); if (s) recs.push(s);
+      });
+      return recs;
+    }
+
+    // ---- Matchup Multi legs (disposals over, DVP >= +8%, L5 already clears the line) ----
+    // Extra deps: priceForLine, snapToRung, logsFor(name)->rows, abbr, curSeason.
+    var priceForLine = deps.priceForLine, snapToRung = deps.snapToRung,
+        logsFor = deps.logsFor || function () { return []; },
+        abbr = deps.abbr || function (t) { return String(t || '').slice(0, 3).toUpperCase(); },
+        curSeason = deps.curSeason || function () { return ''; };
+    // ---- Defence vs Play Style (ported from index.html fxDvPS/allPlayStyles) --------------
+    // How much MORE (vs league avg) the opponent concedes to the player's specific PLAYSTYLE,
+    // not just their broad position. Gives Matchup Multi a second way to qualify.
+    var _MM_DVP_MIN = 6;      // lowered from 8 — and now satisfiable by playstyle edge, not position only
+    var _MM_L5_SLACK = 2;     // L5 may sit up to this far under the line when the matchup is soft
+    var _PS_POS = {'Accumulator Mid':'Midfielder','Contested Mid':'Midfielder','Running Mid':'Midfielder','Handball Mid':'Midfielder','Scoring MF':'Mid-Forward','Bear in the Square':'Key Forward','Key Target':'Key Forward','Pressure Fwd':'Gen. Forward','Small Forwards':'Gen. Forward','Clearance Beast':'Midfielder','Intercept Def':'Key Defender','Uncontested Marker':'Gen. Defender','Defensive Ball User':'Gen. Defender','Ruck Mid':'Ruck','Dominant Ruck':'Ruck','Winger':'Midfielder','Shankers':'All Positions','Cuddle Monsters':'All Positions','Fantasy Stars':'All Positions','Entry Man':'All Positions'};
+    var _PS_CROSS = { 'Shankers':1, 'Cuddle Monsters':1, 'Fantasy Stars':1, 'Entry Man':1 };
+    function _allPlayStyles(p, pg) {
+      var cp=p.contested||0,clr=p.clearances||0,disp=p.disposals||0,kicks=p.kicks||0,hb=p.handballs||0,
+          mtrs=p.metresGained||0,tack=p.tackles||0,press=p.pressureActs||0,ho=p.hitouts||0,goals=p.goals||0,
+          i50=p.inside50s||0,scoreInv=p.scoreInvolvements||0,intMk=p.interceptMarks||0,contMk=p.contestedMarks||0,
+          cbaPct=p.cba||0,behinds=p.behinds||0,mol=p.marksOnLead||0,mi50=p.marksInside50||0,ti50=p.tacklesInside50||0,marks=p.marks||0; var s=[];
+      if(pg==='Midfielder'){
+        if(disp>=27) s.push('Accumulator Mid');
+        if(clr>=6&&cbaPct>=50) s.push('Clearance Beast');
+        if(cp>=10) s.push('Contested Mid');
+        if(kicks>=14&&mtrs>=200&&cp<10) s.push('Running Mid');
+        if(hb>kicks&&hb>=10) s.push('Handball Mid');
+        if(cbaPct===0) s.push('Winger');
+      }
+      if(pg==='Mid-Forward'){ if((p.shotsAtGoal||0)>=1.5) s.push('Scoring MF'); }
+      if(pg==='Key Forward'){ if(disp<10&&goals>=1.5) s.push('Bear in the Square'); if(mol>=1.5||mi50>=2) s.push('Key Target'); }
+      if(pg==='Gen. Forward'){ if(press>=10&&ti50>=1) s.push('Pressure Fwd'); if((p.goalAssists||0)>=0.5&&scoreInv>=5) s.push('Small Forwards'); }
+      if(pg==='Key Defender'||pg==='Gen. Defender'){
+        if(intMk>=2||contMk>=1.1) s.push('Intercept Def');
+        if(marks>=6&&contMk<1) s.push('Uncontested Marker');
+        if(pg==='Gen. Defender'&&disp>=22) s.push('Defensive Ball User');
+      }
+      if(pg==='Ruck'){ if(disp>=15) s.push('Ruck Mid'); if(ho>=30) s.push('Dominant Ruck'); }
+      if(goals>0&&behinds>goals) s.push('Shankers');
+      if(tack>=5.5) s.push('Cuddle Monsters');
+      if((p.dreamteam||0)>=100) s.push('Fantasy Stars');
+      if(i50>=5.5) s.push('Entry Man');
+      return s.length?s:[pg];
+    }
+    var _scCache = {};
+    // concession vs THIS opp for players sharing `style`, as % over league avg. Cached per opp+style+stat.
+    function _styleConc(opp, style, statKey) {
+      var key = opp + '|' + style + '|' + statKey;
+      if (key in _scCache) return _scCache[key];
+      var cs = curSeason(), crossOk = !!_PS_CROSS[style], epos = _PS_POS[style];
+      var oS=0,oN=0,lS=0,lN=0;
+      for (var i=0;i<_players.length;i++){ var pp=_players[i];
+        var ppos=(JTTScoring.POS_TO_DVP&&JTTScoring.POS_TO_DVP[pp.position])||pp.position;
+        if(!crossOk && epos && epos!=='All Positions' && epos!==ppos) continue;
+        if(_allPlayStyles(pp,ppos).indexOf(style)<0) continue;
+        var logs=logsFor(pp.name)||[];
+        for(var j=0;j<logs.length;j++){ var r=logs[j]; if(String(r.Year)!==cs) continue; var ro=r.opponent; if(!ro) continue;
+          var v=+(r[statKey]||0); if(!isFinite(v)) continue; lS+=v; lN++; if(ro===opp){ oS+=v; oN++; } }
+      }
+      var out=(oN<2||lN<3)?null:((lN&&(lS/lN)>0)?(((oS/oN)-(lS/lN))/(lS/lN)*100):0);
+      _scCache[key]=out; return out;
+    }
+    // best playstyle edge for player p vs opp -> {pct, style} | null
+    function _bestStyle(p, opp, statKey) {
+      var pos=(JTTScoring.POS_TO_DVP&&JTTScoring.POS_TO_DVP[p.position])||p.position;
+      var styles=_allPlayStyles(p,pos), best=null, bs=null;
+      for(var i=0;i<styles.length;i++){ var pct=_styleConc(opp,styles[i],statKey); if(pct==null) continue; if(best==null||pct>best){best=pct;bs=styles[i];} }
+      return best==null?null:{pct:best,style:bs};
+    }
+
+    // Per-market line derivation (mirrors legCandidates' realistic lines) + which markets mids-only.
+    var _MM_MARKETS = [
+      { k:'disposals',  min:15,  mids:false, line:function(a){ return Math.max(10, Math.round(a)-1); } },
+      { k:'goals',      min:1,   mids:false, line:function(a){ return Math.max(1, Math.floor(a)); } },
+      { k:'marks',      min:5,   mids:false, line:function(a){ var e=Math.floor(a/2)*2; return (a-e<0.5&&e>=4)?e-2:Math.max(2,e); } },
+      { k:'tackles',    min:4.5, mids:false, line:function(a){ var e=Math.floor(a/2)*2; return (a-e<0.5&&e>=4)?e-2:Math.max(2,e); } },
+      { k:'clearances', min:4.5, mids:true,  line:function(a){ var e=Math.floor(a/2)*2; return (a-e<0.5&&e>=4)?e-2:Math.max(2,e); } },
+      { k:'kicks',      min:10,  mids:false, line:function(a){ return Math.max(8, Math.round(a)-2); } },
+      { k:'handballs',  min:10,  mids:false, line:function(a){ return Math.max(8, Math.round(a)-2); } },
+    ];
+    var _MM_MIDS = { 'Midfielder':1, 'Mid-Forward':1, 'Ruck':1 };
+    var _MM_NM = { disposals:'Disposals', goals:'Goals', marks:'Marks', tackles:'Tackles', clearances:'Clearances', kicks:'Kicks', handballs:'Handballs' };
+    // Matchup Multi legs across ALL bettable markets (was disposals-only, which hardly fired and
+    // priced short). For each player+market: qualify if the opponent bleeds to the player's POSITION
+    // or PLAYSTYLE for that stat; keep one leg per player (their softest matchup). Longer-odds markets
+    // (goals/marks/tackles) also make the card's $1.75 floor trivial to clear.
+    function matchupLegs(players, opp) {
+      var out = [], best = {};
+      if (!opp || !JTTScoring || !priceForLine || !snapToRung) return out;
+      var cs = curSeason();
+      players.forEach(function (p) {
+        if ((p.matches || 0) < 4) return;
+        var pos = (JTTScoring.POS_TO_DVP && JTTScoring.POS_TO_DVP[p.position]) || p.position;
+        var logs = (logsFor(p.name) || []).filter(function (r) { return String(r.Year) === cs; });
+        _MM_MARKETS.forEach(function (mk) {
+          if (mk.mids && !_MM_MIDS[pos]) return;
+          var avg = +(p[mk.k] || 0); if (avg < mk.min) return;
+          var posDvp = JTTScoring.getDVPPct(opp, pos, mk.k);
+          if (posDvp != null && !isFinite(posDvp)) posDvp = null;
+          var st = _bestStyle(p, opp, mk.k);
+          var styleDvp = st ? st.pct : null;
+          var edge = Math.max(posDvp == null ? -999 : posDvp, styleDvp == null ? -999 : styleDvp);
+          if (edge < _MM_DVP_MIN) return;                                    // neither position NOR playstyle soft enough
+          var line = snapToRung(p.name, mk.k, mk.line(avg));
+          if (line < 1 || avg <= line) return;                              // season avg must clear the line
+          var l5arr = logs.slice(-5).map(function (r) { return +r[mk.k]; }).filter(function (x) { return isFinite(x); });
+          var l5 = l5arr.length ? l5arr.reduce(function (a, b) { return a + b; }, 0) / l5arr.length : null;
+          if (l5 == null || l5 < line - _MM_L5_SLACK) return;               // L5 within slack of the line
+          var pr = priceForLine(p.name, mk.k, line);
+          if (!pr || !pr.price) return;
+          var hr = JTTScoring.getHitRate ? JTTScoring.getHitRate(p.name, mk.k, line, true) : null;
+          var byStyle = styleDvp != null && (posDvp == null || styleDvp >= posDvp);
+          var leg = { p: p, opp: opp, statKey: mk.k, market: mk.k, line: line, side: 'over',
+            type: mk.k.toUpperCase(), avg: avg, betLabel: line + '+ ' + _MM_NM[mk.k],
+            lineType: (mk.k === 'goals' ? 'milestone' : 'twoway'),
+            prob: hr ? hr.rate : null, probReal: !!hr, probN: hr ? hr.n : 0,
+            _odds: { price: pr.price, book: pr.book, label: line + '+' }, _dvp: edge, score: edge,
+            reasons: [ byStyle ? { label: abbr(opp) + ' soft vs ' + st.style, pct: styleDvp }
+                               : { label: abbr(opp) + ' bleed to ' + pos + ' (' + _MM_NM[mk.k] + ')', pct: posDvp } ] };
+          if (!best[p.name] || leg._dvp > best[p.name]._dvp ||
+              (leg._dvp === best[p.name]._dvp && leg._odds.price > best[p.name]._odds.price)) best[p.name] = leg;
+        });
+      });
+      Object.keys(best).forEach(function (n) { out.push(best[n]); });
+      return out.sort(function (a, b) { return (b._dvp - a._dvp) || (b._odds.price - a._odds.price); });
+    }
+    // Capture the qualifying legs (leg-level grading -> "Matchup Multi legs: X%").
+    function captureMatchup(fixtures, ctx) {
+      var recs = [], seen = {};
+      (fixtures || []).forEach(function (g) {
+        [[g.home, g.away], [g.away, g.home]].forEach(function (pair) {
+          matchupLegs(playersOnTeam(pair[0]), pair[1]).forEach(function (l) {
+            l.team = pair[0]; l.oppName = pair[1]; l.odds = l._odds.price; l.book = l._odds.book;
+            var s = toSettleable('matchup_multi', l, ctx);
+            if (s && !seen[s.id]) { seen[s.id] = 1; recs.push(s); }
+          });
+        });
+      });
+      return recs;
+    }
+
+
+    // ============================================================
+    //  Elite Matchups / Bunnies / Bogey / Let's Climb (first tier)
+    //  Ported from index.html so the pre-slate capture matches what
+    //  the tool displayed. Bettable line = the main posted line
+    //  (over for elite/bunnies/climb-start-rung, under for bogey).
+    // ============================================================
+    var _players  = deps.players || [];
+    var _dvp      = deps.dvp || [];
+    var _altLines = deps.altLines || function () { return []; };
+    var _cur      = curSeason;
+    function _avg(a){ return a.length ? a.reduce(function(x,y){return x+y;},0)/a.length : 0; }
+    var ELITE_DEFS = [{k:'disposals',l:'Disposals'},{k:'marks',l:'Marks'},{k:'tackles',l:'Tackles'},{k:'goals',l:'Goals'},{k:'clearances',l:'Clearances'}];
+    var BUNNY_STATS = [{k:'disposals',l:'Disposals',min:15},{k:'dreamteam',l:'Fantasy',min:60}];
+    var BOGEY_STATS = [{k:'disposals',l:'Disposals',min:15}];
+    var CLIMB_MARKETS = [['disposals','Disposals'],['kicks','Kicks'],['handballs','Handballs'],['marks','Marks'],['tackles','Tackles'],['clearances','Clearances'],['goals','Goals']];
+    var CLIMB_MIN_ODDS=1.70, CLIMB_HIT=0.70, CLIMB_CLIMB_MIN=0.40, CLIMB_MIN_H2H=3, CLIMB_MIN_L10=8, CLIMB_STEPS=2;
+
+    function dvpRank(opp, position, stat){
+      var rows=(_dvp||[]).filter(function(r){return r.pos===position;});
+      if(!rows.length||rows[0][stat]==null) return null;
+      var oppRow=null; for(var i=0;i<rows.length;i++){ if(rows[i].team===opp){oppRow=rows[i];break;} }
+      if(!oppRow) return null;
+      var vals=rows.map(function(r){return r[stat]||0;});
+      var avg=vals.reduce(function(a,b){return a+b;},0)/vals.length;
+      var sorted=vals.slice().sort(function(a,b){return b-a;});
+      return {rank:sorted.indexOf(oppRow[stat]||0)+1, total:rows.length, pct:avg?((oppRow[stat]-avg)/avg*100):0};
+    }
+    function _h2hByOpp(name){ var byOpp={}; (logsFor(name)||[]).forEach(function(r){ if(r.opponent){(byOpp[r.opponent]=byOpp[r.opponent]||[]).push(r);} }); return byOpp; }
+
+    function _elite(){
+      var out=[];
+      ELITE_DEFS.forEach(function(def){
+        var pool=_players.filter(function(p){return (p.matches||0)>=4;});
+        pool.sort(function(a,b){return (b[def.k]||0)-(a[def.k]||0);});
+        pool.slice(0,10).forEach(function(p){
+          var opp=nextOpp(p.team); if(!opp) return;
+          var dr=dvpRank(opp,p.position,def.k); if(!dr) return;
+          if(dr.rank>5) return;
+          out.push({p:p,def:def,opp:opp,dvpRank:dr.rank,dvpPct:dr.pct});
+        });
+      });
+      return out.sort(function(a,b){return a.dvpRank-b.dvpRank;});
+    }
+    function _bunnies(){
+      var out=[];
+      _players.filter(function(p){return (p.matches||0)>=3;}).forEach(function(p){
+        var opp=nextOpp(p.team); if(!opp) return;
+        var byOpp=_h2hByOpp(p.name); var vt=byOpp[opp]; if(!vt||vt.length<3) return;
+        BUNNY_STATS.forEach(function(sdef){
+          if((p[sdef.k]||0)<sdef.min) return;
+          var thisAvg=_avg(vt.map(function(r){return r[sdef.k]||0;}));
+          var best=null; Object.keys(byOpp).forEach(function(o){ if(o===opp)return; var rs=byOpp[o]; if(rs.length<2)return; var a=_avg(rs.map(function(r){return r[sdef.k]||0;})); if(best==null||a>best)best=a; });
+          var avgBunny=(best!=null)&&(thisAvg>best);
+          var diffPct=(best!=null&&best>0)?((thisAvg-best)/best)*100:null;
+          var mkt=sdef.k==='disposals'?'disposals':null;
+          var posted=mkt?oddsFor(p.name,mkt):null;
+          var line=(posted&&posted.line!=null)?posted.line:null;
+          var lineBunny=line!=null&&vt.every(function(r){return (r[sdef.k]||0)>=line;});
+          if(!avgBunny&&!lineBunny) return;
+          out.push({p:p,opp:opp,stat:sdef,diffPct:diffPct,lineBunny:lineBunny});
+        });
+      });
+      return out.sort(function(a,b){return (b.lineBunny-a.lineBunny)||((b.diffPct||0)-(a.diffPct||0));});
+    }
+    function _bogey(){
+      var out=[];
+      _players.filter(function(p){return (p.matches||0)>=3;}).forEach(function(p){
+        var opp=nextOpp(p.team); if(!opp) return;
+        var byOpp=_h2hByOpp(p.name); var vt=byOpp[opp]; if(!vt||vt.length<2) return;
+        BOGEY_STATS.forEach(function(sdef){
+          if((p[sdef.k]||0)<sdef.min) return;
+          var thisAvg=_avg(vt.map(function(r){return r[sdef.k]||0;}));
+          var worst=null; Object.keys(byOpp).forEach(function(o){ if(o===opp)return; var rs=byOpp[o]; if(rs.length<2)return; var a=_avg(rs.map(function(r){return r[sdef.k]||0;})); if(worst==null||a<worst)worst=a; });
+          var avgBogey=(worst==null)||(thisAvg<worst);
+          var diffPct=(worst!=null&&worst>0)?((worst-thisAvg)/worst)*100:null;
+          var mkt=sdef.k==='disposals'?'disposals':null;
+          var posted=mkt?oddsFor(p.name,mkt):null;
+          var line=(posted&&posted.line!=null)?posted.line:null;
+          var lineBogey=line!=null&&vt.every(function(r){return (r[sdef.k]||0)<line;});
+          if(!avgBogey&&!lineBogey) return;
+          out.push({p:p,opp:opp,stat:sdef,diffPct:diffPct,lineBogey:lineBogey});
+        });
+      });
+      return out.sort(function(a,b){return (b.lineBogey-a.lineBogey)||((b.diffPct||0)-(a.diffPct||0));});
+    }
+    function _climb(){
+      var out=[];
+      _players.forEach(function(p){
+        var opp=nextOpp(p.team);
+        var logs=(logsFor(p.name)||[]);
+        if(!logs.length) return;
+        var h2h=opp?logs.filter(function(r){return r.opponent===opp;}):[];
+        var season=logs.filter(function(r){return String(r.Year)===_cur();});
+        CLIMB_MARKETS.forEach(function(mk){
+          var k=mk[0];
+          var rungMap={};
+          var main=oddsFor(p.name,k); if(main&&main.line!=null&&main.over!=null){ var L=Math.ceil(main.line); rungMap[L]={line:L,over:main.over,book:main.book}; }
+          _altLines(p.name,k).forEach(function(a){ if(a.line!=null&&a.over!=null){ var L2=Math.ceil(a.line); if(!rungMap[L2]||a.over>rungMap[L2].over) rungMap[L2]={line:L2,over:a.over,book:a.book}; } });
+          var rungs=Object.keys(rungMap).map(function(kk){return rungMap[kk];}).sort(function(x,y){return x.line-y.line;});
+          if(!rungs.length) return;
+          var start=null; for(var i=0;i<rungs.length;i++){ if(rungs[i].over>=CLIMB_MIN_ODDS){start=rungs[i];break;} }
+          if(!start) return;
+          var N0=start.line, t1=N0+1, t2=N0+CLIMB_STEPS;
+          var hr=function(g,line){ return g.length ? g.filter(function(r){return (r[k]||0)>=line;}).length/g.length : null; };
+          if(season.length<CLIMB_MIN_L10) return;
+          var s1=hr(season,t1), s2=hr(season,t2);
+          if(s1==null||s2==null||s1<CLIMB_HIT||s2<CLIMB_CLIMB_MIN) return;
+          if(h2h.length>=CLIMB_MIN_H2H){ var h1=hr(h2h,t1), h2r=hr(h2h,t2); if((h1!=null&&h1<CLIMB_CLIMB_MIN)||(h2r!=null&&h2r<CLIMB_CLIMB_MIN)) return; }
+          out.push({p:p,opp:opp,statKey:k,startN:N0,startOver:start.over,startBook:start.book,rate2:s2});
+        });
+      });
+      return out.sort(function(a,b){return (b.rate2-a.rate2);});
+    }
+
+    function captureElite(ctx){
+      var recs=[];
+      _elite().forEach(function(e){
+        var posted=oddsFor(e.p.name,e.def.k); if(!posted||posted.line==null||posted.over==null) return;
+        var s=toSettleable('elite',{p:e.p,opp:e.opp,team:e.p.team,market:e.def.k,line:posted.line,side:'over',odds:posted.over,book:posted.book,lineType:'twoway',score:e.dvpPct},ctx);
+        if(s) recs.push(s);
+      });
+      return recs;
+    }
+    function captureBunnies(ctx){
+      var recs=[];
+      _bunnies().forEach(function(b){
+        if(b.stat.k!=='disposals') return;
+        var posted=oddsFor(b.p.name,'disposals'); if(!posted||posted.line==null||posted.over==null) return;
+        var s=toSettleable('bunnies',{p:b.p,opp:b.opp,team:b.p.team,market:'disposals',line:posted.line,side:'over',odds:posted.over,book:posted.book,lineType:'twoway',score:b.diffPct||0},ctx);
+        if(s) recs.push(s);
+      });
+      return recs;
+    }
+    function captureBogey(ctx){
+      var recs=[];
+      _bogey().forEach(function(b){
+        if(b.stat.k!=='disposals') return;
+        var posted=oddsFor(b.p.name,'disposals'); if(!posted||posted.line==null) return;
+        var s=toSettleable('bogey',{p:b.p,opp:b.opp,team:b.p.team,market:'disposals',line:posted.line,side:'under',odds:(posted.under!=null?posted.under:null),book:posted.book,lineType:'twoway',score:b.diffPct||0},ctx);
+        if(s) recs.push(s);
+      });
+      return recs;
+    }
+    function captureClimb(ctx){
+      var recs=[];
+      _climb().forEach(function(c){
+        var s=toSettleable('climb',{p:c.p,opp:c.opp,team:c.p.team,market:c.statKey,line:c.startN,side:'over',odds:c.startOver,book:c.startBook,lineType:'milestone',score:c.rate2},ctx);
+        if(s) recs.push(s);
+      });
+      return recs;
+    }
+
+    return { collectOU: collectOU, captureOU: captureOU, matchupLegs: matchupLegs, captureMatchup: captureMatchup,
+             captureElite: captureElite, captureBunnies: captureBunnies, captureBogey: captureBogey, captureClimb: captureClimb };
+  }
+
+
+  /* ============================================================================
+   * SHARED ODDS LAYER (for the Node capture job)
+   * ----------------------------------------------------------------------------
+   * The browser builds oddsFor() inside index.html's buildOddsIdx(). The capture
+   * job needs the SAME best-price selection AND — critically — the SAME odds-feed
+   * name → game-log name remap (the Lachie/Lachlan fix), or settle can't find the
+   * box score and everything voids. So the remap + a disposals-market oddsFor live
+   * here, and capture uses them. Validated to match the browser's oddsFor output.
+   * ========================================================================== */
+  var _NICK = { lachie:'lachlan',lochie:'lachlan',josh:'joshua',tom:'thomas',tommy:'thomas',nat:'nathan',nate:'nathan',
+    zac:'zachary',zach:'zachary',zak:'zachary',matt:'matthew',mitch:'mitchell',sam:'samuel',harry:'harrison',
+    charlie:'charles',nic:'nicholas',nick:'nicholas',gus:'angus',ollie:'oliver',jake:'jacob',ben:'benjamin',
+    alex:'alexander',will:'william',billy:'william',bill:'william',dan:'daniel',danny:'daniel',jimmy:'james',
+    jim:'james',joe:'joseph',joey:'joseph',max:'maxwell',ed:'edward',eddie:'edward',ted:'edward',toby:'tobias',
+    paddy:'patrick',pat:'patrick',steve:'stephen',cam:'cameron',fred:'frederick',freddy:'frederick',
+    brad:'bradley',lenny:'leonard',len:'leonard' };
+  function _onorm(x){ return (x||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-z ]/g,'').replace(/\s+/g,' ').trim(); }
+  function _ocanon(n){ var p=n.split(' '); if(p.length<2) return n; p[0]=_NICK[p[0]]||p[0]; return p.join(' '); }
+  // players: [{name}]  — the game-log player list to resolve feed names against
+  function oddsNameMap(oddsNames, players){
+    var map={}; if(!players || !players.length){ oddsNames.forEach(function(n){ map[n]=n; }); return map; }
+    var byExact={}, byCanon={}, bySur={};
+    players.forEach(function(p){ var n=_onorm(p.name); byExact[n]=p.name;
+      var c=_ocanon(n); if(!(c in byCanon)) byCanon[c]=p.name;
+      var parts=n.split(' '); if(parts.length>=2){ var sk=parts.slice(1).join(' '); (bySur[sk]=bySur[sk]||[]).push(p.name); } });
+    oddsNames.forEach(function(on){ var n=_onorm(on);
+      if(byExact[n]){ map[on]=byExact[n]; return; }
+      var c=_ocanon(n); if(byCanon[c]){ map[on]=byCanon[c]; return; }
+      var parts=n.split(' ');
+      if(parts.length>=2){ var sk=parts.slice(1).join(' '), cands=bySur[sk]||[];
+        if(cands.length===1 && _onorm(cands[0])[0]===n[0]){ map[on]=cands[0]; return; } }
+      map[on]=on; });
+    return map;
+  }
+
+  // Build an oddsFor(name, market) from an odds.json blob, name-mapped to log names.
+  // Mirrors index.html's oddsFor for two-way markets (disposals): best OVER across books
+  // at the main line, keeping the main UNDER. No book filter (capture the true best).
+  function buildOddsLookup(oddsJson, players){
+    var lines=(oddsJson && oddsJson.lines)||[], books=(oddsJson && oddsJson.books)||[];
+    var names=new Set();
+    lines.forEach(function(o){ if(o.player) names.add(o.player); });
+    books.forEach(function(b){ if(b.player) names.add(b.player); });
+    var nmap=oddsNameMap([].concat.apply([], [Array.from(names)]), players), RS=function(n){ return nmap[n]||n; };
+    var alt=(oddsJson && oddsJson.alt)||[];
+    var main={}, bookIdx={}, altIdx={};
+    lines.forEach(function(o){ var n=RS(o.player); if(!n) return; (main[n]=main[n]||{})[o.market]={line:o.line,over:o.over,under:o.under,book:o.book}; });
+    books.forEach(function(b){ var n=RS(b.player); if(!n) return; var m=(bookIdx[n]=bookIdx[n]||{}); (m[b.market]=m[b.market]||[]).push({line:b.line,over:b.over,under:b.under,book:b.book}); });
+    alt.forEach(function(a){ var n=RS(a.player); if(!n) return; var m=(altIdx[n]=altIdx[n]||{}); (m[a.market]=m[a.market]||[]).push({line:a.line,over:a.over,book:a.book}); });
+    // Best OVER price per posted line (mirrors index.html altLines). Capture uses best price
+    // across books (no book filter) — the honest baseline the ledger grades at.
+    function altLines(name, market){
+      var rows=((bookIdx[name]||{})[market]||[]).filter(function(r){ return r.over!=null; });
+      if(rows.length){ var byL={}; rows.forEach(function(r){ if(!byL[r.line]||r.over>byL[r.line].over) byL[r.line]={line:r.line,over:r.over,book:r.book}; });
+        return Object.keys(byL).map(function(k){ return byL[k]; }).sort(function(x,y){ return x.line-y.line; }); }
+      return ((altIdx[name]||{})[market]||[]);
+    }
+    function snapToRung(name, market, target){
+      if(market==='goals'||market==='goalsx') return target;
+      var lad=Array.from(new Set(altLines(name,market).map(function(a){ return Math.ceil(a.line); }))).sort(function(a,b){ return a-b; });
+      if(!lad.length) return target;
+      var pick=null; lad.forEach(function(r){ if(r<=target) pick=r; });
+      return pick!=null?pick:lad[0];
+    }
+    function priceForLine(name, market, line){
+      var alts=altLines(name,market);
+      var hit=alts.filter(function(a){ return Math.round(a.line+0.5)===line; })[0];
+      if(!hit){ var ge=alts.filter(function(a){ return Math.round(a.line+0.5)>=line; }).sort(function(x,y){ return x.line-y.line; }); hit=ge[0]; }
+      if(hit&&hit.over!=null) return { price:hit.over, label:Math.round(hit.line+0.5)+'+', book:hit.book };
+      var od=oddsFor(name,market);
+      if(od&&od.over!=null&&od.line!=null) return { price:od.over, label:od.line+' O', book:od.book };
+      return null;
+    }
+    function oddsFor(player, market){
+      var mn=(main[player]||{})[market];
+      var rows=((bookIdx[player]||{})[market]||[]).filter(function(r){ return r.over!=null; });
+      if(mn && mn.line!=null){
+        var atLine=rows.filter(function(r){ return r.line===mn.line; }).sort(function(x,y){ return y.over-x.over; });
+        var over=mn.over!=null?mn.over:null, book=mn.over!=null?mn.book:null;
+        if(atLine.length && (over==null || atLine[0].over>over)){ over=atLine[0].over; book=atLine[0].book; }
+        if(over==null) return null;
+        return { line:mn.line, over:over, under:(mn.under!=null?mn.under:null), book:book };
+      }
+      return null;   // OU signals only need the two-way main line; alt-only markets (goals) handled in phase 2
+    }
+    return { oddsFor: oddsFor, nameMap: nmap, altLines: altLines, snapToRung: snapToRung, priceForLine: priceForLine };
+  }
+
+  return {
+    create: create,
+    SIGNAL_DEFS: SIGNAL_DEFS,
+    makeId: makeId,
+    toSettleable: toSettleable,
+    grade: grade,
+    pnl: pnl,
+    rollup: rollup,
+    oddsNameMap: oddsNameMap,
+    buildOddsLookup: buildOddsLookup
+  };
+});
