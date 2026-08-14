@@ -1612,7 +1612,7 @@
   function fmt(v,dp){return v==null?'—':(+v).toFixed(dp==null?1:dp);}
 
   /* ===================== TAB NAV / RENDER ===================== */
-  function _renderTabnav(){document.getElementById('tabnav').innerHTML=TABS.filter(t=>!t.sports||t.sports.indexOf(SPORT.key)>=0).map(t=>'<button class="tab'+(t.name===state.view.activeTab?' active':'')+'" onclick="_switchTab(\''+t.name+'\')"><i class="ti '+t.icon+'"></i>'+t.label+'</button>').join('');}
+  function _renderTabnav(){document.getElementById('tabnav').innerHTML=TABS.filter(t=>(!t.sports||t.sports.indexOf(SPORT.key)>=0)&&!(t.name==='odds'&&(window.SPORT_CONFIG||{}).noPlayerOdds)).map(t=>'<button class="tab'+(t.name===state.view.activeTab?' active':'')+'" onclick="_switchTab(\''+t.name+'\')"><i class="ti '+t.icon+'"></i>'+t.label+'</button>').join('');}
   function _switchTab(n){state.view.activeTab=n;state.view.fixtureId=null;_renderTabnav();_renderApp();window.scrollTo({top:0});}
   function _renderApp(){const p=document.getElementById('page-content');try{p.innerHTML=renderTab(state.view.activeTab)||'';}catch(e){console.error('renderTab',e);p.innerHTML='<div class="empty"><div class="ico"><i class="ti ti-alert-triangle"></i></div>Render error — see console</div>';}}
   // ---- League view (MLB): standings, stat leaders, scoring trends ----
@@ -1664,7 +1664,7 @@
     h+='</div></details>';
     return h;
   }
-  function renderTab(t){ if(t==='league')return renderLeague(); if(t==='fixture')return renderFixture(); if(t==='odds')return renderOdds(); if(t==='stats')return renderStats(); if(t==='degen')return renderDegen(); if(t==='info')return renderInfo(); return ''; }
+  function renderTab(t){ if(t==='league')return renderLeague(); if(t==='fixture')return renderFixture(); if(t==='odds')return ((window.SPORT_CONFIG||{}).noPlayerOdds)?renderFixture():renderOdds(); if(t==='stats')return renderStats(); if(t==='degen')return renderDegen(); if(t==='info')return renderInfo(); return ''; }
   // Odds-poll re-render that doesn't rug-pull the user: skips while a modal is open or an
   // input/select is focused, and preserves collapsible open-state + scroll across the swap.
   function _renderAppPreserving(){
@@ -5643,6 +5643,7 @@
     const games=multiBuilder();
     const mode=SETTINGS.multi.mode||'smart';
     if(!games.length){
+      if((window.SPORT_CONFIG||{}).noPlayerOdds) return emptyState('ti-stack-2','No player-prop odds for this sport','The Multi Builder prices every leg against a posted line, so it needs a player-prop odds feed. Use the Degen signals — they run on the stats (form, H2H, DVP) — for your plays.');
       if(!_oddsLive()) return emptyState('ti-stack-2','Waiting on live odds','Multi suggestions appear when the bookmaker odds feed is live — every leg is priced against a posted line.');
       return emptyState('ti-stack-2','No priced legs','Nothing clears the current filters with a posted line. Loosen Min prob / Min score, or widen the markets above.');
     }
