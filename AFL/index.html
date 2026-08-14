@@ -5286,6 +5286,16 @@
     _sportBadges(leg).forEach(function(k){ if(base.indexOf(k)<0) base.push(k); });
     return {base:base, nerd:nerd};
   }
+  function _dvMeetCached(a,b){ var k=(a<b?a+'|'+b:b+'|'+a), c=state.idx._dvMeetC||(state.idx._dvMeetC={}); if(!(k in c)) c[k]=_dvMeetings(a,b,20); return c[k]; }
+  function _dejaVuStreak(leg){
+    var p=leg.p, sk=leg.statKey, line=leg.line, opp=leg.opp; if(!opp) return 0;
+    var vals;
+    if(((window.SPORT&&SPORT.key))==='mlb'){ var rows=(p.h2h&&p.h2h[opp])||[]; vals=rows.slice().reverse().map(function(r){return +r[sk];}).filter(function(v){return isFinite(v);}); }
+    else { var meets=_dvMeetCached(p.team, opp); if(!meets.length) return 0;
+      var lg=(state.idx.logsByName&&state.idx.logsByName[p.name])||[];
+      vals=meets.map(function(mid){ for(var i=0;i<lg.length;i++){ if(lg[i].MatchId===mid) return +lg[i][sk]; } return null; }).filter(function(v){return v!=null&&isFinite(v);}); }
+    var st=0; for(var i=0;i<vals.length;i++){ if(vals[i]>=line) st++; else break; } return st;
+  }
   function _mbCandPool(){
     const banned=new Set((SETTINGS.multi&&SETTINGS.multi.banned)||[]);
     const pl=t=>(state.idx.players||[]).filter(p=>p.team===t&&(p.matches||0)>=3&&!banned.has(p.name));
@@ -5299,7 +5309,7 @@
       pl(g.away).forEach(p=>legCandidates(p,g.home).forEach(c=>{ if(_mlb) c._pctx={isHome:false, oppHand:_mlbHand(g.homePitcher)}; pool.push(c); }));
     });
     const best={}; pool.forEach(c=>{ const key=c.p.name+'|'+c.statKey; if(!best[key]||c.score>best[key].score) best[key]=c; });
-    const arr=Object.values(best); arr.forEach(function(c){ var m=_projModel(c.p,c.statKey,c.line,c.opp,c._pctx); c.proj=m.mean; c.projSd=m.sd; if(m.prob!=null){ c.prob=m.prob; c.probReal=true; } });
+    const arr=Object.values(best); arr.forEach(function(c){ var m=_projModel(c.p,c.statKey,c.line,c.opp,c._pctx); c.proj=m.mean; c._deja=_dejaVuStreak(c); c.projSd=m.sd; if(m.prob!=null){ c.prob=m.prob; c.probReal=true; } });
     return arr.sort((a,b)=>(b.score-a.score)||(b.prob-a.prob));
   }
   function _mbvBody(){
@@ -5350,7 +5360,7 @@
           +'<span class="mbv-hit">'+(l.probReal?Math.round(l.prob*100)+'% hit':'~'+Math.round(l.prob*100)+'%')+'</span>'
           +(edge?'<span class="mbv-edge">'+edge+'</span>':'')
           +'<span class="mbv-opp">v '+abbr(l.opp||'')+'</span></div>'
-        +(ctx?'<div class="mbv-ctx">'+ctx+'</div>':'')+'<div class="mbv-badges">'+bd.base.map(k=>{const b=_MB_ALLBDG[k];if(!b)return '';return '<span class="mbv-bdg" style="background:'+b[1]+';color:'+b[2]+'"><i class="ti '+b[3]+'"></i>'+b[0]+'</span>';}).join('')
+        +(ctx?'<div class="mbv-ctx">'+ctx+'</div>':'')+'<div class="mbv-badges">'+((l._deja>=2)?'<span class="mbv-bdg" style="background:#EEEDFE;color:#26215C"><i class="ti ti-versions"></i>Déjà Vu x'+l._deja+'</span>':'')+bd.base.map(k=>{const b=_MB_ALLBDG[k];if(!b)return '';return '<span class="mbv-bdg" style="background:'+b[1]+';color:'+b[2]+'"><i class="ti '+b[3]+'"></i>'+b[0]+'</span>';}).join('')
           +bd.nerd.map(nx=>'<span class="mbv-nerd"><i class="ti '+nx[1]+'"></i>'+nx[0]+'</span>').join('')+'</div>'
         +'</div>';
     }).join('')+'</div>';
