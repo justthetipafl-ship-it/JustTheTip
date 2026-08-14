@@ -401,7 +401,14 @@
   .auth-img{width:34px;height:34px;border-radius:50%;display:block;}
   .boot-img{width:64px;height:64px;border-radius:50%;display:block;}
   .boot-wordmark{width:min(300px,72vw);height:auto;display:block;}
-  .ob-filters{display:flex;flex-direction:column;gap:8px;margin:10px 0 12px;}
+  .ob-filters{display:flex;flex-direction:row;flex-wrap:wrap;gap:9px 14px;margin:10px 0 12px;align-items:center;}
+.ob-sel{background:var(--surface-2);border:1px solid var(--border);color:var(--text);font-family:var(--font-display);font-weight:700;font-size:12px;padding:6px 10px;border-radius:6px;cursor:pointer;max-width:190px;}
+.ob-sel:focus{outline:none;border-color:var(--accent);}
+.ob-dd{position:relative;}
+.ob-dd-sum{list-style:none;display:inline-flex;align-items:center;gap:6px;user-select:none;white-space:nowrap;}
+.ob-dd-sum::-webkit-details-marker{display:none;}
+.ob-dd[open]>.ob-dd-sum{border-color:var(--accent);}
+.ob-dd-body{position:absolute;z-index:30;top:calc(100% + 4px);left:0;background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:9px;display:flex;flex-wrap:wrap;gap:6px;width:min(280px,80vw);box-shadow:0 8px 24px rgba(0,0,0,.45);}
   .ob-filter{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
   .ob-fl{font-size:9px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:var(--text-3);min-width:48px;}
   .ob-chips{display:flex;gap:5px;flex-wrap:wrap;}
@@ -1731,10 +1738,11 @@
     const gi=Math.min(state.view.oddsGame||0, Math.max(0,fx.length-1));
     const mkt=state.view.oddsMkt||(ODDS_MKTS[0]&&ODDS_MKTS[0][0])||'disposals';
     const head='<div class="tp-sec"><div class="sec-title"><i class="ti ti-coins"></i> Live Odds Board</div></div>'+oddsTimeframeNote();
-    const gameChips=_obPool.length?('<div class="ob-filter"><span class="ob-fl">Game</span><div class="ob-chips">'+_obPool.map(({g,i})=>'<button class="ob-chip'+(i===gi?' active':'')+'" onclick="setOddsGame('+i+')">'+abbr(g.home)+' v '+abbr(g.away)+'</button>').join('')+'</div></div>'):'';
-    const mktChips='<div class="ob-filter"><span class="ob-fl">Market</span><div class="ob-chips">'+ODDS_MKTS.map(m=>'<button class="ob-chip'+(m[0]===mkt?' active':'')+'" onclick="setOddsMkt(\''+m[0]+'\')">'+m[1]+'</button>').join('')+'</div></div>';
-    const bookChips='<div class="ob-filter"><span class="ob-fl">My Books</span><div class="ob-chips"><button class="ob-chip'+(SETTINGS.books.length?'':' active')+'" onclick="_sBookAll()">All</button>'+ALL_BOOKS.map(([k,l])=>'<button class="ob-chip'+(SETTINGS.books.indexOf(k)>=0?' active':'')+'" onclick="_sBook(\''+k+'\')">'+l+'</button>').join('')+'</div></div>';
-    const filters='<div class="ob-filters">'+gameChips+mktChips+bookChips+'</div>';
+    const gameSel=_obPool.length?('<div class="ob-filter"><span class="ob-fl">Game</span><select class="ob-sel" onchange="setOddsGame(+this.value)">'+_obPool.map(({g,i})=>'<option value="'+i+'"'+(i===gi?' selected':'')+'>'+abbr(g.home)+' v '+abbr(g.away)+'</option>').join('')+'</select></div>'):'';
+    const mktSel='<div class="ob-filter"><span class="ob-fl">Market</span><select class="ob-sel" onchange="setOddsMkt(this.value)">'+ODDS_MKTS.map(m=>'<option value="'+m[0]+'"'+(m[0]===mkt?' selected':'')+'>'+m[1]+'</option>').join('')+'</select></div>';
+    const _nbk=SETTINGS.books.length, _bkOpen=state.view.oddsBooksOpen?' open':'';
+    const bookSel='<div class="ob-filter"><span class="ob-fl">Books</span><details class="ob-dd"'+_bkOpen+' ontoggle="state.view.oddsBooksOpen=this.open"><summary class="ob-sel ob-dd-sum">'+(_nbk?_nbk+' book'+(_nbk>1?'s':''):'All books')+'<i class="ti ti-chevron-down"></i></summary><div class="ob-dd-body"><button class="ob-chip'+(_nbk?'':' active')+'" onclick="_sBookAll()">All</button>'+ALL_BOOKS.map(([k,l])=>'<button class="ob-chip'+(SETTINGS.books.indexOf(k)>=0?' active':'')+'" onclick="_sBook(\''+k+'\')">'+l+'</button>').join('')+'</div></details></div>';
+    const filters='<div class="ob-filters">'+gameSel+mktSel+bookSel+'</div>';
     const live=hasAnyOdds() && !(state.idx.oddsMeta&&state.idx.oddsMeta.sample);
     if(!live){
       const stamp=(state.idx.oddsMeta&&state.idx.oddsMeta.updated)?(' Last prices seen: '+state.idx.oddsMeta.updated+'.'):'';
