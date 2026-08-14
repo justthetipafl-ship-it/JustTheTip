@@ -1,6 +1,9 @@
 /* JTT sport config — AFL. Loaded by the unified shell as window.SPORT_CONFIG. */
 window.SPORT_CONFIG = {
   key: 'afl',
+  logoCdn: 'https://squiggle.com.au/wp-content/themes/squiggle/assets/images/',
+  logoCdnExt: '.png',
+  teamIds: { 'Adelaide':'Adelaide','Brisbane':'Brisbane','Carlton':'Carlton','Collingwood':'Collingwood','Essendon':'Essendon','Fremantle':'Fremantle','Geelong':'Geelong','Gold Coast':'GoldCoast','Greater Western Sydney':'Giants','Hawthorn':'Hawthorn','Melbourne':'Melbourne','North Melbourne':'NorthMelbourne','Port Adelaide':'PortAdelaide','Richmond':'Richmond','St Kilda':'StKilda','Sydney':'Sydney','West Coast':'WestCoast','Western Bulldogs':'Bulldogs' },
   name: 'AFL',
   jupiter: {
     markets: [['disposals','Disp'],['goals','Goals'],['marks','Marks'],['tackles','Tackles'],['kicks','Kicks'],['handballs','HB'],['clearances','Clear']],
