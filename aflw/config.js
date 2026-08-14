@@ -7,7 +7,7 @@ window.SPORT_CONFIG = {
   name: 'AFLW',
   logoBase: '/AFL/assets/logos/',   // same 18 clubs as AFL -> reuse the AFL logo set
   noPlayerOdds: true,   // no AFLW player-prop odds -> hide Odds tab + Jupiter + Radar
-  hideCrew: ['green','death','multi','radar','kickins','taggers'],   // odds-only / no-data / AFL-men's-list tiles -> hidden for AFLW
+  hideCrew: ['green','death','radar','kickins','taggers'],   // odds-only / no-data / AFL-men's-list tiles -> hidden for AFLW
   jupiter: {
     markets: [['disposals','Disp'],['goals','Goals']],
     mlab:    { disposals:'disp', goals:'goals' },
