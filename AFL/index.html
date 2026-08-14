@@ -1035,6 +1035,10 @@
   .mbv-bdg i{font-size:12px}
   .mbv-nerd{display:inline-flex;align-items:center;gap:4px;font-size:10px;color:var(--text-3);border:1px dashed var(--border-light,var(--border));font-family:var(--font-mono);padding:3px 7px;border-radius:20px;line-height:1}
   .mbv-nerd i{font-size:11px}
+  .mbv-pager{display:flex;align-items:center;justify-content:center;gap:14px;margin-top:12px}
+  .mbv-pg{background:var(--surface-2);border:1px solid var(--border);color:var(--text);border-radius:8px;padding:6px 12px;cursor:pointer;font-size:15px}
+  .mbv-pg[disabled]{opacity:.4;cursor:default}
+  .mbv-pg-lbl{font-size:12px;color:var(--text-3);font-variant-numeric:tabular-nums}
   .mbv-save{width:100%;margin-top:12px;padding:11px;background:var(--accent);color:#0b1220;border:none;border-radius:10px;font-weight:800;font-size:14px;cursor:pointer;font-family:var(--font-display)}
 </style>
 </head>
@@ -1185,7 +1189,7 @@
     MULTI_MKTS=CFG.multiMkts||[['disposals','Disposals'],['goals','Goals'],['dreamteam','Fantasy'],['marks','Marks'],['tackles','Tackles'],['clearances','Clearances'],['kicks','Kicks'],['handballs','Handballs']];
     NERD_MARKETS=CFG.nerdMkts||[['disposals','Disposals'],['dreamteam','Fantasy'],['kicks','Kicks'],['handballs','Handballs'],['marks','Marks'],['tackles','Tackles'],['clearances','Clearances']];
     NM_LBL=Object.fromEntries(NERD_MARKETS);
-    try{ if(SETTINGS&&SETTINGS.multi&&Array.isArray(SETTINGS.multi.markets)&&!SETTINGS.multi.markets.some(k=>MULTI_MKTS.some(m=>m[0]===k))) SETTINGS.multi.markets=MULTI_MKTS.map(m=>m[0]); }catch(e){}
+    try{ if(SETTINGS&&SETTINGS.multi&&Array.isArray(SETTINGS.multi.markets)){ const _vm=new Set(MULTI_MKTS.map(m=>m[0])); SETTINGS.multi.markets=SETTINGS.multi.markets.filter(k=>_vm.has(k)); if(!SETTINGS.multi.markets.length) SETTINGS.multi.markets=MULTI_MKTS.map(m=>m[0]); } }catch(e){}
     POS_SHORT=CFG.posShort||{'Midfielder':'MID','Mid-Forward':'M-F','Key Forward':'KF','Gen. Forward':'GF','Key Defender':'KD','Gen. Defender':'GD','Ruck':'RK'};
     SETTINGS_MKTS=CFG.settingsMkts||[['disposals','Disposals'],['goals','Goals'],['marks','Marks'],['tackles','Tackles'],['kicks','Kicks'],['handballs','Handballs'],['clearances','Clearances'],['inside50s','Inside 50s']];
     COMPARE_STATS=CFG.compareStats||[['disposals','Disposals'],['kicks','Kicks'],['handballs','Handballs'],['marks','Marks'],['tackles','Tackles'],['goals','Goals'],['cba','CBA %'],['dreamteam','Dream Team']];
@@ -4365,6 +4369,23 @@
     let pick=null; for(const r of lad){ if(r<=target) pick=r; }
     return pick!=null?pick:lad[0];
   }
+  function _genericCandidates(p,opp){
+    const mkts=(SETTINGS.multi.markets&&SETTINGS.multi.markets.length)?SETTINGS.multi.markets:MULTI_MKTS.map(m=>m[0]);
+    const NM=Object.fromEntries(MULTI_MKTS); const c=[];
+    mkts.forEach(function(sk){
+      var avg=+p[sk]; if(!isFinite(avg)||avg<=0) return;
+      var line=(typeof _snapToRung==='function')?_snapToRung(p.name,sk,Math.max(0.5,Math.round(avg*0.8))):Math.max(0.5,Math.round(avg*0.8));
+      if(line==null||line<0.5||avg<=line) return;
+      var hr=JTTScoring.getHitRate(p.name,sk,line,true);
+      var prob=hr?hr.rate:estimateHitProb(avg,line);
+      var sigs=opp?JTTScoring.getContextSignals(p,sk,opp):[];
+      var score=sigs.reduce(function(s,sig){return s+(sig.pct!=null?sig.pct*(sig.weight||1):0);},0);
+      var reasons=sigs.filter(function(sg){return sg.pct>0;}).sort(function(a,b){return (b.pct*b.weight)-(a.pct*a.weight);}).slice(0,2).map(function(sg){return {label:sg.label,pct:sg.pct};});
+      var _odds=(typeof priceForLine==='function')?priceForLine(p.name,sk,line):null;
+      c.push({id:p.name+'-'+sk,p:p,statKey:sk,line:line,avg:avg,prob:prob,probReal:!!hr,probN:hr?hr.n:0,score:score,opp:opp,type:'',betLabel:line+'+ '+(NM[sk]||sk),reasons:reasons,_odds:_odds});
+    });
+    return c;
+  }
   function _legCandidatesMLB(p,opp){
     const c=[];
     if(p.role!=='bat') return c;
@@ -4388,6 +4409,7 @@
   }
   function legCandidates(p,opp){
     if(SPORT.key==='mlb') return _legCandidatesMLB(p,opp);
+    if(SPORT.key!=='afl'&&SPORT.key!=='aflw') return _genericCandidates(p,opp);
     const c=[]; const pos=JTTScoring.POS_TO_DVP[p.position]||p.position;
     const add=(statKey,line,avg,type,label)=>{
       if((SETTINGS.multi.markets||[]).indexOf(statKey)<0) return;
@@ -5175,8 +5197,6 @@
       if(dp!=null && dp>=15) push(base,'dvp'); }
     if((sk==='disposals'||sk==='clearances') && /Mid/.test(p.position||'') && typeof _taggerFacing==='function'){
       if(!_taggerFacing(p,opp)) push(base,'untagged'); }
-    const xs=_mbLogsFor(p.name).map(r=>+r.xScore).filter(v=>isFinite(v));
-    if(sk==='dreamteam' && xs.length>=5){ const mx=xs.slice(-8).reduce((a,b)=>a+b,0)/Math.min(8,xs.length); if(avg&&avg>=mx*1.08) nerd.push(['xScore +'+Math.round((avg/mx-1)*100)+'%','ti-math-function']); }
     const cn=_mbLogsFor(p.name).map(r=>+r.contested).filter(v=>isFinite(v)); const dz=_mbLogsFor(p.name).map(r=>+r.disposals).filter(v=>isFinite(v));
     if(cn.length>=5 && dz.length>=5){ const cr=cn.slice(-6).reduce((a,b)=>a+b,0)/Math.min(6,cn.length), dr=dz.slice(-6).reduce((a,b)=>a+b,0)/Math.min(6,dz.length); if(dr&&cr/dr>=0.55) nerd.push(['Contested '+Math.round(cr/dr*100)+'%','ti-swords']); }
     const cb=_mbLogsFor(p.name).map(r=>+r.cba).filter(v=>isFinite(v));
@@ -5205,9 +5225,14 @@
     const books=oddsOn?[...new Set(pool.map(c=>c._odds&&c._odds.book).filter(Boolean))]:[];
     if(mSel!=='all') pool=pool.filter(c=>c.statKey===mSel);
     if(oddsOn&&bSel!=='all') pool=pool.filter(c=>c._odds&&c._odds.book===bSel);
-    pool=pool.slice(0,40);
+    pool.forEach(l=>{ l._bd=_legBadges(l); });
+    pool=pool.filter(l=>l._bd.base.length>0);                 // only legs that actually earn a badge
+    pool=_mbBalance(pool);                                    // even split between the two teams
     const slip=state.view.mbSlip||(state.view.mbSlip={});
     const chosen=pool.filter(c=>slip[c.id]);
+    const PER=10, pages=Math.max(1,Math.ceil(pool.length/PER));
+    let page=Math.min(state.view.mbvPage||0, pages-1); if(page<0)page=0;
+    const shown=pool.slice(page*PER, page*PER+PER);
     let comb=1, conf=1; chosen.forEach(c=>{ const px=(c._odds&&c._odds.price)||(c.prob>0?1/c.prob:null); if(px)comb*=px; conf*=Math.max(0.05,Math.min(0.99,c.prob||0)); });
     const _lbl=k=>({disposals:'Disposals',goals:'Goals',dreamteam:'Fantasy',marks:'Marks',tackles:'Tackles',clearances:'Clearances',kicks:'Kicks',handballs:'Handballs',shots:'Shots',points:'Points',assists:'Assists',saves:'Saves',hits:'Hits',blocks:'Blocks',H:'Hits',TB:'Bases',HR:'HR',RBI:'RBI',R:'Runs',K:'Ks'}[k]||k);
     // header + summary
@@ -5222,8 +5247,8 @@
     h+='</div>';
     if(!pool.length) return h+emptyState('ti-search-off','No legs','No qualifying legs for this filter.');
     // cards
-    h+='<div class="mbv-list">'+pool.map(l=>{
-      const bd=_legBadges(l), on=!!slip[l.id];
+    h+='<div class="mbv-list">'+shown.map(l=>{
+      const bd=l._bd, on=!!slip[l.id];
       const dots=(()=>{ const n=Math.round((l.prob||0)*5); let s=''; for(let i=0;i<5;i++)s+='<span class="mbv-dot'+(i<n?' on':'')+'"></span>'; return s; })();
       const px=l._odds&&l._odds.price;
       const edge=px?('+'+((l.prob-1/px)*100).toFixed(0)+'% EV'):((l.avg-l.line)>0?('+'+(l.avg-l.line).toFixed(1)):'');
@@ -5241,14 +5266,19 @@
           +bd.nerd.map(nx=>'<span class="mbv-nerd"><i class="ti '+nx[1]+'"></i>'+nx[0]+'</span>').join('')+'</div>'
         +'</div>';
     }).join('')+'</div>';
+    if(pages>1){ h+='<div class="mbv-pager">'+'<button class="mbv-pg"'+(page<=0?' disabled':'')+' onclick="_mbvPage(-1)"><i class="ti ti-chevron-left"></i></button>'+'<span class="mbv-pg-lbl">'+(page*PER+1)+'\u2013'+Math.min(pool.length,page*PER+PER)+' of '+pool.length+'</span>'+'<button class="mbv-pg"'+(page>=pages-1?' disabled':'')+' onclick="_mbvPage(1)"><i class="ti ti-chevron-right"></i></button></div>'; }
     if(chosen.length>=2){ h+='<button class="mbv-save" onclick="_mbSaveCards()">Save '+chosen.length+'-leg multi to Bet Slip</button>'; }
     return h;
   }
-  function _fxMultiCards(g){ if(!g) return ''; state.view.mbvFocus={home:g.home,away:g.away}; return '<div class="fx-mtool" style="margin-top:14px">'+_multiCardsView()+'</div>'; }
+  function _fxMultiCards(g){ if(!g) return ''; state.view.mbvFocus={home:g.home,away:g.away}; state.view.mbvPage=0; return '<div class="fx-mtool" style="margin-top:14px">'+_multiCardsView()+'</div>'; }
   function _multiCardsView(){ return '<div id="mbv-wrap">'+_mbvBody()+'</div>'; }
   window._mbvRerender=function(){ var el=document.getElementById('mbv-wrap'); if(el) el.innerHTML=_mbvBody(); };
-  window._mbSetCardMkt=function(v){ SETTINGS.multi.cardMkt=v; saveSettings(); _mbvRerender(); };
-  window._mbSetCardBook=function(v){ SETTINGS.multi.cardBook=v; saveSettings(); _mbvRerender(); };
+  function _mbBalance(pool){ var foc=state.view.mbvFocus; if(!foc) return pool;
+    var A=pool.filter(function(l){return l.p.team===foc.home;}), B=pool.filter(function(l){return l.p.team===foc.away;});
+    var out=[], n=Math.max(A.length,B.length); for(var i=0;i<n;i++){ if(A[i])out.push(A[i]); if(B[i])out.push(B[i]); } return out; }
+  window._mbvPage=function(d){ state.view.mbvPage=Math.max(0,(state.view.mbvPage||0)+d); _mbvRerender(); };
+  window._mbSetCardMkt=function(v){ SETTINGS.multi.cardMkt=v; state.view.mbvPage=0; saveSettings(); _mbvRerender(); };
+  window._mbSetCardBook=function(v){ SETTINGS.multi.cardBook=v; state.view.mbvPage=0; saveSettings(); _mbvRerender(); };
   window._mbToggleLeg=function(id){ const s=state.view.mbSlip||(state.view.mbSlip={}); if(s[id])delete s[id]; else s[id]=1; _mbvRerender(); };
   window._mbSaveCards=function(){ const pool=_mbCandPool(), s=state.view.mbSlip||{}; const legs=pool.filter(c=>s[c.id]); if(legs.length<2)return;
     let comb=1; legs.forEach(l=>{ const px=(l._odds&&l._odds.price)||(l.prob>0?1/l.prob:null); if(px)comb*=px; });
@@ -5700,7 +5730,7 @@
       return degWrap('ti-stairs-up',"Let's Climb",rows,'c-green');
     }
     if(k==='multi'){
-      state.view.mbvFocus=null;
+      state.view.mbvFocus=null; state.view.mbvPage=0;
       return _multiCardsView();
     }
     return emptyState('ti-flame','Coming next','This tile ports next.');
