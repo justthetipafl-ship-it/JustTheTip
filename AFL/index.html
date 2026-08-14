@@ -4253,11 +4253,11 @@
     const sameSPToggle=(SPORT.key==='mlb')?'<span class="dv-seg" style="display:inline-flex" title="Same Team = any prior meeting between these clubs; Same SP = only meetings where today\'s two starters both faced off"><button class="dv-tier'+(!S.sameSP?' on':'')+'" onclick="_dvSameSP(0)">Same Team</button><button class="dv-tier'+(S.sameSP?' on':'')+'" onclick="_dvSameSP(1)"><i class="ti ti-ball-baseball"></i> Same SP</button></span>':'';
     const dvHelp='<div class="dv-help"><i class="ti ti-info-circle"></i><span>Hit streak — only players who cleared their line in each of the last '+meets+' straight meetings between '+abbr(home)+' and '+abbr(away)+' qualify. Lower it to widen the pool.</span></div>';
     const meetings=_dvMeetings(home,away,meets);
-    if(meetings.length<meets) return title+'<div class="dv-steps">'+meetsStep+sameSPToggle+'</div>'+dvHelp+mktChips+'<div class="tp-body-meta" style="border:0">Need at least '+meets+' prior meetings between '+abbr(home)+' and '+abbr(away)+' — lower the hit streak to widen the pool.</div>';
+    if(meetings.length<meets) return title+'<div class="dv-steps">'+meetsStep+sameSPToggle+mktChips+'</div>'+dvHelp+'<div class="tp-body-meta" style="border:0">Need at least '+meets+' prior meetings between '+abbr(home)+' and '+abbr(away)+' — lower the hit streak to widen the pool.</div>';
     // no live per-book odds yet -> preview the qualifying players (one row each)
     if(!(state.idx.bookIdx&&Object.keys(state.idx.bookIdx).length)){
       const {legs}=_dvLegs(home,away);
-      const ctrls='<div class="dv-steps">'+meetsStep+sameSPToggle+'</div>'+dvHelp+mktChips;
+      const ctrls='<div class="dv-steps">'+meetsStep+sameSPToggle+mktChips+'</div>'+dvHelp;
       if(!legs.length) return title+ctrls+'<div class="tp-body-meta" style="border:0">No player cleared a market line in all '+meets+' meetings.</div>';
       const seen=new Set(),top=[];
       legs.slice().sort((a,b)=>b.strength-a.strength).forEach(l=>{ if(top.length<10&&!seen.has(l.name)){ seen.add(l.name); top.push(l); } });
@@ -4291,15 +4291,15 @@
     const _tier=Math.min(Math.max(S.tier||3,2),Math.max(2,distinctN));
     const tierBtns='<span class="dv-step"><span class="dv-step-lbl">Legs</span><button onclick="_dvTierStep(-1)"'+((_tier<=2||S.hail)?' disabled':'')+'>\u2212</button><b>'+(S.hail?distinctN:_tier)+'</b><button onclick="_dvTierStep(1)"'+((_tier>=distinctN||S.hail)?' disabled':'')+'>+</button></span>';
     const hailBtn='<button class="dv-tier dv-hail'+(S.hail?' on':'')+'" onclick="_dvHail()"><i class="ti ti-bolt"></i> Hail Mary</button>';
-    const bookChips=books.length>1?('<div class="dv-books">'+books.slice().sort((a,b)=>_dvDistinct(byBook[b])-_dvDistinct(byBook[a])).map(b=>'<button class="dv-bk'+(b===book?' on':'')+'" onclick="_dvBook(\''+b+'\')">'+bookName(b)+' <i>'+_dvDistinct(byBook[b])+'</i></button>').join('')+'</div>'):'';
+    const bookChips=books.length>1?('<select class="ob-sel" onchange="_dvBook(this.value)">'+books.slice().sort((a,b)=>_dvDistinct(byBook[b])-_dvDistinct(byBook[a])).map(b=>'<option value="'+b+'"'+(b===book?' selected':'')+'>'+bookName(b)+' ('+_dvDistinct(byBook[b])+')</option>').join('')+'</select>'):'';
     const minStep='<span class="dv-step"><span class="dv-step-lbl">Min $</span><button onclick="_dvMin(-1)">−</button><b>'+(S.minOdds==null?DV_MIN_DEFAULT:S.minOdds).toFixed(2)+'</b><button onclick="_dvMin(1)">+</button></span>';
     const maxStep='<span class="dv-step"><span class="dv-step-lbl">Max $</span><button onclick="_dvMax(-1)">−</button><b>'+(maxOdds>0?maxOdds.toFixed(2):'off')+'</b><button onclick="_dvMax(1)">+</button></span>';
-    const steppers='<div class="dv-steps">'+meetsStep+minStep+maxStep+'</div>'+dvHelp;
+    const steppers='<div class="dv-steps">'+meetsStep+minStep+maxStep+mktChips+bookChips+'</div>'+dvHelp;
     const moreNote=(!S.hail&&distinctN>want)?(' · '+(distinctN-want)+' more player'+(distinctN-want>1?'s':'')+' to swap in'):'';
     const restore=(S.hail&&removed.size)?(' <button class="dv-restore" onclick="_dvRestore()">+'+removed.size+' removed · restore</button>'):'';
     return title+
       '<div class="tp-body-meta">Hit the last '+meets+' '+abbr(home)+' v '+abbr(away)+' meetings · book: <b>'+bookName(book)+'</b> · '+distinctN+' players qualify'+moreNote+'</div>'+
-      '<div class="dv-ctrls">'+tierBtns+hailBtn+'</div>'+steppers+mktChips+bookChips+
+      '<div class="dv-ctrls">'+tierBtns+hailBtn+'</div>'+steppers+
       '<div class="dv-legs">'+slip+'</div>'+
       '<div class="dv-comb">'+legN+'-leg combined <b>$'+comb.toFixed(2)+'</b>'+restore+'<span class="dv-est">est · straight multi; a true SGM (esp. same-player) pays less</span></div>'+
       (legN>=2?'<button class="slip-share-btn" onclick="_openSlipShare(\'deja\')"><i class="ti ti-share"></i> Share card</button><button class="mb-addcard" onclick="_cardAddFromDeja()"><i class="ti ti-receipt"></i> Add all to card</button>':'');
@@ -4769,7 +4769,8 @@
   }
   // two-way (each-way) lines a player has across books — these are backable, unlike the deep alt ladder
   function _radarTwoWayLines(player, market){
-    const rows=(((state.idx.bookIdx||{})[player]||{})[market]||[]).filter(r=>_bookOK(r.book)&&r.over!=null&&r.under!=null);
+    const RADAR_MIN=1.45;   // ignore padded alt lines (BetR's ~$1.40 o/u) — a real two-way line has both sides longer than this
+    const rows=(((state.idx.bookIdx||{})[player]||{})[market]||[]).filter(r=>_bookOK(r.book)&&r.over!=null&&r.under!=null&&r.over>=RADAR_MIN&&r.under>=RADAR_MIN);
     const byL={}; rows.forEach(r=>{ if(!byL[r.line]||r.over>byL[r.line].over) byL[r.line]={line:r.line,over:r.over,under:r.under,book:r.book}; });
     return Object.values(byL).sort((a,b)=>a.line-b.line);
   }
