@@ -1018,6 +1018,10 @@
   .mbv-mk{font-size:13px;color:var(--text-2);display:flex;justify-content:space-between;align-items:baseline;margin-top:1px;gap:8px}
   .mbv-proj{font-size:12px;color:var(--text-3)}
   .mbv-add{font-size:22px;color:var(--text-3);flex-shrink:0;line-height:1}
+  .mbv-op{display:flex;flex-direction:column;align-items:center;justify-content:center;min-width:58px;padding:4px 8px;border:1px solid var(--accent);border-radius:8px;flex-shrink:0}
+  .mbv-op-nb{border-color:var(--border)}
+  .mbv-op-price{font-size:15px;font-weight:800;color:var(--text);font-family:var(--font-display);line-height:1.1}
+  .mbv-op-book{font-size:9px;color:var(--text-3);text-transform:uppercase;letter-spacing:.4px;margin-top:1px}
   .mbv-card.on .mbv-add{color:var(--accent)}
   .mbv-row2{display:flex;align-items:center;gap:10px;margin-bottom:8px;font-size:12px;color:var(--text-3)}
   .mbv-dots{display:inline-flex;gap:3px;align-items:center}
@@ -3018,7 +3022,7 @@
     if(!_fxHid('sec','radar')) h+=radarSection(g.home,g.away,g.venue||(g.park&&g.park.name));
     if(fxMode!=='nerd' && !_fxHid('sec','jupiter')) h+=jupiter(g);
     if(fxMode!=='nerd' && !_fxHid('sec','deja')) h+=dejaVuSGM(g.home,g.away);
-    if(fxMode!=='nerd' && !_fxHid('sec','multiTool')) h+=fxPickMulti(g);
+    if(fxMode!=='nerd' && !_fxHid('sec','multiTool')) h+=_fxMultiCards(g);
     return h;
   }
 
@@ -5121,6 +5125,35 @@
     untagged:['Untagged','#EAF3DE','#27500A','ti-user-check'],
     ceiling: ['Ceiling','#FCEBEB','#791F1F','ti-arrow-up-right']
   };
+  const MB_SPORT_BADGES={
+    targethog:['Target Hog','#E6F1FB','#0C447C','ti-crosshair'],
+    snaplock: ['Snap Lock','#EAF3DE','#27500A','ti-lock'],
+    redzone:  ['Red Zone','#FCEBEB','#791F1F','ti-target-arrow'],
+    usage:    ['Usage','#EEEDFE','#26215C','ti-activity'],
+    volume:   ['Shot Volume','#FAEEDA','#633806','ti-arrows-up'],
+    pp1:      ['PP1 Unit','#FBEAF0','#72243E','ti-bolt'],
+    power:    ['Power','#FCEBEB','#791F1F','ti-flame'],
+    ruckedge: ['Ruck Edge','#FAEEDA','#633806','ti-arrows-up']
+  };
+  const _MB_ALLBDG=Object.assign({},MB_BADGES,MB_SPORT_BADGES);
+  function _sportBadges(leg){
+    const out=[], p=leg.p, sk=leg.statKey, k=(window.SPORT&&SPORT.key)||'';
+    if(k==='nfl'||k==='ncaaf'){
+      if((+p.targets||0)>=7 && (sk==='receptions'||sk==='recYds'||sk==='rushRecYds')) out.push('targethog');
+      if((+p.snapPct||0)>=85) out.push('snaplock');
+      if((+p.rzTgt||+p.rzTgts||0)>=1.5 && (sk==='anytimeTd'||sk==='totalTds'||sk==='receptions')) out.push('redzone');
+    } else if(k==='nba'||k==='wnba'){
+      if((+p.usage||0)>=28 || (+p.minutes||+p.min||0)>=32) out.push('usage');
+    } else if(k==='nhl'){
+      if(sk==='shots' && (+p.shots||0)>=3) out.push('volume');
+      if((+p.ppPoints||0)>=0.5) out.push('pp1');
+    } else if(k==='mlb'){
+      if(sk==='HR'||sk==='TB') out.push('power');
+    } else if(k==='afl'||k==='aflw'){
+      if((sk==='dreamteam'||sk==='disposals') && /Ruck/.test(p.position||'')) out.push('ruckedge');
+    }
+    return out;
+  }
   function _mbLogsFor(nm){ return (state.idx.logsByName&&state.idx.logsByName[nm])||[]; }
   function _legBadges(leg){
     const base=[], nerd=[], p=leg.p, sk=leg.statKey, line=leg.line, opp=leg.opp;
@@ -5148,13 +5181,15 @@
     if(cn.length>=5 && dz.length>=5){ const cr=cn.slice(-6).reduce((a,b)=>a+b,0)/Math.min(6,cn.length), dr=dz.slice(-6).reduce((a,b)=>a+b,0)/Math.min(6,dz.length); if(dr&&cr/dr>=0.55) nerd.push(['Contested '+Math.round(cr/dr*100)+'%','ti-swords']); }
     const cb=_mbLogsFor(p.name).map(r=>+r.cba).filter(v=>isFinite(v));
     if(cb.length>=4){ const cr=cb.slice(-5).reduce((a,b)=>a+b,0)/Math.min(5,cb.length); if(cr>=70) nerd.push(['CBA '+Math.round(cr)+'%','ti-refresh']); }
+    _sportBadges(leg).forEach(function(k){ if(base.indexOf(k)<0) base.push(k); });
     return {base:base, nerd:nerd};
   }
   function _mbCandPool(){
     const banned=new Set((SETTINGS.multi&&SETTINGS.multi.banned)||[]);
     const pl=t=>(state.idx.players||[]).filter(p=>p.team===t&&(p.matches||0)>=3&&!banned.has(p.name));
     const fx=(state.data.fixture||[]).filter(g=>g.home&&g.away);
-    const games=_mbFocusGame?fx.filter(g=>g.home===_mbFocusGame.home&&g.away===_mbFocusGame.away):fx;
+    const _foc=state.view.mbvFocus;
+    const games=_foc?fx.filter(g=>g.home===_foc.home&&g.away===_foc.away):fx;
     let pool=[];
     games.forEach(g=>{ pl(g.home).forEach(p=>legCandidates(p,g.away).forEach(c=>pool.push(c))); pl(g.away).forEach(p=>legCandidates(p,g.home).forEach(c=>pool.push(c))); });
     const best={}; pool.forEach(c=>{ const key=c.p.name+'|'+c.statKey; if(!best[key]||c.score>best[key].score) best[key]=c; });
@@ -5192,23 +5227,24 @@
       const dots=(()=>{ const n=Math.round((l.prob||0)*5); let s=''; for(let i=0;i<5;i++)s+='<span class="mbv-dot'+(i<n?' on':'')+'"></span>'; return s; })();
       const px=l._odds&&l._odds.price;
       const edge=px?('+'+((l.prob-1/px)*100).toFixed(0)+'% EV'):((l.avg-l.line)>0?('+'+(l.avg-l.line).toFixed(1)):'');
+      const oddsPill=px?('<div class="mbv-op"><span class="mbv-op-price">$'+px.toFixed(2)+'</span><span class="mbv-op-book">'+esc((l._odds.book||'').slice(0,9))+'</span></div>'):('<div class="mbv-op mbv-op-nb"><span class="mbv-op-price">'+Math.round((l.prob||0)*100)+'%</span><span class="mbv-op-book">proj</span></div>');
       return '<div class="mbv-card'+(on?' on':'')+'" onclick="_mbToggleLeg(\''+l.id.replace(/'/g,"\\'")+'\')">'
         +'<div class="mbv-row1">'+teamLogo(l.p.team,30)
           +'<div class="mbv-pn"><div class="mbv-nm">'+esc(l.p.name)+'<span class="mbv-tm">'+abbr(l.p.team)+' \u00b7 '+posShort(l.p.position)+'</span></div>'
           +'<div class="mbv-mk">'+l.line+'+ '+_lbl(l.statKey)+'<span class="mbv-proj">proj '+fmt(l.avg,l.statKey==='goals'?1:l.statKey==='dreamteam'?0:1)+'</span></div></div>'
-          +'<div class="mbv-add"><i class="ti '+(on?'ti-circle-check-filled':'ti-circle-plus')+'"></i></div></div>'
+          +oddsPill+'<div class="mbv-add"><i class="ti '+(on?'ti-circle-check-filled':'ti-circle-plus')+'"></i></div></div>'
         +'<div class="mbv-row2"><span class="mbv-dots">'+dots+'</span>'
           +'<span class="mbv-hit">'+(l.probReal?Math.round(l.prob*100)+'% hit':'~'+Math.round(l.prob*100)+'%')+'</span>'
           +(edge?'<span class="mbv-edge">'+edge+'</span>':'')
-          +(px?'<span class="mbv-odds">$'+px.toFixed(2)+'</span>':'')
           +'<span class="mbv-opp">v '+abbr(l.opp||'')+'</span></div>'
-        +'<div class="mbv-badges">'+bd.base.map(k=>{const b=MB_BADGES[k];return '<span class="mbv-bdg" style="background:'+b[1]+';color:'+b[2]+'"><i class="ti '+b[3]+'"></i>'+b[0]+'</span>';}).join('')
+        +'<div class="mbv-badges">'+bd.base.map(k=>{const b=_MB_ALLBDG[k];if(!b)return '';return '<span class="mbv-bdg" style="background:'+b[1]+';color:'+b[2]+'"><i class="ti '+b[3]+'"></i>'+b[0]+'</span>';}).join('')
           +bd.nerd.map(nx=>'<span class="mbv-nerd"><i class="ti '+nx[1]+'"></i>'+nx[0]+'</span>').join('')+'</div>'
         +'</div>';
     }).join('')+'</div>';
     if(chosen.length>=2){ h+='<button class="mbv-save" onclick="_mbSaveCards()">Save '+chosen.length+'-leg multi to Bet Slip</button>'; }
     return h;
   }
+  function _fxMultiCards(g){ if(!g) return ''; state.view.mbvFocus={home:g.home,away:g.away}; return '<div class="fx-mtool" style="margin-top:14px">'+_multiCardsView()+'</div>'; }
   function _multiCardsView(){ return '<div id="mbv-wrap">'+_mbvBody()+'</div>'; }
   window._mbvRerender=function(){ var el=document.getElementById('mbv-wrap'); if(el) el.innerHTML=_mbvBody(); };
   window._mbSetCardMkt=function(v){ SETTINGS.multi.cardMkt=v; saveSettings(); _mbvRerender(); };
@@ -5664,7 +5700,7 @@
       return degWrap('ti-stairs-up',"Let's Climb",rows,'c-green');
     }
     if(k==='multi'){
-      _mbFocusGame=null;
+      state.view.mbvFocus=null;
       return _multiCardsView();
     }
     return emptyState('ti-flame','Coming next','This tile ports next.');
