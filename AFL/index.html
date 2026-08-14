@@ -5186,7 +5186,21 @@
     var y=1-(((((1.061405429*t-1.453152027)*t)+1.421413741)*t-0.284496736)*t+0.254829592)*t*Math.exp(-x*x); return s*y; }
   function _normCDF(z){ return 0.5*(1+_erf(z/Math.SQRT2)); }
   function _poissonCDF(k, lam){ if(lam<=0) return k>=0?1:0; if(k<0) return 0; var t=Math.exp(-lam), sm=t; for(var i=1;i<=k;i++){ t*=lam/i; sm+=t; } return Math.min(1,sm); }
+  // Per-sport projection config — shared engine below reads these. Params are starting points to calibrate per sport.
+  const PROJ_CONFIG={
+    afl:  {lambda:0.85, shrinkK:5, dvpBeta:0.55, dvpCap:0.12, poissonBelow:6, roleStat:'cba',     roleMkts:['disposals','clearances'], roleBeta:0.30, roleLo:-0.06, roleHi:0.08},
+    aflw: {lambda:0.85, shrinkK:5, dvpBeta:0.55, dvpCap:0.12, poissonBelow:6, roleStat:'cba',     roleMkts:['disposals','clearances'], roleBeta:0.30, roleLo:-0.06, roleHi:0.08},
+    nfl:  {lambda:0.85, shrinkK:4, dvpBeta:0.55, dvpCap:0.15, poissonBelow:8, roleStat:'snapPct', roleMkts:['receptions','recYds','rushRecYds'], roleBeta:0.25, roleLo:-0.06, roleHi:0.08},
+    ncaaf:{lambda:0.85, shrinkK:4, dvpBeta:0.55, dvpCap:0.15, poissonBelow:8, roleStat:'snapPct', roleMkts:['receptions','recYds','rushRecYds'], roleBeta:0.25, roleLo:-0.06, roleHi:0.08},
+    nba:  {lambda:0.92, shrinkK:8, dvpBeta:0.50, dvpCap:0.10, poissonBelow:4, roleStat:'minutes', roleMkts:['points','rebounds','assists'], roleBeta:0.25, roleLo:-0.06, roleHi:0.08},
+    wnba: {lambda:0.92, shrinkK:8, dvpBeta:0.50, dvpCap:0.10, poissonBelow:4, roleStat:'minutes', roleMkts:['points','rebounds','assists'], roleBeta:0.25, roleLo:-0.06, roleHi:0.08},
+    nhl:  {lambda:0.92, shrinkK:8, dvpBeta:0.45, dvpCap:0.10, poissonBelow:3, roleStat:'toi',     roleMkts:['shots','points'], roleBeta:0.25, roleLo:-0.06, roleHi:0.08},
+    mlb:  {lambda:0.94, shrinkK:8, dvpBeta:0.45, dvpCap:0.12, poissonBelow:5, roleStat:'',        roleMkts:[], roleBeta:0, roleLo:0, roleHi:0}
+  };
+  const _PROJ_DEF={lambda:0.88, shrinkK:5, dvpBeta:0.55, dvpCap:0.12, poissonBelow:6, roleStat:'', roleMkts:[], roleBeta:0, roleLo:-0.06, roleHi:0.08};
+  function _projCfg(){ return PROJ_CONFIG[(window.SPORT&&SPORT.key)||'']||_PROJ_DEF; }
   function _projModel(p, sk, line, opp){
+    var C=_projCfg();
     var logs=_mbLogsFor(p.name), vals=logs.map(function(r){return +r[sk];}).filter(function(v){return isFinite(v);});
     var n=vals.length;
     var _mean=function(a){return a.length?a.reduce(function(x,y){return x+y;},0)/a.length:0;};
@@ -5198,23 +5212,23 @@
     var ad=vals.map(function(v){return Math.abs(v-med);}).sort(function(a,b){return a-b;});
     var mad=ad[Math.floor((ad.length-1)/2)]||0, cap=Math.max(mad*1.4826*2.5, med*0.30, 2);
     var lo=med-cap, hi=med+cap, w=vals.map(function(v){return v<lo?lo:(v>hi?hi:v);});
-    var lam=0.88, wsum=0, vsum=0;                                               // exponential recency weight (half-life ~5-6 games)
+    var lam=C.lambda, wsum=0, vsum=0;                                           // exponential recency weight
     for(var i=0;i<n;i++){ var ww=Math.pow(lam, n-1-i); wsum+=ww; vsum+=ww*w[i]; }
     var recMean=vsum/wsum;
-    var K=5, formConf=n/(n+K), mean=season + (recMean-season)*formConf;         // shrink form deviation toward baseline by sample size
+    var K=C.shrinkK, formConf=n/(n+K), mean=season + (recMean-season)*formConf; // shrink form deviation toward baseline
     if(opp && window.JTTScoring && JTTScoring.getDVPPct){                        // opponent softness (DVP)
       var dp=JTTScoring.getDVPPct(opp,(JTTScoring.POS_TO_DVP&&JTTScoring.POS_TO_DVP[p.position])||p.position,(typeof LEG_DVP!=='undefined'&&LEG_DVP[sk])||sk);
-      if(dp!=null) mean *= (1 + _clamp((dp/100)*0.55, -0.12, 0.12));
+      if(dp!=null) mean *= (1 + _clamp((dp/100)*C.dvpBeta, -C.dvpCap, C.dvpCap));
     }
-    if(sk==='disposals'||sk==='clearances'){                                     // role trend: recent CBA% vs season (mids)
-      var cb=logs.map(function(r){return +r.cba;}).filter(function(v){return isFinite(v);});
-      if(cb.length>=4){ var recCB=_mean(cb.slice(-5)), seaCB=_mean(cb);
-        if(seaCB>3) mean *= (1 + _clamp((recCB-seaCB)/seaCB*0.30, -0.06, 0.08)); }
+    if(C.roleStat && C.roleMkts.indexOf(sk)>=0){                                 // sport-specific role/usage trend
+      var rv=logs.map(function(r){return +r[C.roleStat];}).filter(function(v){return isFinite(v);});
+      if(rv.length>=4){ var recR=_mean(rv.slice(-5)), seaR=_mean(rv);
+        if(seaR>3) mean *= (1 + _clamp((recR-seaR)/seaR*C.roleBeta, C.roleLo, C.roleHi)); }
     }
-    var vsq=0; for(var j=0;j<n;j++){ var d=w[j]-recMean; vsq+=d*d; }             // dispersion: winsorized sd, shrunk to a mean-scaled prior for small n
+    var vsq=0; for(var j=0;j<n;j++){ var d=w[j]-recMean; vsq+=d*d; }             // dispersion: winsorized sd, shrunk to a mean-scaled prior
     var sampleSD=Math.sqrt(vsq/Math.max(1,n-1)), Ksd=4, priorSD=Math.max(0.8, mean*0.35);
     var sd=Math.max((n*sampleSD + Ksd*priorSD)/(n+Ksd), 0.6);
-    var pModel = mean<6 ? (1-_poissonCDF(Math.ceil(line)-1, mean)) : (1-_normCDF((line-mean)/sd));
+    var pModel = mean<C.poissonBelow ? (1-_poissonCDF(Math.ceil(line)-1, mean)) : (1-_normCDF((line-mean)/sd));
     pModel=_clamp(pModel, 0.02, 0.98);
     var prob=pModel;                                                            // blend model with empirical hit rate
     if(window.JTTScoring && JTTScoring.getHitRate){ var hr=JTTScoring.getHitRate(p.name, sk, line, true);
