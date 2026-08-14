@@ -5311,7 +5311,7 @@
   }
   function _mbCandPool(){
     const banned=new Set((SETTINGS.multi&&SETTINGS.multi.banned)||[]);
-    const pl=t=>(state.idx.players||[]).filter(p=>p.team===t&&(p.matches||0)>=3&&!banned.has(p.name));
+    const pl=t=>(state.idx.players||[]).filter(p=>p.team===t&&(p.matches||0)>=3&&!banned.has(p.name)&&isPlaying(p.name,p.team));
     const fx=(state.data.fixture||[]).filter(g=>g.home&&g.away);
     const _foc=state.view.mbvFocus;
     const games=_foc?fx.filter(g=>g.home===_foc.home&&g.away===_foc.away):fx;
@@ -5321,6 +5321,7 @@
       pl(g.home).forEach(p=>legCandidates(p,g.away).forEach(c=>{ if(_mlb) c._pctx={isHome:true, oppHand:_mlbHand(g.awayPitcher)}; pool.push(c); }));
       pl(g.away).forEach(p=>legCandidates(p,g.home).forEach(c=>{ if(_mlb) c._pctx={isHome:false, oppHand:_mlbHand(g.homePitcher)}; pool.push(c); }));
     });
+    if(_oddsLive()) pool=pool.filter(c=>c._odds);   // odds live -> only players/markets with a posted price
     const best={}; pool.forEach(c=>{ const key=c.p.name+'|'+c.statKey; if(!best[key]||c.score>best[key].score) best[key]=c; });
     const arr=Object.values(best); arr.forEach(function(c){ var m=_projModel(c.p,c.statKey,c.line,c.opp,c._pctx); c.proj=m.mean; c._deja=_dejaVuStreak(c); c.projSd=m.sd; if(m.prob!=null){ c.prob=m.prob; c.probReal=true; } });
     return arr.sort((a,b)=>(b.score-a.score)||(b.prob-a.prob));
