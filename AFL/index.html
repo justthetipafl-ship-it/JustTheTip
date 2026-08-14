@@ -1030,6 +1030,7 @@
   .mbv-edge{color:var(--ok,#22c55e)}
   .mbv-odds{color:var(--text);font-weight:700}
   .mbv-opp{margin-left:auto}
+  .mbv-ctx{font-size:11px;color:var(--text-3);margin-bottom:9px;line-height:1.35}
   .mbv-badges{display:flex;flex-wrap:wrap;gap:6px}
   .mbv-bdg{display:inline-flex;align-items:center;gap:4px;font-size:11px;font-weight:600;padding:3px 8px;border-radius:20px;line-height:1}
   .mbv-bdg i{font-size:12px}
@@ -5177,16 +5178,59 @@
     return out;
   }
   function _mbLogsFor(nm){ return (state.idx.logsByName&&state.idx.logsByName[nm])||[]; }
+  // ===== Projection model =====
+  // Exponential recency weighting -> empirical-Bayes shrinkage to the season baseline -> opponent (DVP)
+  // adjustment -> dispersion estimate -> distribution-based P(over line) blended with the empirical hit
+  // rate. Returns {mean, sd, prob, n}. Poisson tail for low-count markets, Normal (with continuity) otherwise.
+  function _erf(x){ var s=x<0?-1:1; x=Math.abs(x); var t=1/(1+0.3275911*x);
+    var y=1-(((((1.061405429*t-1.453152027)*t)+1.421413741)*t-0.284496736)*t+0.254829592)*t*Math.exp(-x*x); return s*y; }
+  function _normCDF(z){ return 0.5*(1+_erf(z/Math.SQRT2)); }
+  function _poissonCDF(k, lam){ if(lam<=0) return k>=0?1:0; if(k<0) return 0; var t=Math.exp(-lam), sm=t; for(var i=1;i<=k;i++){ t*=lam/i; sm+=t; } return Math.min(1,sm); }
+  function _projModel(p, sk, line, opp){
+    var logs=_mbLogsFor(p.name), vals=logs.map(function(r){return +r[sk];}).filter(function(v){return isFinite(v);});
+    var n=vals.length;
+    var _mean=function(a){return a.length?a.reduce(function(x,y){return x+y;},0)/a.length:0;};
+    var _clamp=function(v,a,b){return Math.max(a,Math.min(b,v));};
+    var season=(+p[sk]) || _mean(vals);
+    if(n<3) return {mean:season, sd:Math.max(1,season*0.35), prob:null, n:n};
+    var srt=vals.slice().sort(function(a,b){return a-b;});                       // robust winsorize: cap at median +/- 2.5 MAD-sigma
+    var med=srt[Math.floor((srt.length-1)/2)];
+    var ad=vals.map(function(v){return Math.abs(v-med);}).sort(function(a,b){return a-b;});
+    var mad=ad[Math.floor((ad.length-1)/2)]||0, cap=Math.max(mad*1.4826*2.5, med*0.30, 2);
+    var lo=med-cap, hi=med+cap, w=vals.map(function(v){return v<lo?lo:(v>hi?hi:v);});
+    var lam=0.88, wsum=0, vsum=0;                                               // exponential recency weight (half-life ~5-6 games)
+    for(var i=0;i<n;i++){ var ww=Math.pow(lam, n-1-i); wsum+=ww; vsum+=ww*w[i]; }
+    var recMean=vsum/wsum;
+    var K=5, formConf=n/(n+K), mean=season + (recMean-season)*formConf;         // shrink form deviation toward baseline by sample size
+    if(opp && window.JTTScoring && JTTScoring.getDVPPct){                        // opponent softness (DVP)
+      var dp=JTTScoring.getDVPPct(opp,(JTTScoring.POS_TO_DVP&&JTTScoring.POS_TO_DVP[p.position])||p.position,(typeof LEG_DVP!=='undefined'&&LEG_DVP[sk])||sk);
+      if(dp!=null) mean *= (1 + _clamp((dp/100)*0.55, -0.12, 0.12));
+    }
+    if(sk==='disposals'||sk==='clearances'){                                     // role trend: recent CBA% vs season (mids)
+      var cb=logs.map(function(r){return +r.cba;}).filter(function(v){return isFinite(v);});
+      if(cb.length>=4){ var recCB=_mean(cb.slice(-5)), seaCB=_mean(cb);
+        if(seaCB>3) mean *= (1 + _clamp((recCB-seaCB)/seaCB*0.30, -0.06, 0.08)); }
+    }
+    var vsq=0; for(var j=0;j<n;j++){ var d=w[j]-recMean; vsq+=d*d; }             // dispersion: winsorized sd, shrunk to a mean-scaled prior for small n
+    var sampleSD=Math.sqrt(vsq/Math.max(1,n-1)), Ksd=4, priorSD=Math.max(0.8, mean*0.35);
+    var sd=Math.max((n*sampleSD + Ksd*priorSD)/(n+Ksd), 0.6);
+    var pModel = mean<6 ? (1-_poissonCDF(Math.ceil(line)-1, mean)) : (1-_normCDF((line-mean)/sd));
+    pModel=_clamp(pModel, 0.02, 0.98);
+    var prob=pModel;                                                            // blend model with empirical hit rate
+    if(window.JTTScoring && JTTScoring.getHitRate){ var hr=JTTScoring.getHitRate(p.name, sk, line, true);
+      if(hr && hr.n>=3){ var ew=Math.min(0.5, hr.n/(hr.n+8)); prob = ew*hr.rate + (1-ew)*pModel; } }
+    return {mean:mean, sd:sd, prob:_clamp(prob,0.02,0.98), n:n};
+  }
   function _legBadges(leg){
     const base=[], nerd=[], p=leg.p, sk=leg.statKey, line=leg.line, opp=leg.opp;
-    const prob=leg.prob||0, avg=leg.avg||0, o=leg._odds;
+    const prob=leg.prob||0, season=leg.avg||0, avg=(leg.proj!=null?leg.proj:season), o=leg._odds;
     const vals=_mbLogsFor(p.name).map(r=>+r[sk]).filter(v=>isFinite(v));
     const l10=vals.slice(-10), l3=vals.slice(-3);
     const push=(a,k)=>{ if(a.indexOf(k)<0)a.push(k); };
     if(prob>=0.78 && (avg-line)>=1) push(base,'banker');
     if(o&&o.price){ const edge=prob-1/o.price; if(edge>=0.05)push(base,'value'); if(o.price>=3.0&&prob>=0.2)push(base,'longshot'); }
     else if(line>0 && (avg-line)/line>=0.18) push(base,'value');
-    if(l3.length>=3){ const a3=l3.reduce((a,b)=>a+b,0)/l3.length; if(avg&&a3>=avg*1.12) push(base,'form'); }
+    if(l3.length>=3){ const a3=l3.reduce((a,b)=>a+b,0)/l3.length; if(season&&a3>=season*1.12) push(base,'form'); }
     { let st=0; for(let i=vals.length-1;i>=0;i--){ if(vals[i]>=line)st++; else break; } if(st>=5) push(base,'streak'); }
     if(l10.length>=5 && Math.max.apply(null,l10)>=line*1.6) push(base,'ceiling');
     (leg.reasons||[]).forEach(r=>{ const L=(r.label||'').toLowerCase();
@@ -5213,7 +5257,8 @@
     let pool=[];
     games.forEach(g=>{ pl(g.home).forEach(p=>legCandidates(p,g.away).forEach(c=>pool.push(c))); pl(g.away).forEach(p=>legCandidates(p,g.home).forEach(c=>pool.push(c))); });
     const best={}; pool.forEach(c=>{ const key=c.p.name+'|'+c.statKey; if(!best[key]||c.score>best[key].score) best[key]=c; });
-    return Object.values(best).sort((a,b)=>(b.score-a.score)||(b.prob-a.prob));
+    const arr=Object.values(best); arr.forEach(function(c){ var m=_projModel(c.p,c.statKey,c.line,c.opp); c.proj=m.mean; c.projSd=m.sd; if(m.prob!=null){ c.prob=m.prob; c.probReal=true; } });
+    return arr.sort((a,b)=>(b.score-a.score)||(b.prob-a.prob));
   }
   function _mbvBody(){
     const M=SETTINGS.multi||(SETTINGS.multi={});
@@ -5251,18 +5296,19 @@
       const bd=l._bd, on=!!slip[l.id];
       const dots=(()=>{ const n=Math.round((l.prob||0)*5); let s=''; for(let i=0;i<5;i++)s+='<span class="mbv-dot'+(i<n?' on':'')+'"></span>'; return s; })();
       const px=l._odds&&l._odds.price;
-      const edge=px?('+'+((l.prob-1/px)*100).toFixed(0)+'% EV'):((l.avg-l.line)>0?('+'+(l.avg-l.line).toFixed(1)):'');
+      const edge=px?('+'+((l.prob-1/px)*100).toFixed(0)+'% EV'):(((l.proj!=null?l.proj:l.avg)-l.line)>0?('+'+((l.proj!=null?l.proj:l.avg)-l.line).toFixed(1)):'');
       const oddsPill=px?('<div class="mbv-op"><span class="mbv-op-price">$'+px.toFixed(2)+'</span><span class="mbv-op-book">'+esc((l._odds.book||'').slice(0,9))+'</span></div>'):('<div class="mbv-op mbv-op-nb"><span class="mbv-op-price">'+Math.round((l.prob||0)*100)+'%</span><span class="mbv-op-book">proj</span></div>');
+      const ctx=(l.reasons&&l.reasons.length)?l.reasons.map(function(r){return esc(r.label)+(r.pct?' '+Math.round(r.pct)+'%':'');}).join(' \u00b7 '):'';
       return '<div class="mbv-card'+(on?' on':'')+'" onclick="_mbToggleLeg(\''+l.id.replace(/'/g,"\\'")+'\')">'
         +'<div class="mbv-row1">'+teamLogo(l.p.team,30)
           +'<div class="mbv-pn"><div class="mbv-nm">'+esc(l.p.name)+'<span class="mbv-tm">'+abbr(l.p.team)+' \u00b7 '+posShort(l.p.position)+'</span></div>'
-          +'<div class="mbv-mk">'+l.line+'+ '+_lbl(l.statKey)+'<span class="mbv-proj">proj '+fmt(l.avg,l.statKey==='goals'?1:l.statKey==='dreamteam'?0:1)+'</span></div></div>'
+          +'<div class="mbv-mk">'+l.line+'+ '+_lbl(l.statKey)+'<span class="mbv-proj">proj '+fmt(l.proj!=null?l.proj:l.avg,l.statKey==='goals'?1:l.statKey==='dreamteam'?0:1)+'</span></div></div>'
           +oddsPill+'<div class="mbv-add"><i class="ti '+(on?'ti-circle-check-filled':'ti-circle-plus')+'"></i></div></div>'
         +'<div class="mbv-row2"><span class="mbv-dots">'+dots+'</span>'
           +'<span class="mbv-hit">'+(l.probReal?Math.round(l.prob*100)+'% hit':'~'+Math.round(l.prob*100)+'%')+'</span>'
           +(edge?'<span class="mbv-edge">'+edge+'</span>':'')
           +'<span class="mbv-opp">v '+abbr(l.opp||'')+'</span></div>'
-        +'<div class="mbv-badges">'+bd.base.map(k=>{const b=_MB_ALLBDG[k];if(!b)return '';return '<span class="mbv-bdg" style="background:'+b[1]+';color:'+b[2]+'"><i class="ti '+b[3]+'"></i>'+b[0]+'</span>';}).join('')
+        +(ctx?'<div class="mbv-ctx">'+ctx+'</div>':'')+'<div class="mbv-badges">'+bd.base.map(k=>{const b=_MB_ALLBDG[k];if(!b)return '';return '<span class="mbv-bdg" style="background:'+b[1]+';color:'+b[2]+'"><i class="ti '+b[3]+'"></i>'+b[0]+'</span>';}).join('')
           +bd.nerd.map(nx=>'<span class="mbv-nerd"><i class="ti '+nx[1]+'"></i>'+nx[0]+'</span>').join('')+'</div>'
         +'</div>';
     }).join('')+'</div>';
