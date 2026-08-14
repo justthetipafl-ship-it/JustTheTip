@@ -5188,8 +5188,8 @@
   function _poissonCDF(k, lam){ if(lam<=0) return k>=0?1:0; if(k<0) return 0; var t=Math.exp(-lam), sm=t; for(var i=1;i<=k;i++){ t*=lam/i; sm+=t; } return Math.min(1,sm); }
   // Per-sport projection config — shared engine below reads these. Params are starting points to calibrate per sport.
   const PROJ_CONFIG={
-    afl:  {lambda:0.85, shrinkK:5, dvpBeta:0.55, dvpCap:0.12, poissonBelow:6, roleStat:'cba',     roleMkts:['disposals','clearances'], roleBeta:0.30, roleLo:-0.06, roleHi:0.08},
-    aflw: {lambda:0.85, shrinkK:5, dvpBeta:0.55, dvpCap:0.12, poissonBelow:6, roleStat:'cba',     roleMkts:['disposals','clearances'], roleBeta:0.30, roleLo:-0.06, roleHi:0.08},
+    afl:  {lambda:0.85, biasCorr:1.011, shrinkK:5, dvpBeta:0.55, dvpCap:0.12, poissonBelow:6, roleStat:'cba',     roleMkts:['disposals','clearances'], roleBeta:0.30, roleLo:-0.06, roleHi:0.08},
+    aflw: {lambda:0.85, biasCorr:1.011, shrinkK:5, dvpBeta:0.55, dvpCap:0.12, poissonBelow:6, roleStat:'cba',     roleMkts:['disposals','clearances'], roleBeta:0.30, roleLo:-0.06, roleHi:0.08},
     nfl:  {lambda:0.85, shrinkK:4, dvpBeta:0.55, dvpCap:0.15, poissonBelow:8, roleStat:'snapPct', roleMkts:['receptions','recYds','rushRecYds'], roleBeta:0.25, roleLo:-0.06, roleHi:0.08},
     ncaaf:{lambda:0.85, shrinkK:4, dvpBeta:0.55, dvpCap:0.15, poissonBelow:8, roleStat:'snapPct', roleMkts:['receptions','recYds','rushRecYds'], roleBeta:0.25, roleLo:-0.06, roleHi:0.08},
     nba:  {lambda:0.92, shrinkK:8, dvpBeta:0.50, dvpCap:0.10, poissonBelow:4, roleStat:'minutes', roleMkts:['points','rebounds','assists'], roleBeta:0.25, roleLo:-0.06, roleHi:0.08},
@@ -5199,7 +5199,7 @@
   };
   const _PROJ_DEF={lambda:0.88, shrinkK:5, dvpBeta:0.55, dvpCap:0.12, poissonBelow:6, roleStat:'', roleMkts:[], roleBeta:0, roleLo:-0.06, roleHi:0.08};
   function _projCfg(){ return PROJ_CONFIG[(window.SPORT&&SPORT.key)||'']||_PROJ_DEF; }
-  function _projModel(p, sk, line, opp){
+  function _projModel(p, sk, line, opp, ctx){
     var C=_projCfg();
     var logs=_mbLogsFor(p.name), vals=logs.map(function(r){return +r[sk];}).filter(function(v){return isFinite(v);});
     var n=vals.length;
@@ -5225,6 +5225,8 @@
       if(rv.length>=4){ var recR=_mean(rv.slice(-5)), seaR=_mean(rv);
         if(seaR>3) mean *= (1 + _clamp((recR-seaR)/seaR*C.roleBeta, C.roleLo, C.roleHi)); }
     }
+    mean *= (C.biasCorr||1);                                                    // backtested bias correction (per sport)
+    if(((window.SPORT&&SPORT.key))==='mlb' && ctx){ mean *= _mlbPlatoon(p,sk,ctx.oppHand); mean *= _mlbHomeAway(logs,sk,ctx.isHome,season); }
     var vsq=0; for(var j=0;j<n;j++){ var d=w[j]-recMean; vsq+=d*d; }             // dispersion: winsorized sd, shrunk to a mean-scaled prior
     var sampleSD=Math.sqrt(vsq/Math.max(1,n-1)), Ksd=4, priorSD=Math.max(0.8, mean*0.35);
     var sd=Math.max((n*sampleSD + Ksd*priorSD)/(n+Ksd), 0.6);
@@ -5234,6 +5236,28 @@
     if(window.JTTScoring && JTTScoring.getHitRate){ var hr=JTTScoring.getHitRate(p.name, sk, line, true);
       if(hr && hr.n>=3){ var ew=Math.min(0.5, hr.n/(hr.n+8)); prob = ew*hr.rate + (1-ew)*pModel; } }
     return {mean:mean, sd:sd, prob:_clamp(prob,0.02,0.98), n:n};
+  }
+  // ===== MLB-specific adjustment layers =====
+  function _mlbHand(nm){ if(!nm) return null; var m=state.idx._pHand; if(!m){ m=state.idx._pHand={}; (state.idx.players||[]).forEach(function(x){ if(x.throws) m[x.name]=x.throws; }); } return m[nm]||null; }
+  function _mlbPlatoon(p, sk, oppHand){                         // batter split vs the opposing starter's hand
+    if(!oppHand) return 1;
+    var sp = oppHand==='L' ? p.splitVsL : p.splitVsR;
+    if(!sp || (sp.PA||0)<20) return 1;                          // need a meaningful platoon sample
+    var r=1;
+    if(sk==='H' && +p.AVG>0) r=sp.AVG/(+p.AVG);
+    else if(sk==='TB' && +p.SLG>0) r=sp.SLG/(+p.SLG);
+    else if((sk==='RBI'||sk==='R') && +p.OPS>0) r=sp.OPS/(+p.OPS);
+    else if(sk==='HR'){ var sr=(sp.HR||0)/Math.max(1,sp.PA), orr=(+p.HR||0)/Math.max(1,+p.PA); if(orr>0) r=sr/orr; }
+    else return 1;
+    var conf=Math.min(1, sp.PA/(sp.PA+50));                     // shrink the split ratio by its sample size
+    return Math.max(0.75, Math.min(1.30, 1+(r-1)*conf));
+  }
+  function _mlbHomeAway(logs, sk, isHome, ov){                  // home/away split from game logs
+    if(isHome==null || !ov) return 1;
+    var rel=logs.filter(function(r){return !!r.home===isHome;}).map(function(r){return +r[sk];}).filter(function(v){return isFinite(v);});
+    if(rel.length<10) return 1;
+    var rm=rel.reduce(function(a,b){return a+b;},0)/rel.length, conf=Math.min(1, rel.length/(rel.length+15));
+    return Math.max(0.85, Math.min(1.15, 1+(rm/ov-1)*conf));
   }
   function _legBadges(leg){
     const base=[], nerd=[], p=leg.p, sk=leg.statKey, line=leg.line, opp=leg.opp;
@@ -5269,9 +5293,13 @@
     const _foc=state.view.mbvFocus;
     const games=_foc?fx.filter(g=>g.home===_foc.home&&g.away===_foc.away):fx;
     let pool=[];
-    games.forEach(g=>{ pl(g.home).forEach(p=>legCandidates(p,g.away).forEach(c=>pool.push(c))); pl(g.away).forEach(p=>legCandidates(p,g.home).forEach(c=>pool.push(c))); });
+    var _mlb=(window.SPORT&&SPORT.key)==='mlb';
+    games.forEach(g=>{
+      pl(g.home).forEach(p=>legCandidates(p,g.away).forEach(c=>{ if(_mlb) c._pctx={isHome:true, oppHand:_mlbHand(g.awayPitcher)}; pool.push(c); }));
+      pl(g.away).forEach(p=>legCandidates(p,g.home).forEach(c=>{ if(_mlb) c._pctx={isHome:false, oppHand:_mlbHand(g.homePitcher)}; pool.push(c); }));
+    });
     const best={}; pool.forEach(c=>{ const key=c.p.name+'|'+c.statKey; if(!best[key]||c.score>best[key].score) best[key]=c; });
-    const arr=Object.values(best); arr.forEach(function(c){ var m=_projModel(c.p,c.statKey,c.line,c.opp); c.proj=m.mean; c.projSd=m.sd; if(m.prob!=null){ c.prob=m.prob; c.probReal=true; } });
+    const arr=Object.values(best); arr.forEach(function(c){ var m=_projModel(c.p,c.statKey,c.line,c.opp,c._pctx); c.proj=m.mean; c.projSd=m.sd; if(m.prob!=null){ c.prob=m.prob; c.probReal=true; } });
     return arr.sort((a,b)=>(b.score-a.score)||(b.prob-a.prob));
   }
   function _mbvBody(){
