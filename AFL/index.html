@@ -3144,7 +3144,9 @@
   function dvpView(){
     const v=state.view, all=state.data.dvp||[]; if(!all.length) return emptyState('ti-shield-off','No DVP data','Run the data build to derive DVP.');
     const pos=(v.dvpPos&&(POS_ORDER||[]).indexOf(v.dvpPos)>=0)?v.dvpPos:(POS_ORDER||['All'])[0];
-    const COLS=_posMkts(pos,DVP_STATS).filter((x,i,a)=>a.findIndex(y=>y[0]===x[0])===i);   // position-relevant stat columns
+    // use the same short abbreviations the Scanner + Teams show, so columns stay even
+    const _lbl={}; [].concat(DVP_STATS||[], TEAM_COLS||[], DISPLAY||[], DISPLAY_FOR(pos)||[]).forEach(function(x){_lbl[x[0]]=x[1];});
+    const COLS=_posMkts(pos,DVP_STATS).filter((x,i,a)=>a.findIndex(y=>y[0]===x[0])===i).map(function(x){return [x[0], _lbl[x[0]]||x[1]];});   // position-relevant columns, Scanner/Teams labels
     const rows=all.filter(r=>r.pos===pos);
     const avg={}; COLS.forEach(([k])=>{const vals=rows.map(r=>r[k]).filter(x=>x!=null);avg[k]=vals.length?vals.reduce((a,b)=>a+b,0)/vals.length:0;});
     const sk=v.dvpSortKey||'__team', sd=v.dvpSortDir||(sk==='__team'?1:-1);
