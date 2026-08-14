@@ -1040,6 +1040,15 @@
   .mbv-pg{background:var(--surface-2);border:1px solid var(--border);color:var(--text);border-radius:8px;padding:6px 12px;cursor:pointer;font-size:15px}
   .mbv-pg[disabled]{opacity:.4;cursor:default}
   .mbv-pg-lbl{font-size:12px;color:var(--text-3);font-variant-numeric:tabular-nums}
+  .dv-card .mbv-mk{flex-wrap:wrap;gap:3px 6px;align-items:center}
+  .dv-cardctrl{display:flex;align-items:center;gap:3px;flex-shrink:0}
+  .dv-card .dv-swap,.dv-cardctrl .dv-swap{display:inline-flex;gap:2px}
+  .dv-card .dv-swap button,.dv-cardctrl button,.dv-card .dv-statswap,.dv-card .dv-linedown,.dv-card .dv-linereset,.dv-cardctrl .dv-rm{background:var(--surface-3,var(--surface));border:1px solid var(--border);color:var(--text-2);border-radius:6px;padding:2px 7px;font-size:12px;cursor:pointer;line-height:1.3}
+  .dv-card .dv-statswap{display:inline-flex;align-items:center;gap:4px}
+  .dv-card .dv-linedown,.dv-card .dv-linereset{padding:2px 6px;margin-right:3px}
+  .dv-cardbadges{align-items:center;gap:8px}
+  .dv-vals{font-size:11px;color:var(--text-3);font-family:var(--font-mono)}
+  .dv-card.dv-reduced{border-color:var(--ok,#22c55e)}
   .mbv-save{width:100%;margin-top:12px;padding:11px;background:var(--accent);color:#0b1220;border:none;border-radius:10px;font-weight:800;font-size:14px;cursor:pointer;font-family:var(--font-display)}
 </style>
 </head>
@@ -4238,7 +4247,8 @@
     const avail=Math.max(1,_dvMeetings(home,away,999).length);   // total H2H meetings available (respects the Same Team/Same SP filter)
     const meets=Math.min(Math.max(1,S.meets||1),avail);
     const title='<div class="tp-sec"><div class="sec-title"><i class="ti ti-versions"></i> Déjà Vu SGM</div></div>';
-    const mktChips='<div class="dv-mkts">'+DV_MARKETS.map(([k,l])=>'<button class="dv-mkt'+(_dvMktOn(k)?' on':'')+'" onclick="_dvMkt(\''+k+'\')">'+l+'</button>').join('')+'</div>';
+    const _nMkt=DV_MARKETS.filter(m=>_dvMktOn(m[0])).length;
+    const mktChips='<details class="ob-dd dv-mktdd"'+(S.mktOpen?' open':'')+' ontoggle="_dvState().mktOpen=this.open"><summary class="ob-sel ob-dd-sum">'+(_nMkt<DV_MARKETS.length?_nMkt+' market'+(_nMkt>1?'s':''):'All markets')+'<i class="ti ti-chevron-down"></i></summary><div class="ob-dd-body">'+DV_MARKETS.map(([k,l])=>'<button class="ob-chip'+(_dvMktOn(k)?' active':'')+'" onclick="_dvMkt(\''+k+'\')">'+l+'</button>').join('')+'</div></details>';
     const meetsStep='<span class="dv-step" title="Player must have cleared the line in this many of the most recent H2H meetings ('+avail+' available)"><span class="dv-step-lbl">Hit streak</span><button onclick="_dvMeets(-1)"'+(meets<=1?' disabled':'')+'>−</button><b>'+meets+'</b><button onclick="_dvMeets(1)"'+(meets>=avail?' disabled':'')+'>+</button><span class="dv-step-lbl" style="opacity:.55">/ '+avail+'</span></span>';
     const sameSPToggle=(SPORT.key==='mlb')?'<span class="dv-seg" style="display:inline-flex" title="Same Team = any prior meeting between these clubs; Same SP = only meetings where today\'s two starters both faced off"><button class="dv-tier'+(!S.sameSP?' on':'')+'" onclick="_dvSameSP(0)">Same Team</button><button class="dv-tier'+(S.sameSP?' on':'')+'" onclick="_dvSameSP(1)"><i class="ti ti-ball-baseball"></i> Same SP</button></span>':'';
     const dvHelp='<div class="dv-help"><i class="ti ti-info-circle"></i><span>Hit streak — only players who cleared their line in each of the last '+meets+' straight meetings between '+abbr(home)+' and '+abbr(away)+' qualify. Lower it to widen the pool.</span></div>';
@@ -4251,7 +4261,7 @@
       if(!legs.length) return title+ctrls+'<div class="tp-body-meta" style="border:0">No player cleared a market line in all '+meets+' meetings.</div>';
       const seen=new Set(),top=[];
       legs.slice().sort((a,b)=>b.strength-a.strength).forEach(l=>{ if(top.length<10&&!seen.has(l.name)){ seen.add(l.name); top.push(l); } });
-      const rows=top.map(l=>'<div class="dv-leg"><span class="dv-n">'+esc(l.name)+'</span><span class="dv-l">'+l.line+'+ '+l.marketLabel+'</span><span class="dv-h">'+l.vals.join(' / ')+'</span></div>').join('');
+      const rows=top.map(l=>'<div class="mbv-card dv-card">'+'<div class="mbv-row1">'+teamLogo(l.team,30)+'<div class="mbv-pn"><div class="mbv-nm">'+esc(l.name)+'<span class="mbv-tm">'+abbr(l.team)+' \u00b7 '+posShort(l.pos||'')+'</span></div>'+'<div class="mbv-mk"><b>'+l.line+'+</b> '+esc(l.marketLabel)+'</div></div></div>'+'<div class="mbv-badges dv-cardbadges"><span class="mbv-bdg" style="background:#EEEDFE;color:#26215C"><i class="ti ti-versions"></i>D\u00e9j\u00e0 Vu x'+meets+'</span><span class="dv-vals">'+l.vals.join(' / ')+'</span></div>'+'</div>').join('');
       return title+ctrls+'<div class="tp-body-meta">'+_dvDistinct(legs)+' players hit a line in all '+meets+' meetings · single-book prices, tiers &amp; Hail Mary appear once the live per-book odds feed is on</div><div class="dv-legs">'+rows+'</div>';
     }
     const {books,book,pool,byBook}=_dvPool(S);
@@ -4273,12 +4283,13 @@
       const mktCell=(nMkt>1)?'<button class="dv-statswap" onclick="_dvStatSwap('+slot+',1)" title="Swap to another stat this player also cleared in all meetings">'+esc(l.marketLabel)+' <i class="ti ti-arrows-exchange-2"></i></button>':esc(l.marketLabel);
       const rungs=S.hail?[]:_dvRungs(l,S); const curL=(S.lineOv&&S.lineOv[slot]!=null)?S.lineOv[slot]:l.betLine; const reduced=!!(S.lineOv&&S.lineOv[slot]!=null);
       const lineCtl=S.hail?'':('<button class="dv-linedown" onclick="_dvLineDown('+slot+')"'+(rungs.some(r=>r<curL)?'':' disabled')+' title="Reduce the line — safer, shorter odds">−</button>'+(reduced?'<button class="dv-linereset" onclick="_dvLineReset('+slot+')" title="Restore the max line">↺</button>':''));
-      return '<div class="dv-leg'+(reduced?' dv-reduced':'')+'"><span class="dv-n">'+esc(l.name)+'</span><span class="dv-l">'+lineCtl+'<b>'+l.betLine+'+</b> '+mktCell+'</span><span class="dv-o">$'+l.over.toFixed(2)+'</span>'+ctrl+'</div>';
+      return '<div class="mbv-card dv-card'+(reduced?' dv-reduced':'')+'">'+'<div class="mbv-row1">'+teamLogo(l.team,30)+'<div class="mbv-pn"><div class="mbv-nm">'+esc(l.name)+'<span class="mbv-tm">'+abbr(l.team)+' \u00b7 '+posShort(l.pos||'')+'</span></div>'+'<div class="mbv-mk">'+lineCtl+'<b>'+l.betLine+'+</b> '+mktCell+'</div></div>'+'<div class="mbv-op"><span class="mbv-op-price">$'+l.over.toFixed(2)+'</span><span class="mbv-op-book">'+bookName(book)+'</span></div>'+'<div class="dv-cardctrl">'+ctrl+'</div></div>'+'<div class="mbv-badges dv-cardbadges"><span class="mbv-bdg" style="background:#EEEDFE;color:#26215C"><i class="ti ti-versions"></i>D\u00e9j\u00e0 Vu x'+meets+'</span><span class="dv-vals">'+(l.vals||[]).join(' / ')+'</span></div>'+'</div>';
     }).join('');
     const activeLegs=sel.map((i,slot)=>_dvEffLeg(pool[i],slot,S)).filter(l=>l&&!removed.has(l.name));
     const comb=_dvProduct(activeLegs);
     const legN=activeLegs.length;
-    const tierBtns=[3,4,5].map(t=>'<button class="dv-tier'+(!S.hail&&S.tier===t?' on':'')+'"'+(distinctN>=t?'':' disabled')+' onclick="_dvTier('+t+')">'+t+' legs</button>').join('');
+    const _tier=Math.min(Math.max(S.tier||3,2),Math.max(2,distinctN));
+    const tierBtns='<span class="dv-step"><span class="dv-step-lbl">Legs</span><button onclick="_dvTierStep(-1)"'+((_tier<=2||S.hail)?' disabled':'')+'>\u2212</button><b>'+(S.hail?distinctN:_tier)+'</b><button onclick="_dvTierStep(1)"'+((_tier>=distinctN||S.hail)?' disabled':'')+'>+</button></span>';
     const hailBtn='<button class="dv-tier dv-hail'+(S.hail?' on':'')+'" onclick="_dvHail()"><i class="ti ti-bolt"></i> Hail Mary</button>';
     const bookChips=books.length>1?('<div class="dv-books">'+books.slice().sort((a,b)=>_dvDistinct(byBook[b])-_dvDistinct(byBook[a])).map(b=>'<button class="dv-bk'+(b===book?' on':'')+'" onclick="_dvBook(\''+b+'\')">'+bookName(b)+' <i>'+_dvDistinct(byBook[b])+'</i></button>').join('')+'</div>'):'';
     const minStep='<span class="dv-step"><span class="dv-step-lbl">Min $</span><button onclick="_dvMin(-1)">−</button><b>'+(S.minOdds==null?DV_MIN_DEFAULT:S.minOdds).toFixed(2)+'</b><button onclick="_dvMin(1)">+</button></span>';
@@ -4321,6 +4332,7 @@
   window._dvStatSwap=function(slot,dir){ const S=_dvState(); if(!S.sel) return; const {pool}=_dvPool(S); const cur=pool[S.sel.idx[slot]]; if(!cur) return; const mine=_dvPlayerMktIdx(pool,cur.name); if(mine.length<2) return; let ci=mine.indexOf(S.sel.idx[slot]); ci=(ci+(dir||1)+mine.length)%mine.length; S.sel.idx[slot]=mine[ci]; if(S.lineOv) delete S.lineOv[slot]; _renderApp(); };
   window._dvLineDown=function(slot){ const S=_dvState(); if(!S.sel) return; const {pool}=_dvPool(S); const l=pool[S.sel.idx[slot]]; if(!l) return; const rungs=_dvRungs(l,S); const cur=(S.lineOv&&S.lineOv[slot]!=null)?S.lineOv[slot]:l.betLine; const below=rungs.filter(r=>r<cur); if(!below.length) return; (S.lineOv=S.lineOv||{})[slot]=below[0]; _renderApp(); };
   window._dvLineReset=function(slot){ const S=_dvState(); if(S.lineOv) delete S.lineOv[slot]; _renderApp(); };
+  window._dvTierStep=function(d){ const S=_dvState(); S.hail=false; S.tier=Math.max(2,(S.tier||3)+d); S.sel=null; S.removed=[]; _renderApp(); };
   window._dvTier=function(t){ const S=_dvState(); S.hail=false; S.tier=t; S.sel=null; S.removed=[]; _renderApp(); };
   window._dvHail=function(){ const S=_dvState(); S.hail=!S.hail; S.sel=null; S.removed=[]; _renderApp(); };
   window._dvBook=function(b){ const S=_dvState(); S.book=b; S.sel=null; S.removed=[]; _renderApp(); };
