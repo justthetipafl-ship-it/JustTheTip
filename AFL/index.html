@@ -2491,7 +2491,7 @@
   // ===== Defence vs Play Style (focused fixture) =====
   let DVP_PLAY_STYLE_POS;  // from SPORT_CONFIG
   function allPlayStyles(p,pg){
-    if(SPORT.key!=='afl'){ const _S=_signals(); if(_S&&_S.playStyles) return _S.playStyles(p,pg); return [pg]; }
+    if(SPORT.key!=='afl'&&SPORT.key!=='aflw'){ const _S=_signals(); if(_S&&_S.playStyles) return _S.playStyles(p,pg); return [pg]; }
     const cp=p.contested||0,clr=p.clearances||0,disp=p.disposals||0,kicks=p.kicks||0,hb=p.handballs||0,
       mtrs=p.metresGained||0,tack=p.tackles||0,press=p.pressureActs||0,ho=p.hitouts||0,goals=p.goals||0,
       i50=p.inside50s||0,scoreInv=p.scoreInvolvements||0,intMk=p.interceptMarks||0,contMk=p.contestedMarks||0,
@@ -3445,7 +3445,7 @@
   /* ---------- DEGEN CREW ---------- */
   function renderDegen(){
     let h='<div class="page-header"><div class="page-title">Degen Crew</div><div class="page-sub">All signals live on the scoring engine · tap a tile</div></div>';
-    h+='<div class="crew-grid">'+CREW.map(c=>'<div class="crew-tile" onclick="degenTile(\''+c.k+'\')"><div class="crew-tile-icon"><i class="ti '+c.i+'"></i></div><div class="crew-tile-name">'+c.n+'</div><div class="crew-tile-sub">'+c.d+'</div></div>').join('')+'</div>';
+    h+='<div class="crew-grid">'+CREW.filter(c=>((window.SPORT_CONFIG||{}).hideCrew||[]).indexOf(c.k)<0).map(c=>'<div class="crew-tile" onclick="degenTile(\''+c.k+'\')"><div class="crew-tile-icon"><i class="ti '+c.i+'"></i></div><div class="crew-tile-name">'+c.n+'</div><div class="crew-tile-sub">'+c.d+'</div></div>').join('')+'</div>';
     return h;
   }
   // --- scoring-backed signal compute (Green Lights / Death Riders) ---
@@ -4791,6 +4791,7 @@
       '<div class="rdr-grade" style="color:'+gr.c+'">'+gr.g+'<span>'+gr.t+'</span></div></div>';
   }
   function radarSection(home, away, venue){
+    if((window.SPORT_CONFIG||{}).noPlayerOdds) return '';   // no player-prop odds -> Radar can't rate lines, hide it
     if(!hasAnyOdds()) return _degenFocused?'':emptyState('ti-radar','The Radar','Needs posted each-way lines to rate matchups.');
     const board=_radarBoard([home,away], venue);
     if(!board.length) return _degenFocused?'':emptyState('ti-radar','The Radar','No each-way markets on the board yet.');
@@ -5434,7 +5435,7 @@
     return out;
   }
   function _degenTileKeys(){
-    if(SPORT.key==='afl') return ['snags','elite','bunnies','hunting','nmu','kickins','bogey','streak','climb','form','taggers'];
+    if(SPORT.key==='afl'||SPORT.key==='aflw'){ var _hc=(window.SPORT_CONFIG&&SPORT_CONFIG.hideCrew)||[]; return ['snags','elite','bunnies','hunting','nmu','kickins','bogey','streak','climb','form','taggers'].filter(function(k){return _hc.indexOf(k)<0;}); }
     const S=_signals(); if(!(S&&S.tiles)) return [];
     const have=Object.keys(S.tiles); const ord=(window.SPORT_CONFIG&&SPORT_CONFIG.tileOrder)||[];
     const first=ord.filter(k=>have.indexOf(k)>=0); const rest=have.filter(k=>first.indexOf(k)<0);
@@ -5445,7 +5446,7 @@
     // Other sports get their OU signals (Green Lights/Death Riders) + Matchup from their signals.js,
     // and the config-driven Multi Builder — but the AFL-specific research tiles stay AFL-only until
     // each sport's versions are ported into its signals.js.
-    if(SPORT.key!=='afl'){ const _S=_signals(); if(_S&&_S.tiles&&typeof _S.tiles[k]==='function'){ try{ return _S.tiles[k](); }catch(_e){ return ''; } } if(k!=='multi') return ''; }
+    if(SPORT.key!=='afl'&&SPORT.key!=='aflw'){ const _S=_signals(); if(_S&&_S.tiles&&typeof _S.tiles[k]==='function'){ try{ return _S.tiles[k](); }catch(_e){ return ''; } } if(k!=='multi') return ''; }
     const M=v=>fmt(v,1), abv=t=>abbr(t);
     if(k==='snags'){
       const rows=_byGame(_fc(snags(),6), s=>s.p.team, s=>degRow(s.p.name,'#f59e0b',{v1:fmt(s.val,2),l1:'gpg',v2:'#'+s.dvpRank,l2:posShort(s.p.position)},
