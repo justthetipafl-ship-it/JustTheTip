@@ -1,7 +1,11 @@
 /* JTT sport config - AFLW. Same game as AFL -> same markets/positions/engines. */
 window.SPORT_CONFIG = {
   key: 'aflw',
+  logoCdn: 'https://squiggle.com.au/wp-content/themes/squiggle/assets/images/',
+  logoCdnExt: '.png',
+  teamIds: { 'Adelaide':'Adelaide','Brisbane':'Brisbane','Carlton':'Carlton','Collingwood':'Collingwood','Essendon':'Essendon','Fremantle':'Fremantle','Geelong':'Geelong','Gold Coast':'GoldCoast','Greater Western Sydney':'Giants','Hawthorn':'Hawthorn','Melbourne':'Melbourne','North Melbourne':'NorthMelbourne','Port Adelaide':'PortAdelaide','Richmond':'Richmond','St Kilda':'StKilda','Sydney':'Sydney','West Coast':'WestCoast','Western Bulldogs':'Bulldogs' },
   name: 'AFLW',
+  logoBase: '/AFL/assets/logos/',   // same 18 clubs as AFL -> reuse the AFL logo set
   noPlayerOdds: true,   // no AFLW player-prop odds -> hide Odds tab + Jupiter + Radar
   hideCrew: ['green','death','multi','radar','kickins','taggers'],   // odds-only / no-data / AFL-men's-list tiles -> hidden for AFLW
   jupiter: {
