@@ -3118,10 +3118,10 @@
     teams.sort((a,b)=>(b[sk+suf]||0)-(a[sk+suf]||0));
     // league averages for colour scale
     const avg={}; TEAM_COLS.forEach(([k])=>{avg[k]=teams.reduce((s,t)=>s+(t[k+suf]||0),0)/teams.length;});
-    let h='<div class="teams-toggle"><span class="tt-lbl">Showing</span>'+
-      '<button class="seg'+(!A?' on':'')+'" onclick="setTeamsMode(false)">For</button>'+
-      '<button class="seg'+(A?' on':'')+'" onclick="setTeamsMode(true)">Allowed</button>'+
-      '<span class="tt-hint">'+(A?'avg conceded to opponents — higher = softer defence':'team\'s own per-game output')+'</span></div>';
+    let h='<div class="filterbar"><div class="pos-pills">'+
+      '<button class="dfilt-chip'+(!A?' active':'')+'" onclick="setTeamsMode(false)">For</button>'+
+      '<button class="dfilt-chip'+(A?' active':'')+'" onclick="setTeamsMode(true)">Allowed</button>'+
+      '</div></div><div class="tt-hint" style="padding:2px 4px 8px">'+(A?'avg conceded to opponents — higher = softer defence':'team\'s own per-game output')+'</div>';
     const th=(k,l)=>'<th class="'+(sk===k?'sorted':'')+'" onclick="setTeamsSort(\''+k+'\')">'+l+(sk===k?' ▾':'')+'</th>';
     h+='<div class="stbl-wrap"><table class="stbl"><thead><tr><th>Team</th><th>GP</th>'+TEAM_COLS.map(([k,l])=>th(k,l)).join('')+'</tr></thead><tbody>';
     teams.forEach(t=>{
@@ -3140,48 +3140,41 @@
   window.setTeamsMode=function(a){state.view.teamsAllowed=a;const b=document.getElementById('stats-body');if(b)b.innerHTML=teamsView();};
   window.setTeamsSort=function(k){state.view.teamsSort=k;const b=document.getElementById('stats-body');if(b)b.innerHTML=teamsView();};
 
-  /* ---------- DVP grid (team × position, allowed per stat) ---------- */
+  /* ---------- DVP (Scanner-style: pick a position, see its stats per team) ---------- */
   function dvpView(){
-    const v=state.view, rows=state.data.dvp||[]; if(!rows.length) return emptyState('ti-shield-off','No DVP data','Run the data build to derive DVP.');
-    const stat=v.statsStat;
-    const POSES=_statPositions(stat);   // only positions that actually bet this stat
-    // index team -> pos -> value
-    const grid={}; rows.forEach(r=>{(grid[r.team]=grid[r.team]||{})[r.pos]=r[stat];});
-    let teams=Object.keys(grid);
-    // per-position league average (for colour scale)
-    const posAvg={}; POSES.forEach(pos=>{const vals=teams.map(t=>grid[t][pos]).filter(x=>x!=null);posAvg[pos]=vals.length?vals.reduce((a,b)=>a+b,0)/vals.length:0;});
-    // sort: by a position's allowed value, or alphabetically by team
-    const sp=v.dvpSortPos||'__team', sd=v.dvpSortDir||(sp==='__team'?1:-1);
-    if(sp==='__team') teams.sort((a,b)=>a.localeCompare(b)*sd);
-    else teams.sort((a,b)=>{const x=grid[a][sp],y=grid[b][sp];if(x==null)return 1;if(y==null)return -1;return (x-y)*sd;});
-    const arr=k=> sp===k?(sd<0?' ▾':' ▴'):'';
-    const scl=k=> sp===k?' sorted':'';
-    const _dw=(state.view.dvpWindow||SETTINGS.dvpWindow||'season');
-    const _winToggle='<span class="tt-lbl" style="margin-left:6px">Window</span><div class="dvp-win">'+
-      [['season','Season'],['l10','L10'],['l5','L5']].map(function(w){return '<button class="dvp-winbtn'+(_dw===w[0]?' on':'')+'" onclick="setDvpWindow(\''+w[0]+'\')" title="Rolling DVP over the last '+(w[0]==='season'?'full season':w[0]==='l10'?'10':'5')+' games — applies to Check My Bet, the modal and signals too">'+w[1]+'</button>';}).join('')+'</div>';
-    let h='<div class="dvp-controls"><span class="tt-lbl">Stat</span><select class="dvp-sel" onchange="setStatsStat(this.value)">'+
-      DVP_STATS.filter((x,i,a)=>a.findIndex(y=>y[0]===x[0])===i).map(([k,l])=>'<option value="'+k+'"'+(stat===k?' selected':'')+'>'+l+'</option>').join('')+
-      '</select><span class="tt-hint">avg <strong>'+(DVP_STATS.find(x=>x[0]===stat)||[,stat])[1]+'</strong> conceded per position · tap a column to sort · <span style="color:#22c55e">green = soft</span> / <span style="color:#ef4444">red = tough</span></span>'+_winToggle+'</div>';
-    h+='<div class="stbl-wrap"><table class="stbl dvp-grid"><thead><tr>'+
-       '<th class="dvp-th'+scl('__team')+'" onclick="sortDvp(\'__team\')">Team'+arr('__team')+'</th>'+
-       POSES.map(p=>'<th class="dvp-th'+scl(p)+'" title="'+p+'" onclick="sortDvp(\''+p+'\')">'+posShort(p)+arr(p)+'</th>').join('')+'</tr></thead><tbody>';
-    teams.forEach(t=>{
-      h+='<tr><td class="name">'+teamLogo(t,22)+'<span style="margin-left:7px">'+t+'</span></td>';
-      POSES.forEach(pos=>{
-        const val=grid[t][pos];
-        if(val==null){h+='<td class="dvp-na">—</td>';return;}
-        const a=posAvg[pos], d=a?((val-a)/a*100):0;
-        const mag=Math.min(Math.abs(d)/30,1); // 30%+ swing = full intensity
+    const v=state.view, all=state.data.dvp||[]; if(!all.length) return emptyState('ti-shield-off','No DVP data','Run the data build to derive DVP.');
+    const pos=(v.dvpPos&&(POS_ORDER||[]).indexOf(v.dvpPos)>=0)?v.dvpPos:(POS_ORDER||['All'])[0];
+    const COLS=_posMkts(pos,DVP_STATS).filter((x,i,a)=>a.findIndex(y=>y[0]===x[0])===i);   // position-relevant stat columns
+    const rows=all.filter(r=>r.pos===pos);
+    const avg={}; COLS.forEach(([k])=>{const vals=rows.map(r=>r[k]).filter(x=>x!=null);avg[k]=vals.length?vals.reduce((a,b)=>a+b,0)/vals.length:0;});
+    const sk=v.dvpSortKey||'__team', sd=v.dvpSortDir||(sk==='__team'?1:-1);
+    let tr=rows.slice();
+    if(sk==='__team') tr.sort((a,b)=>a.team.localeCompare(b.team)*sd);
+    else tr.sort((a,b)=>{const x=a[sk],y=b[sk];if(x==null)return 1;if(y==null)return -1;return (x-y)*sd;});
+    const arr=k=> sk===k?(sd<0?' \u25be':' \u25b4'):'';
+    const _dw=(v.dvpWindow||SETTINGS.dvpWindow||'season');
+    const _winToggle='<div class="dvp-win">'+[['season','Season'],['l10','L10'],['l5','L5']].map(function(w){return '<button class="dvp-winbtn'+(_dw===w[0]?' on':'')+'" onclick="setDvpWindow(\''+w[0]+'\')" title="Rolling DVP over the last '+(w[0]==='season'?'full season':w[0]==='l10'?'10':'5')+' games \u2014 applies to Check My Bet, the modal and signals too">'+w[1]+'</button>';}).join('')+'</div>';
+    let h='<div class="filterbar"><div class="pos-pills">'+(POS_ORDER||[]).map(p=>'<button class="dfilt-chip'+(p===pos?' active':'')+'" onclick="setDvpPos(\''+p+'\')" title="'+p+'">'+posShort(p)+'</button>').join('')+'</div>'+_winToggle+'</div>';
+    h+='<div class="tt-hint" style="padding:2px 4px 8px">avg conceded to <strong>'+pos+'</strong> per game \u00b7 tap a column to sort \u00b7 <span style="color:#22c55e">green = soft</span> / <span style="color:#ef4444">red = tough</span></div>';
+    h+='<div class="stbl-wrap"><table class="stbl"><thead><tr><th class="'+(sk==='__team'?'sorted':'')+'" onclick="sortDvpCol(\'__team\')">Team'+arr('__team')+'</th>';
+    COLS.forEach(([k,l])=>h+='<th class="'+(sk===k?'sorted':'')+'" onclick="sortDvpCol(\''+k+'\')">'+l+arr(k)+'</th>');
+    h+='</tr></thead><tbody>';
+    tr.forEach(r=>{
+      h+='<tr><td class="name">'+teamLogo(r.team,22)+'<span style="margin-left:7px">'+r.team+'</span></td>';
+      COLS.forEach(([k])=>{
+        const val=r[k];
+        if(val==null){h+='<td class="dvp-na">\u2014</td>';return;}
+        const a=avg[k], d=a?((val-a)/a*100):0, mag=Math.min(Math.abs(d)/30,1);
         const bg=d>2?'rgba(34,197,94,'+(0.10+mag*0.5).toFixed(2)+')':d<-2?'rgba(239,68,68,'+(0.10+mag*0.5).toFixed(2)+')':'';
-        h+='<td'+(sp===pos?' class="dvp-sortcol"':'')+(bg?' style="background:'+bg+'"':'')+'>'+fmt(val, val<3?2:val<20?1:0)+'</td>';
+        h+='<td'+(sk===k?' class="dvp-sortcol"':'')+(bg?' style="background:'+bg+'"':'')+'>'+fmt(val, val<3?2:val<20?1:0)+'</td>';
       });
       h+='</tr>';
     });
     h+='</tbody></table></div>';
     return h;
   }
-  window.sortDvp=function(pos){const v=state.view;if((v.dvpSortPos||'__team')===pos){v.dvpSortDir=(v.dvpSortDir||(pos==='__team'?1:-1))*-1;}else{v.dvpSortPos=pos;v.dvpSortDir=pos==='__team'?1:-1;}const b=document.getElementById('stats-body');if(b)b.innerHTML=dvpView();};
-  window.setStatsStat=function(k){state.view.statsStat=k;const b=document.getElementById('stats-body');if(b)b.innerHTML=dvpView();};
+  window.setDvpPos=function(p){state.view.dvpPos=p;state.view.dvpSortKey='__team';state.view.dvpSortDir=1;const b=document.getElementById('stats-body');if(b)b.innerHTML=dvpView();};
+  window.sortDvpCol=function(k){const v=state.view;if((v.dvpSortKey||'__team')===k){v.dvpSortDir=(v.dvpSortDir||(k==='__team'?1:-1))*-1;}else{v.dvpSortKey=k;v.dvpSortDir=k==='__team'?1:-1;}const b=document.getElementById('stats-body');if(b)b.innerHTML=dvpView();};
   window.sortStats=function(k){const v=state.view;if(v.sortKey===k)v.sortDir*=-1;else{v.sortKey=k;v.sortDir=k==='name'?1:-1;}rerenderStats();};
 
   /* ---------- PLAYER MODAL ---------- */
@@ -5735,7 +5728,7 @@
     const names=(state.idx.players||[]).map(p=>p.name).sort();
     const dl='<datalist id="cmp-dl">'+names.map(n=>'<option value="'+esc(n)+'">').join('')+'</datalist>';
     const inp=(slot,val)=>'<input class="cmp-inp" list="cmp-dl" placeholder="Player '+(slot==='a'?'1':'2')+'\u2026" value="'+(val?esc(val):'')+'" onchange="_setCmp(\''+slot+'\',this.value)">';
-    let h=dl+'<div class="cmp-pick">'+inp('a',_cmpA)+'<span class="cmp-vs">vs</span>'+inp('b',_cmpB)+'</div>';
+    let h=dl+'<div class="filterbar"><div class="cmp-pick">'+inp('a',_cmpA)+'<span class="cmp-vs">vs</span>'+inp('b',_cmpB)+'</div></div>';
     const A=_cmpA&&state.idx.byName[_cmpA], B=_cmpB&&state.idx.byName[_cmpB];
     if(!A||!B) return h+emptyState('ti-users','Pick two players','Start typing to search and compare.');
     h+='<div class="cmp-head"><div class="cmp-h" onclick="openPlayer(\''+esc(_cmpA).replace(/\x27/g,"\\\x27")+'\')">'+esc(_cmpA)+'<div class="cmp-hsub">'+esc(A.team||'')+' \u00b7 '+esc(A.position||'')+'</div></div>'+
