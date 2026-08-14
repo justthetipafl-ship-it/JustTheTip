@@ -2,7 +2,8 @@
 window.SPORT_CONFIG = {
   key: 'aflw',
   name: 'AFLW',
-  noPlayerOdds: true,   // no AFLW player-prop odds from the API -> hide Odds tab + Jupiter, Degen runs on stats
+  noPlayerOdds: true,   // no AFLW player-prop odds -> hide Odds tab + Jupiter + Radar
+  hideCrew: ['green','death','multi','radar','kickins','taggers'],   // odds-only / no-data / AFL-men's-list tiles -> hidden for AFLW
   jupiter: {
     markets: [['disposals','Disp'],['goals','Goals']],
     mlab:    { disposals:'disp', goals:'goals' },
