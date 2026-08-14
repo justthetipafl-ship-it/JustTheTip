@@ -1003,7 +1003,36 @@
   .fxchip.off::before{content:'✕';text-decoration:none;}
   .card-toast{position:fixed;left:50%;bottom:74px;transform:translateX(-50%) translateY(10px);background:var(--surface-3,#1a1f1a);border:1px solid var(--accent);color:var(--text);font-size:12.5px;font-weight:700;padding:9px 15px;border-radius:22px;z-index:9600;opacity:0;pointer-events:none;transition:opacity .18s,transform .18s;box-shadow:0 8px 24px rgba(0,0,0,.5);}
   .card-toast.show{opacity:1;transform:translateX(-50%) translateY(0);}
-  </style>
+    .mbv-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}
+  .mbv-title{font-size:16px;font-weight:800;font-family:var(--font-display);display:flex;align-items:center;gap:8px}
+  .mbv-sum{font-size:12px;color:var(--text-3)}
+  .mbv-filters{display:flex;gap:8px;margin-bottom:12px}
+  .mbv-filters .ob-sel{flex:1}
+  .mbv-list{display:flex;flex-direction:column;gap:10px}
+  .mbv-card{background:var(--surface-2);border:1px solid var(--border);border-radius:12px;padding:11px 12px;cursor:pointer}
+  .mbv-card.on{border-color:var(--accent)}
+  .mbv-row1{display:flex;align-items:center;gap:10px;margin-bottom:8px}
+  .mbv-pn{flex:1;min-width:0}
+  .mbv-nm{font-size:14px;font-weight:700;display:flex;justify-content:space-between;align-items:baseline;gap:8px}
+  .mbv-tm{font-size:11px;color:var(--text-3);font-weight:400}
+  .mbv-mk{font-size:13px;color:var(--text-2);display:flex;justify-content:space-between;align-items:baseline;margin-top:1px;gap:8px}
+  .mbv-proj{font-size:12px;color:var(--text-3)}
+  .mbv-add{font-size:22px;color:var(--text-3);flex-shrink:0;line-height:1}
+  .mbv-card.on .mbv-add{color:var(--accent)}
+  .mbv-row2{display:flex;align-items:center;gap:10px;margin-bottom:8px;font-size:12px;color:var(--text-3)}
+  .mbv-dots{display:inline-flex;gap:3px;align-items:center}
+  .mbv-dot{width:6px;height:6px;border-radius:50%;background:var(--border)}
+  .mbv-dot.on{background:var(--accent)}
+  .mbv-edge{color:var(--ok,#22c55e)}
+  .mbv-odds{color:var(--text);font-weight:700}
+  .mbv-opp{margin-left:auto}
+  .mbv-badges{display:flex;flex-wrap:wrap;gap:6px}
+  .mbv-bdg{display:inline-flex;align-items:center;gap:4px;font-size:11px;font-weight:600;padding:3px 8px;border-radius:20px;line-height:1}
+  .mbv-bdg i{font-size:12px}
+  .mbv-nerd{display:inline-flex;align-items:center;gap:4px;font-size:10px;color:var(--text-3);border:1px dashed var(--border-light,var(--border));font-family:var(--font-mono);padding:3px 7px;border-radius:20px;line-height:1}
+  .mbv-nerd i{font-size:11px}
+  .mbv-save{width:100%;margin-top:12px;padding:11px;background:var(--accent);color:#0b1220;border:none;border-radius:10px;font-weight:800;font-size:14px;cursor:pointer;font-family:var(--font-display)}
+</style>
 </head>
 <body class="auth-locked">
 
@@ -5079,6 +5108,116 @@
     const head='<div class="tp-sec" style="margin-top:14px"><div class="sec-title"><i class="ti ti-stack-2"></i> Multi Builder</div><div class="sec-meta">'+pool.length+' triggered leg'+(pool.length!==1?'s':'')+'</div></div>';
     return '<div id="fx-pick">'+head+_pickControls('fx')+'<div class="fxp-pool">'+cards+'</div>'+_pickSlip('fx',pool)+'</div>';
   }
+  // ===== Multi Builder v2 — badge-driven leg cards (odds optional; works on stats too) =====
+  const MB_BADGES={
+    banker:  ['Banker','#EAF3DE','#27500A','ti-shield-check'],
+    value:   ['Value','#E6F1FB','#0C447C','ti-trending-up'],
+    longshot:['Longshot','#EEEDFE','#26215C','ti-rocket'],
+    form:    ['Form','#FAEEDA','#633806','ti-flame'],
+    bunny:   ['Bunny','#FBEAF0','#72243E','ti-carrot'],
+    venue:   ['Venue','#E1F5EE','#04342C','ti-map-pin'],
+    streak:  ['Streak','#FAECE7','#712B13','ti-arrow-big-up-lines'],
+    dvp:     ['Soft DVP','#E6F1FB','#0C447C','ti-shield-half'],
+    untagged:['Untagged','#EAF3DE','#27500A','ti-user-check'],
+    ceiling: ['Ceiling','#FCEBEB','#791F1F','ti-arrow-up-right']
+  };
+  function _mbLogsFor(nm){ return (state.idx.logsByName&&state.idx.logsByName[nm])||[]; }
+  function _legBadges(leg){
+    const base=[], nerd=[], p=leg.p, sk=leg.statKey, line=leg.line, opp=leg.opp;
+    const prob=leg.prob||0, avg=leg.avg||0, o=leg._odds;
+    const vals=_mbLogsFor(p.name).map(r=>+r[sk]).filter(v=>isFinite(v));
+    const l10=vals.slice(-10), l3=vals.slice(-3);
+    const push=(a,k)=>{ if(a.indexOf(k)<0)a.push(k); };
+    if(prob>=0.78 && (avg-line)>=1) push(base,'banker');
+    if(o&&o.price){ const edge=prob-1/o.price; if(edge>=0.05)push(base,'value'); if(o.price>=3.0&&prob>=0.2)push(base,'longshot'); }
+    else if(line>0 && (avg-line)/line>=0.18) push(base,'value');
+    if(l3.length>=3){ const a3=l3.reduce((a,b)=>a+b,0)/l3.length; if(avg&&a3>=avg*1.12) push(base,'form'); }
+    { let st=0; for(let i=vals.length-1;i>=0;i--){ if(vals[i]>=line)st++; else break; } if(st>=5) push(base,'streak'); }
+    if(l10.length>=5 && Math.max.apply(null,l10)>=line*1.6) push(base,'ceiling');
+    (leg.reasons||[]).forEach(r=>{ const L=(r.label||'').toLowerCase();
+      if(/h2h|head|owns|vs\s/.test(L) && r.pct>=60) push(base,'bunny');
+      if(/venue|ground|home/.test(L) && r.pct>=60) push(base,'venue'); });
+    if(opp && window.JTTScoring && JTTScoring.getDVPPct){
+      const dp=JTTScoring.getDVPPct(opp,(JTTScoring.POS_TO_DVP&&JTTScoring.POS_TO_DVP[p.position])||p.position,(typeof LEG_DVP!=='undefined'&&LEG_DVP[sk])||sk);
+      if(dp!=null && dp>=15) push(base,'dvp'); }
+    if((sk==='disposals'||sk==='clearances') && /Mid/.test(p.position||'') && typeof _taggerFacing==='function'){
+      if(!_taggerFacing(p,opp)) push(base,'untagged'); }
+    const xs=_mbLogsFor(p.name).map(r=>+r.xScore).filter(v=>isFinite(v));
+    if(sk==='dreamteam' && xs.length>=5){ const mx=xs.slice(-8).reduce((a,b)=>a+b,0)/Math.min(8,xs.length); if(avg&&avg>=mx*1.08) nerd.push(['xScore +'+Math.round((avg/mx-1)*100)+'%','ti-math-function']); }
+    const cn=_mbLogsFor(p.name).map(r=>+r.contested).filter(v=>isFinite(v)); const dz=_mbLogsFor(p.name).map(r=>+r.disposals).filter(v=>isFinite(v));
+    if(cn.length>=5 && dz.length>=5){ const cr=cn.slice(-6).reduce((a,b)=>a+b,0)/Math.min(6,cn.length), dr=dz.slice(-6).reduce((a,b)=>a+b,0)/Math.min(6,dz.length); if(dr&&cr/dr>=0.55) nerd.push(['Contested '+Math.round(cr/dr*100)+'%','ti-swords']); }
+    const cb=_mbLogsFor(p.name).map(r=>+r.cba).filter(v=>isFinite(v));
+    if(cb.length>=4){ const cr=cb.slice(-5).reduce((a,b)=>a+b,0)/Math.min(5,cb.length); if(cr>=70) nerd.push(['CBA '+Math.round(cr)+'%','ti-refresh']); }
+    return {base:base, nerd:nerd};
+  }
+  function _mbCandPool(){
+    const banned=new Set((SETTINGS.multi&&SETTINGS.multi.banned)||[]);
+    const pl=t=>(state.idx.players||[]).filter(p=>p.team===t&&(p.matches||0)>=3&&!banned.has(p.name));
+    const fx=(state.data.fixture||[]).filter(g=>g.home&&g.away);
+    const games=_mbFocusGame?fx.filter(g=>g.home===_mbFocusGame.home&&g.away===_mbFocusGame.away):fx;
+    let pool=[];
+    games.forEach(g=>{ pl(g.home).forEach(p=>legCandidates(p,g.away).forEach(c=>pool.push(c))); pl(g.away).forEach(p=>legCandidates(p,g.home).forEach(c=>pool.push(c))); });
+    const best={}; pool.forEach(c=>{ const key=c.p.name+'|'+c.statKey; if(!best[key]||c.score>best[key].score) best[key]=c; });
+    return Object.values(best).sort((a,b)=>(b.score-a.score)||(b.prob-a.prob));
+  }
+  function _mbvBody(){
+    const M=SETTINGS.multi||(SETTINGS.multi={});
+    if((state.data.fixture||[]).filter(g=>g.home&&g.away).length===0) return emptyState('ti-stack-2','No fixtures','The upcoming round hasn\'t loaded yet.');
+    let pool=_mbCandPool();
+    const oddsOn=_oddsLive();
+    const mSel=M.cardMkt||'all', bSel=M.cardBook||'all';
+    const mkts=[...new Set(pool.map(c=>c.statKey))];
+    const books=oddsOn?[...new Set(pool.map(c=>c._odds&&c._odds.book).filter(Boolean))]:[];
+    if(mSel!=='all') pool=pool.filter(c=>c.statKey===mSel);
+    if(oddsOn&&bSel!=='all') pool=pool.filter(c=>c._odds&&c._odds.book===bSel);
+    pool=pool.slice(0,40);
+    const slip=state.view.mbSlip||(state.view.mbSlip={});
+    const chosen=pool.filter(c=>slip[c.id]);
+    let comb=1, conf=1; chosen.forEach(c=>{ const px=(c._odds&&c._odds.price)||(c.prob>0?1/c.prob:null); if(px)comb*=px; conf*=Math.max(0.05,Math.min(0.99,c.prob||0)); });
+    const _lbl=k=>({disposals:'Disposals',goals:'Goals',dreamteam:'Fantasy',marks:'Marks',tackles:'Tackles',clearances:'Clearances',kicks:'Kicks',handballs:'Handballs',shots:'Shots',points:'Points',assists:'Assists',saves:'Saves',hits:'Hits',blocks:'Blocks',H:'Hits',TB:'Bases',HR:'HR',RBI:'RBI',R:'Runs',K:'Ks'}[k]||k);
+    // header + summary
+    let h='<div class="mbv-head"><div class="mbv-title"><i class="ti ti-stack-2"></i> Multi Builder</div>'
+      +'<div class="mbv-sum">'+chosen.length+' leg'+(chosen.length!==1?'s':'')+(chosen.length?(oddsOn?' \u00b7 $'+comb.toFixed(2):' \u00b7 '+Math.round(conf*100)+'%'):'')+'</div></div>';
+    // filters (dropdowns)
+    h+='<div class="mbv-filters">'
+      +'<select class="ob-sel" onchange="_mbSetCardMkt(this.value)"><option value="all"'+(mSel==='all'?' selected':'')+'>All markets</option>'
+        +mkts.map(k=>'<option value="'+k+'"'+(k===mSel?' selected':'')+'>'+_lbl(k)+'</option>').join('')+'</select>';
+    if(oddsOn){ h+='<select class="ob-sel" onchange="_mbSetCardBook(this.value)"><option value="all"'+(bSel==='all'?' selected':'')+'>All books</option>'
+        +books.map(b=>'<option value="'+b+'"'+(b===bSel?' selected':'')+'>'+b+'</option>').join('')+'</select>'; }
+    h+='</div>';
+    if(!pool.length) return h+emptyState('ti-search-off','No legs','No qualifying legs for this filter.');
+    // cards
+    h+='<div class="mbv-list">'+pool.map(l=>{
+      const bd=_legBadges(l), on=!!slip[l.id];
+      const dots=(()=>{ const n=Math.round((l.prob||0)*5); let s=''; for(let i=0;i<5;i++)s+='<span class="mbv-dot'+(i<n?' on':'')+'"></span>'; return s; })();
+      const px=l._odds&&l._odds.price;
+      const edge=px?('+'+((l.prob-1/px)*100).toFixed(0)+'% EV'):((l.avg-l.line)>0?('+'+(l.avg-l.line).toFixed(1)):'');
+      return '<div class="mbv-card'+(on?' on':'')+'" onclick="_mbToggleLeg(\''+l.id.replace(/'/g,"\\'")+'\')">'
+        +'<div class="mbv-row1">'+teamLogo(l.p.team,30)
+          +'<div class="mbv-pn"><div class="mbv-nm">'+esc(l.p.name)+'<span class="mbv-tm">'+abbr(l.p.team)+' \u00b7 '+posShort(l.p.position)+'</span></div>'
+          +'<div class="mbv-mk">'+l.line+'+ '+_lbl(l.statKey)+'<span class="mbv-proj">proj '+fmt(l.avg,l.statKey==='goals'?1:l.statKey==='dreamteam'?0:1)+'</span></div></div>'
+          +'<div class="mbv-add"><i class="ti '+(on?'ti-circle-check-filled':'ti-circle-plus')+'"></i></div></div>'
+        +'<div class="mbv-row2"><span class="mbv-dots">'+dots+'</span>'
+          +'<span class="mbv-hit">'+(l.probReal?Math.round(l.prob*100)+'% hit':'~'+Math.round(l.prob*100)+'%')+'</span>'
+          +(edge?'<span class="mbv-edge">'+edge+'</span>':'')
+          +(px?'<span class="mbv-odds">$'+px.toFixed(2)+'</span>':'')
+          +'<span class="mbv-opp">v '+abbr(l.opp||'')+'</span></div>'
+        +'<div class="mbv-badges">'+bd.base.map(k=>{const b=MB_BADGES[k];return '<span class="mbv-bdg" style="background:'+b[1]+';color:'+b[2]+'"><i class="ti '+b[3]+'"></i>'+b[0]+'</span>';}).join('')
+          +bd.nerd.map(nx=>'<span class="mbv-nerd"><i class="ti '+nx[1]+'"></i>'+nx[0]+'</span>').join('')+'</div>'
+        +'</div>';
+    }).join('')+'</div>';
+    if(chosen.length>=2){ h+='<button class="mbv-save" onclick="_mbSaveCards()">Save '+chosen.length+'-leg multi to Bet Slip</button>'; }
+    return h;
+  }
+  function _multiCardsView(){ return '<div id="mbv-wrap">'+_mbvBody()+'</div>'; }
+  window._mbvRerender=function(){ var el=document.getElementById('mbv-wrap'); if(el) el.innerHTML=_mbvBody(); };
+  window._mbSetCardMkt=function(v){ SETTINGS.multi.cardMkt=v; saveSettings(); _mbvRerender(); };
+  window._mbSetCardBook=function(v){ SETTINGS.multi.cardBook=v; saveSettings(); _mbvRerender(); };
+  window._mbToggleLeg=function(id){ const s=state.view.mbSlip||(state.view.mbSlip={}); if(s[id])delete s[id]; else s[id]=1; _mbvRerender(); };
+  window._mbSaveCards=function(){ const pool=_mbCandPool(), s=state.view.mbSlip||{}; const legs=pool.filter(c=>s[c.id]); if(legs.length<2)return;
+    let comb=1; legs.forEach(l=>{ const px=(l._odds&&l._odds.price)||(l.prob>0?1/l.prob:null); if(px)comb*=px; });
+    _cardAddMultiEntry({ title:legs.length+'-leg multi', legs:legs.map(l=>({name:l.p.name,label:l.betLabel,odds:l._odds&&l._odds.price})), odds:comb, book:'', src:'Multi Builder' }); };
+
   function degenPickMulti(){
     if(!_oddsLive()) return '<div class="tp-body-meta" style="border:0;margin:10px 0;opacity:.75">Live odds are off right now \u2014 the Multi Builder needs posted prices to build legs.</div>';
     const pool=_pickPool('dg');
@@ -5526,7 +5665,7 @@
     }
     if(k==='multi'){
       _mbFocusGame=null;
-      return degenPickMulti();
+      return _multiCardsView();
     }
     return emptyState('ti-flame','Coming next','This tile ports next.');
   }
