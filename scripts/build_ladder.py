@@ -16,8 +16,9 @@ import glob
 import datetime
 from itertools import combinations, product
 
-STAKE = 10.0
-KEEP = 10
+START = 10.0
+TARGET = 10000.0
+MAX_RUNGS = 12
 MIN_GAMES = 6
 ODDS_LO = 1.85          # target SGM price window (~$2)
 ODDS_HI = 2.20
@@ -233,47 +234,65 @@ def main():
     gl = load_gamelogs(base)
     fx = load(os.path.join(base, 'fixture.json')) or []
     lpath = os.path.join(base, 'ladder.json')
-    lad = load(lpath) or {'bank': 100.0, 'start': 100.0, 'days': []}
+    lad = load(lpath) or {'bank': START, 'start': START, 'target': TARGET,
+                          'attempt': 1, 'peak': START, 'days': []}
     byp = build_index(gl)
 
-    # 1) grade previous pending
+    # 1) grade the pending rung (all legs must clear); winnings compound, a loss busts
     for d in lad['days']:
         if d.get('result') not in (None, 'pending'):
             continue
-        legs = d.get('legs') or [{'pick_name': d.get('pick_name'), 'market': d.get('market'),
-                                  'line': d.get('line')}]
+        legs = d.get('legs') or []
         outcomes = []
         for lg in legs:
             fld = MKT.get(lg.get('market'), lg.get('market'))
             outcomes.append(grade_leg(byp, lg.get('pick_name') or lg.get('name'), fld,
                                       lg.get('line'), d.get('year', 0), d.get('round', 0)))
-        if any(o is None for o in outcomes):
+        if not outcomes or any(o is None for o in outcomes):
             continue                              # not all legs played yet
-        d['result'] = 'win' if all(outcomes) else 'loss'
-        d['bank'] = lad['bank'] = round(
-            lad['bank'] + (STAKE * (d['odds'] - 1) if d['result'] == 'win' else -STAKE), 2)
+        before = d.get('bank_before', lad['bank'])
+        if all(outcomes):
+            d['result'] = 'win'
+            d['bank_after'] = round(before * d['odds'], 2)
+            lad['bank'] = d['bank_after']
+            lad['peak'] = max(lad.get('peak', START), lad['bank'])
+            if lad['bank'] >= lad.get('target', TARGET):
+                d['complete'] = True              # reached the top of the ladder
+        else:
+            d['result'] = 'loss'
+            d['bank_after'] = 0.0                 # busted
 
-    # 2) add next pick if latest day graded
+    # 2) add the next rung once the latest is graded
     last = lad['days'][-1] if lad['days'] else None
     if (last is None) or last.get('result') in ('win', 'loss'):
+        if last is None:
+            bank, rung = START, 1
+        elif last['result'] == 'win' and not last.get('complete'):
+            bank, rung = lad['bank'], last['rung'] + 1      # climb: stake the whole balance
+        else:                                                # busted or topped out -> new climb
+            bank, rung = START, 1
+            lad['attempt'] = lad.get('attempt', 1) + 1
+            lad['days'] = []
+        lad['bank'] = bank
         sgm = best_pick(base, gl, byp)
-        if sgm:                                   # only add a day when real odds yield a multi
+        if sgm:
             legs = [{'name': lg['name'], 'pick_name': lg['name'], 'market': lg['market'],
                      'line': lg['line'], 'odds': lg['over']} for lg in sgm['legs']]
             desc = ' + '.join('%s %s+ %s' % (lg['name'].split(' ')[-1], lg['line'], lg['market'])
                               for lg in sgm['legs'])
-            lad['days'].append({'date': datetime.date.today().isoformat(),
+            lad['days'].append({'date': datetime.date.today().isoformat(), 'rung': rung,
                                 'legs': legs, 'pick': desc, 'odds': sgm['price'],
-                                'book': sgm['book'], 'type': sgm.get('type'), 'result': 'pending', 'bank': None,
-                                'year': sgm['year'], 'round': sgm['round']})
+                                'book': sgm['book'], 'type': sgm.get('type'),
+                                'bank_before': round(bank, 2), 'bank_after': None,
+                                'result': 'pending', 'year': sgm['year'], 'round': sgm['round']})
 
-    lad['days'] = lad['days'][-KEEP:]
+    lad['days'] = lad['days'][-MAX_RUNGS:]
     with open(lpath, 'w') as fh:
         json.dump(lad, fh, indent=2)
-    n = len(lad['days'])
     tail = lad['days'][-1] if lad['days'] else {}
-    print('ladder %s: %d days, bank %s, latest: %s @ $%s' %
-          (base, n, lad['bank'], (tail.get('pick') or '-')[:70], tail.get('odds')))
+    print('ladder %s: attempt %s, rung %s, bank $%s (peak $%s), latest: %s @ $%s' %
+          (base, lad.get('attempt', 1), tail.get('rung', 0), lad['bank'], lad.get('peak', START),
+           (tail.get('pick') or '-')[:60], tail.get('odds')))
 
 
 if __name__ == '__main__':
