@@ -1,0 +1,29 @@
+name: JTT WNBA Odds
+on:
+  schedule:
+    - cron: '55 22 * * *'   # 08:55 AEST, just before the 9:01 ladder run
+    # add more lines here for in-game refreshes if you want, e.g. '0 3 * * *' etc.
+  workflow_dispatch:
+concurrency:
+  group: jtt-wnba-odds
+jobs:
+  odds:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install SDK
+        run: pip install rapidoddsapi
+      - name: Fetch WNBA odds
+        env:
+          ROA_API_KEY: ${{ secrets.ROA_API_KEY }}
+        run: python scripts/fetch_wnba_odds.py wnba/data/odds.json
+      - name: Commit
+        run: |
+          git config user.name "jtt-bot"
+          git config user.email "bot@justthetip"
+          git add wnba/data/odds.json
+          git diff --staged --quiet || git commit -m "wnba odds: refresh"
+          git push
