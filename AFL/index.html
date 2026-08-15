@@ -1049,6 +1049,23 @@
   .dv-cardbadges{align-items:center;gap:8px}
   .dv-vals{font-size:11px;color:var(--text-3);font-family:var(--font-mono)}
   .dv-card.dv-reduced{border-color:var(--ok,#22c55e)}
+  .deg-page{display:flex;flex-direction:column;gap:16px}
+  .deg-sec{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:12px}
+  .deg-sec-h{font-size:15px;font-weight:800;font-family:var(--font-display);display:flex;align-items:center;gap:8px;margin-bottom:3px}
+  .deg-sec-sub{font-size:12px;color:var(--text-3);margin-bottom:10px}
+  .deg-empty{padding:18px;text-align:center;color:var(--text-3);font-size:13px;display:flex;align-items:center;justify-content:center;gap:8px}
+  .pyr{display:flex;flex-direction:column;gap:12px}
+  .pyr-line{font-size:11px;font-weight:700;color:var(--accent);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px}
+  .lad-grid{display:flex;flex-direction:column;gap:4px}
+  .lad-day{display:flex;align-items:center;gap:10px;padding:8px 10px;background:var(--surface-2);border:1px solid var(--border);border-radius:8px;font-size:13px}
+  .lad-n{font-weight:700;min-width:46px;color:var(--text-2)}
+  .lad-pick{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .lad-odds{color:var(--text-3);font-variant-numeric:tabular-nums}
+  .lad-bank{font-weight:700;font-variant-numeric:tabular-nums;min-width:60px;text-align:right}
+  .lad-ic{font-size:18px}
+  .lad-win .lad-ic{color:var(--ok,#22c55e)} .lad-win{border-color:rgba(34,197,94,.35)}
+  .lad-loss .lad-ic{color:var(--bad,#ef4444)} .lad-loss{opacity:.65}
+  .lad-pending .lad-ic{color:var(--text-3)}
   .mbv-save{width:100%;margin-top:12px;padding:11px;background:var(--accent);color:#0b1220;border:none;border-radius:10px;font-weight:800;font-size:14px;cursor:pointer;font-family:var(--font-display)}
 </style>
 </head>
@@ -1215,6 +1232,7 @@
     CREW=CFG.crew||[
     {k:'board',    n:"Today's Board",i:'ti-clipboard-list',d:'Best plays ranked'},
     {k:'multi',    n:'Multi Builder', i:'ti-stack-2',      d:'Stacked legs'},
+    {k:'degenerates',n:'Degenerates', i:'ti-flame',       d:'Round multis & ladder'},
     {k:'radar',    n:'The Radar',     i:'ti-radar',        d:'4-axis matchup ratings'},
     {k:'green',    n:'Green Lights',  i:'ti-traffic-lights',d:'Strong OVER'},
     {k:'death',    n:'Death Riders',  i:'ti-skull',        d:'Strong UNDER'},
@@ -6081,11 +6099,97 @@
     });
     return h;
   }
+  // ===== Degenerates page: high-variance round multis + the shared 10-day ladder =====
+  function _mktLbl(k){ var m=[].concat(MULTI_MKTS||[],ODDS_MKTS||[],DV_MARKETS||[]); for(var i=0;i<m.length;i++){ if(m[i][0]===k) return m[i][1]; } return k; }
+  function _degWrap(title, icon, sub, body){
+    return '<div class="deg-sec"><div class="deg-sec-h"><i class="ti '+icon+'"></i> '+title+'</div>'
+      +(sub?'<div class="deg-sec-sub">'+sub+'</div>':'')+(body||'')+'</div>';
+  }
+  function _degCard(l){
+    var bd=_legBadges(l), px=l._odds&&l._odds.price;
+    var badges=bd.base.slice(0,3).map(function(k){var b=_MB_ALLBDG[k];if(!b)return '';return '<span class="mbv-bdg" style="background:'+b[1]+';color:'+b[2]+'"><i class="ti '+b[3]+'"></i>'+b[0]+'</span>';}).join('');
+    return '<div class="mbv-card">'
+      +'<div class="mbv-row1">'+teamLogo(l.p.team,28)
+        +'<div class="mbv-pn"><div class="mbv-nm">'+esc(l.p.name)+'<span class="mbv-tm">'+abbr(l.p.team)+' \u00b7 v '+abbr(l.opp||'')+'</span></div>'
+        +'<div class="mbv-mk"><b>'+l.line+'+</b> '+_mktLbl(l.statKey)+'<span class="mbv-proj">proj '+fmt(l.proj!=null?l.proj:l.avg,1)+'</span></div></div>'
+        +(px?'<div class="mbv-op"><span class="mbv-op-price">$'+px.toFixed(2)+'</span><span class="mbv-op-book">'+esc((l._odds.book||'').slice(0,9))+'</span></div>':'<div class="mbv-op mbv-op-nb"><span class="mbv-op-price">'+Math.round((l.prob||0)*100)+'%</span><span class="mbv-op-book">proj</span></div>')+'</div>'
+      +(badges?'<div class="mbv-badges">'+badges+'</div>':'')+'</div>';
+  }
+  function _degPool(){ state.view.mbvFocus=null; return _mbCandPool(); }
+
+  // --- The Train: a long banker multi of short-priced legs across the round/day ---
+  function _trainSection(){
+    var oddsOn=_oddsLive();
+    var pool=_degPool();
+    var legs = oddsOn ? pool.filter(function(c){return c._odds&&c._odds.price>=1.30&&c._odds.price<=1.60;})
+                      : pool.filter(function(c){return (c.prob||0)>=0.80;});
+    legs=legs.sort(function(a,b){return (b.prob||0)-(a.prob||0);});
+    var seen={}; legs=legs.filter(function(l){ if(seen[l.p.name])return false; seen[l.p.name]=1; return true; });
+    legs=legs.slice(0, oddsOn?12:10);
+    if(!legs.length) return _degWrap('The Train','ti-train','No qualifying banker legs right now.','');
+    var comb=1, conf=1; legs.forEach(function(l){ var px=(l._odds&&l._odds.price)||(l.prob>0?1/l.prob:2); comb*=px; conf*=Math.max(0.5,l.prob||0.5); });
+    var daily=_dailySched();
+    var sub=(daily?'Daily':'Round')+' Train \u00b7 '+legs.length+' legs \u00b7 all aboard \u2014 '+(oddsOn?('$'+comb.toFixed(2)+' combined'):(Math.round(conf*100)+'% all hit'));
+    return _degWrap('The Train','ti-train',sub, '<div class="mbv-list">'+legs.map(_degCard).join('')+'</div>');
+  }
+
+  // --- The Pyramid: one aggressive line up top, widening to safer lines below ---
+  function _pyramidSection(){
+    var games=(state.data.fixture||[]).filter(function(g){return g.home&&g.away;});
+    var teams={}; games.forEach(function(g){teams[g.home]=1;teams[g.away]=1;});
+    var cands=(state.idx.players||[]).filter(function(p){return teams[p.team]&&(p.matches||0)>=5&&isPlaying(p.name,p.team)&&/Mid|Ruck/.test(p.position||'');})
+      .map(function(p){ var opp=nextOpp(p.team); var m=_projModel(p,'disposals',20,opp); return {p:p,opp:opp,statKey:'disposals',avg:+p.disposals,proj:m.mean,prob:m.prob,line:20,_odds:(typeof priceForLine==='function'?priceForLine(p.name,'disposals',20):null)}; })
+      .sort(function(a,b){return b.proj-a.proj;});
+    var seen={}; cands=cands.filter(function(l){ if(seen[l.p.name])return false; seen[l.p.name]=1; return true; });
+    var t30=cands.filter(function(l){return l.proj>=31;}).slice(0,1);
+    var used={}; t30.forEach(function(l){used[l.p.name]=1;});
+    var t25=cands.filter(function(l){return l.proj>=26&&!used[l.p.name];}).slice(0,2); t25.forEach(function(l){used[l.p.name]=1;});
+    var t20=cands.filter(function(l){return l.proj>=21&&!used[l.p.name];}).slice(0,3);
+    if(t30.length+t25.length+t20.length<3) return _degWrap('The Pyramid','ti-triangle','Not enough disposal projections to build a pyramid.','');
+    function tier(list,line,lbl){ if(!list.length)return ''; return '<div class="pyr-tier"><div class="pyr-line">'+lbl+' \u00b7 '+line+'+ disp</div><div class="mbv-list">'+list.map(function(l){l=Object.assign({},l,{line:line}); return _degCard(l);}).join('')+'</div></div>'; }
+    var body='<div class="pyr">'+tier(t30,30,'Apex')+tier(t25,25,'Middle')+tier(t20,20,'Base')+'</div>';
+    var n=t30.length+t25.length+t20.length;
+    return _degWrap('The Pyramid','ti-triangle',n+' legs \u00b7 tiers down 30+ / 25+ / 20+ disposals \u2014 top-heavy, safer as it widens', body);
+  }
+
+  // --- The 10-day Ladder (shared, pipeline-fed via AFL/data/ladder.json) ---
+  function _ladderSection(){
+    var L=(state.data.ladder||null);
+    if(!L||!L.days||!L.days.length){
+      return _degWrap('The Ladder','ti-stairs-up','10-day rolling challenge \u2014 a banker a day, riding the bankroll',
+        '<div class="deg-empty"><i class="ti ti-hourglass"></i> The daily ladder pick lands here once the challenge feed is live.</div>');
+    }
+    var rows=L.days.map(function(d,i){
+      var st=d.result==='win'?'win':d.result==='loss'?'loss':'pending';
+      var ic=st==='win'?'ti-circle-check-filled':st==='loss'?'ti-circle-x-filled':'ti-clock';
+      return '<div class="lad-day lad-'+st+'"><span class="lad-n">Day '+(i+1)+'</span>'
+        +'<span class="lad-pick">'+esc(d.pick||'')+'</span>'
+        +'<span class="lad-odds">'+(d.odds?'$'+(+d.odds).toFixed(2):'')+'</span>'
+        +'<span class="lad-bank">'+(d.bank!=null?'$'+(+d.bank).toFixed(2):'')+'</span>'
+        +'<i class="ti '+ic+' lad-ic"></i></div>';
+    }).join('');
+    var wins=L.days.filter(function(d){return d.result==='win';}).length;
+    var done=L.days.filter(function(d){return d.result==='win'||d.result==='loss';}).length;
+    var sub='Day '+Math.min(L.days.length,done+1)+'/10 \u00b7 '+wins+'/'+done+' landed'+(L.bank!=null?' \u00b7 bankroll $'+(+L.bank).toFixed(2):'');
+    return _degWrap('The Ladder','ti-stairs-up',sub, '<div class="lad-grid">'+rows+'</div>');
+  }
+
+  function _yankeeSection(){
+    return _degWrap('The Yankee','ti-versions','4 SGMs \u00b7 system multi (6 doubles + 4 trebles + 1 four-fold)',
+      '<div class="deg-empty"><i class="ti ti-tools"></i> The Yankee system builder is coming next.</div>');
+  }
+
+  function degeneratesPage(){
+    state.view.mbvFocus=null;
+    return '<div class="deg-page">'+_ladderSection()+_trainSection()+_pyramidSection()+_yankeeSection()+'</div>';
+  }
+
   window.degenTile=function(k){
     const c=CREW.find(x=>x.k===k);
     let body;
     const teams=(state.data.fixture||[]).flatMap(g=>[g.home,g.away]);
     if(k==='board') body=todaysBoardPage();
+    else if(k==='degenerates') body=degeneratesPage();
     else if(k==='compare') body=comparePage();
     else if(k==='green') body=ouSection(collectOU(teams,'over'),'over','Green Lights','ti-traffic-lights','c-green');
     else if(k==='death') body=ouSection(collectOU(teams,'under'),'under','Death Riders','ti-skull','c-red');
