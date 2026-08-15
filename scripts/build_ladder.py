@@ -1,20 +1,39 @@
 #!/usr/bin/env python3
 """JTT shared ladder challenge -> writes <base>/ladder.json for one sport.
-Usage: build_ladder.py <data_dir> <stat>
-Each run: grade any pending pick whose next game has been played, adjust the bankroll,
-then add the next day's banker (the safest 'lock' line). Keeps a rolling 10 days.
-Handles single-file (gamelogs.json) and per-season (gamelogs_YYYY.json) game logs."""
+Usage: build_ladder.py <data_dir> [fallback_stat]
+
+Preferred mode (odds present): each day's pick is the best ~$2 same-game multi
+(2-4 legs, any stat) from a single bookmaker, chosen by highest combined hit-rate.
+Fallback mode (no odds, e.g. AFLW): a single-stat banker on [fallback_stat].
+
+Each run grades the previous pending pick (all legs must clear), moves the bankroll,
+then adds the next pick. Keeps a rolling 10 days. Handles split game-log files."""
 import json
 import os
 import re
 import sys
 import glob
 import datetime
+from itertools import combinations, product
 
 STAKE = 10.0
 KEEP = 10
-NOM_ODDS = 1.30
 MIN_GAMES = 6
+ODDS_LO = 1.85          # target SGM price window (~$2)
+ODDS_HI = 2.20
+LEG_LO = 1.14           # per-leg price floor/ceiling worth combining
+LEG_HI = 1.75
+HIT_WINDOW = 12         # recent games used for hit-rate
+TOP_PER_GAME = 10       # legs per game/book fed to the combo search
+
+# odds market -> game-log field (only markets we can grade)
+MKT = {'disposals': 'disposals', 'goals': 'goals', 'marks': 'marks', 'tackles': 'tackles',
+       'dreamteam': 'dreamteam', 'kicks': 'kicks', 'handballs': 'handballs',
+       'clearances': 'clearances', 'hitouts': 'hitouts', 'fantasy': 'dreamteam',
+       'points': 'points', 'rebounds': 'rebounds', 'assists': 'assists', 'threes': 'threes',
+       'shots': 'shots', 'saves': 'saves', 'passYds': 'passYds', 'rushYds': 'rushYds',
+       'recYds': 'recYds', 'receptions': 'receptions', 'H': 'H', 'TB': 'TB', 'HR': 'HR',
+       'RBI': 'RBI', 'R': 'R', 'SB': 'SB', 'K': 'SO'}
 
 
 def load(path):
@@ -42,12 +61,183 @@ def rnum(name):
     return int(m.group(1)) if m else 0
 
 
+def build_index(gl):
+    byp = {}
+    for r in gl:
+        nm = r.get('Player')
+        if not nm:
+            continue
+        rec = byp.setdefault(nm, {'team': r.get('Team'), 'games': []})
+        rec['team'] = r.get('Team')
+        rec['games'].append(r)
+    for nm in byp:
+        byp[nm]['games'].sort(key=lambda r: (int(r.get('Year', 0) or 0), rnum(r.get('RoundName') or r.get('Week'))))
+    return byp
+
+
+def hit_rate(rec, field, line):
+    vals = [r.get(field) for r in rec['games'][-HIT_WINDOW:] if r.get(field) is not None]
+    vals = [float(v) for v in vals]
+    if len(vals) < 4:
+        return None
+    return sum(1 for v in vals if v >= line) / float(len(vals))
+
+
+def _mkleg(l, byp):
+    nm = l.get('player'); mk = l.get('market'); ov = l.get('over')
+    if nm is None or ov is None or mk not in MKT or ov < LEG_LO or ov > LEG_HI:
+        return None
+    rec = byp.get(nm)
+    if not rec or len(rec['games']) < MIN_GAMES:
+        return None
+    hr = hit_rate(rec, MKT[mk], l.get('line'))
+    if hr is None or hr < 0.5:
+        return None
+    return {'name': nm, 'market': mk, 'line': l.get('line'), 'over': ov, 'hr': hr}
+
+
+def _combo_same_game(legs):
+    """Best 2-4 distinct-player legs from one game, priced ~$2 (SGM)."""
+    byname = {}
+    for lg in legs:
+        if lg['name'] not in byname or lg['hr'] > byname[lg['name']]['hr']:
+            byname[lg['name']] = lg
+    cand = sorted(byname.values(), key=lambda x: -x['hr'])[:TOP_PER_GAME]
+    best = None
+    n = len(cand)
+    for size in (2, 3, 4):
+        if n < size:
+            break
+        for combo in combinations(range(n), size):
+            price = 1.0; hrp = 1.0
+            for i in combo:
+                price *= cand[i]['over']; hrp *= cand[i]['hr']
+            if ODDS_LO <= price <= ODDS_HI and (best is None or hrp > best['hrp']):
+                best = {'legs': [cand[i] for i in combo], 'hrp': hrp}
+    return best
+
+
+def _combo_cross_game(by_game):
+    """Best 2-4 legs, ONE per game, priced ~$2 (cross-game multi -> honest independent pricing)."""
+    games = {}
+    for gi, legs in by_game.items():
+        byline = {}
+        for lg in legs:
+            if lg['line'] not in byline or lg['hr'] > byline[lg['line']]['hr']:
+                byline[lg['line']] = lg
+        games[gi] = sorted(byline.values(), key=lambda x: -x['hr'])[:4]
+    gis = sorted(games.keys(), key=lambda gi: -games[gi][0]['hr'])[:6]
+    best = None
+    for size in (2, 3, 4):
+        if len(gis) < size:
+            break
+        for gset in combinations(gis, size):
+            pools = [games[gi] for gi in gset]
+            for pick in product(*pools):
+                price = 1.0; hrp = 1.0
+                for lg in pick:
+                    price *= lg['over']; hrp *= lg['hr']
+                if ODDS_LO <= price <= ODDS_HI and (best is None or hrp > best['hrp']):
+                    best = {'legs': list(pick), 'hrp': hrp}
+    return best
+
+
+def best_pick(base, gl, byp):
+    """Cross-game multi across the slate (one book); SGM only when a single game is on."""
+    od = load(os.path.join(base, 'odds.json'))
+    fx = load(os.path.join(base, 'fixture.json')) or []
+    if not od or not od.get('lines'):
+        return None
+    legs_all = list(od.get('lines') or []) + list(od.get('alt') or [])
+
+    pteam = {nm: rec['team'] for nm, rec in byp.items()}
+    games = [(g.get('home'), g.get('away')) for g in fx if g.get('home') and g.get('away')]
+    if not games:
+        return None
+    team_game = {}
+    for i, (h, a) in enumerate(games):
+        team_game[h] = i; team_game[a] = i
+    single = len(games) == 1
+
+    # priced, gradeable, short legs grouped by (book, game)
+    by_book = {}
+    for l in legs_all:
+        gi = team_game.get(pteam.get(l.get('player')))
+        if gi is None:
+            continue
+        lg = _mkleg(l, byp)
+        if lg is None:
+            continue
+        by_book.setdefault(l.get('book'), {}).setdefault(gi, []).append(lg)
+
+    best = None
+    for book, by_game in by_book.items():
+        if single:
+            gi = next(iter(by_game))
+            c = _combo_same_game(by_game[gi]); typ = 'sgm'
+        else:
+            if len(by_game) < 2:            # need >=2 games for a cross-game multi
+                continue
+            c = _combo_cross_game(by_game); typ = 'multi'
+        if c and (best is None or c['hrp'] > best['hrp']):
+            price = 1.0
+            for lg in c['legs']:
+                price *= lg['over']
+            best = {'legs': c['legs'], 'hrp': c['hrp'], 'price': price, 'book': book, 'type': typ}
+
+    if not best:
+        return None
+    latest = (0, 0)
+    for lg in best['legs']:
+        g = byp[lg['name']]['games'][-1]
+        latest = max(latest, (int(g.get('Year', 0) or 0), rnum(g.get('RoundName') or g.get('Week'))))
+    return {'legs': best['legs'], 'price': round(best['price'], 2), 'book': best['book'],
+            'type': best['type'], 'year': latest[0], 'round': latest[1] + 1}
+
+
+def banker(byp, fx, stat):                       # fallback for no-odds sports
+    teams = set()
+    for g in fx:
+        for k in ('home', 'away', 'homeAbbr', 'awayAbbr'):
+            if g.get(k):
+                teams.add(g[k])
+    cand = [nm for nm, rec in byp.items()
+            if len(rec['games']) >= MIN_GAMES and (not teams or rec['team'] in teams)]
+    best = None
+    for nm in cand:
+        rec = byp[nm]
+        recent = [float(r.get(stat)) for r in rec['games'][-8:] if r.get(stat) is not None]
+        if len(recent) < 5:
+            continue
+        line = float(int(min(recent) * 0.85)) + 0.5
+        if line < 0.5:
+            continue
+        if best is None or line > best['line']:
+            g = rec['games'][-1]
+            best = {'name': nm, 'line': line, 'stat': stat,
+                    'year': int(g.get('Year', 0) or 0),
+                    'round': rnum(g.get('RoundName') or g.get('Week')) + 1}
+    return best
+
+
+def grade_leg(byp, name, field, line, year, rnd):
+    rec = byp.get(name)
+    if not rec:
+        return None
+    for r in rec['games']:
+        y = int(r.get('Year', 0) or 0)
+        rd = rnum(r.get('RoundName') or r.get('Week'))
+        if (y, rd) >= (year, rnd) and r.get(field) is not None:
+            return float(r.get(field)) >= line
+    return None
+
+
 def main():
     if len(sys.argv) < 2:
-        print('usage: build_ladder.py <data_dir> <stat>')
+        print('usage: build_ladder.py <data_dir> [fallback_stat]')
         return
     base = sys.argv[1]
-    stat = sys.argv[2] if len(sys.argv) > 2 else 'disposals'
+    fb_stat = sys.argv[2] if len(sys.argv) > 2 else 'disposals'
     if not os.path.isdir(base):
         print('skip (no dir):', base)
         return
@@ -55,83 +245,57 @@ def main():
     gl = load_gamelogs(base)
     fx = load(os.path.join(base, 'fixture.json')) or []
     lpath = os.path.join(base, 'ladder.json')
-    lad = load(lpath) or {'bank': 100.0, 'start': 100.0, 'stat': stat, 'days': []}
-    lad['stat'] = stat
+    lad = load(lpath) or {'bank': 100.0, 'start': 100.0, 'days': []}
+    byp = build_index(gl)
 
-    byp = {}
-    for r in gl:
-        v = r.get(stat)
-        if v is None:
-            continue
-        try:
-            v = float(v)
-        except Exception:
-            continue
-        rec = byp.setdefault(r.get('Player'), {'team': r.get('Team'), 'games': []})
-        rec['team'] = r.get('Team')
-        rec['games'].append((int(r.get('Year', 0) or 0), rnum(r.get('RoundName') or r.get('Week')), v))
-    for nm in byp:
-        byp[nm]['games'].sort()
-
+    # 1) grade previous pending
     for d in lad['days']:
         if d.get('result') not in (None, 'pending'):
             continue
-        rec = byp.get(d.get('pick_name'))
-        if not rec:
-            continue
-        after = [(y, rd, v) for (y, rd, v) in rec['games']
-                 if (y, rd) >= (d.get('year', 0), d.get('round', 0))]
-        if after:
-            y, rd, v = after[0]
-            d['result'] = 'win' if v >= d['line'] else 'loss'
-            if d['result'] == 'win':
-                lad['bank'] = round(lad['bank'] + STAKE * (d['odds'] - 1), 2)
-            else:
-                lad['bank'] = round(lad['bank'] - STAKE, 2)
-            d['bank'] = lad['bank']
+        legs = d.get('legs') or [{'pick_name': d.get('pick_name'), 'market': d.get('market'),
+                                  'line': d.get('line')}]
+        outcomes = []
+        for lg in legs:
+            fld = MKT.get(lg.get('market'), lg.get('market'))
+            outcomes.append(grade_leg(byp, lg.get('pick_name') or lg.get('name'), fld,
+                                      lg.get('line'), d.get('year', 0), d.get('round', 0)))
+        if any(o is None for o in outcomes):
+            continue                              # not all legs played yet
+        d['result'] = 'win' if all(outcomes) else 'loss'
+        d['bank'] = lad['bank'] = round(
+            lad['bank'] + (STAKE * (d['odds'] - 1) if d['result'] == 'win' else -STAKE), 2)
 
+    # 2) add next pick if latest day graded
     last = lad['days'][-1] if lad['days'] else None
     if (last is None) or last.get('result') in ('win', 'loss'):
-        teams = set()
-        for g in fx:
-            for key in ('home', 'away', 'homeAbbr', 'awayAbbr'):
-                if g.get(key):
-                    teams.add(g[key])
-        cands = [nm for nm, rec in byp.items()
-                 if len(rec['games']) >= MIN_GAMES and (not teams or rec['team'] in teams)]
-        if not cands:
-            latest = max((rec['games'][-1][:2] for rec in byp.values() if rec['games']), default=(0, 0))
-            cands = [nm for nm, rec in byp.items()
-                     if len(rec['games']) >= MIN_GAMES and rec['games'][-1][:2] >= (latest[0], latest[1] - 1)]
-        best = None
-        for nm in cands:
-            rec = byp[nm]
-            recent = [v for (_, _, v) in rec['games'][-8:]]
-            mn = min(recent)
-            line = float(int(mn * 0.85)) + 0.5
-            if line < 0.5:
-                continue
-            if (best is None) or line > best['line']:
-                y, rd, _ = rec['games'][-1]
-                best = {'name': nm, 'line': line, 'year': y, 'round': rd + 1}
-        if best:
-            lad['days'].append({
-                'date': datetime.date.today().isoformat(),
-                'pick': best['name'] + ' ' + str(best['line']) + '+ ' + stat,
-                'pick_name': best['name'],
-                'line': best['line'],
-                'market': stat,
-                'odds': NOM_ODDS,
-                'result': 'pending',
-                'bank': None,
-                'year': best['year'],
-                'round': best['round'],
-            })
+        sgm = best_pick(base, gl, byp)
+        if sgm:
+            legs = [{'name': lg['name'], 'pick_name': lg['name'], 'market': lg['market'],
+                     'line': lg['line'], 'odds': lg['over']} for lg in sgm['legs']]
+            desc = ' + '.join('%s %s+ %s' % (lg['name'].split(' ')[-1], lg['line'], lg['market'])
+                              for lg in sgm['legs'])
+            lad['days'].append({'date': datetime.date.today().isoformat(),
+                                'legs': legs, 'pick': desc, 'odds': sgm['price'],
+                                'book': sgm['book'], 'type': sgm.get('type'), 'result': 'pending', 'bank': None,
+                                'year': sgm['year'], 'round': sgm['round']})
+        else:
+            b = banker(byp, fx, fb_stat)
+            if b:
+                lad['days'].append({'date': datetime.date.today().isoformat(),
+                                    'legs': [{'name': b['name'], 'pick_name': b['name'],
+                                              'market': b['stat'], 'line': b['line'],
+                                              'odds': 1.30}],
+                                    'pick': '%s %s+ %s' % (b['name'], b['line'], b['stat']),
+                                    'odds': 1.30, 'result': 'pending', 'bank': None,
+                                    'year': b['year'], 'round': b['round']})
 
     lad['days'] = lad['days'][-KEEP:]
     with open(lpath, 'w') as fh:
         json.dump(lad, fh, indent=2)
-    print('ladder %s (%s): %d days, bank %s' % (base, stat, len(lad['days']), lad['bank']))
+    n = len(lad['days'])
+    tail = lad['days'][-1] if lad['days'] else {}
+    print('ladder %s: %d days, bank %s, latest: %s @ $%s' %
+          (base, n, lad['bank'], (tail.get('pick') or '-')[:70], tail.get('odds')))
 
 
 if __name__ == '__main__':
