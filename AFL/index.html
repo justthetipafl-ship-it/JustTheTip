@@ -1064,6 +1064,19 @@
   .deg-empty{padding:18px;text-align:center;color:var(--text-3);font-size:13px;display:flex;align-items:center;justify-content:center;gap:8px}
   .pyr{display:flex;flex-direction:column;gap:12px}
   .pyr-line{font-size:11px;font-weight:700;color:var(--accent);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px}
+  .yk-sgm{padding:0!important;overflow:hidden}
+  .yk-sgm-h{display:flex;align-items:center;gap:8px;padding:8px 10px;background:var(--surface-3,var(--surface));border-bottom:1px solid var(--border);font-size:12px;font-weight:700}
+  .yk-sgm-g{flex:1}
+  .yk-sgm-od{color:var(--accent);font-family:var(--font-display)}
+  .yk-leg{display:flex;align-items:center;gap:8px;padding:7px 10px;font-size:12px;border-bottom:1px solid var(--border-light,var(--border))}
+  .yk-leg:last-child{border-bottom:none}
+  .yk-lp{flex:1;font-weight:600}
+  .yk-lm{color:var(--text-2)}
+  .yk-lo{color:var(--text-3);min-width:44px;text-align:right}
+  .yk-sys{margin-top:10px;background:var(--surface-2);border:1px solid var(--border);border-radius:10px;padding:10px 12px}
+  .yk-sys-r{display:flex;justify-content:space-between;font-size:13px;padding:3px 0}
+  .yk-sys-max{font-weight:800;color:var(--ok,#22c55e);border-top:1px solid var(--border);margin-top:4px;padding-top:7px}
+  .yk-sys-note{font-size:11px;color:var(--text-3);margin-top:6px;line-height:1.4}
   .lad-grid{display:flex;flex-direction:column;gap:4px}
   .lad-day{display:flex;align-items:center;gap:10px;padding:8px 10px;background:var(--surface-2);border:1px solid var(--border);border-radius:8px;font-size:13px}
   .lad-n{font-weight:700;min-width:46px;color:var(--text-2)}
@@ -1265,7 +1278,8 @@
                        teams_form:'data/teams_form.json', dvp:'data/dvp.json',
                        gamelogs:'data/gamelogs.json', fixture:'data/fixture.json',
                        injury:'data/injury.json', odds:'data/odds.json',
-                       results:'data/results.json', lineups:'data/lineups.json', weather:'data/weather.json' };
+                       results:'data/results.json', lineups:'data/lineups.json', weather:'data/weather.json',
+                       ladder:'data/ladder.json' };
   let DATA_FILES;  // = common + per-sport extras (SPORT_CONFIG.dataFiles); set in _applyConfig
 
   // Live odds from the Cloudflare Worker (proximity-gated poller). Leave '' to use the
@@ -6222,9 +6236,47 @@
     var sub='Day '+Math.min(L.days.length,done+1)+'/10 \u00b7 '+wins+'/'+done+' landed'+(L.bank!=null?' \u00b7 bankroll $'+(+L.bank).toFixed(2):'');
     return _degWrap('The Ladder','ti-stairs-up',sub, '<div class="lad-grid">'+rows+'</div>');
   }
-  function _yankeeSection(){
-    return _degWrap('The Yankee','ti-versions','4 SGMs \u00b7 system multi (6 doubles + 4 trebles + 1 four-fold)',
-      '<div class="deg-empty"><i class="ti ti-tools"></i> The Yankee system builder is coming next.</div>');
+  // --- The Yankee: 4 SGMs (~$3 each) across 4 games, staked as an 11-bet system ---
+  function _sgmCard(sgm){
+    return '<div class="mbv-card yk-sgm">'
+      +'<div class="yk-sgm-h">'+teamLogo(sgm.legs[0].p.team,20)+'<span class="yk-sgm-g">'+abbr(sgm.legs[0].p.team)+' v '+abbr(sgm.legs[0].opp)+'</span><span class="yk-sgm-od">$'+sgm.od.toFixed(2)+' SGM</span></div>'
+      +sgm.legs.map(function(l){return '<div class="yk-leg"><span class="yk-lp">'+esc(l.p.name)+'</span><span class="yk-lm">'+l.line+'+ '+_mktLbl(l.statKey)+'</span><span class="yk-lo">$'+l.over.toFixed(2)+'</span></div>';}).join('')
+      +'</div>';
+  }
+  function _yankeeSGMs(legs){
+    var byGame={}; legs.forEach(function(l){ if(l.over<1.4||l.over>2.1)return; var g=_gameKey(l.p.team,l.opp); (byGame[g]=byGame[g]||[]).push(l); });
+    var sgms=[];
+    Object.keys(byGame).forEach(function(g){
+      var gl=byGame[g], byPl={}; gl.forEach(function(l){ if(!byPl[l.p.name]||l.prob>byPl[l.p.name].prob) byPl[l.p.name]=l; });
+      var cand=Object.keys(byPl).map(function(k){return byPl[k];}).sort(function(a,b){return b.prob-a.prob;}).slice(0,8);
+      var best=null;
+      for(var i=0;i<cand.length;i++) for(var j=i+1;j<cand.length;j++){
+        var od=cand[i].over*cand[j].over; if(od<2.5||od>3.5) continue;
+        var pr=(cand[i].prob||0)*(cand[j].prob||0); if(!best||pr>best.pr) best={legs:[cand[i],cand[j]],od:od,pr:pr};
+      }
+      if(best) sgms.push(best);
+    });
+    return sgms.sort(function(a,b){return b.pr-a.pr;}).slice(0,4);
+  }
+  function _yankeeSystem(o){
+    var doubles=[],trebles=[],four=1,i,j,k;
+    for(i=0;i<4;i++)for(j=i+1;j<4;j++) doubles.push(o[i]*o[j]);
+    for(i=0;i<4;i++)for(j=i+1;j<4;j++)for(k=j+1;k<4;k++) trebles.push(o[i]*o[j]*o[k]);
+    four=o[0]*o[1]*o[2]*o[3];
+    var sum=function(a){return a.reduce(function(x,y){return x+y;},0);};
+    return {allWin:sum(doubles)+sum(trebles)+four, doubles:doubles, trebles:trebles, four:four, outlay:11};
+  }
+  function _yankeeSection(legs, oddsOn, book){
+    if(!oddsOn) return _degWrap('The Yankee','ti-versions','4 SGMs \u00b7 11-bet system','<div class="deg-empty"><i class="ti ti-lock"></i> Needs live odds \u2014 four priced ~$3 SGMs.</div>');
+    var sgms=_yankeeSGMs(legs);
+    if(sgms.length<4) return _degWrap('The Yankee','ti-versions','','<div class="deg-empty">Not enough games with a ~$3 SGM at '+bookName(book)+'.</div>');
+    var sys=_yankeeSystem(sgms.map(function(s){return s.od;}));
+    var cards='<div class="mbv-list">'+sgms.map(_sgmCard).join('')+'</div>';
+    var box='<div class="yk-sys"><div class="yk-sys-r"><span>Stake</span><span>$11 ($1 \u00d7 11 bets)</span></div>'
+      +'<div class="yk-sys-r"><span>6 doubles + 4 trebles + 1 four-fold</span><span></span></div>'
+      +'<div class="yk-sys-r yk-sys-max"><span>Return if all 4 land</span><span>$'+sys.allWin.toFixed(2)+'</span></div>'
+      +'<div class="yk-sys-note">Any 2 SGMs returns (a double); 3 pays doubles + a treble. Break-even needs ~2\u20133 to land.</div></div>';
+    return _degWrap('The Yankee','ti-versions','4 SGMs @ '+bookName(book)+' \u00b7 6 doubles + 4 trebles + 1 four-fold', cards+box);
   }
 
   function _degBody(){
@@ -6233,7 +6285,7 @@
     var book=(oddsOn&&(state.view.degBook&&books.indexOf(state.view.degBook)>=0?state.view.degBook:books[0]))||null;
     var bar=(oddsOn&&books.length)?('<div class="deg-bookbar"><span class="deg-bl">Bookmaker</span><select class="ob-sel" onchange="_degSetBook(this.value)">'+books.map(function(b){return '<option value="'+b+'"'+(b===book?' selected':'')+'>'+bookName(b)+'</option>';}).join('')+'</select><span class="deg-bl" style="font-weight:400">one book \u2014 legs are stakeable together</span></div>'):'';
     var legs=oddsOn?_degBookLegs(book):_degProjLegs();
-    return bar+_ladderSection()+_trainSection(legs,oddsOn,book)+_pyramidSection(legs,oddsOn,book)+_yankeeSection();
+    return bar+_ladderSection()+_trainSection(legs,oddsOn,book)+_pyramidSection(legs,oddsOn,book)+_yankeeSection(legs,oddsOn,book);
   }
   window._degSetBook=function(b){ state.view.degBook=b; var el=document.getElementById('deg-wrap'); if(el) el.innerHTML=_degBody(); };
   function degeneratesPage(){ state.view.mbvFocus=null; return '<div id="deg-wrap" class="deg-page">'+_degBody()+'</div>'; }
