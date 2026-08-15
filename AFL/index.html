@@ -3833,6 +3833,13 @@
   }
   const _EMPTYSET=new Set();
   function _wwIsOut(name,team){ if(_confirmedIn(name)) return false; if(_injuryFor(name)) return true; if((state.data.lineups||[]).some(r=>r.team===team)&&!isPlaying(name,team)) return true; return false; }
+  function _nmuGroup(pos){ var p=(pos||'').toLowerCase();
+    if(p.indexOf('ruck')>=0) return 'ruck';
+    if(p.indexOf('mid')>=0) return 'mid';        // Midfielder + Mid-Forward
+    if(p.indexOf('def')>=0) return 'def';        // Key/Gen Defender
+    if(p.indexOf('forward')>=0||p.indexOf('fwd')>=0) return 'fwd';
+    return 'any';
+  }
   function nextManUp(){
     const {keyAvg}=_wwBuild(); const out=[];
     const teamSet=new Set((state.data.fixture||[]).flatMap(g=>[g.home,g.away]));
@@ -3842,6 +3849,7 @@
       if(!teamSet.has(Y.team)||(keyAvg[Y.name]||0)<18||!_wwIsOut(Y.name,Y.team)) return;   // OUT key player
       (byTeam[Y.team]||[]).forEach(X=>{
         if(X.name===Y.name||(X.matches||0)<6||_wwIsOut(X.name,X.team)) return;              // beneficiary is playing
+        if(_nmuGroup(Y.position)!=='any' && _nmuGroup(X.position)!==_nmuGroup(Y.position)) return;  // similar position only (a mid replaces a mid)
         const sp=_wwSplit(X.name,Y.name,Y.team);
         if(!sp||sp.delta<WW_MIN_DELTA) return;
         out.push({p:X,opp:nextOpp(X.team),outName:Y.name,wAvg:sp.wAvg,woAvg:sp.woAvg,woN:sp.woN,wN:sp.wN,delta:sp.delta,score:sp.delta});
@@ -4769,8 +4777,13 @@
   }
   // two-way (each-way) lines a player has across books — these are backable, unlike the deep alt ladder
   function _radarTwoWayLines(player, market){
-    const RADAR_MIN=1.45;   // ignore padded alt lines (BetR's ~$1.40 o/u) — a real two-way line has both sides longer than this
-    const rows=(((state.idx.bookIdx||{})[player]||{})[market]||[]).filter(r=>_bookOK(r.book)&&r.over!=null&&r.under!=null&&r.over>=RADAR_MIN&&r.under>=RADAR_MIN);
+    // Only balanced *main* lines — a real two-way market has over and under close together.
+    // Alt ladder rungs (BetR's ~$1.40 padded o/u) are skewed, so they're excluded entirely.
+    const rows=(((state.idx.bookIdx||{})[player]||{})[market]||[]).filter(r=>{
+      if(!_bookOK(r.book)||r.over==null||r.under==null) return false;
+      if(r.over<1.55||r.under<1.55) return false;                       // neither side padded short
+      return Math.abs(1/r.over - 1/r.under) < 0.18;                     // implied probs balanced -> main line
+    });
     const byL={}; rows.forEach(r=>{ if(!byL[r.line]||r.over>byL[r.line].over) byL[r.line]={line:r.line,over:r.over,under:r.under,book:r.book}; });
     return Object.values(byL).sort((a,b)=>a.line-b.line);
   }
