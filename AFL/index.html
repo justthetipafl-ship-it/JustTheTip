@@ -6163,41 +6163,43 @@
     return _degWrap('The Train','ti-train',sub,'<div class="mbv-list">'+picks.map(_degCard).join('')+'</div>');
   }
 
-  // --- The Pyramid: 1 apex / 2 middle / 3 base, tiered lines, min $1.25/leg, rendered as a pyramid ---
-  function _pyrCard(pl, line, over){
+  // --- The Pyramid: sport-relevant stat, self-lowering apex, min $1.25/leg, rendered as a pyramid ---
+  function _pyrCard(pl, line, over, statLbl){
     var ln=(pl.p.name||'').split(' '); ln=ln[ln.length-1];
-    return '<div class="pyr-card">'+teamLogo(pl.p.team,22)
-      +'<div class="pyr-nm">'+esc(ln)+'</div><div class="pyr-ln">'+line+'+ disp</div>'
-      +'<div class="pyr-od">'+(over?'$'+over.toFixed(2):'proj '+Math.round(pl.proj))+'</div></div>';
+    return '<div class="pyr-card">'+teamLogo(pl.p.team,22)+'<div class="pyr-nm">'+esc(ln)+'</div><div class="pyr-ln">'+line+'+ '+esc((statLbl||'').slice(0,6))+'</div><div class="pyr-od">'+(over?'$'+over.toFixed(2):'proj '+Math.round(pl.proj))+'</div></div>';
   }
+  var PYR_RUNG={disposals:5,kicks:3,handballs:3,marks:2,tackles:2,goals:1,clearances:2,hitouts:4,dreamteam:20,inside50s:2,
+    passYds:25,rushYds:15,recYds:15,receptions:1,rushRecYds:15,anytimeTd:1,passComp:3,passAtt:5,rushAtt:3,soloTk:1,
+    points:4,rebounds:2,assists:2,threes:1,steals:1,blocks:1,pra:6,
+    shots:1,saves:5,ppPoints:1,
+    H:1,TB:1,HR:1,RBI:1,R:1,SB:1,K:2};
+  function _pyrDefaultStat(){ var d={afl:'disposals',aflw:'disposals',nfl:'recYds',ncaaf:'recYds',nba:'points',wnba:'points',nhl:'shots',mlb:'TB'}[(window.SPORT&&SPORT.key)]; var mk=(MULTI_MKTS||[]).map(function(m){return m[0];}); return (d&&mk.indexOf(d)>=0)?d:(mk[0]||'disposals'); }
+  window._degSetPyrStat=function(s){ state.view.pyrStat=s; var el=document.getElementById('deg-wrap'); if(el) el.innerHTML=_degBody(); };
   function _pyramidSection(legs, oddsOn, book){
-    var byP={};                                                     // disposal lines the book prices, per player
-    legs.filter(function(l){return l.statKey==='disposals';}).forEach(function(l){
-      var e=byP[l.p.name]||(byP[l.p.name]={p:l.p,opp:l.opp,proj:l.proj,lines:{}}); e.lines[l.line]=l.over;
-    });
-    if(!oddsOn){ // projection-only fallback
-      (state.idx.players||[]).filter(function(p){var t=(state.data.fixture||[]).some(function(g){return g.home===p.team||g.away===p.team;});return t&&(p.matches||0)>=5&&isPlaying(p.name,p.team)&&/Mid|Ruck/.test(p.position||'');}).forEach(function(p){
-        if(byP[p.name])return; var o=nextOpp(p.team); byP[p.name]={p:p,opp:o,proj:_projModel(p,'disposals',20,o).mean,lines:{}};
-      });
+    var stat=(state.view.pyrStat&&(MULTI_MKTS||[]).some(function(m){return m[0]===state.view.pyrStat;}))?state.view.pyrStat:_pyrDefaultStat();
+    var statLbl=_mktLbl(stat);
+    var statSel='<div class="deg-bookbar"><span class="deg-bl">Stat</span><select class="ob-sel" onchange="_degSetPyrStat(this.value)">'+(MULTI_MKTS||[]).map(function(m){return '<option value="'+m[0]+'"'+(m[0]===stat?' selected':'')+'>'+m[1]+'</option>';}).join('')+'</select></div>';
+    var byP={};
+    if(oddsOn){
+      legs.filter(function(l){return l.statKey===stat;}).forEach(function(l){ var e=byP[l.p.name]||(byP[l.p.name]={p:l.p,opp:l.opp,proj:l.proj,lines:{}}); e.lines[l.line]=l.over; });
+    } else {
+      var gs=(state.data.fixture||[]).filter(function(g){return g.home&&g.away;}), ts={}; gs.forEach(function(g){ts[g.home]=1;ts[g.away]=1;});
+      (state.idx.players||[]).filter(function(p){return ts[p.team]&&(p.matches||0)>=5&&isPlaying(p.name,p.team);}).forEach(function(p){ var o=nextOpp(p.team), m=_projModel(p,stat,1,o); if(m.mean>0) byP[p.name]={p:p,opp:o,proj:m.mean,lines:{}}; });
     }
     var players=Object.keys(byP).map(function(k){return byP[k];}).sort(function(a,b){return b.proj-a.proj;});
-    function overAt(pl, target){ var best=null,bd=99; Object.keys(pl.lines).forEach(function(ln){ var d=Math.abs(+ln-target); if(d<bd&&d<=1.5){bd=d;best={line:+ln,over:pl.lines[ln]};} }); return best; }
-    function tierPick(target, projMin, n, used){
-      return players.filter(function(pl){ if(used[pl.p.name]||pl.proj<projMin)return false;
-        if(!oddsOn) return true;
-        var oa=overAt(pl,target); return oa&&oa.over>=1.25;
-      }).slice(0,n);
-    }
-    var used={};
-    var apex=tierPick(30,31,1,used); apex.forEach(function(x){used[x.p.name]=1;});
-    var mid=tierPick(25,26,2,used); mid.forEach(function(x){used[x.p.name]=1;});
-    var base=tierPick(20,21,3,used); base.forEach(function(x){used[x.p.name]=1;});
+    if(players.length<3) return _degWrap('The Pyramid','ti-triangle','', statSel+'<div class="deg-empty">Not enough '+esc(statLbl)+' projections to build a pyramid.</div>');
+    var rung=PYR_RUNG[stat]||Math.max(1,Math.round(players[0].proj/6));
+    function overAt(pl,target){ var best=null,bd=99; Object.keys(pl.lines).forEach(function(ln){ var d=Math.abs(+ln-target); if(d<bd&&d<=Math.max(0.6,rung*0.6)){bd=d;best={line:+ln,over:pl.lines[ln]};} }); return best; }
+    function tierPick(line,n,used){ return players.filter(function(pl){ if(used[pl.p.name]||pl.proj<line)return false; if(!oddsOn)return true; var oa=overAt(pl,line); return oa&&oa.over>=1.25; }).slice(0,n); }
+    var apexLine=Math.max(rung,Math.floor(players[0].proj/rung)*rung), apex=[],mid=[],base=[],used={};
+    for(var t=0;t<10 && apexLine>=rung;t++){ used={}; apex=tierPick(apexLine,1,used); if(apex.length){ apex.forEach(function(x){used[x.p.name]=1;}); mid=tierPick(apexLine-rung,2,used); mid.forEach(function(x){used[x.p.name]=1;}); base=tierPick(Math.max(rung*0.5,apexLine-2*rung),3,used); if(mid.length&&base.length) break; } apexLine-=rung; }
+    var midLine=apexLine-rung, baseLine=Math.max(rung*0.5,apexLine-2*rung);
     var total=apex.length+mid.length+base.length;
-    if(total<3) return _degWrap('The Pyramid','ti-triangle','Not enough disposal lines'+(oddsOn?' at '+bookName(book):'')+' to build a pyramid.','');
-    function row(list,line){ return '<div class="pyr-row">'+list.map(function(pl){ var oa=oddsOn?overAt(pl,line):null; return _pyrCard(pl,line,oa?oa.over:null); }).join('')+'</div>'; }
-    var comb=1; if(oddsOn){ [[apex,30],[mid,25],[base,20]].forEach(function(t){ t[0].forEach(function(pl){ var oa=overAt(pl,t[1]); if(oa)comb*=oa.over; }); }); }
-    var body='<div class="pyr">'+row(apex,30)+row(mid,25)+row(base,20)+'</div>';
-    var sub=total+' legs \u00b7 30+ / 25+ / 20+ disposals \u00b7 min $1.25/leg'+(oddsOn?' @ '+bookName(book)+' \u00b7 $'+comb.toFixed(2):'');
+    if(!apex.length||total<3) return _degWrap('The Pyramid','ti-triangle','', statSel+'<div class="deg-empty">Couldn\u2019t form a full '+esc(statLbl)+' pyramid'+(oddsOn?' at '+bookName(book):'')+'.</div>');
+    function row(list,line){ return '<div class="pyr-row">'+list.map(function(pl){ var oa=oddsOn?overAt(pl,line):null; return _pyrCard(pl,line,oa?oa.over:null,statLbl); }).join('')+'</div>'; }
+    var comb=1; if(oddsOn){ [[apex,apexLine],[mid,midLine],[base,baseLine]].forEach(function(tt){ tt[0].forEach(function(pl){ var oa=overAt(pl,tt[1]); if(oa)comb*=oa.over; }); }); }
+    var body=statSel+'<div class="pyr">'+row(apex,apexLine)+row(mid,midLine)+row(base,baseLine)+'</div>';
+    var sub=total+' legs \u00b7 '+apexLine+'+ / '+midLine+'+ / '+baseLine+'+ '+esc(statLbl)+' \u00b7 min $1.25/leg'+(oddsOn?' @ '+bookName(book)+' \u00b7 $'+comb.toFixed(2):'');
     return _degWrap('The Pyramid','ti-triangle',sub, body);
   }
 
