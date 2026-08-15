@@ -6206,7 +6206,7 @@
     if(!picks.length) return _degWrap('The Train','ti-train','No qualifying banker legs'+(oddsOn?' at '+bookName(book):'')+'.','');
     var comb=1,conf=1; picks.forEach(function(l){ var px=oddsOn?l.over:(l.prob>0?1/l.prob:2); comb*=px; conf*=Math.max(0.5,l.prob||0.5); });
     var daily=_dailySched();
-    var sub=(daily?'Daily':'Round')+' Train \u00b7 1 leg/game \u00b7 '+picks.length+' legs'+(oddsOn?' @ '+bookName(book)+' \u00b7 $'+comb.toFixed(2)+' combined':' \u00b7 '+Math.round(conf*100)+'% all hit');
+    var sub=oddsOn?('$'+comb.toFixed(2)+' @ '+bookName(book)):(Math.round(conf*100)+'%');
     return _degWrap('The Train','ti-train',sub,'<div class="mbv-list">'+picks.map(_degCard).join('')+'</div>');
   }
 
@@ -6246,7 +6246,7 @@
     function row(list,line){ return '<div class="pyr-row">'+list.map(function(pl){ var oa=oddsOn?overAt(pl,line):null; return _pyrCard(pl,line,oa?oa.over:null,statLbl); }).join('')+'</div>'; }
     var comb=1; if(oddsOn){ [[apex,apexLine],[mid,midLine],[base,baseLine]].forEach(function(tt){ tt[0].forEach(function(pl){ var oa=overAt(pl,tt[1]); if(oa)comb*=oa.over; }); }); }
     var body=statSel+'<div class="pyr">'+row(apex,apexLine)+row(mid,midLine)+row(base,baseLine)+'</div>';
-    var sub=total+' legs \u00b7 '+apexLine+'+ / '+midLine+'+ / '+baseLine+'+ '+esc(statLbl)+' \u00b7 min $1.25/leg'+(oddsOn?' @ '+bookName(book)+' \u00b7 $'+comb.toFixed(2):'');
+    var sub=oddsOn?('$'+comb.toFixed(2)+' @ '+bookName(book)):'';
     return _degWrap('The Pyramid','ti-triangle',sub, body);
   }
 
@@ -6254,7 +6254,7 @@
   function _ladderSection(){
     var L=(state.data.ladder||null);
     if(!L||!L.days||!L.days.length){
-      return _degWrap('The Ladder','ti-stairs-up','$10 \u2192 $10,000 \u2014 roll the whole bank onto one ~$2 multi a day',
+      return _degWrap('The Ladder','ti-stairs-up','',
         '<div class="deg-empty"><i class="ti ti-hourglass"></i> The climb starts here once the odds feed is live.</div>');
     }
     var start=L.start||10, target=L.target||10000, bank=L.bank!=null?L.bank:start;
@@ -6290,7 +6290,7 @@
           :busted?'<b class="lad-tag-bust">Busted \u2014 next climb starts from $'+start+'</b>'
           :'Rung '+rung+' \u00b7 '+wins+' cleared \u00b7 peak $'+(+(L.peak||bank)).toFixed(2))
         +(L.attempt>1?' \u00b7 attempt #'+L.attempt:'')+'</div></div>';
-    return _degWrap('The Ladder','ti-stairs-up','Roll it all onto one ~$2 multi a day \u2014 ten rungs to ~$10k',
+    return _degWrap('The Ladder','ti-stairs-up','',
       head+'<div class="lad-grid">'+rows+'</div>');
   }
   // --- The Yankee: 4 SGMs (~$3 each) across 4 games, staked as an 11-bet system ---
@@ -6324,7 +6324,7 @@
     return {allWin:sum(doubles)+sum(trebles)+four, doubles:doubles, trebles:trebles, four:four, outlay:11};
   }
   function _yankeeSection(legs, oddsOn, book){
-    if(!oddsOn) return _degWrap('The Yankee','ti-versions','4 SGMs \u00b7 11-bet system','<div class="deg-empty"><i class="ti ti-lock"></i> Needs live odds \u2014 four priced ~$3 SGMs.</div>');
+    if(!oddsOn) return _degWrap('The Yankee','ti-versions','','<div class="deg-empty"><i class="ti ti-lock"></i> Needs live odds \u2014 four priced ~$3 SGMs.</div>');
     var sgms=_yankeeSGMs(legs);
     if(sgms.length<4) return _degWrap('The Yankee','ti-versions','','<div class="deg-empty">Not enough games with a ~$3 SGM at '+bookName(book)+'.</div>');
     var sys=_yankeeSystem(sgms.map(function(s){return s.od;}));
@@ -6332,8 +6332,8 @@
     var box='<div class="yk-sys"><div class="yk-sys-r"><span>Stake</span><span>$11 ($1 \u00d7 11 bets)</span></div>'
       +'<div class="yk-sys-r"><span>6 doubles + 4 trebles + 1 four-fold</span><span></span></div>'
       +'<div class="yk-sys-r yk-sys-max"><span>Return if all 4 land</span><span>$'+sys.allWin.toFixed(2)+'</span></div>'
-      +'<div class="yk-sys-note">Any 2 SGMs returns (a double); 3 pays doubles + a treble. Break-even needs ~2\u20133 to land.</div></div>';
-    return _degWrap('The Yankee','ti-versions','4 SGMs @ '+bookName(book)+' \u00b7 6 doubles + 4 trebles + 1 four-fold', cards+box);
+      +'</div>';
+    return _degWrap('The Yankee','ti-versions','', cards+box);
   }
 
   function _degBody(){
