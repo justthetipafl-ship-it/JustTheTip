@@ -4777,13 +4777,9 @@
   }
   // two-way (each-way) lines a player has across books — these are backable, unlike the deep alt ladder
   function _radarTwoWayLines(player, market){
-    // Only balanced *main* lines — a real two-way market has over and under close together.
-    // Alt ladder rungs (BetR's ~$1.40 padded o/u) are skewed, so they're excluded entirely.
-    const rows=(((state.idx.bookIdx||{})[player]||{})[market]||[]).filter(r=>{
-      if(!_bookOK(r.book)||r.over==null||r.under==null) return false;
-      if(r.over<1.55||r.under<1.55) return false;                       // neither side padded short
-      return Math.abs(1/r.over - 1/r.under) < 0.18;                     // implied probs balanced -> main line
-    });
+    // BetR floods a padded alt ladder into the two-way feed, so it's excluded from the Radar entirely.
+    const RADAR_EXCLUDE=new Set(['Betr']);
+    const rows=(((state.idx.bookIdx||{})[player]||{})[market]||[]).filter(r=>_bookOK(r.book)&&!RADAR_EXCLUDE.has(r.book)&&r.over!=null&&r.under!=null);
     const byL={}; rows.forEach(r=>{ if(!byL[r.line]||r.over>byL[r.line].over) byL[r.line]={line:r.line,over:r.over,under:r.under,book:r.book}; });
     return Object.values(byL).sort((a,b)=>a.line-b.line);
   }
