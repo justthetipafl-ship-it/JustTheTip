@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """JTT shared ladder challenge -> writes <base>/ladder.json for one sport.
-Usage: build_ladder.py <data_dir> [fallback_stat]
+Usage: build_ladder.py <data_dir>
 
 Preferred mode (odds present): each day's pick is the best ~$2 same-game multi
 (2-4 legs, any stat) from a single bookmaker, chosen by highest combined hit-rate.
@@ -151,7 +151,20 @@ def best_pick(base, gl, byp):
     legs_all = list(od.get('lines') or []) + list(od.get('alt') or [])
 
     pteam = {nm: rec['team'] for nm, rec in byp.items()}
-    games = [(g.get('home'), g.get('away')) for g in fx if g.get('home') and g.get('away')]
+    now = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
+    def _upcoming(g):
+        u = g.get('utc')
+        if u:
+            try:
+                return datetime.datetime.fromisoformat(str(u).replace('Z', '')) > now
+            except Exception:
+                return True
+        d = g.get('date')
+        if d:
+            return str(d) >= now.strftime('%Y-%m-%d')
+        return True
+    games = [(g.get('home'), g.get('away')) for g in fx
+             if g.get('home') and g.get('away') and _upcoming(g)]
     if not games:
         return None
     team_game = {}
@@ -195,30 +208,6 @@ def best_pick(base, gl, byp):
             'type': best['type'], 'year': latest[0], 'round': latest[1] + 1}
 
 
-def banker(byp, fx, stat):                       # fallback for no-odds sports
-    teams = set()
-    for g in fx:
-        for k in ('home', 'away', 'homeAbbr', 'awayAbbr'):
-            if g.get(k):
-                teams.add(g[k])
-    cand = [nm for nm, rec in byp.items()
-            if len(rec['games']) >= MIN_GAMES and (not teams or rec['team'] in teams)]
-    best = None
-    for nm in cand:
-        rec = byp[nm]
-        recent = [float(r.get(stat)) for r in rec['games'][-8:] if r.get(stat) is not None]
-        if len(recent) < 5:
-            continue
-        line = float(int(min(recent) * 0.85)) + 0.5
-        if line < 0.5:
-            continue
-        if best is None or line > best['line']:
-            g = rec['games'][-1]
-            best = {'name': nm, 'line': line, 'stat': stat,
-                    'year': int(g.get('Year', 0) or 0),
-                    'round': rnum(g.get('RoundName') or g.get('Week')) + 1}
-    return best
-
 
 def grade_leg(byp, name, field, line, year, rnd):
     rec = byp.get(name)
@@ -237,7 +226,6 @@ def main():
         print('usage: build_ladder.py <data_dir> [fallback_stat]')
         return
     base = sys.argv[1]
-    fb_stat = sys.argv[2] if len(sys.argv) > 2 else 'disposals'
     if not os.path.isdir(base):
         print('skip (no dir):', base)
         return
@@ -269,7 +257,7 @@ def main():
     last = lad['days'][-1] if lad['days'] else None
     if (last is None) or last.get('result') in ('win', 'loss'):
         sgm = best_pick(base, gl, byp)
-        if sgm:
+        if sgm:                                   # only add a day when real odds yield a multi
             legs = [{'name': lg['name'], 'pick_name': lg['name'], 'market': lg['market'],
                      'line': lg['line'], 'odds': lg['over']} for lg in sgm['legs']]
             desc = ' + '.join('%s %s+ %s' % (lg['name'].split(' ')[-1], lg['line'], lg['market'])
@@ -278,16 +266,6 @@ def main():
                                 'legs': legs, 'pick': desc, 'odds': sgm['price'],
                                 'book': sgm['book'], 'type': sgm.get('type'), 'result': 'pending', 'bank': None,
                                 'year': sgm['year'], 'round': sgm['round']})
-        else:
-            b = banker(byp, fx, fb_stat)
-            if b:
-                lad['days'].append({'date': datetime.date.today().isoformat(),
-                                    'legs': [{'name': b['name'], 'pick_name': b['name'],
-                                              'market': b['stat'], 'line': b['line'],
-                                              'odds': 1.30}],
-                                    'pick': '%s %s+ %s' % (b['name'], b['line'], b['stat']),
-                                    'odds': 1.30, 'result': 'pending', 'bank': None,
-                                    'year': b['year'], 'round': b['round']})
 
     lad['days'] = lad['days'][-KEEP:]
     with open(lpath, 'w') as fh:
