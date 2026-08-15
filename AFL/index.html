@@ -1097,6 +1097,20 @@
   .lad-type{font-size:9px;font-weight:800;letter-spacing:.4px;padding:1px 5px;border-radius:4px;text-transform:uppercase}
   .lad-type-multi{background:color-mix(in srgb,var(--accent) 18%,transparent);color:var(--accent)}
   .lad-type-sgm{background:color-mix(in srgb,var(--ok,#22c55e) 18%,transparent);color:var(--ok,#22c55e)}
+  .lad-hero{background:var(--surface-2);border:1px solid var(--border);border-radius:12px;padding:12px 14px;margin-bottom:10px}
+  .lad-hero-top{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:8px}
+  .lad-goal{font-size:12px;font-weight:700;color:var(--text-3);letter-spacing:.3px}
+  .lad-cur{font-size:22px;font-weight:800;font-family:var(--font-display);color:var(--accent)}
+  .lad-bar{height:8px;border-radius:5px;background:var(--surface-3,var(--surface));overflow:hidden}
+  .lad-bar-fill{height:100%;border-radius:5px;background:linear-gradient(90deg,var(--accent),var(--ok,#22c55e));transition:width .5s ease}
+  .lad-hero-sub{font-size:12px;color:var(--text-2);margin-top:7px}
+  .lad-tag-win{color:var(--ok,#22c55e)}
+  .lad-tag-bust{color:var(--bad,#ef4444)}
+  .lad-rung{color:var(--text);font-weight:800}
+  .lad-money{margin-left:auto;font-family:var(--font-display);font-size:12px;color:var(--text-2)}
+  .lad-money b{color:var(--text)}
+  .lad-win .lad-money b{color:var(--ok,#22c55e)}
+  .lad-loss .lad-money b{color:var(--bad,#ef4444)}
   .lad-day{display:flex;align-items:center;gap:10px;padding:8px 10px;background:var(--surface-2);border:1px solid var(--border);border-radius:8px;font-size:13px}
   .lad-n{font-weight:700;min-width:46px;color:var(--text-2)}
   .lad-pick{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -6240,27 +6254,44 @@
   function _ladderSection(){
     var L=(state.data.ladder||null);
     if(!L||!L.days||!L.days.length){
-      return _degWrap('The Ladder','ti-stairs-up','10-day rolling challenge \u2014 the best ~$2 same-game multi each day, riding the bankroll',
-        '<div class="deg-empty"><i class="ti ti-hourglass"></i> The daily ladder pick lands here once the challenge feed is live.</div>');
+      return _degWrap('The Ladder','ti-stairs-up','$10 \u2192 $10,000 \u2014 roll the whole bank onto one ~$2 multi a day',
+        '<div class="deg-empty"><i class="ti ti-hourglass"></i> The climb starts here once the odds feed is live.</div>');
     }
-    var rows=L.days.map(function(d,i){
+    var start=L.start||10, target=L.target||10000, bank=L.bank!=null?L.bank:start;
+    var busted=L.days.some(function(d){return d.result==='loss';});
+    var topped=L.days.some(function(d){return d.complete;});
+    // rungs shown newest at the top so the climb reads upward
+    var rows=L.days.slice().reverse().map(function(d){
       var st=d.result==='win'?'win':d.result==='loss'?'loss':'pending';
-      var ic=st==='win'?'ti-circle-check-filled':st==='loss'?'ti-circle-x-filled':'ti-clock';
-      var legs=(d.legs&&d.legs.length)?d.legs:[{name:d.pick_name,market:d.market,line:d.line}];
+      var ic=st==='win'?'ti-circle-check-filled':st==='loss'?'ti-circle-x-filled':'ti-arrow-big-up-lines';
+      var legs=(d.legs&&d.legs.length)?d.legs:[];
       var legHtml=legs.map(function(l){var nm=(l.name||'').split(' ');nm=nm[nm.length-1];return '<span class="lad-leg">'+esc(nm)+' <b>'+l.line+'+</b> '+_mktLbl(l.market)+'</span>';}).join('');
+      var bb=d.bank_before, ba=d.bank_after;
+      var money=st==='win'?('$'+(+bb).toFixed(2)+' \u2192 <b>$'+(+ba).toFixed(2)+'</b>')
+               :st==='loss'?('$'+(+bb).toFixed(2)+' \u2192 <b>busted</b>')
+               :('$'+(bb!=null?(+bb).toFixed(2):'-')+' \u00d7 '+(d.odds?(+d.odds).toFixed(2):'-')+' \u2192 $'+(bb!=null&&d.odds?(bb*d.odds).toFixed(2):'-'));
       return '<div class="lad-day lad-'+st+'">'
-        +'<div class="lad-day-h"><span class="lad-n">Day '+(i+1)+'</span>'
+        +'<div class="lad-day-h"><span class="lad-rung">Rung '+(d.rung||'?')+'</span>'
         +(d.type?'<span class="lad-type lad-type-'+d.type+'">'+(d.type==='sgm'?'SGM':'MULTI')+'</span>':'')
         +'<i class="ti '+ic+' lad-ic"></i>'
-        +'<span class="lad-odds">$'+(d.odds?(+d.odds).toFixed(2):'-')+'</span>'
-        +(d.book?'<span class="lad-book">'+esc(d.book)+'</span>':'')
-        +'<span class="lad-bank">'+(d.bank!=null?'$'+(+d.bank).toFixed(2):'')+'</span></div>'
-        +'<div class="lad-legs">'+legHtml+'</div></div>';
+        +'<span class="lad-money">'+money+'</span>'
+        +(d.book?'<span class="lad-book">@ '+esc(d.book)+'</span>':'')+'</div>'
+        +(legHtml?'<div class="lad-legs">'+legHtml+'</div>':'')+'</div>';
     }).join('');
     var wins=L.days.filter(function(d){return d.result==='win';}).length;
-    var done=L.days.filter(function(d){return d.result==='win'||d.result==='loss';}).length;
-    var sub='Day '+Math.min(L.days.length,done+1)+'/10 \u00b7 '+wins+'/'+done+' landed \u00b7 best ~$2 SGM daily'+(L.bank!=null?' \u00b7 bankroll $'+(+L.bank).toFixed(2):'');
-    return _degWrap('The Ladder','ti-stairs-up',sub, '<div class="lad-grid">'+rows+'</div>');
+    // progress on a log scale ($10 -> $10k spans 3 orders of magnitude)
+    var prog=Math.max(0,Math.min(1, Math.log(Math.max(bank,start)/start)/Math.log(target/start)));
+    var rung=(L.days[L.days.length-1]||{}).rung||wins+1;
+    var head='<div class="lad-hero">'
+      +'<div class="lad-hero-top"><span class="lad-goal">$'+start+' \u2192 $'+(target>=1000?(target/1000)+'k':target)+'</span>'
+        +'<span class="lad-cur">$'+(+bank).toFixed(2)+'</span></div>'
+      +'<div class="lad-bar"><div class="lad-bar-fill" style="width:'+(prog*100).toFixed(1)+'%"></div></div>'
+      +'<div class="lad-hero-sub">'+(topped?'<b class="lad-tag-win">Top of the ladder \u2014 challenge complete!</b>'
+          :busted?'<b class="lad-tag-bust">Busted \u2014 next climb starts from $'+start+'</b>'
+          :'Rung '+rung+' \u00b7 '+wins+' cleared \u00b7 peak $'+(+(L.peak||bank)).toFixed(2))
+        +(L.attempt>1?' \u00b7 attempt #'+L.attempt:'')+'</div></div>';
+    return _degWrap('The Ladder','ti-stairs-up','Roll it all onto one ~$2 multi a day \u2014 ten rungs to ~$10k',
+      head+'<div class="lad-grid">'+rows+'</div>');
   }
   // --- The Yankee: 4 SGMs (~$3 each) across 4 games, staked as an 11-bet system ---
   function _sgmCard(sgm){
