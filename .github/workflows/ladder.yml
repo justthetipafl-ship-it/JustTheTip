@@ -1,7 +1,7 @@
 name: JTT Ladders
 on:
   schedule:
-    - cron: '0 20 * * *'   # daily ~06:00 AEST
+    - cron: '1 23 * * *'   # 09:01 AEST daily (Brisbane, UTC+10) — just after the 9am AFL odds refresh
   workflow_dispatch:
 concurrency:
   group: jtt-ladders
@@ -14,18 +14,13 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      # 2nd arg = fallback stat, used only when a sport has no odds.json (e.g. AFLW).
-      # When odds exist, the pick is the best ~$2 same-game multi (any stat).
+      # A day is only added when a sport has real odds that yield a ~$2 multi
+      # (cross-game when 2+ games are on, SGM when a single game is on).
       - name: Build ladders (all sports)
         run: |
-          python scripts/build_ladder.py AFL/data   disposals || true
-          python scripts/build_ladder.py aflw/data  disposals || true
-          python scripts/build_ladder.py nfl/data   recYds    || true
-          python scripts/build_ladder.py ncaaf/data recYds    || true
-          python scripts/build_ladder.py nba/data   points    || true
-          python scripts/build_ladder.py wnba/data  points    || true
-          python scripts/build_ladder.py nhl/data   shots     || true
-          python scripts/build_ladder.py mlb/data   TB        || true
+          for s in AFL aflw nfl ncaaf nba wnba nhl mlb; do
+            python scripts/build_ladder.py "$s/data" || true
+          done
       - name: Commit ladders
         run: |
           git config user.name "jtt-bot"
