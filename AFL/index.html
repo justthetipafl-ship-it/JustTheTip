@@ -1077,7 +1077,26 @@
   .yk-sys-r{display:flex;justify-content:space-between;font-size:13px;padding:3px 0}
   .yk-sys-max{font-weight:800;color:var(--ok,#22c55e);border-top:1px solid var(--border);margin-top:4px;padding-top:7px}
   .yk-sys-note{font-size:11px;color:var(--text-3);margin-top:6px;line-height:1.4}
-  .lad-grid{display:flex;flex-direction:column;gap:4px}
+  .lad-grid{display:flex;flex-direction:column;gap:8px}
+  .lad-day{background:var(--surface-2);border:1px solid var(--border);border-left-width:3px;border-radius:10px;padding:9px 11px}
+  .lad-day-h{display:flex;align-items:center;gap:8px;font-size:12px;font-weight:700}
+  .lad-n{color:var(--text-3)}
+  .lad-ic{font-size:15px}
+  .lad-win{border-left-color:var(--ok,#22c55e)}
+  .lad-win .lad-ic{color:var(--ok,#22c55e)}
+  .lad-loss{border-left-color:var(--bad,#ef4444)}
+  .lad-loss .lad-ic{color:var(--bad,#ef4444)}
+  .lad-pending{border-left-color:var(--border)}
+  .lad-pending .lad-ic{color:var(--text-3)}
+  .lad-odds{color:var(--accent);font-family:var(--font-display)}
+  .lad-book{color:var(--text-3);font-weight:400;font-size:11px}
+  .lad-bank{margin-left:auto;color:var(--text-2);font-family:var(--font-display)}
+  .lad-legs{display:flex;flex-wrap:wrap;gap:5px;margin-top:7px}
+  .lad-leg{background:var(--surface-3,var(--surface));border:1px solid var(--border-light,var(--border));border-radius:6px;padding:2px 7px;font-size:11px;color:var(--text-2)}
+  .lad-leg b{color:var(--text);font-family:var(--font-display)}
+  .lad-type{font-size:9px;font-weight:800;letter-spacing:.4px;padding:1px 5px;border-radius:4px;text-transform:uppercase}
+  .lad-type-multi{background:color-mix(in srgb,var(--accent) 18%,transparent);color:var(--accent)}
+  .lad-type-sgm{background:color-mix(in srgb,var(--ok,#22c55e) 18%,transparent);color:var(--ok,#22c55e)}
   .lad-day{display:flex;align-items:center;gap:10px;padding:8px 10px;background:var(--surface-2);border:1px solid var(--border);border-radius:8px;font-size:13px}
   .lad-n{font-weight:700;min-width:46px;color:var(--text-2)}
   .lad-pick{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -6221,19 +6240,26 @@
   function _ladderSection(){
     var L=(state.data.ladder||null);
     if(!L||!L.days||!L.days.length){
-      return _degWrap('The Ladder','ti-stairs-up','10-day rolling challenge \u2014 a banker a day, riding the bankroll',
+      return _degWrap('The Ladder','ti-stairs-up','10-day rolling challenge \u2014 the best ~$2 same-game multi each day, riding the bankroll',
         '<div class="deg-empty"><i class="ti ti-hourglass"></i> The daily ladder pick lands here once the challenge feed is live.</div>');
     }
     var rows=L.days.map(function(d,i){
       var st=d.result==='win'?'win':d.result==='loss'?'loss':'pending';
       var ic=st==='win'?'ti-circle-check-filled':st==='loss'?'ti-circle-x-filled':'ti-clock';
-      return '<div class="lad-day lad-'+st+'"><span class="lad-n">Day '+(i+1)+'</span>'
-        +'<span class="lad-pick">'+esc(d.pick||'')+'</span><span class="lad-odds">'+(d.odds?'$'+(+d.odds).toFixed(2):'')+'</span>'
-        +'<span class="lad-bank">'+(d.bank!=null?'$'+(+d.bank).toFixed(2):'')+'</span><i class="ti '+ic+' lad-ic"></i></div>';
+      var legs=(d.legs&&d.legs.length)?d.legs:[{name:d.pick_name,market:d.market,line:d.line}];
+      var legHtml=legs.map(function(l){var nm=(l.name||'').split(' ');nm=nm[nm.length-1];return '<span class="lad-leg">'+esc(nm)+' <b>'+l.line+'+</b> '+_mktLbl(l.market)+'</span>';}).join('');
+      return '<div class="lad-day lad-'+st+'">'
+        +'<div class="lad-day-h"><span class="lad-n">Day '+(i+1)+'</span>'
+        +(d.type?'<span class="lad-type lad-type-'+d.type+'">'+(d.type==='sgm'?'SGM':'MULTI')+'</span>':'')
+        +'<i class="ti '+ic+' lad-ic"></i>'
+        +'<span class="lad-odds">$'+(d.odds?(+d.odds).toFixed(2):'-')+'</span>'
+        +(d.book?'<span class="lad-book">'+esc(d.book)+'</span>':'')
+        +'<span class="lad-bank">'+(d.bank!=null?'$'+(+d.bank).toFixed(2):'')+'</span></div>'
+        +'<div class="lad-legs">'+legHtml+'</div></div>';
     }).join('');
     var wins=L.days.filter(function(d){return d.result==='win';}).length;
     var done=L.days.filter(function(d){return d.result==='win'||d.result==='loss';}).length;
-    var sub='Day '+Math.min(L.days.length,done+1)+'/10 \u00b7 '+wins+'/'+done+' landed'+(L.bank!=null?' \u00b7 bankroll $'+(+L.bank).toFixed(2):'');
+    var sub='Day '+Math.min(L.days.length,done+1)+'/10 \u00b7 '+wins+'/'+done+' landed \u00b7 best ~$2 SGM daily'+(L.bank!=null?' \u00b7 bankroll $'+(+L.bank).toFixed(2):'');
     return _degWrap('The Ladder','ti-stairs-up',sub, '<div class="lad-grid">'+rows+'</div>');
   }
   // --- The Yankee: 4 SGMs (~$3 each) across 4 games, staked as an 11-bet system ---
