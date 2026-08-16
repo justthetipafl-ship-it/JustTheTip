@@ -185,6 +185,9 @@ def best_pick(base, gl, byp, book=LADDER_BOOK):
         lg = _mkleg(l, byp)
         if lg is None:
             continue
+        tm = pteam.get(lg['name']); h, a = games[gi]
+        lg['team'] = tm
+        lg['opp'] = a if tm == h else h
         by_book.setdefault(l.get('book'), {}).setdefault(gi, []).append(lg)
 
     best = None
@@ -204,12 +207,20 @@ def best_pick(base, gl, byp, book=LADDER_BOOK):
 
     if not best:
         return None
+    picked = set(l['name'] for l in best['legs'])
+    subleg = None
+    for gi2, legs2 in by_book.get(best['book'], {}).items():
+        for l2 in legs2:
+            if l2['name'] in picked:
+                continue
+            if subleg is None or l2['hr'] > subleg['hr']:
+                subleg = l2
     latest = (0, 0)
     for lg in best['legs']:
         g = byp[lg['name']]['games'][-1]
         latest = max(latest, (int(g.get('Year', 0) or 0), rnum(g.get('RoundName') or g.get('Week'))))
     return {'legs': best['legs'], 'price': round(best['price'], 2), 'book': best['book'],
-            'type': best['type'], 'year': latest[0], 'round': latest[1] + 1}
+            'type': best['type'], 'sub': subleg, 'year': latest[0], 'round': latest[1] + 1}
 
 
 
@@ -281,12 +292,17 @@ def main():
         sgm = best_pick(base, gl, byp, book)
         if sgm:
             legs = [{'name': lg['name'], 'pick_name': lg['name'], 'market': lg['market'],
-                     'line': lg['line'], 'odds': lg['over']} for lg in sgm['legs']]
+                     'line': lg['line'], 'odds': lg['over'], 'team': lg.get('team'),
+                     'opp': lg.get('opp')} for lg in sgm['legs']]
             desc = ' + '.join('%s %s+ %s' % (lg['name'].split(' ')[-1], lg['line'], lg['market'])
                               for lg in sgm['legs'])
+            sb = sgm.get('sub')
+            sub_rec = ({'name': sb['name'], 'market': sb['market'], 'line': sb['line'],
+                        'odds': sb['over'], 'team': sb.get('team'), 'opp': sb.get('opp'),
+                        'hr': round(sb.get('hr', 0), 2)} if sb else None)
             lad['days'].append({'date': datetime.date.today().isoformat(), 'rung': rung,
                                 'legs': legs, 'pick': desc, 'odds': sgm['price'],
-                                'book': sgm['book'], 'type': sgm.get('type'),
+                                'book': sgm['book'], 'type': sgm.get('type'), 'sub': sub_rec,
                                 'bank_before': round(bank, 2), 'bank_after': None,
                                 'result': 'pending', 'year': sgm['year'], 'round': sgm['round']})
 
