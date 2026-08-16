@@ -496,13 +496,18 @@ def _mmss_to_min(v):
 def sportsblaze_player_box(lg, start_date, end_date):
     """Return recent player-box rows in the wehoop source schema, from the free cache API."""
     import datetime as _dt
-    rows, d = [], start_date
+    rows, d, miss = [], start_date, 0
     while d <= end_date:
         ds = d.isoformat()
         try:
             js = _sb_json(f"{SB_CACHE}/{lg}/{ds}")
+            miss = 0
         except Exception as e:
-            print(f"    (sportsblaze {lg} {ds} failed: {e})")
+            if "404" not in str(e):
+                print(f"    (sportsblaze {lg} {ds} failed: {e})")
+            miss += 1
+            if not rows and miss >= 8:            # 8 straight no-game days + nothing yet = dormant/off-season
+                break
             d += _dt.timedelta(days=1)
             continue
         for ev in (js.get("events") or []):
@@ -557,8 +562,10 @@ def augment_from_sportsblaze(lg, raw_pb):
     if latest >= today - _dt.timedelta(days=1):
         return raw_pb
     extra = sportsblaze_player_box(lg, latest + _dt.timedelta(days=1), today)
-    if len(extra):
-        print(f"  [sportsblaze] {lg}: +{len(extra)} player-rows since {latest} (parquet lagged)")
+    n = len(extra)
+    days = len(set(extra["game_date"])) if n else 0
+    print(f"  [sportsblaze] {lg}: +{n} player-rows across {days} day(s) since {latest}")
+    if n:
         return pd.concat([raw_pb, extra], ignore_index=True)
     return raw_pb
 
