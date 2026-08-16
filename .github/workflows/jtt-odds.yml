@@ -1,0 +1,31 @@
+name: JTT Odds (rapidoddsapi)
+on:
+  schedule:
+    - cron: '55 22 * * *'   # 08:55 AEST daily, just before the 9:01 ladder run
+  workflow_dispatch:
+concurrency:
+  group: jtt-odds
+  cancel-in-progress: false
+jobs:
+  odds:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install SDK
+        run: pip install rapidoddsapi
+      - name: Fetch odds
+        env:
+          ROA_API_KEY: ${{ secrets.ROA_API_KEY }}
+        run: |
+          python scripts/fetch_odds.py WNBA wnba/data/odds.json || true
+          python scripts/fetch_odds.py MLB  mlb/data/odds.json  || true
+      - name: Commit
+        run: |
+          git config user.name "jtt-bot"
+          git config user.email "bot@justthetip"
+          git add wnba/data/odds.json mlb/data/odds.json
+          git diff --staged --quiet || git commit -m "odds: wnba + mlb refresh"
+          git push
