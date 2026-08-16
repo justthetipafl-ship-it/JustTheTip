@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-build_nba_data.py — JTT NBA + WNBA split-data generator (advanced tool, AFL-parity).
+build_nba_data.py - JTT NBA + WNBA split-data generator (advanced tool, AFL-parity).
 
 One pipeline, two leagues. Mirrors nfl/build_nfl_data.py's role: writes the
 split nba/data/{league}/*.json files the shell + scoring.js consume.
@@ -47,7 +47,7 @@ from collections import defaultdict
 import pandas as pd
 
 # ----------------------------------------------------------------------------
-# League config — the ONLY place NBA and WNBA differ.
+# League config - the ONLY place NBA and WNBA differ.
 # ----------------------------------------------------------------------------
 NBA_EAST = {"BOS","BKN","NY","NYK","PHI","TOR","CHI","CLE","DET","IND","MIL",
             "ATL","CHA","MIA","ORL","WSH","WAS"}
@@ -122,7 +122,7 @@ POS_BUCKET = {"G":"G","PG":"G","SG":"G",
               "C":"C","FC":"C","PF/C":"C"}
 POSITIONS  = ["G","F","C"]
 
-SEASON_TYPES = {2, 3, 5}          # regular, playoffs, play-in — all kept
+SEASON_TYPES = {2, 3, 5}          # regular, playoffs, play-in - all kept
 UA = {"User-Agent": "jtt-nba-pipeline/1.0"}
 
 
@@ -148,13 +148,13 @@ def load_frame(lg, ds, season, src_local=None):
     try:
         return _fetch_parquet(raw)
     except Exception as e:
-        print(f"  [warn] raw fetch failed ({e}); trying release asset…", flush=True)
+        print(f"  [warn] raw fetch failed ({e}); trying release asset...", flush=True)
         rel = REL_URL.format(prefix=LEAGUES[lg]["prefix"], tag=REL_TAG[ds], fname=fname)
         return _fetch_parquet(rel)
 
 
 # ============================================================================
-# Transforms (pure — everything below is selftest-covered)
+# Transforms (pure - everything below is selftest-covered)
 # ============================================================================
 def normalize_player_box(pb):
     """Source player_box -> internal per-game log frame with the stat contract."""
@@ -189,7 +189,7 @@ def representative(df, floor):
     return df[(m.isna()) | (m >= floor)]
 
 
-MIN_TEAM_GAMES = 8       # per season — filters All-Star squads (STARS/STRIPES/WORLD
+MIN_TEAM_GAMES = 8       # per season - filters All-Star squads (STARS/STRIPES/WORLD
                          # etc. arrive mislabelled as regular season with 1-2 games)
 
 def valid_teams_by_year(team_rows):
@@ -330,7 +330,7 @@ def build_teams(tb_frames, cfg, current, form_only=False):
 
 def build_dvp(logs, current):
     """Per (defTeam, posBucket): per-game totals allowed for each DVP stat.
-    No minutes gate — everything conceded to the bucket counts."""
+    No minutes gate - everything conceded to the bucket counts."""
     cur = logs[logs["Year"] == str(current)]
     if cur.empty:
         return []
@@ -425,7 +425,7 @@ def build_lineups(logs, cfg, current):
 
 
 def fetch_injuries(lg):
-    """ESPN injuries endpoint — guarded; caller keeps the old file on failure."""
+    """ESPN injuries endpoint - guarded; caller keeps the old file on failure."""
     import requests
     url = (f"https://site.api.espn.com/apis/site/v2/sports/basketball/"
            f"{LEAGUES[lg]['espn_slug']}/injuries")
@@ -464,6 +464,105 @@ def wjson(outdir, name, obj):
     print(f"  wrote {name:16s} {os.path.getsize(p):>10,} bytes")
 
 
+# ============================================================================
+# SportsBlaze top-up (no-auth cache API) - fills recent games when the
+# sportsdataverse parquet lags. https://cache.sportsblaze.com/boxscores/{lg}/{date}
+# ============================================================================
+SB_CACHE = "https://cache.sportsblaze.com/boxscores"
+SB_STYPE = {"Regular Season": 2, "Playoffs": 3, "Preseason": 1, "In-Season Tournament": 2}
+
+
+def _sb_json(url):
+    import requests
+    r = requests.get(url, headers=UA, timeout=30)
+    r.raise_for_status()
+    return r.json()
+
+
+def _mmss_to_min(v):
+    s = str(v if v is not None else "0")
+    if ":" in s:
+        parts = s.split(":")
+        try:
+            return int(parts[0]) + int(parts[1]) / 60.0
+        except Exception:
+            return 0.0
+    try:
+        return float(s)
+    except Exception:
+        return 0.0
+
+
+def sportsblaze_player_box(lg, start_date, end_date):
+    """Return recent player-box rows in the wehoop source schema, from the free cache API."""
+    import datetime as _dt
+    rows, d = [], start_date
+    while d <= end_date:
+        ds = d.isoformat()
+        try:
+            js = _sb_json(f"{SB_CACHE}/{lg}/{ds}")
+        except Exception as e:
+            print(f"    (sportsblaze {lg} {ds} failed: {e})")
+            d += _dt.timedelta(days=1)
+            continue
+        for ev in (js.get("events") or []):
+            if ev.get("status") != "Final":
+                continue
+            seas = ev.get("season", {}) or {}
+            yr, st = seas.get("year"), SB_STYPE.get(seas.get("type"), 2)
+            gid = ev.get("id")
+            gdate = (ev.get("date") or ds)[:10]
+            teams = ev.get("teams", {}) or {}
+            players = ev.get("players", {}) or {}
+            for side in ("away", "home"):
+                tm = teams.get(side, {}) or {}
+                opp = teams.get("home" if side == "away" else "away", {}) or {}
+                for p in (players.get(side) or []):
+                    stt = ((p.get("statistics") or {}).get("total") or {})
+                    rows.append({
+                        "season": yr, "season_type": st, "game_date": gdate, "game_id": gid,
+                        "athlete_id": p.get("id"), "athlete_display_name": p.get("name"),
+                        "team_abbreviation": tm.get("abbreviation"), "team_display_name": tm.get("name"),
+                        "opponent_team_abbreviation": opp.get("abbreviation"),
+                        "home_away": side, "starter": bool(p.get("starter")),
+                        "did_not_play": not bool(p.get("played")),
+                        "athlete_position_abbreviation": p.get("position"),
+                        "points": stt.get("points"), "rebounds": stt.get("rebounds"),
+                        "assists": stt.get("assists"),
+                        "three_point_field_goals_made": stt.get("three_points_made"),
+                        "three_point_field_goals_attempted": stt.get("three_points_attempted"),
+                        "field_goals_made": stt.get("field_goals_made"),
+                        "field_goals_attempted": stt.get("field_goals_attempted"),
+                        "free_throws_made": stt.get("free_throws_made"),
+                        "free_throws_attempted": stt.get("free_throws_attempted"),
+                        "offensive_rebounds": stt.get("rebounds_offensive"),
+                        "defensive_rebounds": stt.get("rebounds_defensive"),
+                        "steals": stt.get("steals"), "blocks": stt.get("blocks"),
+                        "turnovers": stt.get("turnovers"), "fouls": stt.get("fouls"),
+                        "plus_minus": stt.get("plus_minus"),
+                        "minutes": _mmss_to_min(stt.get("minutes")),
+                    })
+        d += _dt.timedelta(days=1)
+    return pd.DataFrame(rows)
+
+
+def augment_from_sportsblaze(lg, raw_pb):
+    """Top up the current-season parquet with SportsBlaze rows for any days it's missing."""
+    import datetime as _dt
+    try:
+        latest = pd.to_datetime(raw_pb["game_date"]).max().date()
+    except Exception:
+        return raw_pb
+    today = _dt.date.today()
+    if latest >= today - _dt.timedelta(days=1):
+        return raw_pb
+    extra = sportsblaze_player_box(lg, latest + _dt.timedelta(days=1), today)
+    if len(extra):
+        print(f"  [sportsblaze] {lg}: +{len(extra)} player-rows since {latest} (parquet lagged)")
+        return pd.concat([raw_pb, extra], ignore_index=True)
+    return raw_pb
+
+
 def run_league(lg, seasons, current, outroot, password, src_local):
     cfg = LEAGUES[lg]
     outdir = os.path.join(outroot, lg)
@@ -476,16 +575,19 @@ def run_league(lg, seasons, current, outroot, password, src_local):
     for s in probe:
         optional = s not in seasons
         if optional:
-            print(f"  probing {s} (next season)…", flush=True)
+            print(f"  probing {s} (next season)...", flush=True)
             try:
                 sc_frames.append(load_frame(lg, "schedules", s, src_local))
                 pb_frames.append(normalize_player_box(load_frame(lg, "player_box", s, src_local)))
                 tb_frames.append(_team_game_rows(load_frame(lg, "team_box", s, src_local)))
             except Exception:
-                print(f"  [info] {s} not published yet — skipped")
+                print(f"  [info] {s} not published yet - skipped")
             continue
-        print(f"  loading {s}…", flush=True)
-        pb_frames.append(normalize_player_box(load_frame(lg, "player_box", s, src_local)))
+        print(f"  loading {s}...", flush=True)
+        _rawpb = load_frame(lg, "player_box", s, src_local)
+        if s == current and not src_local:
+            _rawpb = augment_from_sportsblaze(lg, _rawpb)
+        pb_frames.append(normalize_player_box(_rawpb))
         tb_frames.append(_team_game_rows(load_frame(lg, "team_box", s, src_local)))
         sc_frames.append(load_frame(lg, "schedules", s, src_local))
         if s == current:
@@ -531,7 +633,7 @@ def run_league(lg, seasons, current, outroot, password, src_local):
 
     op = os.path.join(outdir, "odds.json")
     if not os.path.exists(op):
-        wjson(outdir, "odds.json", {"note": "stub — worker owns this file", "events": []})
+        wjson(outdir, "odds.json", {"note": "stub - worker owns this file", "events": []})
 
     version = str(int(time.time()))
     nextDay = fixture[0]["utc"][:10] if fixture else None
@@ -563,10 +665,10 @@ def run_league(lg, seasons, current, outroot, password, src_local):
 
 
 # ============================================================================
-# Self-test — synthetic frames through every transform, no network.
+# Self-test - synthetic frames through every transform, no network.
 # ============================================================================
 def selftest():
-    print("selftest: building synthetic frames…")
+    print("selftest: building synthetic frames...")
     def _pbrow(gid, date, aid, name, team, opp, ha, pos, st, mins, pts, reb, ast,
                tpm=1, dnp=False, starter=True):
         return dict(season=2026, season_type=2, game_id=gid, game_date=date,
@@ -652,7 +754,7 @@ def selftest():
                       ("fixture", fixture), ("results", results),
                       ("lineups", lineups), ("gamelogs", glogs)]:
         json.loads(json.dumps(_clean(obj), allow_nan=False))   # raises on NaN leak
-    print("selftest: ALL PASS ✔")
+    print("selftest: ALL PASS ok")
 
 
 # ============================================================================
@@ -666,7 +768,7 @@ def main():
     ap.add_argument("--wnba-current", default="2026")
     ap.add_argument("--password", default="")
     ap.add_argument("--src-local", default=None,
-                    help="dir containing {nba,wnba}/{ds}/parquet — skips network")
+                    help="dir containing {nba,wnba}/{ds}/parquet - skips network")
     ap.add_argument("--selftest", action="store_true")
     args = ap.parse_args()
 
