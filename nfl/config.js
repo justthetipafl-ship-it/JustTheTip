@@ -14,6 +14,7 @@ window.SPORT_CONFIG = {
   cmbPick:  [['passYds','Pass Yds',180],['rushYds','Rush Yds',40],['recYds','Rec Yds',40],['receptions','Receptions',3],['rushAtt','Rush Att',10],['passTds','Pass TDs',1.2],['anytimeTd','Anytime TD',0.35],['tackles','Tackles+Ast',6]],
   fxpMarkets: [['passYds','Pass Yd'],['rushYds','Rush Yd'],['recYds','Rec Yd'],['receptions','Rec'],['rushAtt','Rush Att'],['passTds','Pass TD'],['tackles','Tackles']],
   dvpsOpts: [['receptions','Receptions'],['recYds','Rec Yds'],['recTds','Rec TDs'],['rushYds','Rush Yds'],['rushAtt','Rush Att'],['rushTds','Rush TDs'],['passYds','Pass Yds'],['passTds','Pass TDs'],['anytimeTd','Anytime TD'],['fanPts','Fan Pts'],['tackles','Tackles+Ast']],
+  eliteDefs: [['passYds','Pass Yds'],['passAtt','Pass Att'],['passTds','Pass TDs'],['passInt','INTs'],['recYds','Rec Yds'],['rushYds','Rush Yds'],['receptions','Receptions']],
   dvpStylePos: {'Dual Threat':'QB','Gunslinger':'QB','Game Manager':'QB','Pocket Passer':'QB','Workhorse':'RB','Committee Back':'RB','Receiving Back':'RB','Goal-Line Back':'RB','Alpha WR':'WR','Deep Threat':'WR','Possession / Slot':'WR','Rotational WR':'WR','Route TE':'TE','Hybrid TE':'TE','Blocking TE':'TE','TD Machine':'All Positions','Volume King':'All Positions','Fantasy Stars':'All Positions'},
   h2hKeys: [['points','Points'],['passYds','Pass Yds'],['rushYds','Rush Yds'],['passTds','Pass TDs'],['rushTds','Rush TDs'],['receptions','Receptions'],['passInt','INTs Thrown'],['sacks','Sacks Taken']],
   lowCount: ['passTds','rushTds','recTds','anytimeTd','passInt','totalTds'],
