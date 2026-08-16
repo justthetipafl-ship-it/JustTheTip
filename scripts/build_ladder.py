@@ -35,7 +35,7 @@ MKT = {'disposals': 'disposals', 'goals': 'goals', 'marks': 'marks', 'tackles': 
        'points': 'points', 'rebounds': 'rebounds', 'assists': 'assists', 'threes': 'threes',
        'shots': 'shots', 'saves': 'saves', 'passYds': 'passYds', 'rushYds': 'rushYds',
        'recYds': 'recYds', 'receptions': 'receptions', 'H': 'H', 'TB': 'TB', 'HR': 'HR',
-       'RBI': 'RBI', 'R': 'R', 'SB': 'SB', 'K': 'SO'}
+       'RBI': 'RBI', 'R': 'R', 'SB': 'SB', 'BB': 'BB', 'K': 'SO'}
 
 
 def load(path):
