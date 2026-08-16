@@ -1309,6 +1309,7 @@
   ];
     if(Array.isArray(CREW)&&!CREW.some(function(c){return c.k==='degenerates';})){ var _mi=CREW.findIndex(function(c){return c.k==='multi';}); CREW.splice(_mi>=0?_mi+1:1,0,{k:'degenerates',n:'Degenerates',i:'ti-flame',d:'Round multis & ladder'}); }
     DVPS_OPTS=CFG.dvpsOpts||[['disposals','Disposals'],['kicks','Kicks'],['handballs','Handballs'],['marks','Marks'],['tackles','Tackles'],['clearances','Clearances'],['goals','Goals'],['dreamteam','Fantasy']];
+    ELITE_OPTS=CFG.eliteDefs||null;   // per-sport Elite Matchups stats; falls back to DVPS_OPTS
     DVP_PLAY_STYLE_POS=CFG.dvpStylePos||{'Accumulator Mid':'Midfielder','Contested Mid':'Midfielder','Running Mid':'Midfielder','Handball Mid':'Midfielder','Scoring MF':'Mid-Forward','Bear in the Square':'Key Forward','Key Target':'Key Forward','Pressure Fwd':'Gen. Forward','Small Forwards':'Gen. Forward','Clearance Beast':'Midfielder','Intercept Def':'Key Defender','Uncontested Marker':'Gen. Defender','Defensive Ball User':'Gen. Defender','Ruck Mid':'Ruck','Dominant Ruck':'Ruck','Winger':'Midfielder','Shankers':'All Positions','Cuddle Monsters':'All Positions','Fantasy Stars':'All Positions','Entry Man':'All Positions'};
   }
   function _renderSportToggle(){ const el=document.getElementById('sport-toggle'); if(!el)return; const keys=Object.keys(SPORTS); if(keys.length<2){ el.innerHTML=''; return; } el.innerHTML='<select class="sport-sel" onchange="_switchSport(this.value)" aria-label="Sport">'+keys.map(k=>'<option value="'+k+'"'+(k===SPORT.key?' selected':'')+'>'+SPORTS[k].name+'</option>').join('')+'</select>'; }
@@ -3699,8 +3700,10 @@
   }
   const SNAG_DEFS  = [{k:'goals',l:'Goals'},{k:'shotsAtGoal',l:'Shots'},{k:'behinds',l:'Behinds'}];
   // Elite Matchups = same engine as Snags, for the other bettable stats (goals lives in Snags)
-  function _eliteDefs(){   // per-sport: the DVP-tracked stats for the current sport (not hardcoded AFL)
-    return (DVPS_OPTS||[]).filter(function(o){return o[0]!=='dreamteam';}).slice(0,6).map(function(o){return {k:o[0],l:o[1]};});
+  function _eliteDefs(){   // per-sport Elite Matchups stats: curated eliteDefs if the config sets one, else the DVP options
+    var src=(typeof ELITE_OPTS!=='undefined'&&ELITE_OPTS&&ELITE_OPTS.length)?ELITE_OPTS
+      :(DVPS_OPTS||[]).filter(function(o){return o[0]!=='dreamteam';}).slice(0,6);
+    return src.map(function(o){return {k:o[0],l:o[1]};});
   }
   const BUNNY_STATS = [{k:'disposals',l:'Disposals',min:15},{k:'dreamteam',l:'Fantasy',min:60}];
   const BOGEY_STATS = [{k:'disposals',l:'Disposals',min:15}];   // disposals only — fantasy has no posted under line to bet
