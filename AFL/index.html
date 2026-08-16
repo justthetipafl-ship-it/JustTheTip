@@ -3699,8 +3699,9 @@
   }
   const SNAG_DEFS  = [{k:'goals',l:'Goals'},{k:'shotsAtGoal',l:'Shots'},{k:'behinds',l:'Behinds'}];
   // Elite Matchups = same engine as Snags, for the other bettable stats (goals lives in Snags)
-  const ELITE_DEFS = [{k:'disposals',l:'Disposals'},{k:'marks',l:'Marks'},{k:'tackles',l:'Tackles'},
-    {k:'kicks',l:'Kicks'},{k:'handballs',l:'Handballs'},{k:'clearances',l:'Clearances'}];
+  function _eliteDefs(){   // per-sport: the DVP-tracked stats for the current sport (not hardcoded AFL)
+    return (DVPS_OPTS||[]).filter(function(o){return o[0]!=='dreamteam';}).slice(0,6).map(function(o){return {k:o[0],l:o[1]};});
+  }
   const BUNNY_STATS = [{k:'disposals',l:'Disposals',min:15},{k:'dreamteam',l:'Fantasy',min:60}];
   const BOGEY_STATS = [{k:'disposals',l:'Disposals',min:15}];   // disposals only — fantasy has no posted under line to bet
   const STREAK_STATS = [['disposals','Disposals'],['kicks','Kicks'],['handballs','Handballs'],['marks','Marks'],
@@ -3841,7 +3842,7 @@
     // top 10 in the LEAGUE per stat (not slate); fire when one plays a bottom-5 defence this round
     const pool=(state.idx.players||[]).filter(p=>(p.matches||0)>=4);
     const out=[];
-    ELITE_DEFS.forEach(def=>{
+    _eliteDefs().forEach(def=>{
       [...pool].sort((a,b)=>(b[def.k]||0)-(a[def.k]||0)).slice(0,10).forEach((p,i)=>{
         const opp=nextOpp(p.team); if(!opp) return;
         const dr=dvpRank(opp,p.position,def.k); if(!dr) return;
@@ -3863,7 +3864,7 @@
     }
     const pool=(state.idx.players||[]).filter(p=>(p.matches||0)>=4);
     const teamsArr=Object.values(state.idx.teamMap||{});
-    ELITE_DEFS.forEach(def=>{
+    _eliteDefs().forEach(def=>{
       const k=def.k, ak=k+'_a';
       const withA=teamsArr.filter(t=>t[ak]!=null);
       const lg=withA.length?withA.reduce((s,t)=>s+(+t[ak]),0)/withA.length:0;
