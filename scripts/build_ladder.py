@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """JTT shared ladder challenge -> writes <base>/ladder.json for one sport.
-Usage: build_ladder.py <data_dir>
+Usage: build_ladder.py <data_dir> [bookmaker]
 
 Preferred mode (odds present): each day's pick is the best ~$2 same-game multi
 (2-4 legs, any stat) from a single bookmaker, chosen by highest combined hit-rate.
@@ -19,6 +19,7 @@ from itertools import combinations, product
 START = 10.0
 TARGET = 10000.0
 MAX_RUNGS = 12
+LADDER_BOOK = 'sportsbet'   # the ladder is placed at one set book
 MIN_GAMES = 6
 ODDS_LO = 1.85          # target SGM price window (~$2)
 ODDS_HI = 2.20
@@ -143,7 +144,7 @@ def _combo_cross_game(by_game):
     return best
 
 
-def best_pick(base, gl, byp):
+def best_pick(base, gl, byp, book=LADDER_BOOK):
     """Cross-game multi across the slate (one book); SGM only when a single game is on."""
     od = load(os.path.join(base, 'odds.json'))
     fx = load(os.path.join(base, 'fixture.json')) or []
@@ -176,6 +177,8 @@ def best_pick(base, gl, byp):
     # priced, gradeable, short legs grouped by (book, game)
     by_book = {}
     for l in legs_all:
+        if (l.get('book') or '').lower() != book.lower():
+            continue                               # ladder is locked to one bookmaker
         gi = team_game.get(pteam.get(l.get('player')))
         if gi is None:
             continue
@@ -227,6 +230,7 @@ def main():
         print('usage: build_ladder.py <data_dir> [fallback_stat]')
         return
     base = sys.argv[1]
+    book = sys.argv[2] if len(sys.argv) > 2 else LADDER_BOOK
     if not os.path.isdir(base):
         print('skip (no dir):', base)
         return
@@ -274,7 +278,7 @@ def main():
             lad['attempt'] = lad.get('attempt', 1) + 1
             lad['days'] = []
         lad['bank'] = bank
-        sgm = best_pick(base, gl, byp)
+        sgm = best_pick(base, gl, byp, book)
         if sgm:
             legs = [{'name': lg['name'], 'pick_name': lg['name'], 'market': lg['market'],
                      'line': lg['line'], 'odds': lg['over']} for lg in sgm['legs']]
