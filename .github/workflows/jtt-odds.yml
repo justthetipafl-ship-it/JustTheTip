@@ -1,7 +1,8 @@
 name: JTT Odds (rapidoddsapi)
 on:
   schedule:
-    - cron: '55 22 * * *'   # 08:55 AEST daily, just before the 9:01 ladder run
+    - cron: '55 22 * * *'   # 08:55 AEST — forced pull just before the 9:01 ladder build
+    - cron: '0 * * * *'     # hourly — pulls ONCE when the pre-game window opens (else skips, no credits)
   workflow_dispatch:
 concurrency:
   group: jtt-odds
@@ -16,16 +17,22 @@ jobs:
           python-version: '3.11'
       - name: Install SDK
         run: pip install rapidoddsapi
+      # The 08:55 cron (and manual runs) force a pull; the hourly cron only pulls
+      # when within --window hours before the first game and it hasn't pulled yet.
       - name: Fetch odds
         env:
           ROA_API_KEY: ${{ secrets.ROA_API_KEY }}
         run: |
-          python scripts/fetch_odds.py WNBA wnba/data/odds.json || true
-          python scripts/fetch_odds.py MLB  mlb/data/odds.json  || true
+          FORCE=""
+          if [ "${{ github.event.schedule }}" = "55 22 * * *" ] || [ "${{ github.event_name }}" = "workflow_dispatch" ]; then FORCE="--force"; fi
+          python scripts/fetch_odds.py WNBA wnba/data/odds.json $FORCE --window 3 || true
+          python scripts/fetch_odds.py MLB  mlb/data/odds.json  $FORCE --window 3 || true
       - name: Commit
         run: |
           git config user.name "jtt-bot"
           git config user.email "bot@justthetip"
           git add wnba/data/odds.json mlb/data/odds.json
-          git diff --staged --quiet || git commit -m "odds: wnba + mlb refresh"
+          git diff --staged --quiet && { echo "no change"; exit 0; }
+          git pull --rebase origin main || true
+          git commit -m "odds: wnba + mlb refresh"
           git push
