@@ -1093,7 +1093,12 @@
   .lad-bank{margin-left:auto;color:var(--text-2);font-family:var(--font-display)}
   .lad-legs{display:flex;flex-wrap:wrap;gap:5px;margin-top:7px}
   .lad-leg{background:var(--surface-3,var(--surface));border:1px solid var(--border-light,var(--border));border-radius:6px;padding:2px 7px;font-size:11px;color:var(--text-2)}
+  .lad-leg{display:inline-flex;align-items:center;gap:4px}
+  .lad-leg img,.lad-leg svg{width:14px;height:14px;border-radius:3px;flex:none}
   .lad-leg b{color:var(--text);font-family:var(--font-display)}
+  .lad-vs{color:var(--text-3);font-size:10px}
+  .lad-sub{display:flex;align-items:center;gap:6px;margin-top:6px;padding-top:6px;border-top:1px dashed var(--border);font-size:11px}
+  .lad-sub-lbl{font-size:9px;font-weight:800;letter-spacing:.4px;color:var(--text-3);background:var(--surface-3,var(--surface));border:1px solid var(--border);border-radius:4px;padding:1px 5px}
   .lad-type{font-size:9px;font-weight:800;letter-spacing:.4px;padding:1px 5px;border-radius:4px;text-transform:uppercase}
   .lad-type-multi{background:color-mix(in srgb,var(--accent) 18%,transparent);color:var(--accent)}
   .lad-type-sgm{background:color-mix(in srgb,var(--ok,#22c55e) 18%,transparent);color:var(--ok,#22c55e)}
@@ -6220,12 +6225,25 @@
     points:4,rebounds:2,assists:2,threes:1,steals:1,blocks:1,pra:6,
     shots:1,saves:5,ppPoints:1,
     H:1,TB:1,HR:1,RBI:1,R:1,SB:1,K:2};
-  function _pyrDefaultStat(){ var d={afl:'disposals',aflw:'disposals',nfl:'recYds',ncaaf:'recYds',nba:'points',wnba:'points',nhl:'shots',mlb:'TB'}[(window.SPORT&&SPORT.key)]; var mk=(MULTI_MKTS||[]).map(function(m){return m[0];}); return (d&&mk.indexOf(d)>=0)?d:(mk[0]||'disposals'); }
+  var PYR_STATS={
+    afl:['disposals','kicks','handballs','marks','tackles','goals'],
+    aflw:['disposals','kicks','handballs','marks','tackles','goals'],
+    nfl:['recYds','rushYds','passYds','receptions'], ncaaf:['recYds','rushYds','passYds','receptions'],
+    nba:['points','rebounds','assists','threes','pra'], wnba:['points','rebounds','assists','threes'],
+    nhl:['shots','points','saves'], mlb:['K','TB','H','HR']
+  };
+  function _pyrStatOpts(){
+    var wl=PYR_STATS[(window.SPORT&&SPORT.key)], mk=(MULTI_MKTS||[]);
+    if(!wl) return mk;
+    var out=[]; wl.forEach(function(k){ for(var i=0;i<mk.length;i++){ if(mk[i][0]===k){ out.push(mk[i]); break; } } });
+    return out.length?out:mk;
+  }
+  function _pyrDefaultStat(){ var d={afl:'disposals',aflw:'disposals',nfl:'recYds',ncaaf:'recYds',nba:'points',wnba:'points',nhl:'shots',mlb:'K'}[(window.SPORT&&SPORT.key)]; var mk=_pyrStatOpts().map(function(m){return m[0];}); return (d&&mk.indexOf(d)>=0)?d:(mk[0]||'disposals'); }
   window._degSetPyrStat=function(s){ state.view.pyrStat=s; var el=document.getElementById('deg-wrap'); if(el) el.innerHTML=_degBody(); };
   function _pyramidSection(legs, oddsOn, book){
-    var stat=(state.view.pyrStat&&(MULTI_MKTS||[]).some(function(m){return m[0]===state.view.pyrStat;}))?state.view.pyrStat:_pyrDefaultStat();
+    var stat=(state.view.pyrStat&&_pyrStatOpts().some(function(m){return m[0]===state.view.pyrStat;}))?state.view.pyrStat:_pyrDefaultStat();
     var statLbl=_mktLbl(stat);
-    var statSel='<div class="deg-bookbar"><span class="deg-bl">Stat</span><select class="ob-sel" onchange="_degSetPyrStat(this.value)">'+(MULTI_MKTS||[]).map(function(m){return '<option value="'+m[0]+'"'+(m[0]===stat?' selected':'')+'>'+m[1]+'</option>';}).join('')+'</select></div>';
+    var statSel='<div class="deg-bookbar"><span class="deg-bl">Stat</span><select class="ob-sel" onchange="_degSetPyrStat(this.value)">'+_pyrStatOpts().map(function(m){return '<option value="'+m[0]+'"'+(m[0]===stat?' selected':'')+'>'+m[1]+'</option>';}).join('')+'</select></div>';
     var byP={};
     if(oddsOn){
       legs.filter(function(l){return l.statKey===stat;}).forEach(function(l){ var e=byP[l.p.name]||(byP[l.p.name]={p:l.p,opp:l.opp,proj:l.proj,lines:{}}); e.lines[l.line]=l.over; });
@@ -6234,7 +6252,13 @@
       (state.idx.players||[]).filter(function(p){return ts[p.team]&&(p.matches||0)>=5&&isPlaying(p.name,p.team);}).forEach(function(p){ var o=nextOpp(p.team), m=_projModel(p,stat,1,o); if(m.mean>0) byP[p.name]={p:p,opp:o,proj:m.mean,lines:{}}; });
     }
     var players=Object.keys(byP).map(function(k){return byP[k];}).sort(function(a,b){return b.proj-a.proj;});
-    if(players.length<3) return _degWrap('The Pyramid','ti-triangle','', statSel+'<div class="deg-empty">Not enough '+esc(statLbl)+' projections to build a pyramid.</div>');
+    if(oddsOn && players.length<3){                          // book lacks an alt ladder for this stat -> fall back to projections
+      byP={}; var gsf=(state.data.fixture||[]).filter(function(g){return g.home&&g.away;}), tsf={}; gsf.forEach(function(g){tsf[g.home]=1;tsf[g.away]=1;});
+      (state.idx.players||[]).filter(function(p){return tsf[p.team]&&(p.matches||0)>=5&&isPlaying(p.name,p.team);}).forEach(function(p){ var o=nextOpp(p.team), m=_projModel(p,stat,1,o); if(m.mean>0) byP[p.name]={p:p,opp:o,proj:m.mean,lines:{}}; });
+      players=Object.keys(byP).map(function(k){return byP[k];}).sort(function(a,b){return b.proj-a.proj;});
+      oddsOn=false;
+    }
+    if(players.length<3) return _degWrap('The Pyramid','ti-triangle','', statSel+'<div class="deg-empty">Not enough '+esc(statLbl)+' data to build a pyramid.</div>');
     var rung=PYR_RUNG[stat]||Math.max(1,Math.round(players[0].proj/6));
     function overAt(pl,target){ var best=null,bd=99; Object.keys(pl.lines).forEach(function(ln){ var d=Math.abs(+ln-target); if(d<bd&&d<=Math.max(0.6,rung*0.6)){bd=d;best={line:+ln,over:pl.lines[ln]};} }); return best; }
     function tierPick(line,n,used){ return players.filter(function(pl){ if(used[pl.p.name]||pl.proj<line)return false; if(!oddsOn)return true; var oa=overAt(pl,line); return oa&&oa.over>=1.25; }).slice(0,n); }
@@ -6265,7 +6289,9 @@
       var st=d.result==='win'?'win':d.result==='loss'?'loss':'pending';
       var ic=st==='win'?'ti-circle-check-filled':st==='loss'?'ti-circle-x-filled':'ti-arrow-big-up-lines';
       var legs=(d.legs&&d.legs.length)?d.legs:[];
-      var legHtml=legs.map(function(l){var nm=(l.name||'').split(' ');nm=nm[nm.length-1];return '<span class="lad-leg">'+esc(nm)+' <b>'+l.line+'+</b> '+_mktLbl(l.market)+'</span>';}).join('');
+      function _ladLeg(l,cls){var nm=(l.name||'').split(' ');nm=nm[nm.length-1];return '<span class="lad-leg'+(cls?' '+cls:'')+'">'+(l.team?teamLogo(l.team,14):'')+esc(nm)+' <b>'+l.line+'+</b> '+_mktLbl(l.market)+(l.opp?' <span class="lad-vs">v '+abbr(l.opp)+'</span>':'')+'</span>';}
+      var legHtml=legs.map(function(l){return _ladLeg(l);}).join('');
+      var subHtml=(d.sub&&st==='pending')?('<div class="lad-sub"><span class="lad-sub-lbl">SUB</span>'+_ladLeg(d.sub)+'</div>'):'';
       var bb=d.bank_before, ba=d.bank_after;
       var money=st==='win'?('$'+(+bb).toFixed(2)+' \u2192 <b>$'+(+ba).toFixed(2)+'</b>')
                :st==='loss'?('$'+(+bb).toFixed(2)+' \u2192 <b>busted</b>')
@@ -6276,7 +6302,7 @@
         +'<i class="ti '+ic+' lad-ic"></i>'
         +'<span class="lad-money">'+money+'</span>'
         +(d.book?'<span class="lad-book">@ '+esc(d.book)+'</span>':'')+'</div>'
-        +(legHtml?'<div class="lad-legs">'+legHtml+'</div>':'')+'</div>';
+        +(legHtml?'<div class="lad-legs">'+legHtml+'</div>':'')+subHtml+'</div>';
     }).join('');
     var wins=L.days.filter(function(d){return d.result==='win';}).length;
     // progress on a log scale ($10 -> $10k spans 3 orders of magnitude)
