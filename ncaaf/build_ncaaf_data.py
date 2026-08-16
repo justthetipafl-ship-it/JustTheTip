@@ -255,6 +255,19 @@ def schedules_from_espn(season, identity, conf_hint):
             print(f"    (scoreboard {_rng} failed: {e})")
         _cur = _nx + dt.timedelta(days=1)
         time.sleep(0.3)
+    # Safety net: the date-range sweep can return nothing for a not-yet-live season,
+    # so if it came back thin, also sweep by week via the (proven) year+seasontype+week
+    # form used by fetch_scoreboard_odds. Dedup on game_id folds any overlap.
+    if len(rows) < 50:
+        for _st in (2, 3):
+            for _wk in range(1, 17 if _st == 2 else 2):
+                try:
+                    _ev_rows(fetch_json(f"{ESPN_SITE}/scoreboard?groups=80&dates={season}"
+                                        f"&seasontype={_st}&week={_wk}&limit=400", timeout=45),
+                             "regular" if _st == 2 else "postseason")
+                except Exception as e:
+                    print(f"    (scoreboard {season} st{_st} wk{_wk} failed: {e})")
+                time.sleep(0.2)
     df = pd.DataFrame(rows).drop_duplicates(subset=["game_id"])
     print(f"  schedules {season}: {len(df)} rows (ESPN scoreboard fallback)")
     return df
@@ -1022,7 +1035,7 @@ def run_build(out_dir, seasons, current, password, args, frames=None):
         # parquet lags for the newest season (publishes late pre-season):
         # synthesize from ESPN scoreboards so the fixture still ships
         for s in seasons:
-            if s in sch_frames or args.skip_espn:
+            if (s in sch_frames and len(sch_frames[s])) or args.skip_espn:
                 continue
             conf_hint = {}
             for prev in sorted(sch_frames, reverse=True):
