@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-build_nfl_data.py — JTT NFL split-data generator (advanced tool, AFL-parity).
+build_nfl_data.py - JTT NFL split-data generator (advanced tool, AFL-parity).
 
 Mirrors AFL/build_afl_data.py's role: one script that writes the split
 nfl/data/*.json files the shell + scoring.js consume.
@@ -22,7 +22,7 @@ nfl/data/*.json files the shell + scoring.js consume.
   odds.json        stub written ONLY if missing (worker owns the real file)
 
 Sources: nflreadpy (nflverse). Red-zone/goal-line usage + first-TD need pbp,
-which is heavy — restricted to --pbp-seasons (default: two most recent).
+which is heavy - restricted to --pbp-seasons (default: two most recent).
 
 Run (GitHub Actions):
     pip install -r nfl/requirements.txt
@@ -70,7 +70,7 @@ STADIUMS = {
  "TEN":(36.1665,-86.7713),"WAS":(38.9078,-76.8645),
 }
 
-# ── generic helpers ─────────────────────────────────────────────────────────
+# ?? generic helpers ?????????????????????????????????????????????????????????
 def col(df, *cands, default=None):
     for c in cands:
         if c in df.columns:
@@ -103,12 +103,25 @@ def write_json(path, obj):
         json.dump(obj, f, separators=(",", ":"))
     print(f"  wrote {path} ({os.path.getsize(path)/1024:.0f} KB)")
 
-# ── loaders (network) ───────────────────────────────────────────────────────
+# ?? loaders (network) ???????????????????????????????????????????????????????
+def _safe_seasons_load(fn, seasons, label, **kw):
+    """Load a game-derived frame; if the newest season isn't published yet
+    (e.g. the current preseason 404s the whole call), drop it and retry."""
+    try:
+        return fn(seasons=seasons, **kw).to_pandas()
+    except Exception as e:
+        reduced = [s for s in seasons if s != max(seasons)]
+        if reduced and reduced != list(seasons):
+            print(f"  ({label}: {max(seasons)} not published yet - retrying {reduced})")
+            return fn(seasons=reduced, **kw).to_pandas()
+        raise
+
+
 def load_frames(seasons, pbp_seasons, current):
     import nflreadpy as nfl
-    print("loading nflverse frames …")
-    ps  = nfl.load_player_stats(seasons=seasons, summary_level="week").to_pandas()
-    sc  = nfl.load_snap_counts(seasons=seasons).to_pandas()
+    print("loading nflverse frames ...")
+    ps  = _safe_seasons_load(nfl.load_player_stats, seasons, "player_stats", summary_level="week")
+    sc  = _safe_seasons_load(nfl.load_snap_counts, seasons, "snap_counts")
     sch = nfl.load_schedules(seasons=sorted(set(seasons + [current + 1]))).to_pandas()
     try:
         inj = nfl.load_injuries(seasons=[current]).to_pandas()
@@ -127,21 +140,21 @@ def load_frames(seasons, pbp_seasons, current):
         try:
             pbp = nfl.load_pbp(seasons=pbp_seasons).to_pandas()
         except Exception as e:
-            print(f"  (pbp unavailable — red-zone/first-TD skipped: {e})")
+            print(f"  (pbp unavailable - red-zone/first-TD skipped: {e})")
     adv = ros = None
     try:
         adv = nfl.load_pfr_advstats(seasons=[current], stat_type="def",
                                     summary_level="week").to_pandas()
-        print("  advstats def cols:", list(adv.columns)[:16], "…")
+        print("  advstats def cols:", list(adv.columns)[:16], "...")
     except Exception as e:
-        print(f"  (pfr advstats unavailable — Clamp Watch feed skipped: {e})")
+        print(f"  (pfr advstats unavailable - Clamp Watch feed skipped: {e})")
     try:
         ros = nfl.load_rosters(seasons=[current]).to_pandas()
     except Exception as e:
         print(f"  (rosters unavailable: {e})")
     return ps, sc, sch, inj, dc, tm, pbp, adv, ros
 
-# ── schedules → game index, results, fixture ────────────────────────────────
+# ?? schedules ? game index, results, fixture ????????????????????????????????
 def build_game_index(sch):
     """(season, week, team) -> {matchId, home, away, opp, isHome, date}"""
     gid = col(sch, "game_id"); se = col(sch, "season"); wk = col(sch, "week")
@@ -197,7 +210,7 @@ def build_fixture(sch):
                    "venue": str(g(r, st, "") or ""), "roof": str(g(r, rf, "") or "").lower()})
     return fx, week
 
-# ── snap index ──────────────────────────────────────────────────────────────
+# ?? snap index ??????????????????????????????????????????????????????????????
 def build_snap_idx(sc):
     if sc is None or getattr(sc, "empty", True):
         return {}
@@ -218,7 +231,7 @@ def build_snap_idx(sc):
         out[(_norm(g(r, nm, "")), int(g(r, se)), int(g(r, wk)))] = r1(max(vals)) if vals else None
     return out
 
-# ── PFR advanced defense → Clamp Watch CB feed (dbs.json) ───────────────────
+# ?? PFR advanced defense ? Clamp Watch CB feed (dbs.json) ???????????????????
 PFR_TEAM = {"GNB": "GB", "KAN": "KC", "NWE": "NE", "NOR": "NO", "SFO": "SF",
             "TAM": "TB", "LVR": "LV", "SDG": "LAC", "STL": "LA", "OAK": "LV",
             "CRD": "ARI", "RAV": "BAL", "HTX": "HOU", "CLT": "IND", "JAX": "JAX",
@@ -243,7 +256,7 @@ def _pname(s):
     return " ".join(toks)
 
 def build_dbs(adv, ros, current, players=None):
-    """Clamp Watch feed: CBs graded on coverage — passer rating allowed when
+    """Clamp Watch feed: CBs graded on coverage - passer rating allowed when
     targeted, recomputed from weekly component sums. role='top' (elite corner);
     true shadow charting is paywalled, so this flags coverage QUALITY."""
     if adv is None or getattr(adv, "empty", True):
@@ -306,7 +319,7 @@ def build_dbs(adv, ros, current, players=None):
                     "grade": rat, "tgt": int(a["tgt"]), "cmpPct": round(a["cmp"] / a["tgt"] * 100, 1),
                     "ypt": ypt})
     n_pool = len(out)
-    # clamp corners: elite coverage — low rating allowed, capped at the best 16
+    # clamp corners: elite coverage - low rating allowed, capped at the best 16
     out = [x for x in out if x["grade"] <= 80.0 and x["ypt"] <= 7.5]
     out.sort(key=lambda x: x["grade"])
     print(f"  dbs sieve: {len(agg)} defenders -> {n_cb} CBs -> {n_vol} vol-qualified "
@@ -315,7 +328,7 @@ def build_dbs(adv, ros, current, players=None):
         print(f"  dbs unmatched-position sample: {unmatched}")
     return out[:16]
 
-# ── pbp → Tuddy Targets red-zone splits (season totals, zone splits, team share %) ──
+# ?? pbp ? Tuddy Targets red-zone splits (season totals, zone splits, team share %) ??
 def build_redzone(pbp, short_idx, current):
     """Season totals for the Tuddy Targets boards. Zones: rz (<=20), i10 (<=10),
     i5 (<=5, rushing only). Shares are the player's slice of his TEAM's zone volume."""
@@ -380,7 +393,7 @@ def build_redzone(pbp, short_idx, current):
                 tt["i5Att"] += 1
                 p["i5Att"] += 1; p["i5RushTd"] += 1 if scored else 0
     if unresolved:
-        print(f"  (redzone: {len(unresolved)} short names unresolved — skipped)")
+        print(f"  (redzone: {len(unresolved)} short names unresolved - skipped)")
     out = []
     for p in P.values():
         t = T.get(p["team"], {})
@@ -394,7 +407,7 @@ def build_redzone(pbp, short_idx, current):
     out.sort(key=lambda x: -(x["rzTgt"] + x["rzAtt"]))
     return out
 
-# ── pbp → red-zone / goal-line usage + first-TD log ─────────────────────────
+# ?? pbp ? red-zone / goal-line usage + first-TD log ?????????????????????????
 def build_pbp_derived(pbp, short_idx):
     """pbp names are short ('P.Nacua'); resolve to full names via short_idx
     {(TEAM, short_norm): full_name}. Returns (usage: fullname->rates, firsttd,
@@ -480,7 +493,7 @@ def build_pbp_derived(pbp, short_idx):
                             "team": team, "player": full,
                             "qtr": int(g(r, qtr, 0)), "gameFirst": game_first})
     if unresolved:
-        print(f"  (pbp: {len(unresolved)} short names unresolved — usage skipped for them)")
+        print(f"  (pbp: {len(unresolved)} short names unresolved - usage skipped for them)")
     # collapse usage to per-game rates
     out = {}
     for nm, u in usage.items():
@@ -489,7 +502,7 @@ def build_pbp_derived(pbp, short_idx):
                    "glCarry": r3(u["glCarry"] / n)}
     return out, firsttd, longest
 
-# ── players + gamelogs ──────────────────────────────────────────────────────
+# ?? players + gamelogs ??????????????????????????????????????????????????????
 def build_players_gamelogs(ps, snap_idx, game_idx, current):
     name_c = col(ps, "player_display_name", "player_name")
     pos_c = col(ps, "position", "position_group")
@@ -591,7 +604,7 @@ def build_players_gamelogs(ps, snap_idx, game_idx, current):
     short_idx = {k: v for k, v in short_idx.items() if v}
     return players, gamelogs, short_idx
 
-# ── team aggregation (offense + allowed) ────────────────────────────────────
+# ?? team aggregation (offense + allowed) ????????????????????????????????????
 def _team_games(gamelogs, results, current):
     """(team, matchId) -> summed offense row; plus opp + points from results."""
     tg = defaultdict(lambda: defaultdict(float))
@@ -645,7 +658,7 @@ def build_teams(gamelogs, results, current, divisions, form_n=None):
     return out
 
 def build_dvp(gamelogs, players, current):
-    """defense team × pos → per-game allowed (position totals / games faced)."""
+    """defense team ? pos ? per-game allowed (position totals / games faced)."""
     pos_by_name = {p["name"]: p["position"] for p in players}
     sums = defaultdict(lambda: defaultdict(float))   # (def, pos) -> stat totals
     games = defaultdict(set)                         # (def, pos) -> matchIds
@@ -698,7 +711,7 @@ def build_dvp(gamelogs, players, current):
         out.append(rec)
     return out
 
-# ── injuries / depth charts / teams meta ────────────────────────────────────
+# ?? injuries / depth charts / teams meta ????????????????????????????????????
 def build_injuries(inj, current):
     if inj is None or getattr(inj, "empty", True):
         return []
@@ -757,7 +770,7 @@ def build_lineups(dc, week):
                     "depth": dep, "status": "STARTER" if dep == 1 else "DEPTH"})
     out.sort(key=lambda x: (x["team"], x["position"], x["depth"]))
     if out and all(x["depth"] == 9 for x in out):
-        print("  WARNING: no depth values resolved — check depth-chart cols above")
+        print("  WARNING: no depth values resolved - check depth-chart cols above")
     return out
 
 def build_divisions(tm):
@@ -772,7 +785,7 @@ def build_divisions(tm):
                                           "conference": str(g(r, cf, "") or "")}
     return out
 
-# ── weather (Open-Meteo; outdoor fixtures only) ─────────────────────────────
+# ?? weather (Open-Meteo; outdoor fixtures only) ?????????????????????????????
 def build_weather(fixture):
     import requests
     WMO = {0:"Clear",1:"Mostly clear",2:"Partly cloudy",3:"Overcast",
@@ -811,7 +824,7 @@ def build_weather(fixture):
                         "code": None, "desc": ""})
     return out
 
-# ── main build ──────────────────────────────────────────────────────────────
+# ?? main build ??????????????????????????????????????????????????????????????
 def run_build(frames, out_dir, seasons, current, password, skip_weather=False):
     if len(frames) == 7:                      # selftest / older callers: no advstats
         frames = tuple(frames) + (None, None)
@@ -894,14 +907,14 @@ def run_build(frames, out_dir, seasons, current, password, skip_weather=False):
     print("done.")
     return meta
 
-# ── selftest: synthetic nflverse-shaped frames, full pipeline + assertions ──
+# ?? selftest: synthetic nflverse-shaped frames, full pipeline + assertions ??
 def selftest():
     import pandas as pd
-    print("SELFTEST — synthetic frames through the full pipeline")
+    print("SELFTEST - synthetic frames through the full pipeline")
     teams = ["KC", "BUF"]
     rows, snaps = [], []
     sched = []
-    # two seasons, 3 weeks each, KC v BUF every game (divisional? no—AFC West vs East,
+    # two seasons, 3 weeks each, KC v BUF every game (divisional? no-AFC West vs East,
     # synthetic divisions set below make them same-division to test that path)
     for season in (2024, 2025):
         for week in (1, 2, 3):
@@ -986,7 +999,7 @@ def selftest():
     out = "/tmp/nfl_selftest"
     meta = run_build((ps, sc, sch, inj, dc, tm, pbp), out, [2024, 2025], 2025,
                      password="testpw", skip_weather=True)
-    # ── assertions ──────────────────────────────────────────────────────────
+    # ?? assertions ??????????????????????????????????????????????????????????
     J = lambda f: json.load(open(f"{out}/{f}"))
     players, gl, dvp, teams_j, tf, fx, res, lu, itd, ij = (
         J("players.json"), J("gamelogs.json"), J("dvp.json"), J("teams.json"),
@@ -1020,7 +1033,7 @@ def selftest():
     assert kc["passYds"] == r1((281 + 282 + 283) / 3)
     assert kc["passYds_a"] == kc["passYds"]                  # symmetric synth
     assert kc["division"] == "AFC West" and kc["plays"] == r1(34 + 2 + 4 + 1 + 18)
-    assert tf[0]["matches"] == 3                             # form window ≤ 5
+    assert tf[0]["matches"] == 3                             # form window ? 5
     assert fx and fx[0]["week"] == 4 and fx[0]["roof"] == "outdoors"
     assert res and res[-1]["hs"] == 27
     assert len(lu) == 6 and all(x["status"] == "STARTER" for x in lu)
@@ -1079,9 +1092,9 @@ def selftest():
     assert len(dbs_t) == 1 and dbs_t[0]["player"] == "Elite Corner"          # sieve + position filter
     assert dbs_t[0]["team"] == "GB" and dbs_t[0]["role"] == "top"            # GNB -> GB mapping
     assert dbs_t[0]["tgt"] == 36 and dbs_t[0]["grade"] < 60                  # components aggregated, elite rating
-    print("SELFTEST PASSED — all schema + numeric assertions hold.")
+    print("SELFTEST PASSED - all schema + numeric assertions hold.")
 
-# ── cli ─────────────────────────────────────────────────────────────────────
+# ?? cli ?????????????????????????????????????????????????????????????????????
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", default="nfl/data")
