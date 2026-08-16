@@ -203,6 +203,54 @@ def load_schedules(seasons):
         raise RuntimeError("no schedules loaded - cannot build anything")
     return out
 
+def schedules_from_cfbd(season, key):
+    """2026+ schedule from the CollegeFootballData API (has FBS/FCS classification
+    built in, and isn't ESPN-IP-blocked from Actions). Same frame shape as the
+    ESPN fallback. Handles both camelCase and snake_case field names."""
+    import pandas as pd
+    import requests
+    rows = []
+    hdr = {"Authorization": "Bearer " + key, "Accept": "application/json"}
+    for stype in ("regular", "postseason"):
+        url = "https://api.collegefootballdata.com/games?year=%d&seasonType=%s" % (season, stype)
+        try:
+            r = requests.get(url, headers=hdr, timeout=45)
+            r.raise_for_status()
+            data = r.json()
+        except Exception as e:
+            print("    (cfbd %s %s failed: %s)" % (season, stype, e))
+            continue
+        for g in (data or []):
+            def gv(*ks):
+                for k in ks:
+                    if k in g and g[k] is not None:
+                        return g[k]
+                return None
+            hp = gv("homePoints", "home_points")
+            ap = gv("awayPoints", "away_points")
+            rows.append(dict(
+                game_id=str(gv("id") or ""), week=_int0(gv("week")),
+                season_type=("postseason" if stype == "postseason" else "regular"),
+                home_id=_int0(gv("homeId", "home_id")), away_id=_int0(gv("awayId", "away_id")),
+                home_team=gv("homeTeam", "home_team") or "",
+                away_team=gv("awayTeam", "away_team") or "",
+                home_division=(gv("homeClassification", "home_classification") or "fbs"),
+                away_division=(gv("awayClassification", "away_classification") or "fbs"),
+                home_conference=gv("homeConference", "home_conference") or "",
+                away_conference=gv("awayConference", "away_conference") or "",
+                home_points=_int0(hp) if hp is not None else None,
+                away_points=_int0(ap) if ap is not None else None,
+                completed=bool(gv("completed")),
+                start_date=gv("startDate", "start_date") or "",
+                neutral_site=bool(gv("neutralSite", "neutral_site")),
+                conference_game=bool(gv("conferenceGame", "conference_game")),
+                venue=gv("venue") or "",
+                home_pregame_elo=None, away_pregame_elo=None))
+    df = pd.DataFrame(rows).drop_duplicates(subset=["game_id"])
+    print("  schedules %s: %d rows (CFBD API)" % (season, len(df)))
+    return df
+
+
 def schedules_from_espn(season, identity, conf_hint):
     """Fallback when a season's parquet hasn't published yet (e.g. next season
     pre-kickoff): synthesize the same frame from ESPN scoreboards, one call per
@@ -1037,6 +1085,15 @@ def run_build(out_dir, seasons, current, password, args, frames=None):
         for s in seasons:
             if (s in sch_frames and len(sch_frames[s])) or args.skip_espn:
                 continue
+            cfbd_key = os.environ.get("CFBD_API_KEY", "")
+            if cfbd_key:
+                try:
+                    _df = schedules_from_cfbd(s, cfbd_key)
+                    if len(_df):
+                        sch_frames[s] = _df
+                        continue
+                except Exception as e:
+                    print(f"  (CFBD schedule for {s} failed: {e})")
             conf_hint = {}
             for prev in sorted(sch_frames, reverse=True):
                 for gm in sched_rows({prev: sch_frames[prev]}):
