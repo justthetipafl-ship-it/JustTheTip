@@ -421,12 +421,21 @@ window.JTTScoring = (function () {
     return Math.round(avg);
   }
 
+  // ---- adaptive form window: this season once >=10 games played this season, else last 10 across seasons ----
+  function _formGames(name){ var all=dvpByName(name), sea=all.filter(isCurSeason); return sea.length>=10 ? sea : all.slice(-10); }
+  function _formAvg(name, statKey, p){
+    var all=dvpByName(name), sea=all.filter(isCurSeason);
+    if(sea.length>=10 && p && p[statKey]!=null) return +p[statKey];
+    var w=sea.length>=10 ? sea : all.slice(-10);
+    var v=w.map(function(g){return +(g[statKey]||0);}).filter(function(x){return isFinite(x);});
+    return v.length ? v.reduce(function(a,b){return a+b;},0)/v.length : 0;
+  }
   function scoreCMP(p, statKey, line, opp){
     const logKey=pdToLogKey(statKey);
     const allGames=dvpByName(p.name);
-    const gamesCur=allGames.filter(r=>isCurSeason(r));
+    const gamesCur=_formGames(p.name);
     const logGames=allGames;
-    const pdAvg=p[statKey]||0;
+    const pdAvg=_formAvg(p.name, statKey, p);
     const avgCurVals=gamesCur.map(r=>r[logKey]||0);
     const avg=avgCurVals.length?avgCurVals.reduce((a,b)=>a+b,0)/avgCurVals.length:pdAvg;
     const l5=getL5Avg(p.name,statKey);
@@ -521,15 +530,16 @@ window.JTTScoring = (function () {
   function scoreUnderLine(p, opp, line, statKey){
     statKey=statKey||'recYds';
     const min=MIN_AVG[statKey]||0;
-    if(!line || (p[statKey]||0)<min*0.7) return null;
-    const gamesCur=dvpByName(p.name).filter(isCurSeason);
+    if(!line) return null;
+    const gamesCur=_formGames(p.name);
     if(gamesCur.length<3) return null;
+    const _favg=_formAvg(p.name,statKey,p); if(_favg<min*0.7) return null;
     const dvpPos=POS_TO_DVP[getPlayerPos(p)]||getPlayerPos(p);
     const dvpSk=DVP_STAT_MAP[statKey];
     const dvpPct=dvpSk&&opp?getDVPPct(teamAbbrev(opp),dvpPos,dvpSk):null;
     if(dvpPct!==null&&dvpPct>=0) return null;
     const score=scoreCMP(p,statKey,line,opp);
-    const avg=p[statKey]||0;
+    const avg=_favg;
     const vals=gamesCur.map(r=>r[statKey]||0);
     const hits=vals.filter(v=>v>=line).length;
     const hitRate=hits/vals.length;
@@ -545,16 +555,17 @@ window.JTTScoring = (function () {
   function scoreOverLine(p, opp, line, statKey){
     statKey=statKey||'recYds';
     const min=MIN_AVG[statKey]||0;
-    if(!line || (p[statKey]||0)<min) return null;
-    const gamesCur=dvpByName(p.name).filter(isCurSeason);
+    if(!line) return null;
+    const gamesCur=_formGames(p.name);
     if(gamesCur.length<3) return null;
+    const _favg=_formAvg(p.name,statKey,p); if(_favg<min) return null;
     const dvpPos=POS_TO_DVP[getPlayerPos(p)]||getPlayerPos(p);
     const dvpSk=DVP_STAT_MAP[statKey];
     const dvpPct=dvpSk&&opp?getDVPPct(teamAbbrev(opp),dvpPos,dvpSk):null;
     if(dvpPct!==null&&dvpPct<=0) return null;
     const score=scoreCMP(p,statKey,line,opp);
     if(score===null) return null;
-    const avg=p[statKey]||0;
+    const avg=_favg;
     const vals=gamesCur.map(r=>r[statKey]||0);
     const hits=vals.filter(v=>v>=line).length;
     const hitRate=hits/vals.length;
@@ -585,9 +596,9 @@ window.JTTScoring = (function () {
     lbl=lbl||statKey;
     const logKey=pdToLogKey(statKey);
     const allGames=dvpByName(p.name);
-    const gamesCur=allGames.filter(r=>isCurSeason(r));
+    const gamesCur=_formGames(p.name);
     const logGames=allGames;
-    const pdAvg=p[statKey]||0;
+    const pdAvg=_formAvg(p.name, statKey, p);
     const aCur=gamesCur.map(r=>r[logKey]||0);
     const avg=aCur.length?aCur.reduce((x,y)=>x+y,0)/aCur.length:pdAvg;
     const l5=getL5Avg(p.name,statKey);
