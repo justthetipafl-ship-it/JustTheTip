@@ -2491,6 +2491,54 @@
       '<div class="clash-grid">'+col(home,away,soften(ta))+col(away,home,soften(th))+'</div></div>';
   }
 
+  // ---- EPL Match Markets: 1X2 + Goals (O/U + BTTS) + Cards, Poisson model off GF/GA ----
+  function _mmTeamGoals(t){ var rs=(state.data.results||[]).filter(function(r){return r.home===t||r.away===t;}); if(!rs.length) return null;
+    var gf=0,ga=0,btts=0; rs.forEach(function(r){ var isH=r.home===t; gf+=isH?r.homeScore:r.awayScore; ga+=isH?r.awayScore:r.homeScore; if(r.homeScore>0&&r.awayScore>0)btts++; });
+    return {n:rs.length, gf:gf/rs.length, ga:ga/rs.length, btts:btts/rs.length}; }
+  function _mmTeamCards(t){ var gl=(state.data.gamelogs||[]), byM={}; gl.forEach(function(r){ if(r.Team!==t)return; var m=r.MatchId||r.Date; (byM[m]=byM[m]||{y:0,r:0}); byM[m].y+=r.yellowCard||0; byM[m].r+=r.redCard||0; });
+    var ms=Object.keys(byM).map(function(k){return byM[k];}); if(!ms.length) return null;
+    return {n:ms.length, y:ms.reduce(function(s,x){return s+x.y;},0)/ms.length, r:ms.reduce(function(s,x){return s+x.r;},0)/ms.length}; }
+  function _mmPois(k,lam){ var p=Math.exp(-lam); for(var i=1;i<=k;i++)p*=lam/i; return p; }
+  function _mmModel(lamH,lamA){ var pH=0,pD=0,pA=0,o25=0,btts=0,sc={};
+    for(var h=0;h<=8;h++)for(var a=0;a<=8;a++){ var p=_mmPois(h,lamH)*_mmPois(a,lamA); if(h>a)pH+=p; else if(h<a)pA+=p; else pD+=p; if(h+a>2.5)o25+=p; if(h>0&&a>0)btts+=p; sc[h+'-'+a]=p; }
+    var top=Object.keys(sc).map(function(k){return [k,sc[k]];}).sort(function(a,b){return b[1]-a[1];}).slice(0,3);
+    return {pH:pH,pD:pD,pA:pA,o25:o25,btts:btts,top:top,tot:lamH+lamA}; }
+  function _mmLean(proj,line,overWord,underWord){ var d=proj-line;
+    if(d>=0.75) return {t:'STRONG '+overWord,c:'#22c55e'}; if(d>=0.25) return {t:'LEAN '+overWord,c:'#86efac'};
+    if(d<=-0.75) return {t:'STRONG '+underWord,c:'#22c55e'}; if(d<=-0.25) return {t:'LEAN '+underWord,c:'#86efac'};
+    return {t:'LINE BALL',c:'#888'}; }
+  function gameMatchMarkets(home,away){
+    if(!_isMatchProps()) return '';
+    var hG=_mmTeamGoals(home), aG=_mmTeamGoals(away);
+    if(!hG||!aG) return '';   // need both sides (promoted teams w/o data skip gracefully)
+    var lamH=(hG.gf+aG.ga)/2*1.10, lamA=(aG.gf+hG.ga)/2*0.95;   // light home tilt
+    var m=_mmModel(lamH,lamA);
+    var favP=Math.max(m.pH,m.pD,m.pA), fav=m.pH===favP?home:(m.pA===favP?away:'Draw');
+    var strong=favP>=0.55?'STRONG ':(favP>=0.42?'LEAN ':'');
+    // 1X2 header
+    var bar='<div class="mm-bar"><div class="mm-seg mm-h" style="width:'+(m.pH*100).toFixed(0)+'%"><span>'+abbr(home)+' '+(m.pH*100).toFixed(0)+'%</span></div>'+
+      '<div class="mm-seg mm-d" style="width:'+(m.pD*100).toFixed(0)+'%"><span>Draw '+(m.pD*100).toFixed(0)+'%</span></div>'+
+      '<div class="mm-seg mm-a" style="width:'+(m.pA*100).toFixed(0)+'%"><span>'+abbr(away)+' '+(m.pA*100).toFixed(0)+'%</span></div></div>';
+    var tops='<div class="mm-tops">Top scores: '+m.top.map(function(t){return '<b>'+t[0]+'</b> '+(t[1]*100).toFixed(0)+'%';}).join(' &middot; ')+'</div>';
+    var head='<div class="mm-head"><span class="mm-1x2">1X2</span>'+(strong?'<span class="mm-badge" style="background:'+(favP>=0.55?'#22c55e':'#86efac')+'">'+strong+abbr(fav)+'</span>':'')+'</div>'+bar+tops;
+    // Goals
+    var gl=_mmLean(m.tot,2.5,'OVER','UNDER'), bl=_mmLean(m.btts*100,50,'YES','NO');
+    var goals='<div class="mm-card"><div class="mm-ct"><i class="ti ti-ball-football"></i> Goals</div>'+
+      '<div class="mm-line"><span class="mm-proj">'+m.tot.toFixed(2)+'</span> total &middot; O/U 2.5 <span class="mm-lean" style="color:'+gl.c+'">'+gl.t+'</span></div>'+
+      '<div class="mm-teams"><div class="mm-tr">'+teamLogo(home,18)+abbr(home)+' <b>'+hG.gf.toFixed(2)+'</b> GF / '+hG.ga.toFixed(2)+' GA</div>'+
+      '<div class="mm-tr">'+teamLogo(away,18)+abbr(away)+' <b>'+aG.gf.toFixed(2)+'</b> GF / '+aG.ga.toFixed(2)+' GA</div></div>'+
+      '<div class="mm-line"><span class="mm-proj">'+(m.btts*100).toFixed(0)+'%</span> BTTS &middot; <span class="mm-lean" style="color:'+bl.c+'">'+bl.t+'</span> <span class="mm-sub">('+abbr(home)+' '+(hG.btts*100).toFixed(0)+'% / '+abbr(away)+' '+(aG.btts*100).toFixed(0)+'%)</span></div></div>';
+    // Cards
+    var cards='';
+    var hC=_mmTeamCards(home), aC=_mmTeamCards(away);
+    if(hC&&aC){ var ctot=hC.y+hC.r+aC.y+aC.r, cl=_mmLean(ctot,4.5,'OVER','UNDER');
+      cards='<div class="mm-card"><div class="mm-ct"><i class="ti ti-cards"></i> Cards</div>'+
+        '<div class="mm-line"><span class="mm-proj">'+ctot.toFixed(2)+'</span> total &middot; O/U 4.5 <span class="mm-lean" style="color:'+cl.c+'">'+cl.t+'</span></div>'+
+        '<div class="mm-teams"><div class="mm-tr">'+teamLogo(home,18)+abbr(home)+' <b>'+hC.y.toFixed(2)+'</b> Y / '+hC.r.toFixed(2)+' R</div>'+
+        '<div class="mm-tr">'+teamLogo(away,18)+abbr(away)+' <b>'+aC.y.toFixed(2)+'</b> Y / '+aC.r.toFixed(2)+' R</div></div></div>'; }
+    return '<div class="game-sec mm-sec"><div class="gs-title"><i class="ti ti-clipboard-data"></i> Match Markets &middot; model off recent GF/GA</div>'+head+goals+cards+'</div>';
+  }
+
   // ---- soccer match-trend sections (EPL): By The Halves / Shape Trend / Recent Games ----
   function _isMatchProps(){ return (window.SPORT&&SPORT.key)==='epl'; }
   function _teamResults(team){ return (state.data.results||[]).filter(function(r){return r.home===team||r.away===team;}); }
@@ -3149,7 +3197,7 @@
       '<div class="fixture-center"><div class="kickoff">'+esc(_localDate(g))+' '+esc(_localTime(g))+'</div><div class="vs-big">v</div><div class="venue">'+(g.venue||'TBC')+'</div>'+weatherChip(g.home,g.away)+'</div>'+
       '<div class="fixture-team">'+teamLogo(g.away,52)+'<div class="fxr-name">'+g.away+'</div>'+pips(g.away)+'</div></div>';
     if(SPORT.key==='afl' && LIVE_WORKER) h+='<button class="live-open-btn" onclick="_aflLiveOpenCurrent()"><span class="live-dot on"></span>Watch Live</button>';
-    h+=(_fxHid('sec','matchOdds')?'':gameMatchOdds(g.home,g.away))+(_fxHid('sec','h2h')?'':gameHeadToHead(g.home,g.away))+(_fxHid('sec','clash')?'':gameClash(g.home,g.away))+(_fxHid('sec','lastMeeting')?'':gameLastMeeting(g.home,g.away))+(_fxHid('sec','byHalves')?'':gameByHalves(g.home,g.away))+(_fxHid('sec','shapeTrend')?'':gameShapeTrend(g.home,g.away))+(_fxHid('sec','recentGames')?'':gameRecentGames(g.home,g.away));
+    h+=(_fxHid('sec','matchMkts')?'':gameMatchMarkets(g.home,g.away))+(_fxHid('sec','matchOdds')?'':gameMatchOdds(g.home,g.away))+(_fxHid('sec','h2h')?'':gameHeadToHead(g.home,g.away))+(_fxHid('sec','clash')?'':gameClash(g.home,g.away))+(_fxHid('sec','lastMeeting')?'':gameLastMeeting(g.home,g.away))+(_fxHid('sec','byHalves')?'':gameByHalves(g.home,g.away))+(_fxHid('sec','shapeTrend')?'':gameShapeTrend(g.home,g.away))+(_fxHid('sec','recentGames')?'':gameRecentGames(g.home,g.away));
     h+='<div class="team-cols">'+teamPanel(g.home,g.away,true)+teamPanel(g.away,g.home,false)+'</div>';
     // mode toggle now sits directly above the signals it controls
     const fxMode=(state.view.fxMode||'degen');
