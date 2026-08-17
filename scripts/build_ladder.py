@@ -154,19 +154,32 @@ def best_pick(base, gl, byp, book=LADDER_BOOK):
 
     pteam = {nm: rec['team'] for nm, rec in byp.items()}
     now = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
-    def _upcoming(g):
-        u = g.get('utc')
-        if u:
-            try:
-                return datetime.datetime.fromisoformat(str(u).replace('Z', '')) > now
-            except Exception:
-                return True
-        d = g.get('date')
-        if d:
-            return str(d) >= now.strftime('%Y-%m-%d')
-        return True
+    aest = datetime.timedelta(hours=10)                 # Brisbane, UTC+10, no DST
+    today = (now + aest).date()
+
+    def _start(g):
+        for k in ('utc', 'gameTimeUTC', 'commence_time', 'commence', 'start'):
+            v = g.get(k)
+            if v:
+                try:
+                    return datetime.datetime.fromisoformat(
+                        str(v).replace('Z', '').replace('+00:00', ''))
+                except Exception:
+                    pass
+        return None
+
+    def _today_upcoming(g):
+        """A game on today's AEST date that hasn't started yet."""
+        st = _start(g)
+        if st is None:                                  # no start time -> use the date field
+            d = g.get('date')
+            return bool(d) and str(d) == today.isoformat()
+        if st <= now:                                   # already started
+            return False
+        return (st + aest).date() == today              # same AEST calendar day
+
     games = [(g.get('home'), g.get('away')) for g in fx
-             if g.get('home') and g.get('away') and _upcoming(g)]
+             if g.get('home') and g.get('away') and _today_upcoming(g)]
     if not games:
         return None
     team_game = {}
