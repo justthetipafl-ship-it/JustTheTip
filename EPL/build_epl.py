@@ -227,20 +227,40 @@ def build_gamelogs(fpl_players, fpl_logs, api):
     return out
 
 
-def build_players(fpl_players, match_counts):
+PG_STATS = ["goals", "assists", "shots", "shotsOn", "tackles", "keyPasses",
+            "foulsCommitted", "foulsDrawn", "saves", "xg", "xa", "passes",
+            "cards", "conceded", "cs", "min"]
+ZERO_FILL = {"goals", "assists", "cards", "saves", "conceded", "cs"}  # null = 0, not "not recorded"
+
+
+def build_players(fpl_players, match_counts, gamelogs):
+    by_name = {}
+    for r in (gamelogs or []):
+        by_name.setdefault(r.get("Player"), []).append(r)
     out = []
     for p in fpl_players.get("players", []):
-        out.append({
-            "name": p.get("name"), "team": p.get("team"), "teamShort": p.get("teamShort"),
+        nm = p.get("name")
+        logs = by_name.get(nm, [])[-15:]           # recent-form window for per-game averages
+        row = {
+            "name": nm, "team": p.get("team"), "teamShort": p.get("teamShort"),
             "position": p.get("pos"), "pos": p.get("pos"), "nmkey": p.get("nmkey"),
-            "matches": match_counts.get(p.get("name"), 0),
+            "matches": match_counts.get(nm, 0),
             "price": p.get("price"), "owned": p.get("owned"), "form": p.get("form"),
             "status": p.get("status"), "news": p.get("news"),
             "pens_order": p.get("pens_order"), "corners_fk_order": p.get("corners_fk_order"),
             "direct_fk_order": p.get("direct_fk_order"),
             "G": p.get("G"), "A": p.get("A"), "xG": p.get("xG"), "xA": p.get("xA"),
             "last": p.get("last"),
-        })
+        }
+        played = [r for r in logs if r.get("min") is not None]   # games the player actually featured
+        for st in PG_STATS:
+            if st in ZERO_FILL:                     # count stats: null means 0, average over games played
+                base = played or logs
+                vals = [float(r.get(st) or 0) for r in base]
+            else:                                   # coverage-limited stats: average over games where recorded
+                vals = [float(r[st]) for r in logs if r.get(st) is not None]
+            row[st] = round(sum(vals) / len(vals), 3) if vals else 0
+        out.append(row)
     return out
 
 
@@ -437,7 +457,7 @@ def main():
     counts = {}
     for r in gamelogs:
         counts[r["Player"]] = counts.get(r["Player"], 0) + 1
-    players = build_players(fpl_players, counts)
+    players = build_players(fpl_players, counts, gamelogs)
     referees = build_referees(meta, api, fpl_players)
     tstats = team_stats_and_venues(meta, api, fpl_players)
     teams = build_teams(fpl_players, boot, tstats)
