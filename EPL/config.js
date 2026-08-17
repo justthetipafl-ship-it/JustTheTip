@@ -24,6 +24,9 @@ window.SPORT_CONFIG = {
   // bettable player-prop markets (Clash / Last Meeting / Matchup / Stat Leaders)
   betStats: [['shots','Shots'],['shotsOn','Shots on Target'],['goals','Goals'],['assists','Assists'],
              ['tackles','Tackles'],['foulsCommitted','Fouls'],['keyPasses','Key Passes'],['saves','Saves'],['cards','Cards']],
+  // Multi Builder markets (else it falls back to AFL disposals/marks/kicks - only 'tackles' overlaps EPL)
+  multiMkts: [['shots','Shots'],['shotsOn','Shots on Target'],['goals','Goals'],['assists','Assists'],
+              ['tackles','Tackles'],['keyPasses','Key Passes'],['foulsCommitted','Fouls'],['saves','Saves'],['cards','Cards']],
   mktNames: { shots:'Shots', shotsOn:'Shots on Target', goals:'Goals', assists:'Assists', tackles:'Tackles',
               foulsCommitted:'Fouls', foulsDrawn:'Fouls Drawn', keyPasses:'Key Passes', passes:'Passes',
               saves:'Saves', conceded:'Conceded', cards:'Cards', cs:'Clean Sheet', xg:'xG', xa:'xA' },
