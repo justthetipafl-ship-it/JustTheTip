@@ -420,25 +420,43 @@ def build_teams_form(gamelogs):
     return out
 
 
-def build_results(fixtures, boot_teams):
-    """Finished-match results from the FPL /fixtures/ feed (current season; fills as it plays)."""
+def build_results(api_meta, fpl_fixtures, boot_teams):
+    """Finished-match results with half-time scores. API-Football history first
+    (carries half-time -> By The Halves), then FPL current season for anything newer."""
+    out, seen = [], set()
+
+    def _row(home, away, hs, as_, dt, rnd, hth, hta):
+        return {
+            "home": home, "away": away, "homeScore": hs, "awayScore": as_,
+            "htHome": hth, "htAway": hta,
+            "margin": hs - as_,
+            "winner": home if hs > as_ else (away if as_ > hs else "Draw"),
+            "date": dt, "round": rnd, "key": dt + "-" + away + "-v-" + home,
+        }
+
+    for fid, fx in ((api_meta or {}).get("fixtures", {}) or {}).items():
+        if fx.get("status") not in ("FT", "AET", "PEN"):
+            continue
+        gh, ga = fx.get("gh"), fx.get("ga")
+        home, away = fx.get("home"), fx.get("away")
+        if gh is None or ga is None or not home or not away:
+            continue
+        dt = (fx.get("date") or "")[:10]
+        seen.add(dt + "|" + home + "|" + away)
+        out.append(_row(home, away, gh, ga, dt, fx.get("round"), fx.get("hh"), fx.get("ha")))
+
     id2name = {t.get("id"): t.get("name") for t in (boot_teams or [])}
-    out = []
-    for fx in (fixtures or []):
+    for fx in (fpl_fixtures or []):
         if not fx.get("finished"):
             continue
         hs, as_ = fx.get("team_h_score"), fx.get("team_a_score")
         home, away = id2name.get(fx.get("team_h")), id2name.get(fx.get("team_a"))
         if hs is None or as_ is None or not home or not away:
             continue
-        kt = (fx.get("kickoff_time") or "")[:10]
-        out.append({
-            "home": home, "away": away, "homeScore": hs, "awayScore": as_,
-            "margin": hs - as_,
-            "winner": home if hs > as_ else (away if as_ > hs else "Draw"),
-            "date": kt, "round": fx.get("event"),
-            "key": kt + "-" + away + "-v-" + home,
-        })
+        dt = (fx.get("kickoff_time") or "")[:10]
+        if dt + "|" + home + "|" + away in seen:
+            continue
+        out.append(_row(home, away, hs, as_, dt, fx.get("event"), None, None))
     return out
 
 
@@ -464,7 +482,7 @@ def main():
     fixture = build_fixtures(boot, fixtures, boot.get("teams", []), meta, tstats)
     dvp = build_dvp(gamelogs, players)
     teams_form = build_teams_form(gamelogs)
-    results = build_results(fixtures, boot.get("teams", []))
+    results = build_results(meta, fixtures, boot.get("teams", []))
     meta_out = build_meta(players, gamelogs, teams, fixture, dvp)
 
     os.makedirs(DATA, exist_ok=True)
