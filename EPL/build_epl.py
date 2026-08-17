@@ -427,6 +427,7 @@ TEAM_ALIAS = {
     "Wolverhampton Wanderers": "Wolves", "West Ham United": "West Ham",
     "Brighton Hove Albion": "Brighton", "Leicester City": "Leicester",
     "Sheffield Utd": "Sheffield United", "Luton": "Luton Town",
+    "Coventry": "Coventry City", "Hull": "Hull City", "Middlesbrough": "Middlesbrough",
 }
 
 
@@ -438,6 +439,7 @@ def build_results(api_meta, fpl_fixtures, boot_teams):
     """Finished-match results with half-time scores. API-Football history first
     (carries half-time -> By The Halves), then FPL current season for anything newer."""
     out, seen = [], set()
+    epl_teams = set(_canon_team(t.get("name")) for t in (boot_teams or []) if t.get("name"))
 
     def _row(home, away, hs, as_, dt, rnd, hth, hta):
         return {
@@ -455,6 +457,8 @@ def build_results(api_meta, fpl_fixtures, boot_teams):
         home, away = _canon_team(fx.get("home")), _canon_team(fx.get("away"))
         if gh is None or ga is None or not home or not away:
             continue
+        if fx.get("comp") == "ch" and epl_teams and home not in epl_teams and away not in epl_teams:
+            continue   # keep Championship rows only where a current PL (promoted) side features
         dt = (fx.get("date") or "")[:10]
         seen.add(dt + "|" + home + "|" + away)
         out.append(_row(home, away, gh, ga, dt, fx.get("round"), fx.get("hh"), fx.get("ha")))
