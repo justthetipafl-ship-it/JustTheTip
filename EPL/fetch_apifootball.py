@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """
-JTT API-Football pull — per-player per-match shots / shots-on-target / fouls / passes for EPL.
+JTT API-Football pull - per-player per-match shots / shots-on-target / fouls / passes for EPL.
 
 Fills the stats FPL doesn't carry (shots, SOT, fouls, passes) and merges onto the FPL gamelogs
 by nmkey (+ date/opponent per row). EPL league id = 39.
 
 Free tier = 100 requests/day, so this is RESUMABLE and SELF-LIMITING: it reads the quota headers,
-stops before the daily cap, and skips fixtures already stored — so it backfills a season over ~5
+stops before the daily cap, and skips fixtures already stored - so it backfills a season over ~5
 daily runs, then maintains it. One /fixtures/players call per match = ~380 calls for a full season.
 
 Auth: header x-apisports-key = your api-sports.io key (GitHub secret APIFOOTBALL_KEY).
@@ -38,7 +38,7 @@ _SPECIAL = str.maketrans({
 
 
 def nmkey(name):
-    """Accent-stripped, lowercased, alnum-only name key — must match fetch_fpl.py exactly."""
+    """Accent-stripped, lowercased, alnum-only name key - must match fetch_fpl.py exactly."""
     s = (name or "").translate(_SPECIAL)
     s = unicodedata.normalize("NFKD", s).encode("ascii", "ignore").decode("ascii")
     return " ".join("".join(c for c in s.lower() if c.isalnum() or c == " ").split())
@@ -175,13 +175,15 @@ def main():
             print("api-football error on fixtures list (season %s): %s" % (season, fx["errors"]))
             continue
         fixtures = fx.get("response") or []
-        for f in fixtures:   # referee/venue/goals for every fixture (free — already fetched)
+        for f in fixtures:   # referee/venue/goals for every fixture (free - already fetched)
             fo = f.get("fixture") or {}
             ven = fo.get("venue") or {}; tm = f.get("teams") or {}; gl = f.get("goals") or {}
+            ht = ((f.get("score") or {}).get("halftime") or {})
             meta["fixtures"][str(fo.get("id"))] = {
                 "referee": fo.get("referee"), "venue": ven.get("name"), "city": ven.get("city"),
                 "home": (tm.get("home") or {}).get("name"), "away": (tm.get("away") or {}).get("name"),
                 "date": fo.get("date"), "gh": gl.get("home"), "ga": gl.get("away"),
+                "hh": ht.get("home"), "ha": ht.get("away"),    # half-time score (free) -> By The Halves
                 "round": (f.get("league") or {}).get("round"), "status": ((fo.get("status") or {}).get("short")),
             }
         finished = [f for f in fixtures
