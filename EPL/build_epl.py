@@ -400,6 +400,28 @@ def build_teams_form(gamelogs):
     return out
 
 
+def build_results(fixtures, boot_teams):
+    """Finished-match results from the FPL /fixtures/ feed (current season; fills as it plays)."""
+    id2name = {t.get("id"): t.get("name") for t in (boot_teams or [])}
+    out = []
+    for fx in (fixtures or []):
+        if not fx.get("finished"):
+            continue
+        hs, as_ = fx.get("team_h_score"), fx.get("team_a_score")
+        home, away = id2name.get(fx.get("team_h")), id2name.get(fx.get("team_a"))
+        if hs is None or as_ is None or not home or not away:
+            continue
+        kt = (fx.get("kickoff_time") or "")[:10]
+        out.append({
+            "home": home, "away": away, "homeScore": hs, "awayScore": as_,
+            "margin": hs - as_,
+            "winner": home if hs > as_ else (away if as_ > hs else "Draw"),
+            "date": kt, "round": fx.get("event"),
+            "key": kt + "-" + away + "-v-" + home,
+        })
+    return out
+
+
 def main():
     fpl_players = load("fpl_players.json")
     if not fpl_players:
@@ -422,12 +444,14 @@ def main():
     fixture = build_fixtures(boot, fixtures, boot.get("teams", []), meta, tstats)
     dvp = build_dvp(gamelogs, players)
     teams_form = build_teams_form(gamelogs)
+    results = build_results(fixtures, boot.get("teams", []))
     meta_out = build_meta(players, gamelogs, teams, fixture, dvp)
 
     os.makedirs(DATA, exist_ok=True)
     outputs = [("players.json", players), ("gamelogs.json", gamelogs),
                ("teams.json", teams), ("fixture.json", fixture),
-               ("dvp.json", dvp), ("teams_form.json", teams_form), ("meta.json", meta_out)]
+               ("dvp.json", dvp), ("teams_form.json", teams_form),
+               ("results.json", results), ("meta.json", meta_out)]
     if referees is not None:
         outputs.append(("referees.json", referees))
     for name, obj in outputs:
