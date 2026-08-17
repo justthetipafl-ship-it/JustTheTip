@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-JTT EPL build — merges the source pulls into the unified shell's data files.
+JTT EPL build - merges the source pulls into the unified shell's data files.
 
 Reads (committed by the other workflows):
   EPL/data/fpl_players.json      player index + prices + set-piece takers + last-season block
@@ -19,10 +19,11 @@ Emits (the shapes epl/scoring.js + signals.js + the shell consume):
 
 The join: FPL gamelogs are THIS season; API-Football backfill is LAST season. We union both by
 player (nmkey) and match-day, preferring FPL for goals/assists/tackles/cards/saves and taking
-shots/sot/fouls/passes from API-Football — with API-Football supplying the FPL-shaped fields too
+shots/sot/fouls/passes from API-Football - with API-Football supplying the FPL-shaped fields too
 for last-season rows where FPL has none. Contract field names come from EPL/config.js.
 """
 import json
+import datetime
 import os
 import time
 import urllib.request
@@ -117,7 +118,7 @@ def build_referees(meta, stats, players):
 
 
 def team_stats_and_venues(meta, stats, players):
-    """Per-team goals for/against, cards per game, and home venue — from the fixture meta + player rows."""
+    """Per-team goals for/against, cards per game, and home venue - from the fixture meta + player rows."""
     if not meta:
         return {}
     team_by_nm = {p.get("nmkey"): p.get("team") for p in players.get("players", [])}
@@ -191,7 +192,7 @@ def merge_row(p, f, a, dy):
         "Player": p.get("name"), "Team": team, "Opp": opp, "home": home,
         "Year": year_of(dy), "Date": dy, "date": dy, "MatchId": match_id(dy, team, opp),
         # YYYYMMDD round so the shell's dedupe keys each match-day distinctly (EPL has no AFL-style rounds,
-        # and the same two clubs meet twice a season — without this, home+away fixtures would collapse into one)
+        # and the same two clubs meet twice a season - without this, home+away fixtures would collapse into one)
         "RoundName": (dy or "").replace("-", ""),
         "min": pick("min", "min"),
         # FPL-first fields (API-Football fallback for last-season rows)
@@ -311,10 +312,59 @@ def build_fixtures(boot, fixtures, boot_teams, meta, tstats):
     return out
 
 
+DVP_STATS = ["goals", "assists", "shots", "shotsOn", "tackles", "saves",
+             "keyPasses", "passes", "cards", "foulsCommitted", "conceded", "min"]
+
+
+def build_dvp(gamelogs, players):
+    """List of {team, pos, <stat>: avg allowed} - what each team allows opposing players of each position."""
+    name2pos = {}
+    for p in players:
+        nm = p.get("name")
+        if nm:
+            name2pos[nm] = p.get("pos") or p.get("position")
+    agg = {}
+    for r in gamelogs:
+        opp = r.get("Opp")
+        pos = name2pos.get(r.get("Player"))
+        if not opp or not pos:
+            continue
+        d = agg.setdefault((opp, pos), {})
+        for stat in DVP_STATS:
+            v = r.get(stat)
+            if v is not None:
+                try:
+                    d.setdefault(stat, []).append(float(v))
+                except Exception:
+                    pass
+    out = []
+    for (opp, pos), stats in agg.items():
+        item = {"team": opp, "pos": pos}
+        for stat, vals in stats.items():
+            if vals:
+                item[stat] = round(sum(vals) / len(vals), 3)
+        out.append(item)
+    return out
+
+
+def build_meta(players, gamelogs, teams, fixture, dvp):
+    years = sorted({str(r.get("Year")) for r in gamelogs if r.get("Year") is not None})
+    cur = years[-1] if years else str(datetime.date.today().year)
+    return {
+        "version": str(int(datetime.datetime.now(datetime.timezone.utc).timestamp())),
+        "created": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "league": "epl", "label": "EPL", "day": datetime.date.today().isoformat(),
+        "gameMin": 45, "sportKey": "soccer_epl",
+        "seasons": years, "currentSeason": cur, "gamelogFiles": ["gamelogs.json"],
+        "summary": {"players": len(players), "teams": len(teams), "dvp": len(dvp),
+                    "gamelogs": len(gamelogs), "fixtures": len(fixture)},
+    }
+
+
 def main():
     fpl_players = load("fpl_players.json")
     if not fpl_players:
-        raise SystemExit("EPL/data/fpl_players.json missing — run the FPL workflow first")
+        raise SystemExit("EPL/data/fpl_players.json missing - run the FPL workflow first")
     fpl_logs = load("fpl_gamelogs.json") or {"logs": {}}
     api = load("apifootball_stats.json")  # may be None until the paid key runs
     meta = load("apifootball_meta.json")  # referee/venue/lineups; None until the paid key runs
@@ -331,16 +381,19 @@ def main():
     tstats = team_stats_and_venues(meta, api, fpl_players)
     teams = build_teams(fpl_players, boot, tstats)
     fixture = build_fixtures(boot, fixtures, boot.get("teams", []), meta, tstats)
+    dvp = build_dvp(gamelogs, players)
+    meta_out = build_meta(players, gamelogs, teams, fixture, dvp)
 
     os.makedirs(DATA, exist_ok=True)
     outputs = [("players.json", players), ("gamelogs.json", gamelogs),
-               ("teams.json", teams), ("fixture.json", fixture)]
+               ("teams.json", teams), ("fixture.json", fixture),
+               ("dvp.json", dvp), ("meta.json", meta_out)]
     if referees is not None:
         outputs.append(("referees.json", referees))
     for name, obj in outputs:
         json.dump(obj, open(os.path.join(DATA, name), "w"), separators=(",", ":"))
-    print("built: players %d | gamelogs %d | teams %d | fixture %d | referees %s | meta: %s"
-          % (len(players), len(gamelogs), len(teams), len(fixture),
+    print("built: players %d | gamelogs %d | teams %d | fixture %d | dvp %d | referees %s | meta: %s"
+          % (len(players), len(gamelogs), len(teams), len(fixture), len(dvp),
              (len((referees or {}).get("refStats", {})) if referees else "-"),
              "merged" if meta else "not present yet"))
 
