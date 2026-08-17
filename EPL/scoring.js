@@ -187,6 +187,7 @@ window.JTTScoring = (function () {
   return {
     configure: configure, verdict: verdict, scoreCMP: scoreCMP, drLine: drLine,
     getHitRate: getHitRate, getRecentAvg: getRecentAvg, getDVPPct: getDVPPct,
+    getL5Avg: function (n, st) { return getRecentAvg(n, st, 5); },   // shell's Check My Bet expects this name
     muInfo: muInfo, getContextSignals: getContextSignals, cmpFactors: cmpFactors,
     getL: getL, POS: POS, POS_TO_DVP: POS_TO_DVP,
     // EPL extras used by epl/signals.js
