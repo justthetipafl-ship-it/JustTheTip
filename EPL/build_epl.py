@@ -420,6 +420,20 @@ def build_teams_form(gamelogs):
     return out
 
 
+TEAM_ALIAS = {
+    "Manchester City": "Man City", "Manchester United": "Man Utd",
+    "Tottenham": "Spurs", "Nottingham Forest": "Nott'm Forest",
+    "Ipswich": "Ipswich Town", "Newcastle United": "Newcastle",
+    "Wolverhampton Wanderers": "Wolves", "West Ham United": "West Ham",
+    "Brighton Hove Albion": "Brighton", "Leicester City": "Leicester",
+    "Sheffield Utd": "Sheffield United", "Luton": "Luton Town",
+}
+
+
+def _canon_team(name):
+    return TEAM_ALIAS.get(name, name)
+
+
 def build_results(api_meta, fpl_fixtures, boot_teams):
     """Finished-match results with half-time scores. API-Football history first
     (carries half-time -> By The Halves), then FPL current season for anything newer."""
@@ -438,7 +452,7 @@ def build_results(api_meta, fpl_fixtures, boot_teams):
         if fx.get("status") not in ("FT", "AET", "PEN"):
             continue
         gh, ga = fx.get("gh"), fx.get("ga")
-        home, away = fx.get("home"), fx.get("away")
+        home, away = _canon_team(fx.get("home")), _canon_team(fx.get("away"))
         if gh is None or ga is None or not home or not away:
             continue
         dt = (fx.get("date") or "")[:10]
