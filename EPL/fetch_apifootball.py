@@ -244,6 +244,33 @@ def main():
                 print("  ...%d fixtures this run, %d players stored" % (n, len(store["rows"])))
             time.sleep(PACE)
 
+    # Championship (league 40) finished results so newly-promoted sides carry recent form
+    # into the shell's Match sections. Scores + half-time ride the fixtures list (1 call/season).
+    LEAGUE_CH = 40
+    for season in seasons:
+        if rem is not None and rem <= QUOTA_FLOOR:
+            print("near daily quota - skipping Championship pull this run"); break
+        chfx, rem = api("/fixtures?league=%d&season=%s" % (LEAGUE_CH, season), key)
+        if chfx.get("errors"):
+            print("api-football error on Championship fixtures (season %s): %s" % (season, chfx["errors"])); continue
+        nch = 0
+        for f in (chfx.get("response") or []):
+            fo = f.get("fixture") or {}
+            if ((fo.get("status") or {}).get("short")) not in ("FT", "AET", "PEN"):
+                continue
+            tm = f.get("teams") or {}; gl = f.get("goals") or {}
+            ht = ((f.get("score") or {}).get("halftime") or {}); ven = fo.get("venue") or {}
+            meta["fixtures"][str(fo.get("id"))] = {
+                "referee": fo.get("referee"), "venue": ven.get("name"), "city": ven.get("city"),
+                "home": (tm.get("home") or {}).get("name"), "away": (tm.get("away") or {}).get("name"),
+                "date": fo.get("date"), "gh": gl.get("home"), "ga": gl.get("away"),
+                "hh": ht.get("home"), "ha": ht.get("away"),
+                "round": (f.get("league") or {}).get("round"),
+                "status": ((fo.get("status") or {}).get("short")), "comp": "ch",
+            }
+            nch += 1
+        print("Championship %s: %d finished results added (for promoted-side form)" % (season, nch))
+
     store["updated"] = int(time.time()); json.dump(store, open(out_path, "w"), separators=(",", ":"))
     meta["updated"] = int(time.time()); json.dump(meta, open(meta_path, "w"), separators=(",", ":"))
     n_rows = sum(len(v) for v in store["rows"].values())
