@@ -361,6 +361,45 @@ def build_meta(players, gamelogs, teams, fixture, dvp):
     }
 
 
+def build_teams_form(gamelogs):
+    """Per team: recent for/against averages (from player gamelogs summed to team-match totals)."""
+    STATS = ["goals", "assists", "shots", "shotsOn", "tackles", "passes", "saves", "cards"]
+    match = {}
+    for r in gamelogs:
+        mid, tm = r.get("MatchId"), r.get("Team")
+        if not mid or not tm:
+            continue
+        t = match.setdefault(mid, {}).setdefault(tm, {})
+        for st in STATS:
+            v = r.get(st)
+            if v is not None:
+                try:
+                    t[st] = t.get(st, 0) + float(v)
+                except Exception:
+                    pass
+    tmatch = {}
+    for mid, teams in match.items():
+        names = list(teams.keys())
+        if len(names) != 2:
+            continue
+        a, b = names
+        tmatch.setdefault(a, []).append((teams[a], teams[b]))
+        tmatch.setdefault(b, []).append((teams[b], teams[a]))
+    out = []
+    for tm, ms in tmatch.items():
+        ms = ms[-10:]
+        item = {"team": tm, "matches": len(ms)}
+        for st in STATS:
+            fv = [f[st] for (f, ag) in ms if st in f]
+            av = [ag[st] for (f, ag) in ms if st in ag]
+            if fv:
+                item[st] = round(sum(fv) / len(fv), 2)
+            if av:
+                item[st + "_a"] = round(sum(av) / len(av), 2)
+        out.append(item)
+    return out
+
+
 def main():
     fpl_players = load("fpl_players.json")
     if not fpl_players:
@@ -382,12 +421,13 @@ def main():
     teams = build_teams(fpl_players, boot, tstats)
     fixture = build_fixtures(boot, fixtures, boot.get("teams", []), meta, tstats)
     dvp = build_dvp(gamelogs, players)
+    teams_form = build_teams_form(gamelogs)
     meta_out = build_meta(players, gamelogs, teams, fixture, dvp)
 
     os.makedirs(DATA, exist_ok=True)
     outputs = [("players.json", players), ("gamelogs.json", gamelogs),
                ("teams.json", teams), ("fixture.json", fixture),
-               ("dvp.json", dvp), ("meta.json", meta_out)]
+               ("dvp.json", dvp), ("teams_form.json", teams_form), ("meta.json", meta_out)]
     if referees is not None:
         outputs.append(("referees.json", referees))
     for name, obj in outputs:
