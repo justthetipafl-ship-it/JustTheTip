@@ -244,6 +244,31 @@ def main():
                 print("  ...%d fixtures this run, %d players stored" % (n, len(store["rows"])))
             time.sleep(PACE)
 
+    # Corners backfill: fetch /fixtures/statistics for finished PL fixtures still missing
+    # corners. Runs independently of the player-stats 'done' set (those fixtures are skipped
+    # by the main loop, so their corners never get fetched otherwise). Respects the run cap.
+    for fid, fxm in list(meta["fixtures"].items()):
+        if n >= max_run or (rem is not None and rem <= QUOTA_FLOOR):
+            print("corners backfill: paused at cap/quota (resume next run)"); break
+        if fxm.get("comp") == "ch":
+            continue                                   # PL corners only
+        if fxm.get("status") not in ("FT", "AET", "PEN"):
+            continue
+        if fxm.get("corners") and fxm["corners"].get("home") is not None:
+            continue
+        try:
+            sc, rem = fetch_stats(fid, key)
+            if sc:
+                fxm["corners"] = {"home": sc.get(fxm.get("home")), "away": sc.get(fxm.get("away"))}
+                meta["fixtures"][fid] = fxm
+            n += 1
+            time.sleep(PACE)
+        except urllib.error.HTTPError as e:
+            if e.code == 429:
+                print("corners backfill: quota hit; resume next run"); break
+    ncorn = sum(1 for f in meta["fixtures"].values() if f.get("corners") and f["corners"].get("home") is not None)
+    print("corners: %d/%d PL fixtures now have corners" % (ncorn, len(meta["fixtures"])))
+
     # Championship (league 40) finished results so newly-promoted sides carry recent form
     # into the shell's Match sections. Scores + half-time ride the fixtures list (1 call/season).
     LEAGUE_CH = 40
