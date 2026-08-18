@@ -421,6 +421,71 @@ def _classify_style(a, med):
     return prim, sec, s
 
 
+def build_team_for_allowed(teams, api_meta, gamelogs):
+    """Per-team FOR / ALLOWED averages for the Stats-page Teams table (t[stat] / t[stat+'_a']).
+    Reliable stats (goals/corners/shots/fouls/cards) from the fixture meta; shotsOn/tackles from gamelogs."""
+    agg = {}
+
+    def add(team, stat, fv, av):
+        d = agg.setdefault(team, {})
+        if fv is not None:
+            d.setdefault(stat, []).append(fv)
+        if av is not None:
+            d.setdefault(stat + "_a", []).append(av)
+
+    for fid, fx in ((api_meta or {}).get("fixtures", {}) or {}).items():
+        if fx.get("comp") == "ch" or fx.get("status") not in ("FT", "AET", "PEN"):
+            continue
+        h, a = _canon_team(fx.get("home")), _canon_team(fx.get("away"))
+        if not h or not a:
+            continue
+        add(h, "goals", fx.get("gh"), fx.get("ga")); add(a, "goals", fx.get("ga"), fx.get("gh"))
+        corn = fx.get("corners") or {}
+        add(h, "corners", corn.get("home"), corn.get("away")); add(a, "corners", corn.get("away"), corn.get("home"))
+        st = fx.get("stats") or {}; sh, sa = st.get("home") or {}, st.get("away") or {}
+        add(h, "shots", sh.get("shots"), sa.get("shots")); add(a, "shots", sa.get("shots"), sh.get("shots"))
+        add(h, "foulsCommitted", sh.get("fouls"), sa.get("fouls")); add(a, "foulsCommitted", sa.get("fouls"), sh.get("fouls"))
+        add(h, "cards", sh.get("yellows"), sa.get("yellows")); add(a, "cards", sa.get("yellows"), sh.get("yellows"))
+
+    GL_STATS = ["shotsOn", "tackles", "assists", "keyPasses", "saves"]
+    match = {}
+    for r in (gamelogs or []):
+        mid, tm = r.get("MatchId"), r.get("Team")
+        if not mid or not tm:
+            continue
+        d = match.setdefault(mid, {}).setdefault(tm, {})
+        for st in GL_STATS:
+            if r.get(st) is not None:
+                cell = d.setdefault(st, [0, 0]); cell[0] += r[st]; cell[1] += 1
+    for mid, tms in match.items():
+        names = list(tms.keys())
+        if len(names) != 2:
+            continue
+        a1, a2 = names
+        for tm, opp in ((a1, a2), (a2, a1)):
+            ck = _canon_team(tm)
+            for st in GL_STATS:
+                own = tms[tm].get(st); oppv = tms[opp].get(st)
+                fv = own[0] if (own and own[1]) else None
+                av = oppv[0] if (oppv and oppv[1]) else None
+                add(ck, st, fv, av)
+
+    for t in teams:
+        nm = _canon_team(t.get("team") or t.get("name"))
+        d = agg.get(nm)
+        if not d:
+            continue
+        if d.get("goals") and not t.get("matches"):
+            t["matches"] = len(d["goals"])
+        for stat in ("goals", "shots", "shotsOn", "corners", "tackles", "foulsCommitted",
+                     "cards", "assists", "keyPasses", "saves"):
+            if d.get(stat):
+                t[stat] = round(sum(d[stat]) / len(d[stat]), 2)
+            if d.get(stat + "_a"):
+                t[stat + "_a"] = round(sum(d[stat + "_a"]) / len(d[stat + "_a"]), 2)
+    return teams
+
+
 def build_team_styles(teams, api_meta):
     """Classify each team's playstyle from /fixtures/statistics team stats (populated by the
     corners/stats backfill). No-op until stats exist, so it activates as the backfill fills in."""
@@ -585,6 +650,7 @@ def main():
     tstats = team_stats_and_venues(meta, api, fpl_players)
     teams = build_teams(fpl_players, boot, tstats)
     teams = build_team_styles(teams, meta)
+    teams = build_team_for_allowed(teams, meta, gamelogs)
     fixture = build_fixtures(boot, fixtures, boot.get("teams", []), meta, tstats)
     dvp = build_dvp(gamelogs, players)
     teams_form = build_teams_form(gamelogs)
