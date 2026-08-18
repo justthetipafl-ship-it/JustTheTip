@@ -208,12 +208,46 @@ def merge_row(p, f, a, dy):
     }
 
 
+def _best_api_match(fpl_nmkey, api_nmkeys):
+    """Match FPL full names to API-Football common names: exact, else prefix / first+last.
+    (FPL carries the full registered name e.g. 'david raya martin'; API-Football the common
+    'david raya'. Accents are already stripped by nmkey() upstream.)"""
+    if fpl_nmkey in api_nmkeys:
+        return fpl_nmkey
+    ftoks = fpl_nmkey.split()
+    if not ftoks:
+        return None
+    ffirst, flast, fset = ftoks[0], ftoks[-1], set(ftoks)
+    best, best_sc = None, 0
+    for ak in api_nmkeys:
+        atoks = ak.split()
+        if not atoks:
+            continue
+        afirst, alast = atoks[0], atoks[-1]
+        sc = 0
+        if fpl_nmkey.startswith(ak + " ") or ak.startswith(fpl_nmkey + " "):
+            sc += 5
+        if ffirst == afirst and flast == alast:
+            sc += 5
+        elif flast == alast and ffirst[:1] == afirst[:1]:
+            sc += 3
+        sc += len(fset & set(atoks))
+        if sc > best_sc:
+            best_sc, best = sc, ak
+    return best if best_sc >= 5 else None
+
+
 def build_gamelogs(fpl_players, fpl_logs, api):
     api_rows = (api or {}).get("rows", {})
+    api_nmkeys = list(api_rows.keys())
     logs = (fpl_logs or {}).get("logs", {})
     out = []
     for p in fpl_players.get("players", []):
         nmk, fid = p.get("nmkey"), str(p.get("id"))
+        if nmk not in api_rows:
+            m = _best_api_match(nmk, api_nmkeys)
+            if m:
+                nmk = m
         fpl_by_day = {}
         for r in logs.get(fid, []):
             fpl_by_day[day(r.get("date"))] = r
