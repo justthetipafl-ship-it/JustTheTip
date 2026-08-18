@@ -1095,15 +1095,15 @@
   .lad-odds{color:var(--accent);font-family:var(--font-display)}
   .lad-book{color:var(--text-3);font-weight:400;font-size:11px}
   .lad-bank{margin-left:auto;color:var(--text-2);font-family:var(--font-display)}
-  .lad-legs{display:flex;flex-wrap:wrap;gap:5px;margin-top:7px}
+  .lad-legs{display:grid;grid-template-columns:repeat(auto-fill,minmax(96px,1fr));gap:5px;margin-top:2px}
   .lad-leg{background:var(--surface-3,var(--surface));border:1px solid var(--border-light,var(--border));border-radius:6px;padding:2px 7px;font-size:11px;color:var(--text-2)}
   .lad-leg{display:inline-flex;align-items:center;gap:4px;flex-wrap:wrap;max-width:100%;min-width:0}
   .lad-leg img,.lad-leg svg{width:14px;height:14px;border-radius:3px;flex:none}
   .lad-leg b{color:var(--text);font-family:var(--font-display)}
   .lad-vs{color:var(--text-3);font-size:10px}
-  .lad-sub{display:flex;align-items:center;gap:6px;margin-top:6px;padding-top:6px;border-top:1px dashed var(--border);font-size:11px;flex-wrap:wrap;min-width:0}
+  .lad-sub{display:flex;align-items:center;gap:6px;margin-top:4px;padding-top:6px;border-top:1px dashed var(--border);font-size:11px;flex-wrap:wrap;min-width:0}
   .lad-sub-lbl{font-size:9px;font-weight:800;letter-spacing:.4px;color:var(--text-3);background:var(--surface-3,var(--surface));border:1px solid var(--border);border-radius:4px;padding:1px 5px;flex:none}
-  .lad-sub .lad-leg{flex:1 1 auto}
+  .lad-sub .lad-leg{width:100%}
   .lad-type{font-size:9px;font-weight:800;letter-spacing:.4px;padding:1px 5px;border-radius:4px;text-transform:uppercase}
   .lad-type-multi{background:color-mix(in srgb,var(--accent) 18%,transparent);color:var(--accent)}
   .lad-type-sgm{background:color-mix(in srgb,var(--ok,#22c55e) 18%,transparent);color:var(--ok,#22c55e)}
@@ -1121,7 +1121,7 @@
   .lad-money b{color:var(--text)}
   .lad-win .lad-money b{color:var(--ok,#22c55e)}
   .lad-loss .lad-money b{color:var(--bad,#ef4444)}
-  .lad-day{display:flex;align-items:center;gap:10px;padding:8px 10px;background:var(--surface-2);border:1px solid var(--border);border-radius:8px;font-size:13px}
+  .lad-day{display:flex;flex-direction:column;align-items:stretch;gap:6px;padding:9px 11px;background:var(--surface-2);border:1px solid var(--border);border-radius:10px;font-size:12px}
   .lad-n{font-weight:700;min-width:46px;color:var(--text-2)}
   .lad-pick{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .lad-odds{color:var(--text-3);font-variant-numeric:tabular-nums}
@@ -1745,7 +1745,7 @@
 
   /* ===================== TAB NAV / RENDER ===================== */
   function _renderTabnav(){document.getElementById('tabnav').innerHTML=TABS.filter(t=>(!t.sports||t.sports.indexOf(SPORT.key)>=0)&&!(t.name==='odds'&&(window.SPORT_CONFIG||{}).noPlayerOdds)).map(t=>'<button class="tab'+(t.name===state.view.activeTab?' active':'')+'" onclick="_switchTab(\''+t.name+'\')"><i class="ti '+t.icon+'"></i>'+t.label+'</button>').join('');}
-  function _switchTab(n){state.view.activeTab=n;state.view.fixtureId=null;_renderTabnav();_renderApp();window.scrollTo({top:0});}
+  function _switchTab(n){state.view.activeTab=n;state.view.fixtureId=null;state.view.crewTile=null;_renderTabnav();_renderApp();window.scrollTo({top:0});}
   function _renderApp(){const p=document.getElementById('page-content');try{p.innerHTML=renderTab(state.view.activeTab)||'';}catch(e){console.error('renderTab',e);p.innerHTML='<div class="empty"><div class="ico"><i class="ti ti-alert-triangle"></i></div>Render error — see console</div>';}}
   // ---- League view (MLB): standings, stat leaders, scoring trends ----
   function renderLeague(){
@@ -3710,6 +3710,7 @@
 
   /* ---------- DEGEN CREW ---------- */
   function renderDegen(){
+    if(state.view.crewTile){ const t=_crewTileHTML(state.view.crewTile); if(t) return t; }
     let h='<div class="page-header"><div class="page-title">Degen Crew</div><div class="page-sub">All signals live on the scoring engine · tap a tile</div></div>';
     h+='<div class="crew-grid">'+CREW.filter(c=>((window.SPORT_CONFIG||{}).hideCrew||[]).indexOf(c.k)<0).map(c=>'<div class="crew-tile" onclick="degenTile(\''+c.k+'\')"><div class="crew-tile-icon"><i class="ti '+c.i+'"></i></div><div class="crew-tile-name">'+c.n+'</div><div class="crew-tile-sub">'+c.d+'</div></div>').join('')+'</div>';
     return h;
@@ -6346,12 +6347,19 @@
   function _degProjLegs(){ state.view.mbvFocus=null; return _mbCandPool(); }   // no-odds sports: projection legs
 
   // --- The Train: ONE leg per game (the best short-priced banker) ---
+  function _gameStart(team, opp){ var g=(state.data.fixture||[]).find(function(x){ return (x.home===team||x.away===team)&&(x.home===opp||x.away===opp); }); if(!g) return null;
+    var t=g.date||g.utc||g.commence_time||g.gameTimeUTC||g.kickoff_time||g.start||g.dateUtc; var ms=t?Date.parse(t):NaN; return isNaN(ms)?null:ms; }
+  function _sameDayLocal(a,b){ var x=new Date(a), y=new Date(b); return x.getFullYear()===y.getFullYear()&&x.getMonth()===y.getMonth()&&x.getDate()===y.getDate(); }
   function _trainSection(legs, oddsOn, book){
     var cands = oddsOn ? legs.filter(function(l){return l.over>=1.30&&l.over<=1.60;}) : legs.filter(function(l){return (l.prob||0)>=0.80;});
     var byGame={};                                                   // best (highest prob) leg per game
     cands.forEach(function(l){ var g=_gameKey(l.p.team,l.opp), cur=byGame[g]; if(!cur||(l.prob||0)>(cur.prob||0)) byGame[g]=l; });
-    var picks=Object.keys(byGame).map(function(g){return byGame[g];}).sort(function(a,b){return (b.prob||0)-(a.prob||0);});
-    if(!picks.length) return _degWrap('The Train','ti-train','No qualifying banker legs'+(oddsOn?' at '+bookName(book):'')+'.','');
+    var daily=_dailySched();
+    var picks=Object.keys(byGame).map(function(g){return {l:byGame[g], t:_gameStart(byGame[g].p.team, byGame[g].opp)};})
+      .filter(function(x){ return !daily || x.t==null || _sameDayLocal(x.t, Date.now()); })   // daily sports: only today's games
+      .sort(function(a,b){ return (a.t||Infinity)-(b.t||Infinity); })                          // earliest start first
+      .map(function(x){ return x.l; });
+    if(!picks.length) return _degWrap('The Train','ti-train','No qualifying banker legs'+(oddsOn?' at '+bookName(book):'')+' today.','');
     var comb=1,conf=1; picks.forEach(function(l){ var px=oddsOn?l.over:(l.prob>0?1/l.prob:2); comb*=px; conf*=Math.max(0.5,l.prob||0.5); });
     var daily=_dailySched();
     var sub=oddsOn?('$'+comb.toFixed(2)+' @ '+bookName(book)):(Math.round(conf*100)+'%');
@@ -6372,8 +6380,9 @@
     afl:['disposals','kicks','handballs','marks','tackles','goals'],
     aflw:['disposals','kicks','handballs','marks','tackles','goals'],
     nfl:['recYds','rushYds','passYds','receptions'], ncaaf:['recYds','rushYds','passYds','receptions'],
-    nba:['points','rebounds','assists','threes','pra'], wnba:['points','rebounds','assists','threes'],
-    nhl:['shots','points','saves'], mlb:['K','TB','H','HR']
+    nba:['points','rebounds','assists','threes'], wnba:['rebounds','assists','threes'],
+    nhl:['shots','points','saves'], mlb:['K'],
+    epl:['shots','shotsOn','tackles','keyPasses','foulsCommitted']
   };
   function _pyrStatOpts(){
     var wl=PYR_STATS[(window.SPORT&&SPORT.key)], mk=(MULTI_MKTS||[]);
@@ -6381,11 +6390,12 @@
     var out=[]; wl.forEach(function(k){ for(var i=0;i<mk.length;i++){ if(mk[i][0]===k){ out.push(mk[i]); break; } } });
     return out.length?out:mk;
   }
-  function _pyrDefaultStat(){ var d={afl:'disposals',aflw:'disposals',nfl:'recYds',ncaaf:'recYds',nba:'points',wnba:'points',nhl:'shots',mlb:'K'}[(window.SPORT&&SPORT.key)]; var mk=_pyrStatOpts().map(function(m){return m[0];}); return (d&&mk.indexOf(d)>=0)?d:(mk[0]||'disposals'); }
+  function _pyrDefaultStat(){ var d={afl:'disposals',aflw:'disposals',nfl:'recYds',ncaaf:'recYds',nba:'points',wnba:'rebounds',nhl:'shots',mlb:'K',epl:'shots'}[(window.SPORT&&SPORT.key)]; var mk=_pyrStatOpts().map(function(m){return m[0];}); return (d&&mk.indexOf(d)>=0)?d:(mk[0]||'disposals'); }
   window._degSetPyrStat=function(s){ state.view.pyrStat=s; var el=document.getElementById('deg-wrap'); if(el) el.innerHTML=_degBody(); };
   window._pyrSkip=function(name){ var st=(state.view.pyrStat&&_pyrStatOpts().some(function(m){return m[0]===state.view.pyrStat;}))?state.view.pyrStat:_pyrDefaultStat(); state.view.pyrSkip=state.view.pyrSkip||{}; state.view.pyrSkip[st]=state.view.pyrSkip[st]||[]; if(state.view.pyrSkip[st].indexOf(name)<0) state.view.pyrSkip[st].push(name); var el=document.getElementById('deg-wrap'); if(el) el.innerHTML=_degBody(); };
   window._pyrReset=function(){ var st=(state.view.pyrStat&&_pyrStatOpts().some(function(m){return m[0]===state.view.pyrStat;}))?state.view.pyrStat:_pyrDefaultStat(); if(state.view.pyrSkip) state.view.pyrSkip[st]=[]; var el=document.getElementById('deg-wrap'); if(el) el.innerHTML=_degBody(); };
   function _pyramidSection(legs, oddsOn, book){
+    var _pyrMinM=((window.SPORT&&SPORT.key)==='mlb')?2:5;   // pitchers (K) start infrequently
     var stat=(state.view.pyrStat&&_pyrStatOpts().some(function(m){return m[0]===state.view.pyrStat;}))?state.view.pyrStat:_pyrDefaultStat();
     var statLbl=_mktLbl(stat);
     var _skc=((state.view.pyrSkip||{})[stat])||[];
@@ -6395,12 +6405,12 @@
       legs.filter(function(l){return l.statKey===stat;}).forEach(function(l){ var e=byP[l.p.name]||(byP[l.p.name]={p:l.p,opp:l.opp,proj:l.proj,lines:{}}); e.lines[l.line]=l.over; });
     } else {
       var gs=(state.data.fixture||[]).filter(function(g){return g.home&&g.away;}), ts={}; gs.forEach(function(g){ts[g.home]=1;ts[g.away]=1;});
-      (state.idx.players||[]).filter(function(p){return ts[p.team]&&(p.matches||0)>=5&&isPlaying(p.name,p.team);}).forEach(function(p){ var o=nextOpp(p.team), m=_projModel(p,stat,1,o); if(m.mean>0) byP[p.name]={p:p,opp:o,proj:m.mean,lines:{}}; });
+      (state.idx.players||[]).filter(function(p){return ts[p.team]&&(p.matches||0)>=_pyrMinM&&isPlaying(p.name,p.team);}).forEach(function(p){ var o=nextOpp(p.team), m=_projModel(p,stat,1,o); if(m.mean>0) byP[p.name]={p:p,opp:o,proj:m.mean,lines:{}}; });
     }
     var players=Object.keys(byP).map(function(k){return byP[k];}).sort(function(a,b){return b.proj-a.proj;});
     if(oddsOn && players.length<3){                          // book lacks an alt ladder for this stat -> fall back to projections
       byP={}; var gsf=(state.data.fixture||[]).filter(function(g){return g.home&&g.away;}), tsf={}; gsf.forEach(function(g){tsf[g.home]=1;tsf[g.away]=1;});
-      (state.idx.players||[]).filter(function(p){return tsf[p.team]&&(p.matches||0)>=5&&isPlaying(p.name,p.team);}).forEach(function(p){ var o=nextOpp(p.team), m=_projModel(p,stat,1,o); if(m.mean>0) byP[p.name]={p:p,opp:o,proj:m.mean,lines:{}}; });
+      (state.idx.players||[]).filter(function(p){return tsf[p.team]&&(p.matches||0)>=_pyrMinM&&isPlaying(p.name,p.team);}).forEach(function(p){ var o=nextOpp(p.team), m=_projModel(p,stat,1,o); if(m.mean>0) byP[p.name]={p:p,opp:o,proj:m.mean,lines:{}}; });
       players=Object.keys(byP).map(function(k){return byP[k];}).sort(function(a,b){return b.proj-a.proj;});
       oddsOn=false;
     }
@@ -6521,8 +6531,8 @@
   window._degSetBook=function(b){ state.view.degBook=b; var el=document.getElementById('deg-wrap'); if(el) el.innerHTML=_degBody(); };
   function degeneratesPage(){ state.view.mbvFocus=null; return '<div id="deg-wrap" class="deg-page">'+_degBody()+'</div>'; }
 
-  window.degenTile=function(k){
-    const c=CREW.find(x=>x.k===k);
+  function _crewTileHTML(k){
+    const c=CREW.find(x=>x.k===k); if(!c) return '';
     let body;
     const teams=(state.data.fixture||[]).flatMap(g=>[g.home,g.away]);
     if(k==='board') body=todaysBoardPage();
@@ -6533,7 +6543,12 @@
     else if(k==='snags') body=snagsPage();
     else if(k==='elite') body=elitePage();
     else body=renderTile(k);
-    document.getElementById('page-content').innerHTML='<button class="back-btn" onclick="_switchTab(\'degen\')"><i class="ti ti-arrow-left"></i> Degen Crew</button><div class="page-header"><div class="page-title">'+c.n+'</div><div class="page-sub">'+c.d+'</div></div>'+body;
+    return '<button class="back-btn" onclick="_switchTab(\'degen\')"><i class="ti ti-arrow-left"></i> Degen Crew</button><div class="page-header"><div class="page-title">'+c.n+'</div><div class="page-sub">'+c.d+'</div></div>'+body;
+  }
+  window.degenTile=function(k){
+    state.view.crewTile=k;                                  // persist so the 2.5-min odds refresh re-renders this tile, not the grid
+    const t=_crewTileHTML(k); if(!t) return;
+    document.getElementById('page-content').innerHTML=t;
     window.scrollTo({top:0});
   };
 
