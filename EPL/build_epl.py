@@ -381,6 +381,84 @@ def build_meta(players, gamelogs, teams, fixture, dvp):
     }
 
 
+STYLE_SUB = {
+    "Possession Masters": "CONTROL & SUFFOCATE", "All-Out Attack": "OFFENSIVE FIREPOWER",
+    "Pressers": "HIGH-INTENSITY PRESS", "Counter-Attackers": "SIT, ABSORB, STRIKE",
+    "Park the Bus": "LOW BLOCK SURVIVE", "Box-to-Box": "BALANCED ALL-ROUND",
+}
+
+
+def _clamp01(v):
+    return max(0.0, min(1.0, v))
+
+
+def _classify_style(a, med):
+    """Port of the WC classifier, centres calibrated to the live EPL median."""
+    g = lambda k: a[k] if a.get(k) is not None else med.get(k, 0)
+    poss, passes, pacc = g("possession"), g("passes"), g("passAccuracy")
+    shots, insb, corn = g("shots"), g("shotsInsideBox"), g("corners")
+    fouls, yel = g("fouls"), g("yellows")
+    s = {}
+    s["Possession Masters"] = (_clamp01((poss - med["possession"]) / 8) * 0.45
+        + _clamp01((pacc - med["passAccuracy"]) / 6) * 0.30
+        + _clamp01((passes - med["passes"]) / max(med["passes"] * 0.3, 1)) * 0.25)
+    s["All-Out Attack"] = (_clamp01((shots - med["shots"]) / 4) * 0.40
+        + _clamp01((insb - med["shotsInsideBox"]) / 3) * 0.40
+        + _clamp01((corn - med["corners"]) / 2) * 0.20)
+    s["Counter-Attackers"] = (_clamp01((med["possession"] - poss) / 10) * 0.55
+        + _clamp01((shots - med["shots"] * 0.85) / 3) * 0.30
+        + _clamp01((shots - 6) / 5) * 0.15)
+    s["Park the Bus"] = (_clamp01((med["possession"] - poss) / 10) * 0.40
+        + _clamp01((med["shots"] - shots) / 4) * 0.30
+        + _clamp01((fouls - med["fouls"]) / 3) * 0.30)
+    s["Pressers"] = (_clamp01((poss - med["possession"] * 0.98) / 8) * 0.30
+        + _clamp01((fouls - med["fouls"]) / 3) * 0.35
+        + _clamp01((yel - med["yellows"]) / 0.8) * 0.35)
+    s["Box-to-Box"] = 0.34
+    prim = max(s, key=s.get)
+    ordered = sorted(s, key=s.get, reverse=True)
+    sec = ordered[1] if s[ordered[1]] > 0.40 else None
+    return prim, sec, s
+
+
+def build_team_styles(teams, api_meta):
+    """Classify each team's playstyle from /fixtures/statistics team stats (populated by the
+    corners/stats backfill). No-op until stats exist, so it activates as the backfill fills in."""
+    import statistics as _stats
+    agg = {}
+    for fid, fx in ((api_meta or {}).get("fixtures", {}) or {}).items():
+        st = fx.get("stats")
+        if not st or fx.get("comp") == "ch":
+            continue
+        for side, team in (("home", fx.get("home")), ("away", fx.get("away"))):
+            row = st.get(side) or {}
+            if not team or not row:
+                continue
+            d = agg.setdefault(_canon_team(team), {})
+            for k, v in row.items():
+                if v is not None:
+                    d.setdefault(k, []).append(v)
+    if not agg:
+        return teams
+    avgs = {t: {k: sum(v) / len(v) for k, v in d.items()} for t, d in agg.items()}
+    keys = ["possession", "passes", "passAccuracy", "shots", "shotsInsideBox", "corners", "fouls", "yellows"]
+    med = {}
+    for k in keys:
+        vals = [a[k] for a in avgs.values() if k in a]
+        med[k] = _stats.median(vals) if vals else 0
+    for t in teams:
+        nm = t.get("team") or t.get("name")
+        a = avgs.get(nm)
+        if not a:
+            continue
+        prim, sec, sc = _classify_style(a, med)
+        t["style"], t["style2"], t["styleSub"] = prim, sec, STYLE_SUB[prim]
+        for k in keys:
+            if k in a:
+                t["st_" + k] = round(a[k], 2)
+    return teams
+
+
 def build_teams_form(gamelogs):
     """Per team: recent for/against averages (from player gamelogs summed to team-match totals)."""
     STATS = ["goals", "assists", "shots", "shotsOn", "tackles", "passes", "saves", "cards"]
@@ -497,6 +575,7 @@ def main():
     referees = build_referees(meta, api, fpl_players)
     tstats = team_stats_and_venues(meta, api, fpl_players)
     teams = build_teams(fpl_players, boot, tstats)
+    teams = build_team_styles(teams, meta)
     fixture = build_fixtures(boot, fixtures, boot.get("teams", []), meta, tstats)
     dvp = build_dvp(gamelogs, players)
     teams_form = build_teams_form(gamelogs)
