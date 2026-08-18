@@ -519,14 +519,19 @@ def build_results(api_meta, fpl_fixtures, boot_teams):
     out, seen = [], set()
     epl_teams = set(_canon_team(t.get("name")) for t in (boot_teams or []) if t.get("name"))
 
-    def _row(home, away, hs, as_, dt, rnd, hth, hta):
-        return {
+    def _row(home, away, hs, as_, dt, rnd, hth, hta, ch=None, ca=None, yh=None, ya=None):
+        r = {
             "home": home, "away": away, "homeScore": hs, "awayScore": as_,
             "htHome": hth, "htAway": hta,
             "margin": hs - as_,
             "winner": home if hs > as_ else (away if as_ > hs else "Draw"),
             "date": dt, "round": rnd, "key": dt + "-" + away + "-v-" + home,
         }
+        if ch is not None or ca is not None:
+            r["cornersHome"], r["cornersAway"] = ch, ca
+        if yh is not None or ya is not None:
+            r["cardsHome"], r["cardsAway"] = yh, ya
+        return r
 
     for fid, fx in ((api_meta or {}).get("fixtures", {}) or {}).items():
         if fx.get("status") not in ("FT", "AET", "PEN"):
@@ -539,7 +544,11 @@ def build_results(api_meta, fpl_fixtures, boot_teams):
             continue   # keep Championship rows only where a current PL (promoted) side features
         dt = (fx.get("date") or "")[:10]
         seen.add(dt + "|" + home + "|" + away)
-        out.append(_row(home, away, gh, ga, dt, fx.get("round"), fx.get("hh"), fx.get("ha")))
+        corn = fx.get("corners") or {}
+        stx = fx.get("stats") or {}
+        yh = (stx.get("home") or {}).get("yellows"); ya = (stx.get("away") or {}).get("yellows")
+        out.append(_row(home, away, gh, ga, dt, fx.get("round"), fx.get("hh"), fx.get("ha"),
+                        corn.get("home"), corn.get("away"), yh, ya))
 
     id2name = {t.get("id"): t.get("name") for t in (boot_teams or [])}
     for fx in (fpl_fixtures or []):
