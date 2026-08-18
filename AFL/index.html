@@ -2499,6 +2499,32 @@
     var ms=Object.keys(byM).map(function(k){return byM[k];}); if(!ms.length) return null;
     return {n:ms.length, y:ms.reduce(function(s,x){return s+x.y;},0)/ms.length, r:ms.reduce(function(s,x){return s+x.r;},0)/ms.length}; }
   function _mmTeamCorners(t){ var tr=(state.data.teams||[]).find(function(x){return (x.team||x.name)===t;}); if(!tr||tr.cornersFor==null||tr.cornersAgainst==null) return null; return {cf:+tr.cornersFor, ca:+tr.cornersAgainst}; }
+  function _mmTeamY(t){ var rs=(state.data.results||[]).filter(function(r){return (r.home===t||r.away===t)&&r.cardsHome!=null;}); if(rs.length<3) return null;
+    var f=0,a=0; rs.forEach(function(r){var isH=r.home===t; f+=isH?r.cardsHome:r.cardsAway; a+=isH?r.cardsAway:r.cardsHome;}); return {n:rs.length,f:f/rs.length,a:a/rs.length}; }
+  function _mmStyleOf(t){ var tr=(state.data.teams||[]).find(function(x){return (x.team||x.name)===t;}); return tr&&tr.style?tr.style:null; }
+  var _MM_STYLE_C={'Possession Masters':'#3b82f6','All-Out Attack':'#ef4444','Pressers':'#eab308','Counter-Attackers':'#22c55e','Park the Bus':'#9aa3b0','Box-to-Box':'#a78bfa'};
+  function _mmVsStyle(team,oppStyle){ if(!oppStyle) return null; var sm={}; (state.data.teams||[]).forEach(function(t){sm[t.team||t.name]=t.style;});
+    var rs=(state.data.results||[]).filter(function(r){ var isH=r.home===team; var opp=isH?r.away:r.home; return (r.home===team||r.away===team)&&sm[opp]===oppStyle; });
+    if(rs.length<3) return null; var gf=0,ga=0; rs.forEach(function(r){var isH=r.home===team; gf+=isH?r.homeScore:r.awayScore; ga+=isH?r.awayScore:r.homeScore;}); return {n:rs.length,gf:gf/rs.length,ga:ga/rs.length}; }
+  function _mmRank(team,statKey,higher){ var ts=(state.data.teams||[]).filter(function(t){return t[statKey]!=null;}); if(!ts.length) return '';
+    ts.sort(function(a,b){return higher?(b[statKey]-a[statKey]):(a[statKey]-b[statKey]);});
+    var i=ts.map(function(t){return t.team||t.name;}).indexOf(team); return i<0?'':'<span class="mm-rk">#'+(i+1)+'</span>'; }
+  function _mmVsGen(team,oppStyle,fn){ if(!oppStyle) return null; var sm={}; (state.data.teams||[]).forEach(function(t){sm[t.team||t.name]=t.style;});
+    var rs=(state.data.results||[]).filter(function(r){ var isH=r.home===team; var opp=isH?r.away:r.home; return (r.home===team||r.away===team)&&sm[opp]===oppStyle; });
+    var vals=[]; rs.forEach(function(r){ var v=fn(r,r.home===team); if(v) vals.push(v); }); if(vals.length<3) return null;
+    return {n:vals.length, f:vals.reduce(function(s,x){return s+x.f;},0)/vals.length, a:vals.reduce(function(s,x){return s+x.a;},0)/vals.length}; }
+  function _mmVsBreakGen(home,away,aSt,hSt,fn,fl,al){ var hV=_mmVsGen(home,aSt,fn), aV=_mmVsGen(away,hSt,fn); if(!hV&&!aV) return '';
+    var rows=(hV?'<div class="mm-tr">'+abbr(home)+' vs '+aSt+' <b>'+hV.f.toFixed(2)+'</b> '+fl+' / '+hV.a.toFixed(2)+' '+al+' <span class="mm-sub">'+hV.n+'g</span></div>':'')+
+      (aV?'<div class="mm-tr">'+abbr(away)+' vs '+hSt+' <b>'+aV.f.toFixed(2)+'</b> '+fl+' / '+aV.a.toFixed(2)+' '+al+' <span class="mm-sub">'+aV.n+'g</span></div>':'');
+    return '<div class="mm-brk"><div class="mm-brk-t">Vs Similar Styles</div>'+rows+'</div>'; }
+  function _mmVsCards(home,away,aSt,hSt){ var sm={}; (state.data.teams||[]).forEach(function(t){sm[t.team||t.name]=t.style;}); var gl=(state.data.gamelogs||[]);
+    function team(t,oppStyle){ if(!oppStyle) return null; var byM={}; gl.forEach(function(r){ if(r.Team!==t)return; var m=r.MatchId||r.Date; (byM[m]=byM[m]||{c:0,opp:r.Opp}); byM[m].c+=(r.cards||0); });
+      var vals=Object.keys(byM).filter(function(m){return sm[byM[m].opp]===oppStyle;}).map(function(m){return byM[m].c;}); if(vals.length<3) return null;
+      return {n:vals.length, c:vals.reduce(function(s,x){return s+x;},0)/vals.length}; }
+    var hV=team(home,aSt), aV=team(away,hSt); if(!hV&&!aV) return '';
+    var rows=(hV?'<div class="mm-tr">'+abbr(home)+' vs '+aSt+' <b>'+hV.c.toFixed(2)+'</b> cards <span class="mm-sub">'+hV.n+'g</span></div>':'')+
+      (aV?'<div class="mm-tr">'+abbr(away)+' vs '+hSt+' <b>'+aV.c.toFixed(2)+'</b> cards <span class="mm-sub">'+aV.n+'g</span></div>':'');
+    return '<div class="mm-brk"><div class="mm-brk-t">Vs Similar Styles</div>'+rows+'</div>'; }
   function _mmPois(k,lam){ var p=Math.exp(-lam); for(var i=1;i<=k;i++)p*=lam/i; return p; }
   function _mmModel(lamH,lamA){ var pH=0,pD=0,pA=0,o25=0,btts=0,sc={};
     for(var h=0;h<=8;h++)for(var a=0;a<=8;a++){ var p=_mmPois(h,lamH)*_mmPois(a,lamA); if(h>a)pH+=p; else if(h<a)pA+=p; else pD+=p; if(h+a>2.5)o25+=p; if(h>0&&a>0)btts+=p; sc[h+'-'+a]=p; }
@@ -2508,6 +2534,13 @@
     if(d>=0.75) return {t:'STRONG '+overWord,c:'#22c55e'}; if(d>=0.25) return {t:'LEAN '+overWord,c:'#86efac'};
     if(d<=-0.75) return {t:'STRONG '+underWord,c:'#22c55e'}; if(d<=-0.25) return {t:'LEAN '+underWord,c:'#86efac'};
     return {t:'LINE BALL',c:'#888'}; }
+  function _mmVsBreak(home,away,aSt,hSt){
+    var hVs=_mmVsStyle(home,aSt), aVs=_mmVsStyle(away,hSt);
+    if(!hVs&&!aVs) return '';
+    var rows=(hVs?'<div class="mm-tr">'+abbr(home)+' vs '+aSt+' sides <b>'+hVs.gf.toFixed(2)+'</b> GF / '+hVs.ga.toFixed(2)+' GA <span class="mm-sub">'+hVs.n+'g</span></div>':'')+
+      (aVs?'<div class="mm-tr">'+abbr(away)+' vs '+hSt+' sides <b>'+aVs.gf.toFixed(2)+'</b> GF / '+aVs.ga.toFixed(2)+' GA <span class="mm-sub">'+aVs.n+'g</span></div>':'');
+    return '<div class="mm-brk"><div class="mm-brk-t">Vs Similar Styles</div>'+rows+'</div>';
+  }
   function gameMatchMarkets(home,away){
     if(!_isMatchProps()) return '';
     var hG=_mmTeamGoals(home), aG=_mmTeamGoals(away);
@@ -2521,30 +2554,33 @@
       '<div class="mm-seg mm-d" style="width:'+(m.pD*100).toFixed(0)+'%"><span>Draw '+(m.pD*100).toFixed(0)+'%</span></div>'+
       '<div class="mm-seg mm-a" style="width:'+(m.pA*100).toFixed(0)+'%"><span>'+abbr(away)+' '+(m.pA*100).toFixed(0)+'%</span></div></div>';
     var tops='<div class="mm-tops">Top scores: '+m.top.map(function(t){return '<b>'+t[0]+'</b> '+(t[1]*100).toFixed(0)+'%';}).join(' &middot; ')+'</div>';
-    var head='<div class="mm-head"><span class="mm-1x2">1X2</span>'+(strong?'<span class="mm-badge" style="background:'+(favP>=0.55?'#22c55e':'#86efac')+'">'+strong+abbr(fav)+'</span>':'')+'</div>'+bar+tops;
+    var hSt=_mmStyleOf(home), aSt=_mmStyleOf(away);
+    var styleLine=(hSt||aSt)?'<div class="mm-styles">'+(hSt?'<span class="mm-style" style="border-color:'+(_MM_STYLE_C[hSt]||'#888')+'">'+abbr(home)+' &middot; <b style="color:'+(_MM_STYLE_C[hSt]||'#888')+'">'+hSt+'</b></span>':'')+(aSt?'<span class="mm-style" style="border-color:'+(_MM_STYLE_C[aSt]||'#888')+'">'+abbr(away)+' &middot; <b style="color:'+(_MM_STYLE_C[aSt]||'#888')+'">'+aSt+'</b></span>':'')+'</div>':'';
+    var head='<div class="mm-head"><span class="mm-1x2">1X2</span>'+(strong?'<span class="mm-badge" style="background:'+(favP>=0.55?'#22c55e':'#86efac')+'">'+strong+abbr(fav)+'</span>':'')+'</div>'+bar+tops+styleLine;
     // Goals
     var gl=_mmLean(m.tot,2.5,'OVER','UNDER'), bl=_mmLean(m.btts*100,50,'YES','NO');
     var goals='<div class="mm-card"><div class="mm-ct"><i class="ti ti-ball-football"></i> Goals</div>'+
       '<div class="mm-line"><span class="mm-proj">'+m.tot.toFixed(2)+'</span> total &middot; O/U 2.5 <span class="mm-lean" style="color:'+gl.c+'">'+gl.t+'</span></div>'+
-      '<div class="mm-teams"><div class="mm-tr">'+teamLogo(home,18)+abbr(home)+' <b>'+hG.gf.toFixed(2)+'</b> GF / '+hG.ga.toFixed(2)+' GA</div>'+
-      '<div class="mm-tr">'+teamLogo(away,18)+abbr(away)+' <b>'+aG.gf.toFixed(2)+'</b> GF / '+aG.ga.toFixed(2)+' GA</div></div>'+
-      '<div class="mm-line"><span class="mm-proj">'+(m.btts*100).toFixed(0)+'%</span> BTTS &middot; <span class="mm-lean" style="color:'+bl.c+'">'+bl.t+'</span> <span class="mm-sub">('+abbr(home)+' '+(hG.btts*100).toFixed(0)+'% / '+abbr(away)+' '+(aG.btts*100).toFixed(0)+'%)</span></div></div>';
+      '<div class="mm-teams"><div class="mm-tr">'+teamLogo(home,18)+abbr(home)+' <b>'+hG.gf.toFixed(2)+'</b> GF '+_mmRank(home,'gf',true)+' / '+hG.ga.toFixed(2)+' GA '+_mmRank(home,'ga',false)+'</div>'+
+      '<div class="mm-tr">'+teamLogo(away,18)+abbr(away)+' <b>'+aG.gf.toFixed(2)+'</b> GF '+_mmRank(away,'gf',true)+' / '+aG.ga.toFixed(2)+' GA '+_mmRank(away,'ga',false)+'</div></div>'+
+      '<div class="mm-line"><span class="mm-proj">'+(m.btts*100).toFixed(0)+'%</span> BTTS &middot; <span class="mm-lean" style="color:'+bl.c+'">'+bl.t+'</span> <span class="mm-sub">('+abbr(home)+' '+(hG.btts*100).toFixed(0)+'% / '+abbr(away)+' '+(aG.btts*100).toFixed(0)+'%)</span></div>'+_mmVsBreakGen(home,away,aSt,hSt,function(r,isH){return {f:isH?r.homeScore:r.awayScore,a:isH?r.awayScore:r.homeScore};},'GF','GA')+'</div>';
     // Corners (once the per-fixture stats backfill has populated cornersFor/cornersAgainst)
     var corners='';
     var hCn=_mmTeamCorners(home), aCn=_mmTeamCorners(away);
     if(hCn&&aCn){ var cnProj=((hCn.cf+aCn.ca)/2)+((aCn.cf+hCn.ca)/2), cnl=_mmLean(cnProj,9.5,'OVER','UNDER');
       corners='<div class="mm-card"><div class="mm-ct"><i class="ti ti-corner-up-right"></i> Corners</div>'+
         '<div class="mm-line"><span class="mm-proj">'+cnProj.toFixed(1)+'</span> total &middot; O/U 9.5 <span class="mm-lean" style="color:'+cnl.c+'">'+cnl.t+'</span></div>'+
-        '<div class="mm-teams"><div class="mm-tr">'+teamLogo(home,18)+abbr(home)+' <b>'+hCn.cf.toFixed(1)+'</b> CF / '+hCn.ca.toFixed(1)+' CA</div>'+
-        '<div class="mm-tr">'+teamLogo(away,18)+abbr(away)+' <b>'+aCn.cf.toFixed(1)+'</b> CF / '+aCn.ca.toFixed(1)+' CA</div></div></div>'; }
-    // Cards
+        '<div class="mm-teams"><div class="mm-tr">'+teamLogo(home,18)+abbr(home)+' <b>'+hCn.cf.toFixed(1)+'</b> CF '+_mmRank(home,'cornersFor',true)+' / '+hCn.ca.toFixed(1)+' CA '+_mmRank(home,'cornersAgainst',false)+'</div>'+
+        '<div class="mm-tr">'+teamLogo(away,18)+abbr(away)+' <b>'+aCn.cf.toFixed(1)+'</b> CF '+_mmRank(away,'cornersFor',true)+' / '+aCn.ca.toFixed(1)+' CA '+_mmRank(away,'cornersAgainst',false)+'</div></div>'+_mmVsBreakGen(home,away,aCn&&aSt,hSt,function(r,isH){if(r.cornersHome==null)return null;return {f:isH?r.cornersHome:r.cornersAway,a:isH?r.cornersAway:r.cornersHome};},'CF','CA')+'</div>'; }
+    // Cards (yellows per match, from /fixtures/statistics via results - reliable + deduped)
     var cards='';
-    var hC=_mmTeamCards(home), aC=_mmTeamCards(away);
-    if(hC&&aC){ var ctot=hC.y+hC.r+aC.y+aC.r, cl=_mmLean(ctot,4.5,'OVER','UNDER');
-      cards='<div class="mm-card"><div class="mm-ct"><i class="ti ti-cards"></i> Cards</div>'+
+    var hY=_mmTeamY(home), aY=_mmTeamY(away);
+    if(hY&&aY){ var ctot=hY.f+aY.f, cl=_mmLean(ctot,4.5,'OVER','UNDER');
+      cards='<div class="mm-card"><div class="mm-ct"><i class="ti ti-cards"></i> Cards <span class="mm-sub">yellows</span></div>'+
         '<div class="mm-line"><span class="mm-proj">'+ctot.toFixed(2)+'</span> total &middot; O/U 4.5 <span class="mm-lean" style="color:'+cl.c+'">'+cl.t+'</span></div>'+
-        '<div class="mm-teams"><div class="mm-tr">'+teamLogo(home,18)+abbr(home)+' <b>'+hC.y.toFixed(2)+'</b> Y / '+hC.r.toFixed(2)+' R</div>'+
-        '<div class="mm-tr">'+teamLogo(away,18)+abbr(away)+' <b>'+aC.y.toFixed(2)+'</b> Y / '+aC.r.toFixed(2)+' R</div></div></div>'; }
+        '<div class="mm-teams"><div class="mm-tr">'+teamLogo(home,18)+abbr(home)+' <b>'+hY.f.toFixed(2)+'</b> Y '+_mmRank(home,'cardsPG',true)+' / '+hY.a.toFixed(2)+' drawn</div>'+
+        '<div class="mm-tr">'+teamLogo(away,18)+abbr(away)+' <b>'+aY.f.toFixed(2)+'</b> Y '+_mmRank(away,'cardsPG',true)+' / '+aY.a.toFixed(2)+' drawn</div></div>'+
+        _mmVsBreakGen(home,away,aSt,hSt,function(r,isH){if(r.cardsHome==null)return null;return {f:isH?r.cardsHome:r.cardsAway,a:isH?r.cardsAway:r.cardsHome};},'Y','opp')+'</div>'; }
     return '<div class="game-sec mm-sec"><div class="gs-title"><i class="ti ti-clipboard-data"></i> Match Markets &middot; model off recent GF/GA</div>'+head+goals+corners+cards+'</div>';
   }
 
