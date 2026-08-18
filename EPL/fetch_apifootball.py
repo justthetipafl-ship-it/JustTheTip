@@ -107,20 +107,39 @@ def fetch_lineup(fid, key):
     return (out or None), rem
 
 
+_STAT_WANT = {
+    "Corner Kicks": "corners", "Ball Possession": "possession", "Total Shots": "shots",
+    "Shots insidebox": "shotsInsideBox", "Total passes": "passes", "Passes %": "passAccuracy",
+    "Fouls": "fouls", "Yellow Cards": "yellows",
+}
+
+
+def _stat_num(v):
+    if isinstance(v, str):
+        v = v.replace("%", "").strip()
+    try:
+        return float(v) if v not in (None, "") else None
+    except Exception:
+        return None
+
+
 def fetch_stats(fid, key):
-    """/fixtures/statistics -> {team_name: corner_kicks}, or None."""
+    """/fixtures/statistics -> {team_name: {corners, possession, shots, shotsInsideBox,
+       passes, passAccuracy, fouls, yellows}}, or None."""
     sj, rem = api("/fixtures/statistics?fixture=%s" % fid, key)
     if sj.get("errors"):
         return None, rem
     out = {}
     for tb in (sj.get("response") or []):
         nm = (tb.get("team") or {}).get("name")
-        c = None
+        if nm is None:
+            continue
+        row = {}
         for st in (tb.get("statistics") or []):
-            if st.get("type") == "Corner Kicks":
-                c = st.get("value"); break
-        if nm is not None:
-            out[nm] = c
+            k = _STAT_WANT.get(st.get("type"))
+            if k:
+                row[k] = _stat_num(st.get("value"))
+        out[nm] = row
     return (out or None), rem
 
 
@@ -214,7 +233,9 @@ def main():
                 try:
                     sc, rem = fetch_stats(fid, key)
                     if sc:
-                        fxm["corners"] = {"home": sc.get(fxm.get("home")), "away": sc.get(fxm.get("away"))}
+                        _h = sc.get(fxm.get("home")) or {}; _a = sc.get(fxm.get("away")) or {}
+                        fxm["corners"] = {"home": _h.get("corners"), "away": _a.get("corners")}
+                        fxm["stats"] = {"home": _h, "away": _a}
                         meta["fixtures"][fid] = fxm
                     time.sleep(PACE)
                 except urllib.error.HTTPError as e:
@@ -254,12 +275,14 @@ def main():
             continue                                   # PL corners only
         if fxm.get("status") not in ("FT", "AET", "PEN"):
             continue
-        if fxm.get("corners") and fxm["corners"].get("home") is not None:
+        if fxm.get("stats") and fxm["stats"].get("home"):
             continue
         try:
             sc, rem = fetch_stats(fid, key)
             if sc:
-                fxm["corners"] = {"home": sc.get(fxm.get("home")), "away": sc.get(fxm.get("away"))}
+                _h = sc.get(fxm.get("home")) or {}; _a = sc.get(fxm.get("away")) or {}
+                fxm["corners"] = {"home": _h.get("corners"), "away": _a.get("corners")}
+                fxm["stats"] = {"home": _h, "away": _a}
                 meta["fixtures"][fid] = fxm
             n += 1
             time.sleep(PACE)
