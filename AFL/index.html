@@ -1676,7 +1676,8 @@
       const arr=(bookIdx[n][a.market]=bookIdx[n][a.market]||[]);
       if(!arr.some(r=>r.book===a.book && r.line===+a.line)) arr.push({line:+a.line,book:a.book,over:a.over!=null?+a.over:null,under:null,alt:true}); });
     state.idx.bookIdx=bookIdx;
-    state.idx.oddsMeta={ count, fromPaste,
+    state.idx.oddsMeta={ count, altCount:altArr0.length, bookCount:bookArr0.length,
+      total: count + altArr0.length + bookArr0.length, fromPaste,
       updated:(src&&(src.updated||(src.meta&&src.meta.generated)))||null,
       sample:!!(src&&src._sample) };
   }
@@ -3747,7 +3748,7 @@
   function lineupOut(team){ return !!_lineupKeyMap()[team]; }
   // afl.com.au 'Estimated return' tags: Test / TBC / Late = in doubt (could still play the upcoming game).
   function _injDoubt(ret){ const r=(ret||'').toLowerCase().trim(); return r.indexOf('test')>=0||r.indexOf('tbc')>=0||r==='late'||r==='proof'||r==='1st'; }
-  function hasAnyOdds(){ return state.idx.oddsMeta && state.idx.oddsMeta.count>0; }
+  function hasAnyOdds(){ const m=state.idx.oddsMeta; return !!(m && ((m.total!=null?m.total:m.count)||0)>0); }
   function _oddsLive(){ return hasAnyOdds() && !(state.idx.oddsMeta&&state.idx.oddsMeta.sample); }
   // Green Lights / Death Riders now come from the SHARED signals.js module — the exact
   // same code path the pre-slate capture job grades, so the ledger can't drift from what's
@@ -6739,7 +6740,7 @@
       row('Game logs', (s.gamelogs||(state.data.gamelogs||[]).length||0))+
       row('Fixtures', (state.data.fixture||[]).length)+
       row('Injuries', (state.data.injury||[]).length)+
-      (function(){const o=state.idx.oddsMeta||{count:0};const cls=o.count?'ok':'warn';const lbl=o.count?(o.count+' lines'+(o.sample?' (sample)':'')+(o.fromPaste?' · pasted':'')):'none loaded';return row('Odds / lines', lbl, cls);})()+
+      (function(){const o=state.idx.oddsMeta||{count:0};const tot=(o.total!=null?o.total:o.count)||0;const cls=tot?'ok':'warn';const lbl=tot?((o.count||0)+' lines \u00b7 '+(o.altCount||0)+' ladder'+(o.sample?' (sample)':'')+(o.fromPaste?' \u00b7 pasted':'')):'none loaded';return row('Odds / lines', lbl, cls);})()+
       row('Data version', state.dataVersion||'—')+'</div>';
     h+='<div class="section-title">Odds feed</div>'+oddsTimeframeNote()+oddsDiag()+'<div class="data-status">'+
       '<div style="margin-top:8px"><button class="btn-sm" onclick="_oddsPasteOpen()"><i class="ti ti-clipboard-plus"></i> Load / paste lines</button>'+
