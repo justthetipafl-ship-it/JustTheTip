@@ -2498,6 +2498,7 @@
   function _mmTeamCards(t){ var gl=(state.data.gamelogs||[]), byM={}; gl.forEach(function(r){ if(r.Team!==t)return; var m=r.MatchId||r.Date; (byM[m]=byM[m]||{y:0,r:0}); byM[m].y+=r.yellowCard||0; byM[m].r+=r.redCard||0; });
     var ms=Object.keys(byM).map(function(k){return byM[k];}); if(!ms.length) return null;
     return {n:ms.length, y:ms.reduce(function(s,x){return s+x.y;},0)/ms.length, r:ms.reduce(function(s,x){return s+x.r;},0)/ms.length}; }
+  function _mmTeamCorners(t){ var tr=(state.data.teams||[]).find(function(x){return (x.team||x.name)===t;}); if(!tr||tr.cornersFor==null||tr.cornersAgainst==null) return null; return {cf:+tr.cornersFor, ca:+tr.cornersAgainst}; }
   function _mmPois(k,lam){ var p=Math.exp(-lam); for(var i=1;i<=k;i++)p*=lam/i; return p; }
   function _mmModel(lamH,lamA){ var pH=0,pD=0,pA=0,o25=0,btts=0,sc={};
     for(var h=0;h<=8;h++)for(var a=0;a<=8;a++){ var p=_mmPois(h,lamH)*_mmPois(a,lamA); if(h>a)pH+=p; else if(h<a)pA+=p; else pD+=p; if(h+a>2.5)o25+=p; if(h>0&&a>0)btts+=p; sc[h+'-'+a]=p; }
@@ -2528,6 +2529,14 @@
       '<div class="mm-teams"><div class="mm-tr">'+teamLogo(home,18)+abbr(home)+' <b>'+hG.gf.toFixed(2)+'</b> GF / '+hG.ga.toFixed(2)+' GA</div>'+
       '<div class="mm-tr">'+teamLogo(away,18)+abbr(away)+' <b>'+aG.gf.toFixed(2)+'</b> GF / '+aG.ga.toFixed(2)+' GA</div></div>'+
       '<div class="mm-line"><span class="mm-proj">'+(m.btts*100).toFixed(0)+'%</span> BTTS &middot; <span class="mm-lean" style="color:'+bl.c+'">'+bl.t+'</span> <span class="mm-sub">('+abbr(home)+' '+(hG.btts*100).toFixed(0)+'% / '+abbr(away)+' '+(aG.btts*100).toFixed(0)+'%)</span></div></div>';
+    // Corners (once the per-fixture stats backfill has populated cornersFor/cornersAgainst)
+    var corners='';
+    var hCn=_mmTeamCorners(home), aCn=_mmTeamCorners(away);
+    if(hCn&&aCn){ var cnProj=((hCn.cf+aCn.ca)/2)+((aCn.cf+hCn.ca)/2), cnl=_mmLean(cnProj,9.5,'OVER','UNDER');
+      corners='<div class="mm-card"><div class="mm-ct"><i class="ti ti-corner-up-right"></i> Corners</div>'+
+        '<div class="mm-line"><span class="mm-proj">'+cnProj.toFixed(1)+'</span> total &middot; O/U 9.5 <span class="mm-lean" style="color:'+cnl.c+'">'+cnl.t+'</span></div>'+
+        '<div class="mm-teams"><div class="mm-tr">'+teamLogo(home,18)+abbr(home)+' <b>'+hCn.cf.toFixed(1)+'</b> CF / '+hCn.ca.toFixed(1)+' CA</div>'+
+        '<div class="mm-tr">'+teamLogo(away,18)+abbr(away)+' <b>'+aCn.cf.toFixed(1)+'</b> CF / '+aCn.ca.toFixed(1)+' CA</div></div></div>'; }
     // Cards
     var cards='';
     var hC=_mmTeamCards(home), aC=_mmTeamCards(away);
@@ -2536,7 +2545,7 @@
         '<div class="mm-line"><span class="mm-proj">'+ctot.toFixed(2)+'</span> total &middot; O/U 4.5 <span class="mm-lean" style="color:'+cl.c+'">'+cl.t+'</span></div>'+
         '<div class="mm-teams"><div class="mm-tr">'+teamLogo(home,18)+abbr(home)+' <b>'+hC.y.toFixed(2)+'</b> Y / '+hC.r.toFixed(2)+' R</div>'+
         '<div class="mm-tr">'+teamLogo(away,18)+abbr(away)+' <b>'+aC.y.toFixed(2)+'</b> Y / '+aC.r.toFixed(2)+' R</div></div></div>'; }
-    return '<div class="game-sec mm-sec"><div class="gs-title"><i class="ti ti-clipboard-data"></i> Match Markets &middot; model off recent GF/GA</div>'+head+goals+cards+'</div>';
+    return '<div class="game-sec mm-sec"><div class="gs-title"><i class="ti ti-clipboard-data"></i> Match Markets &middot; model off recent GF/GA</div>'+head+goals+corners+cards+'</div>';
   }
 
   // ---- soccer match-trend sections (EPL): By The Halves / Shape Trend / Recent Games ----
