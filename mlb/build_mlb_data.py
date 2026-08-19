@@ -26,7 +26,7 @@ for b in B.get('batters', {}).values():
          'id': b.get('id'), 'teamId': b.get('teamId'), 'bats': b.get('bats'),
          'order': b.get('order'), 'tier': b.get('tier'), 'matches': s.get('G', 0),
          'splitVsL': b.get('splitVsL'), 'splitVsR': b.get('splitVsR'),
-         'bvp': b.get('bvp'), 'h2h': b.get('h2h'), 'statcast': b.get('statcast')}
+         'bvp': b.get('bvp'), 'h2h': b.get('h2h'), 'statcast': b.get('statcast'), 'vsPitch': b.get('vsPitch')}
     for k, v in s.items(): p[k] = v
     players.append(p)
     for gl in (b.get('gameLog') or []):
@@ -44,7 +44,7 @@ for pt in B.get('pitchers', {}).values():
     p = {'name': pt['name'], 'team': pt.get('abbr'), 'position': pt.get('role') or 'SP', 'role': 'pitch',
          'id': pt.get('id'), 'teamId': pt.get('teamId'), 'throws': pt.get('throws'),
          'tier': pt.get('tier'), 'matches': s.get('GS', s.get('G', 0)),
-         'splitVsL': pt.get('splitVsL'), 'splitVsR': pt.get('splitVsR'), 'h2h': pt.get('h2h'), 'statcast': pt.get('statcast')}
+         'splitVsL': pt.get('splitVsL'), 'splitVsR': pt.get('splitVsR'), 'h2h': pt.get('h2h'), 'statcast': pt.get('statcast'), 'arsenal': pt.get('arsenal')}
     for k, v in s.items(): p[k] = v
     players.append(p)
     for gl in (pt.get('gameLog') or []):
