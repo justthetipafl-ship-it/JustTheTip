@@ -3279,7 +3279,7 @@
     const _pgLead=!!(window.SPORT_CONFIG&&SPORT_CONFIG.leadersPerGame);
     const _lval=(p,k)=>_pgLead?((p[k]||0)/(p.matches||1)):(p[k]||0);
     const leaders=BET_STATS.slice(0,4).filter(([k])=>!_fxHid('mkt',k)).map(([k,l])=>{
-      const top=playersOnTeam(team).filter(p=>(p.matches||0)>=3 && isPlaying(p.name,team)).sort((a,b)=>_lval(b,k)-_lval(a,k))[0];
+      const top=playersOnTeam(team).filter(p=>(p.matches||0)>=3 && isPlaying(p.name,team) && (SPORT.key!=='mlb'||p.role!=='pitch')).sort((a,b)=>_lval(b,k)-_lval(a,k))[0];
       if(!top) return '';
       return '<div class="tp-lead" onclick="openPlayer(\''+esc(top.name).replace(/\x27/g,"\\\x27")+'\')"><span class="nm">'+l+' · '+top.name+'</span><span class="vv">'+fmt(_lval(top,k),_pgLead?2:(k==='goals'?2:1))+(_pgLead?'/g':'')+'</span></div>';
     }).join('');
@@ -6818,8 +6818,11 @@
     if(stat==='goals') return 1;                                  // default anytime goal (1+)
     const od=oddsFor(name,stat);
     if(od&&od.line!=null) return Math.max(1,Math.ceil(od.line));  // snap to the posted line
-    const p=state.idx.byName[name]; const a=p?(p[stat]||0):0;
-    return Math.max(1,Math.round(a));                             // else round the season avg
+    const p=state.idx.byName[name]; if(!p) return 1;
+    // MLB (leadersPerGame) stores SEASON TOTALS -> convert to per-game; others are already per-game
+    const perGame=(window.SPORT_CONFIG&&SPORT_CONFIG.leadersPerGame)?((p[stat]||0)/(p.matches||1)):(p[stat]||0);
+    if(window.SPORT_CONFIG&&SPORT_CONFIG.leadersPerGame) return Math.max(0.5,Math.round(perGame-0.5)+0.5);  // snap to X.5 prop line
+    return Math.max(1,Math.round(perGame));
   }
   function _pcGames(name,scope,opp){
     const all=state.idx.logsByName[name]||[];
