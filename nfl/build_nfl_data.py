@@ -119,6 +119,7 @@ def _safe_seasons_load(fn, seasons, label, **kw):
 
 def load_frames(seasons, pbp_seasons, current):
     import nflreadpy as nfl
+    import pandas as pd
     print("loading nflverse frames ...")
     ps  = _safe_seasons_load(nfl.load_player_stats, seasons, "player_stats", summary_level="week")
     sc  = _safe_seasons_load(nfl.load_snap_counts, seasons, "snap_counts")
@@ -152,7 +153,23 @@ def load_frames(seasons, pbp_seasons, current):
         ros = nfl.load_rosters(seasons=[current]).to_pandas()
     except Exception as e:
         print(f"  (rosters unavailable: {e})")
-    return ps, sc, sch, inj, dc, tm, pbp, adv, ros
+    part = None
+    try:
+        parts = []
+        for _s in pbp_seasons:
+            try:
+                _p = nfl.load_participation(seasons=[_s]).to_pandas()
+                if len(_p): parts.append(_p)
+            except Exception:
+                pass
+        if parts:
+            part = pd.concat(parts, ignore_index=True)
+            print(f"  participation: {len(part)} plays (coverage charting)")
+        else:
+            print("  (participation unavailable - coverage feed skipped)")
+    except Exception as e:
+        print(f"  (participation load failed - coverage skipped: {e})")
+    return ps, sc, sch, inj, dc, tm, pbp, adv, ros, part
 
 # ?? schedules ? game index, results, fixture ????????????????????????????????
 def build_game_index(sch):
@@ -673,6 +690,74 @@ def build_teams(gamelogs, results, current, divisions, form_n=None):
         out.append(rec)
     return out
 
+def build_coverage(pbp, part, players, short_idx):
+    """Man/zone coverage: each defense's tendency (man/zone % + coverage-type mix) and
+    each receiver's production split vs man vs zone. Joins nflverse participation
+    (per-play coverage charting) to pbp receivers. Most recent charted season only."""
+    if pbp is None or getattr(pbp, "empty", True) or part is None or getattr(part, "empty", True):
+        print("  (coverage skipped - pbp or participation unavailable)")
+        return {}
+    import pandas as pd
+    p = part.copy()
+    if "nflverse_game_id" in p.columns:
+        p = p.rename(columns={"nflverse_game_id": "game_id"})
+    MZ, CT = "defense_man_zone_type", "defense_coverage_type"
+    if MZ not in p.columns or "play_id" not in p.columns:
+        print("  (coverage skipped - no man/zone field in participation)")
+        return {}
+    keep = [c for c in ["game_id","play_id","season","posteam","defteam",
+                        "receiver_player_name","complete_pass","yards_gained",
+                        "pass_touchdown","pass_attempt"] if c in pbp.columns]
+    j = pbp[keep].merge(p[["game_id","play_id",MZ,CT]], on=["game_id","play_id"], how="inner")
+    if "season" in j.columns and j["season"].notna().any():
+        j = j[j["season"] == j["season"].max()]                        # most recent charted season
+    j = j[(j.get("pass_attempt", 1) == 1) & (j[MZ].isin(["MAN_COVERAGE","ZONE_COVERAGE"]))].copy()
+    if not len(j):
+        print("  (coverage skipped - no charted pass plays after join)")
+        return {}
+    j["_side"] = j[MZ].map({"MAN_COVERAGE":"man","ZONE_COVERAGE":"zone"})
+    j["complete_pass"] = pd.to_numeric(j["complete_pass"], errors="coerce").fillna(0)
+    j["yards_gained"] = pd.to_numeric(j["yards_gained"], errors="coerce").fillna(0)
+    j["pass_touchdown"] = pd.to_numeric(j["pass_touchdown"], errors="coerce").fillna(0)
+    j["_yds"] = j["yards_gained"] * j["complete_pass"]
+    # ---- team defensive coverage tendency ----
+    team_cov = {}
+    for team, gdf in j.groupby("defteam"):
+        n = len(gdf); man = int((gdf["_side"] == "man").sum())
+        cov = {}
+        for c, cnt in gdf[CT].value_counts().items():
+            cs = str(c)
+            if cs and cs != "nan" and cs != "":
+                cov[cs] = round(cnt / n * 100, 1)
+        team_cov[str(team)] = {"plays": n,
+                               "manRate": round(man / n * 100, 1) if n else 0,
+                               "zoneRate": round((n - man) / n * 100, 1) if n else 0,
+                               "cover": dict(sorted(cov.items(), key=lambda kv: -kv[1])[:6])}
+    # ---- receiver splits (man vs zone) ----
+    j["_full"] = [short_idx.get((t, _norm(r))) for t, r in zip(j["posteam"], j["receiver_player_name"])]
+    jj = j[j["_full"].notna()]
+    agg = jj.groupby(["_full","_side"]).agg(tgt=("play_id","count"), rec=("complete_pass","sum"),
+                                            yds=("_yds","sum"), td=("pass_touchdown","sum")).reset_index()
+    psplit = {}
+    for _, r in agg.iterrows():
+        d = psplit.setdefault(r["_full"], {"man":None,"zone":None})
+        d[r["_side"]] = {"tgt": int(r["tgt"]), "rec": int(r["rec"]),
+                         "yds": round(float(r["yds"]), 1), "td": int(r["td"])}
+    n_att = 0
+    for pl in players:
+        c = psplit.get(pl["name"])
+        if not c:
+            continue
+        man = c.get("man") or {"tgt":0,"rec":0,"yds":0,"td":0}
+        zone = c.get("zone") or {"tgt":0,"rec":0,"yds":0,"td":0}
+        if man["tgt"] + zone["tgt"] < 10:
+            continue
+        pl["cov"] = {"man": man, "zone": zone}
+        n_att += 1
+    print(f"  coverage: {len(team_cov)} team profiles, {n_att} receivers with man/zone splits")
+    return team_cov
+
+
 def build_dvp(gamelogs, players, current):
     """defense team ? pos ? per-game allowed (position totals / games faced)."""
     _sy = _stat_season(gamelogs, current)
@@ -843,9 +928,12 @@ def build_weather(fixture):
 
 # ?? main build ??????????????????????????????????????????????????????????????
 def run_build(frames, out_dir, seasons, current, password, skip_weather=False):
-    if len(frames) == 7:                      # selftest / older callers: no advstats
-        frames = tuple(frames) + (None, None)
-    ps, sc, sch, inj, dc, tm, pbp, adv, ros = frames
+    frames = tuple(frames)
+    if len(frames) == 7:                      # selftest / older callers: no advstats/participation
+        frames = frames + (None, None, None)
+    elif len(frames) == 9:                    # advstats but no participation
+        frames = frames + (None,)
+    ps, sc, sch, inj, dc, tm, pbp, adv, ros, part = frames
     os.makedirs(out_dir, exist_ok=True)
     game_idx = build_game_index(sch)
     results = build_results(sch)
@@ -855,6 +943,7 @@ def run_build(frames, out_dir, seasons, current, password, skip_weather=False):
     rz_usage, firsttd, longest = build_pbp_derived(pbp, short_idx)
     redzone = build_redzone(pbp, short_idx, current)
     dbs = build_dbs(adv, ros, current, players)
+    cov_teams = build_coverage(pbp, part, players, short_idx)
     for p in players:
         u = rz_usage.get(p["name"])
         if u:
@@ -879,6 +968,8 @@ def run_build(frames, out_dir, seasons, current, password, skip_weather=False):
     teams = build_teams(gamelogs, results, current, divisions)
     teams_form = build_teams(gamelogs, results, current, divisions, form_n=FORM_N)
     dvp = build_dvp(gamelogs, players, current)
+    for _t in teams: _t["cov"] = cov_teams.get(_t["team"])
+    for _t in teams_form: _t["cov"] = cov_teams.get(_t["team"])
     injuries = build_injuries(inj, current)
     lineups = build_lineups(dc, next_week)
     weather = [] if skip_weather else build_weather(fixture)
