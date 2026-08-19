@@ -1053,7 +1053,8 @@
   .deg-sec{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:12px}
   .deg-sec-h{font-size:15px;font-weight:800;font-family:var(--font-display);display:flex;align-items:center;gap:8px;margin-bottom:3px}
   .deg-sec-sub{font-size:12px;color:var(--text-3);margin-bottom:10px}
-  .deg-bookbar{display:flex;align-items:center;gap:10px;margin-bottom:12px;flex-wrap:wrap}
+  .ma-vs{display:flex;align-items:center;gap:8px;margin:8px 0 4px}.ma-p{flex:1;min-width:0}.ma-p.r{text-align:right}.ma-nm{font-weight:700;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.ma-sub{font-size:9px;color:var(--text-2);text-transform:uppercase;letter-spacing:.03em}.ma-mid{font-size:11px;color:var(--text-2);font-weight:700}.ma-splitnote{display:flex;justify-content:space-between;font-size:9px;color:var(--text-2);text-transform:uppercase;letter-spacing:.03em;margin-bottom:6px;opacity:.8}.ma-h2h,.ma-cond{font-size:11px;color:var(--text-2);margin-bottom:5px}.ma-h2h b{color:var(--text-1)}.ma-rows{display:flex;flex-direction:column;gap:4px;margin-top:4px}.ma-row{display:grid;grid-template-columns:46px 1fr 74px 1fr 46px;align-items:center;gap:5px;font-size:11px}.ma-v{color:var(--text-1);font-weight:600;font-variant-numeric:tabular-nums;white-space:nowrap}.ma-v.r{text-align:right}.ma-lbl{text-align:center;font-size:9px;color:var(--text-2);text-transform:uppercase;letter-spacing:.02em;line-height:1.1}.ma-bar{position:relative;height:15px;background:var(--surface-2,rgba(128,128,128,.15));border-radius:8px;overflow:hidden}.ma-fill{position:absolute;top:0;bottom:0;border-radius:8px;opacity:.85}.ma-bar.l .ma-fill{right:0}.ma-bar.r .ma-fill{left:0}.ma-pct{position:absolute;top:0;bottom:0;display:flex;align-items:center;font-size:9px;font-weight:700;color:#fff}.ma-bar.l .ma-pct{left:6px}.ma-bar.r .ma-pct{right:6px}.ma-na{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:var(--text-2);font-size:10px;opacity:.6}
+.deg-bookbar{display:flex;align-items:center;gap:10px;margin-bottom:12px;flex-wrap:wrap}
   .deg-bl{font-size:12px;color:var(--text-3);font-weight:700}
   .pyr{display:flex;flex-direction:column;gap:10px;align-items:center;padding:6px 0}
   .pyr-row{display:flex;gap:6px;justify-content:center;align-items:stretch}
@@ -3095,6 +3096,109 @@
       ((g.lines&&g.lines.total!=null)?'<div class="statcell"><div class="v">'+g.lines.total+'</div><div class="k">Book O/U</div></div>':'')+
       '</div></div></details>';
   }
+  // ===================== MLB Matchup Analyzer (Phase 1) =====================
+  var _MA_LEAGUE={};
+  function _maBatRaw(p,m){
+    switch(m){
+      case 'AVG': return p.AVG; case 'SLG': return p.SLG;
+      case 'ISO': return (p.SLG!=null&&p.AVG!=null)?+(p.SLG-p.AVG).toFixed(3):null;
+      case 'xwoba': return p.statcast&&p.statcast.xwoba; case 'barrel': return p.statcast&&p.statcast.barrelPct;
+      case 'hardHit': return p.statcast&&p.statcast.hardHitPct; case 'ev': return p.statcast&&p.statcast.ev;
+      case 'Kpct': return p.PA?+((p.SO||0)/p.PA*100).toFixed(1):null;
+      case 'BBpct': return p.PA?+((p.BB||0)/p.PA*100).toFixed(1):null;
+      case 'HRpct': return p.PA?+((p.HR||0)/p.PA*100).toFixed(1):null;
+    } return null;
+  }
+  function _maPitRaw(p,m){
+    switch(m){
+      case 'oppAVG': return p.oppAVG; case 'xwoba': return p.statcast&&p.statcast.xwoba;
+      case 'barrel': return p.statcast&&p.statcast.barrelPct; case 'hardHit': return p.statcast&&p.statcast.hardHitPct;
+      case 'ev': return p.statcast&&p.statcast.ev; case 'K9': return p.K9; case 'HR9': return p.HR9;
+    } return null;
+  }
+  function _maLeagueArr(role,metric){
+    var key=role+'|'+metric; if(_MA_LEAGUE[key]) return _MA_LEAGUE[key];
+    var arr=[];
+    (state.idx.players||[]).forEach(function(p){
+      if(role==='bat'&&p.role==='pitch') return; if(role==='pit'&&p.role!=='pitch') return;
+      var v=(role==='bat')?_maBatRaw(p,metric):_maPitRaw(p,metric);
+      if(v!=null&&!isNaN(v)) arr.push(+v);
+    });
+    arr.sort(function(a,b){return a-b;});
+    return _MA_LEAGUE[key]=arr;
+  }
+  function _maPctl(role,metric,val){
+    if(val==null||isNaN(val)) return null;
+    var arr=_maLeagueArr(role,metric); if(arr.length<8) return null;
+    var n=0; for(var i=0;i<arr.length;i++) if(arr[i]<=val) n++;
+    return Math.round(n/arr.length*100);
+  }
+  function _maBatVal(bat,pitHand,m){
+    var sp=pitHand==='L'?bat.splitVsL:bat.splitVsR;
+    if(m==='AVG') return (sp&&sp.AVG!=null)?sp.AVG:bat.AVG;
+    if(m==='SLG') return (sp&&sp.SLG!=null)?sp.SLG:bat.SLG;
+    if(m==='ISO'){ var s=(sp&&sp.SLG!=null)?sp.SLG:bat.SLG, a=(sp&&sp.AVG!=null)?sp.AVG:bat.AVG; return (s!=null&&a!=null)?+(s-a).toFixed(3):null; }
+    return _maBatRaw(bat,m);
+  }
+  function _maPitValV(pit,batHand,m){
+    var sp=batHand==='L'?pit.splitVsL:pit.splitVsR;
+    if(m==='oppAVG') return (sp&&sp.oppAVG!=null)?sp.oppAVG:pit.oppAVG;
+    return _maPitRaw(pit,m);
+  }
+  var MA_ROWS=[
+    {lbl:'AVG', bm:'AVG', pm:'oppAVG', dec:3, bdir:1, pdir:1},
+    {lbl:'ISO', bm:'ISO', pm:null, dec:3, bdir:1},
+    {lbl:'xwOBA', bm:'xwoba', pm:'xwoba', dec:3, bdir:1, pdir:1},
+    {lbl:'Barrel%', bm:'barrel', pm:'barrel', dec:1, u:'%', bdir:1, pdir:1},
+    {lbl:'Hard-Hit%', bm:'hardHit', pm:'hardHit', dec:1, u:'%', bdir:1, pdir:1},
+    {lbl:'Avg EV', bm:'ev', pm:'ev', dec:1, u:'', bdir:1, pdir:1},
+    {lbl:'K rate', bm:'Kpct', pm:'K9', dec:1, u:'%', pu:'', bdir:-1, pdir:-1},
+    {lbl:'BB%', bm:'BBpct', pm:null, dec:1, u:'%', bdir:1},
+    {lbl:'HR rate', bm:'HRpct', pm:'HR9', dec:1, u:'%', pu:'', bdir:1, pdir:1}
+  ];
+  function _maFmt(v,dec,u){ if(v==null||isNaN(v)) return '\u2014'; var s=(+v).toFixed(dec); if(dec===3) s=s.replace(/^0/,''); return s+(u||''); }
+  function _maEdge(pctl,dir){ if(pctl==null) return null; return (dir<0)?(100-pctl):pctl; }
+  function _maColor(edge){ if(edge==null) return 'var(--border)'; if(edge>=66) return '#22c55e'; if(edge>=40) return '#eab308'; return '#ef4444'; }
+  function _maBar(pctl,edge,side){
+    if(pctl==null) return '<div class="ma-bar '+side+'"><span class="ma-na">\u2014</span></div>';
+    return '<div class="ma-bar '+side+'"><span class="ma-fill" style="width:'+pctl+'%;background:'+_maColor(edge)+'"></span><span class="ma-pct">'+pctl+'</span></div>';
+  }
+  function _mlbMatchupAnalyzer(g){
+    var bats=(state.idx.players||[]).filter(function(p){return p.role!=='pitch'&&(p.team===g.home||p.team===g.away)&&isPlaying(p.name,p.team);});
+    if(!bats.length) return '';
+    bats.sort(function(a,b){return (a.order||99)-(b.order||99)||a.name.localeCompare(b.name);});
+    var selName=(state.view.maBatter&&bats.some(function(b){return b.name===state.view.maBatter;}))?state.view.maBatter:bats[0].name;
+    var bat=bats.find(function(b){return b.name===selName;});
+    var oppTeam=bat.team===g.home?g.away:g.home;
+    var oppPitcherName=bat.team===g.home?g.awayPitcher:g.homePitcher;
+    var pit=_mlbFindPitcher(oppPitcherName);
+    var sel='<div class="deg-bookbar"><span class="deg-bl">Batter</span><select class="ob-sel" onchange="_maSetBatter(this.value)">'+bats.map(function(b){return '<option value="'+esc(b.name).replace(/"/g,'&quot;')+'"'+(b.name===selName?' selected':'')+'>'+esc(b.name)+' \u00b7 '+esc(b.team)+'</option>';}).join('')+'</select></div>';
+    var h='<details class="tp-collapse c-green" open><summary class="tp-collapse-sum"><i class="ti ti-chart-dots"></i><span class="tp-collapse-title">Matchup Analyzer</span><i class="ti ti-chevron-down tp-collapse-chev"></i></summary><div class="tp-collapse-body">'+sel;
+    if(!pit){ h+='<div class="tp-body-meta" style="border:0">Opposing starter for '+esc(bat.team)+' not posted yet.</div></div></details>'; return h; }
+    var bH=bat.bats||'R', pH=pit.throws||'R';
+    h+='<div class="ma-vs"><div class="ma-p"><div class="ma-nm">'+esc(pit.name)+'</div><div class="ma-sub">'+esc(oppTeam)+' \u00b7 SP \u00b7 '+pH+'HP</div></div>'+
+       '<div class="ma-mid">vs</div>'+
+       '<div class="ma-p r"><div class="ma-nm">'+esc(bat.name)+'</div><div class="ma-sub">'+esc(bat.team)+(bat.position?' \u00b7 '+esc(bat.position):'')+' \u00b7 '+bH+'HB</div></div></div>';
+    h+='<div class="ma-splitnote"><span>Pitcher vs '+bH+'HB</span><span>Batter vs '+pH+'HP</span></div>';
+    var bv=(bat.bvp&&(bat.bvp[String(pit.id)]||bat.bvp[pit.id]))||null;
+    if(bv&&(bv.PA||0)>0){ h+='<div class="ma-h2h"><b>H2H</b> \u00b7 '+[bv.PA+' PA',bv.H!=null?bv.H+' H':'',bv.TB!=null?bv.TB+' TB':'',bv.HR!=null?bv.HR+' HR':'',bv.AVG!=null?_maFmt(bv.AVG,3,'')+' AVG':''].filter(Boolean).join(' \u00b7 ')+'</div>'; }
+    var pk=g.park||{}, hrF=(pk.hrFactor!=null?pk.hrFactor:(pk.hr!=null?pk.hr:null)), wm=(g.weather&&g.weather.hrMult!=null)?g.weather.hrMult:1;
+    var cond=[(pk.name||g.venue||'')]; if(hrF!=null) cond.push('Park HR '+(hrF>=1?'+':'')+Math.round((hrF-1)*100)+'%'); if(wm!==1) cond.push('Wind '+(wm>=1?'+':'')+Math.round((wm-1)*100)+'%');
+    h+='<div class="ma-cond"><i class="ti ti-map-pin"></i> '+cond.filter(Boolean).join(' \u00b7 ')+'</div>';
+    h+='<div class="ma-rows">';
+    MA_ROWS.forEach(function(row){
+      var bVal=_maBatVal(bat,pH,row.bm), bP=_maPctl('bat',row.bm,bVal), bE=_maEdge(bP,row.bdir);
+      var pVal=row.pm?_maPitValV(pit,bH,row.pm):null, pP=row.pm?_maPctl('pit',row.pm,pVal):null, pE=_maEdge(pP,row.pdir||1);
+      h+='<div class="ma-row"><div class="ma-v">'+_maFmt(pVal,row.dec,(row.pu!=null?row.pu:row.u))+'</div>'+
+         _maBar(pP,pE,'l')+'<div class="ma-lbl">'+row.lbl+'</div>'+_maBar(bP,bE,'r')+
+         '<div class="ma-v r">'+_maFmt(bVal,row.dec,row.u)+'</div></div>';
+    });
+    h+='</div>';
+    h+='<div class="tp-body-meta" style="border:0;margin-top:8px;font-size:10px">Bar = league percentile \u00b7 green favours the batter. AVG/ISO use the vs-hand split; Statcast is season-overall (hand splits arrive in Phase 2).</div>';
+    h+='</div></details>'; return h;
+  }
+  window._maSetBatter=function(nm){ state.view.maBatter=nm; (typeof _renderAppPreserving==='function'?_renderAppPreserving:_renderApp)(); };
+
   function _mlbStarterPanel(g, battingTeam, facingPitcherName){
     const st=_mlbFindPitcher(facingPitcherName); if(!st) return '';
     const av3=v=>(v==null?'\u2014':(+v).toFixed(3).replace(/^0/,''));
@@ -3252,6 +3356,7 @@
     if(SPORT.key==='afl' && LIVE_WORKER) h+='<button class="live-open-btn" onclick="_aflLiveOpenCurrent()"><span class="live-dot on"></span>Watch Live</button>';
     h+=(_fxHid('sec','matchMkts')?'':gameMatchMarkets(g.home,g.away))+(_fxHid('sec','matchOdds')?'':gameMatchOdds(g.home,g.away))+(_fxHid('sec','h2h')?'':gameHeadToHead(g.home,g.away))+(_fxHid('sec','clash')?'':gameClash(g.home,g.away))+(_fxHid('sec','lastMeeting')?'':gameLastMeeting(g.home,g.away))+(_fxHid('sec','byHalves')?'':gameByHalves(g.home,g.away))+(_fxHid('sec','shapeTrend')?'':gameShapeTrend(g.home,g.away))+(_fxHid('sec','recentGames')?'':gameRecentGames(g.home,g.away));
     h+='<div class="team-cols">'+teamPanel(g.home,g.away,true)+teamPanel(g.away,g.home,false)+'</div>';
+    if(SPORT.key==='mlb' && !_fxHid('sec','matchupAnalyzer')) h+=_mlbMatchupAnalyzer(g);
     // mode toggle now sits directly above the signals it controls
     const fxMode=(state.view.fxMode||'degen');
     h+='<div class="fx-mode">'+
