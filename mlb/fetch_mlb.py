@@ -560,6 +560,7 @@ def load_statcast(year):
                 "ev": fnum(gv(row, "avg_hit_speed", "exit_velocity_avg")),
             }); matched += 1
         print(f"[JTT MLB]   statcast {typ}: {len(rows)} rows, {matched} keyed")
+    if bat: print("[JTT MLB]   statcast key sample (batter):", list(bat.keys())[:6], "(should be 6-digit MLBAM ids)")
     return {k: v for k, v in bat.items() if v}, {k: v for k, v in pit.items() if v}
 
 # ---------------------------------------------------------------- build
@@ -582,6 +583,8 @@ def main():
     print("[JTT MLB] loading Statcast (Baseball Savant)?")
     STATCAST_BAT, STATCAST_PIT = load_statcast(season)
     print(f"[JTT MLB]   statcast: {len(STATCAST_BAT)} batters, {len(STATCAST_PIT)} pitchers")
+    _sc_keys = list(STATCAST_BAT.keys())[:6]
+    print(f"[JTT MLB]   statcast batter keys: {_sc_keys}")
 
     tomorrow = (datetime.date.fromisoformat(date) + datetime.timedelta(days=1)).isoformat()
     games = load_schedule(date, tomorrow)
