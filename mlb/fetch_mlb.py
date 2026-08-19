@@ -618,9 +618,9 @@ def load_pitch_arsenal(year):
             pt = (gv(row, "pitch_type", "pitch_name", "pitch") or "").upper()
             if pid is None or not pt: continue
             bat_vs.setdefault(pid, {})[pt] = {
-                "woba": fnum(gv(row, "woba")), "xwoba": fnum(gv(row, "est_woba", "xwoba")),
-                "whiff": fnum(gv(row, "whiff_percent", "whiff")),
-                "hardHit": fnum(gv(row, "hard_hit_percent", "hardhit_percent")),
+                "woba": fnum(gv(row, "woba")), "slg": fnum(gv(row, "slg")),
+                "xba": fnum(gv(row, "est_ba")), "whiff": fnum(gv(row, "whiff_percent")),
+                "k": fnum(gv(row, "k_percent")), "rv100": fnum(gv(row, "run_value_per_100")),
             }
     print("[JTT MLB]   pitch arsenal: %d pitchers (usage), %d batters (vs pitch type)" % (len(pit_usage), len(bat_vs)))
     return pit_usage, bat_vs
