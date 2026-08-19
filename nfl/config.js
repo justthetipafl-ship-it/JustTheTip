@@ -3,6 +3,9 @@ window.SPORT_CONFIG = {
   // official team logos — ESPN CDN by lowercase abbreviation (onerror falls back to the jersey)
   logoCdn: 'https://a.espncdn.com/i/teamlogos/nfl/500/', logoCdnExt: '.png', teamIds: { LA:'lar', WAS:'wsh' },
   key: 'nfl',
+  // Coverage matchup thresholds (tunable): defence is 'man-heavy' >= manHeavy%, 'zone-heavy'
+  // >= zoneHeavy%; a receiver flags Buster/Beater when his man-vs-zone y/tgt gap >= lean.
+  coverage: { manHeavy: 45, zoneHeavy: 60, lean: 1.5 },
   name: 'NFL',
   jupiter: {
     markets: [['passYds','Pass Yd'],['rushYds','Rush Yd'],['recYds','Rec Yd'],['receptions','Rec'],['rushAtt','Rush Att'],['passTds','Pass TD'],['tackles','Tackles']],
