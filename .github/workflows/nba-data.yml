@@ -1,8 +1,8 @@
-name: JTT NBA+WNBA — split data refresh (advanced)
+name: JTT NBA — data refresh (advanced)
 
 # Basketball is daily. Two runs:
 #   • 12:00 UTC → after sportsdataverse's own morning refresh (~10:00 UTC):
-#                 full stats/DVP/gamelogs rebuild, both leagues
+#                 full stats/DVP/gamelogs rebuild
 #   • 21:00 UTC → pre-slate top-up (injuries, lineups) before the US evening tips
 # Plus manual dispatch (optionally with the weekly password → hashed into meta.json).
 # Off-season runs are cheap no-ops: identical output → nothing committed.
@@ -52,21 +52,19 @@ jobs:
         run: |
           PW="${{ github.event.inputs.password || secrets.NBA_WEEKLY_PASSWORD }}"
           if [ -n "$PW" ]; then
-            python nba/build_nba_data.py --out nba/data --league both \
+            python nba/build_nba_data.py --out nba/data --league nba \
               --nba-seasons 2024,2025,2026 --nba-current 2026 \
-              --wnba-seasons 2024,2025,2026 --wnba-current 2026 \
               --password "$PW"
           else
-            python nba/build_nba_data.py --out nba/data --league both \
-              --nba-seasons 2024,2025,2026 --nba-current 2026 \
-              --wnba-seasons 2024,2025,2026 --wnba-current 2026
+            python nba/build_nba_data.py --out nba/data --league nba \
+              --nba-seasons 2024,2025,2026 --nba-current 2026
           fi
 
       - name: Commit refreshed data
         run: |
           git config user.name  "jtt-bot"
           git config user.email "actions@github.com"
-          git add nba/data wnba/data
+          git add nba/data
           if git diff --cached --quiet; then
             echo "No changes."
           else
