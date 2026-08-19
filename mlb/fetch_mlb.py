@@ -529,15 +529,27 @@ def load_statcast(year):
     def fnum(x):
         try: return round(float(x), 3)
         except (TypeError, ValueError): return None
+    def _pid_from(row):
+        # Savant's id column name varies; identify the MLBAM id by value (6-digit range),
+        # preferring named columns but falling back to scanning every cell.
+        cand = [row.get(k) for k in ("player_id", "playerid", "mlbam_id", "MLBAMID", "id")]
+        cand += list(row.values())
+        for v in cand:
+            try:
+                iv = int(str(v).strip())
+                if 100000 <= iv <= 999999:
+                    return iv
+            except (TypeError, ValueError):
+                continue
+        return None
     # expected stats: xBA / xSLG / xwOBA (+ actuals for the luck gap)
     for typ, store in (("batter", bat), ("pitcher", pit)):
         rows = _savant_csv(f"https://baseballsavant.mlb.com/leaderboard/expected_statistics"
                            f"?type={typ}&year={year}&position=&team=&min=1&csv=true")
         matched = 0
         for row in rows:
-            pid = gv(row, "player_id", "playerid", "id", "mlbam_id", "MLBAMID")
-            try: pid = int(pid)
-            except (TypeError, ValueError): continue
+            pid = _pid_from(row)
+            if pid is None: continue
             store.setdefault(pid, {}).update({
                 "xba": fnum(gv(row, "est_ba")), "ba": fnum(gv(row, "ba")),
                 "xslg": fnum(gv(row, "est_slg")), "slg": fnum(gv(row, "slg")),
@@ -551,9 +563,8 @@ def load_statcast(year):
                            f"?type={typ}&year={year}&position=&team=&min=10&csv=true")
         matched = 0
         for row in rows:
-            pid = gv(row, "player_id", "playerid", "id", "mlbam_id", "MLBAMID")
-            try: pid = int(pid)
-            except (TypeError, ValueError): continue
+            pid = _pid_from(row)
+            if pid is None: continue
             store.setdefault(pid, {}).update({
                 "barrelPct": fnum(gv(row, "brl_percent", "barrel_batted_rate", "barrels_per_pa_percent")),
                 "hardHitPct": fnum(gv(row, "ev95percent", "hard_hit_percent")),
