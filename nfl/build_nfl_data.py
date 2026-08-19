@@ -605,12 +605,28 @@ def build_players_gamelogs(ps, snap_idx, game_idx, current):
     return players, gamelogs, short_idx
 
 # ?? team aggregation (offense + allowed) ????????????????????????????????????
+def _stat_season(gamelogs, current):
+    """The season whose games the allowed/DvP stats reflect: the current season once it has a
+    real sample (~3 weeks), otherwise the most recent completed season - so DvP/allowed are
+    populated pre-season instead of empty (currentSeason can lead the schedule by months)."""
+    cnt = {}
+    for r in gamelogs:
+        cnt[r["Year"]] = cnt.get(r["Year"], 0) + 1
+    if cnt.get(str(current), 0) >= 2500:
+        return str(current)
+    for y in sorted((y for y in cnt if y.isdigit() and int(y) <= int(current)), key=int, reverse=True):
+        if cnt[y] >= 2500:
+            return y
+    return str(current)
+
+
 def _team_games(gamelogs, results, current):
     """(team, matchId) -> summed offense row; plus opp + points from results."""
+    _sy = _stat_season(gamelogs, current)
     tg = defaultdict(lambda: defaultdict(float))
     meta = {}
     for r in gamelogs:
-        if r["Year"] != str(current):
+        if r["Year"] != _sy:
             continue
         key = (r["Team"], r["MatchId"])
         for k in ["passYds","passAtt","passComp","passTds","passInt","sacks",
@@ -659,11 +675,12 @@ def build_teams(gamelogs, results, current, divisions, form_n=None):
 
 def build_dvp(gamelogs, players, current):
     """defense team ? pos ? per-game allowed (position totals / games faced)."""
+    _sy = _stat_season(gamelogs, current)
     pos_by_name = {p["name"]: p["position"] for p in players}
     sums = defaultdict(lambda: defaultdict(float))   # (def, pos) -> stat totals
     games = defaultdict(set)                         # (def, pos) -> matchIds
     for r in gamelogs:
-        if r["Year"] != str(current):
+        if r["Year"] != _sy:
             continue
         pos = pos_by_name.get(r["Player"])
         if pos not in KEEP_POS:
@@ -679,7 +696,7 @@ def build_dvp(gamelogs, players, current):
     EXP_KEYS = ("expRec", "expRush")
     lmax = defaultdict(dict)                         # (def, pos, matchId) -> {k: max|sum}
     for r in gamelogs:
-        if r["Year"] != str(current):
+        if r["Year"] != _sy:
             continue
         pos = pos_by_name.get(r["Player"])
         if pos not in POSITIONS:
