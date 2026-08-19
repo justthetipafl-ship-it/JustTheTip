@@ -2649,14 +2649,24 @@
       head='<div class="lm-meta" style="margin-bottom:6px">Most recent meeting · '+esc(((lg.RoundName||'')+' '+(lg.Year||'')).trim())+' · official score pending</div>';
     }
     let perf='';
-    if(mid){
-      const logs=(state.data.gamelogs||[]).filter(r=>r.MatchId===mid);
-      const hl=logs.filter(r=>r.Team===home), al=logs.filter(r=>r.Team===away);
+    let _lmLogs=null;
+    if(mid){ _lmLogs=(state.data.gamelogs||[]).filter(r=>r.MatchId===mid); }
+    else if(SPORT.key==='mlb' && off && off.date){ _lmLogs=(state.data.gamelogs||[]).filter(r=>r.Date===off.date && (r.Team===home||r.Team===away)); }
+    if(_lmLogs && _lmLogs.length){
+      const logs=_lmLogs;
+      const hl=logs.filter(r=>r.Team===home && r.role!=='pitch'), al=logs.filter(r=>r.Team===away && r.role!=='pitch');
       const topOf=(arr,k)=>arr.length?arr.reduce((m,r)=>((r[k]||0)>(m[k]||0)?r:m)):null;
       const chip=(r,k)=>r?'<span class="lm-chip" onclick="openPlayer(\''+esc(r.Player).replace(/\x27/g,"\\\x27")+'\')">'+esc(r.Player)+' <b>'+(k==='goals'?(r[k]||0):Math.round(r[k]||0))+'</b></span>':'<span class="lm-chip none">—</span>';
       perf='<div class="lm-grid"><div class="lm-gh">'+abbr(home)+'</div><div class="lm-gk hd">Top by</div><div class="lm-gh r">'+abbr(away)+'</div>';
-      BET_STATS.forEach(([k,l])=>{ perf+='<div class="lm-gc">'+chip(topOf(hl,k),k)+'</div><div class="lm-gk">'+l+'</div><div class="lm-gc r">'+chip(topOf(al,k),k)+'</div>'; });
+      BET_STATS.filter(([k])=>k!=='K').forEach(([k,l])=>{ perf+='<div class="lm-gc">'+chip(topOf(hl,k),k)+'</div><div class="lm-gk">'+l+'</div><div class="lm-gc r">'+chip(topOf(al,k),k)+'</div>'; });
       perf+='</div>';
+      if(SPORT.key==='mlb'){
+        const _pf=logs.filter(r=>r.role==='pitch');
+        const _starterOf=arr=>arr.length?arr.reduce((m,r)=>((r.outs||0)>(m.outs||0)?r:m)):null;
+        const _sh=_starterOf(_pf.filter(r=>r.Team===home)), _sa=_starterOf(_pf.filter(r=>r.Team===away));
+        const _pchip=r=>r?'<span class="lm-chip">'+esc(r.Player)+' <b>'+(r.K||0)+'K</b>'+(r.IP!=null?' '+r.IP+'ip':'')+(r.ER!=null?' '+r.ER+'er':'')+'</span>':'<span class="lm-chip none">\u2014</span>';
+        if(_sh||_sa) perf+='<div class="lm-grid" style="margin-top:6px"><div class="lm-gc">'+_pchip(_sh)+'</div><div class="lm-gk">Starter (K / IP / ER)</div><div class="lm-gc r">'+_pchip(_sa)+'</div></div>';
+      }
     }
     return '<div class="game-sec"><div class="gs-title"><i class="ti ti-history"></i> Last Time They Met</div>'+head+perf+'</div>';
   }
@@ -3112,10 +3122,7 @@
     h+='</div></details>'; return h;
   }
   function _mlbMatchPanels(g){
-    let h=_mlbMatchPanel(g);
-    h+=_mlbStarterPanel(g, g.home, g.awayPitcher);   // home bats vs the away starter
-    h+=_mlbStarterPanel(g, g.away, g.homePitcher);   // away bats vs the home starter
-    return h;
+    return _mlbMatchPanel(g);   // starter matchups now render inside each team's panel (teamPanel)
   }
 
   // ---- EPL focused-fixture panels (Match Markets, Referee, Lineups, Venue) — ported from the WC tool ----
@@ -3269,12 +3276,19 @@
     // form pips
     h+='<div style="margin-bottom:6px">'+pips(team)+'</div>';
     // Stat Leaders (top of team by a few markets)
+    const _pgLead=!!(window.SPORT_CONFIG&&SPORT_CONFIG.leadersPerGame);
+    const _lval=(p,k)=>_pgLead?((p[k]||0)/(p.matches||1)):(p[k]||0);
     const leaders=BET_STATS.slice(0,4).filter(([k])=>!_fxHid('mkt',k)).map(([k,l])=>{
-      const top=playersOnTeam(team).filter(p=>(p.matches||0)>=3 && isPlaying(p.name,team)).sort((a,b)=>(b[k]||0)-(a[k]||0))[0];
+      const top=playersOnTeam(team).filter(p=>(p.matches||0)>=3 && isPlaying(p.name,team)).sort((a,b)=>_lval(b,k)-_lval(a,k))[0];
       if(!top) return '';
-      return '<div class="tp-lead" onclick="openPlayer(\''+esc(top.name).replace(/\x27/g,"\\\x27")+'\')"><span class="nm">'+l+' · '+top.name+'</span><span class="vv">'+fmt(top[k],k==='goals'?2:1)+'</span></div>';
+      return '<div class="tp-lead" onclick="openPlayer(\''+esc(top.name).replace(/\x27/g,"\\\x27")+'\')"><span class="nm">'+l+' · '+top.name+'</span><span class="vv">'+fmt(_lval(top,k),_pgLead?2:(k==='goals'?2:1))+(_pgLead?'/g':'')+'</span></div>';
     }).join('');
     if(leaders && !_fxHid('sec','leaders')){ h+='<div class="tp-sec"><div class="sec-title"><i class="ti ti-user-star"></i> Stat Leaders</div></div>'+leaders; }
+    if(SPORT.key==='mlb' && !_fxHid('sec','starter')){
+      const _sg=(state.data.fixture||[]).find(x=>((x.home===team&&x.away===opp)||(x.home===opp&&x.away===team)));
+      const _fp=_sg?(_sg.home===team?_sg.awayPitcher:_sg.homePitcher):null;
+      if(_sg && _fp) h+=_mlbStarterPanel(_sg, team, _fp);
+    }
     // Matchup: this team For vs what the OPPONENT allows (the edges this team's players face)
     if(t && !_fxHid('sec','matchup')){
       let mt='<div class="tp-sec"><div class="sec-title"><i class="ti ti-shield-half"></i> Matchup vs '+abbr(opp)+'</div></div>';
@@ -3405,7 +3419,8 @@
         const val=t[k+suf]||0, d=avg[k]?((val-avg[k])/avg[k]*100):0;
         // For "allowed": above avg = soft (green, over-friendly). For "For": above avg = strong (green).
         const col=Math.abs(d)<4?'':(d>0?'#22c55e':'#ef4444');
-        h+='<td'+(col?' style="color:'+col+';font-weight:700"':'')+'>'+fmt(val, k==='goals'?1:0)+'</td>';
+        const _td=(window.SPORT_CONFIG&&SPORT_CONFIG.teamDecimals); const _dec=(_td!=null)?_td:(k==='goals'?1:0);
+        h+='<td'+(col?' style="color:'+col+';font-weight:700"':'')+'>'+fmt(val, _dec)+'</td>';
       });
       h+='</tr>';
     });
