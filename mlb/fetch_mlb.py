@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-fetch_mlb.py — JTT MLB daily data pipeline.
+fetch_mlb.py ? JTT MLB daily data pipeline.
 
 Pulls today's slate from the free MLB Stats API (statsapi.mlb.com) and writes
 data/mlb_bundle.json + data/version.txt in the schema JTT_MLB.html expects.
@@ -202,12 +202,12 @@ def gamelog_bat_rows(pid, season, idmap, team_id=None):
 def gamelog_bat(pid, season, idmap, limit=20, team_id=None):
     return gamelog_bat_rows(pid, season, idmap, team_id)[:limit]
 
-# Deeper head-to-head history feeds the Déjà Vu Multis feature (consecutive
+# Deeper head-to-head history feeds the D?j? Vu Multis feature (consecutive
 # meetings between two specific teams). Pull this many prior seasons in
 # addition to the current one. Set to 0 to keep it current-season only.
-H2H_EXTRA_SEASONS = 2                 # current + 2 prior seasons of H2H depth (Déjà Vu)
-GAMELOG_SEASONS = 3                   # main gamelogs span current + 2 prior seasons
-PER_SEASON_CAP = 30                   # recent games kept per season in the main gamelogs
+H2H_EXTRA_SEASONS = 2                 # current + 2 prior seasons of H2H depth (D?j? Vu)
+GAMELOG_SEASONS = 2                   # main gamelogs span current + last season (full)
+PER_SEASON_CAP = 200                  # keep the FULL season per year (batters ~162, pitchers ~34)
 
 def prior_bat_rows(pid, season, idmap, team_id=None):
     """Prior seasons of batter game logs (capped per season) for a 3-season history."""
@@ -355,11 +355,11 @@ def load_standings(season):
                 "name": t.get("name", "?"),
                 "w": i(tr.get("wins")), "l": i(tr.get("losses")),
                 "pct": f(tr.get("winningPercentage")),
-                "gb": str(tr.get("gamesBack", "—")),
+                "gb": str(tr.get("gamesBack", "?")),
                 "rs": i(tr.get("runsScored")), "ra": i(tr.get("runsAllowed")),
                 "diff": i(tr.get("runDifferential")),
-                "l10": l10 or "—",
-                "streak": (tr.get("streak") or {}).get("streakCode", "—"),
+                "l10": l10 or "?",
+                "streak": (tr.get("streak") or {}).get("streakCode", "?"),
             })
         out.append({"div": DIV_NAMES.get(div_id, "Division"), "teams": rows})
     # order AL then NL, East/Central/West
@@ -440,7 +440,7 @@ def classify_weather(park, temp_f, wind_mph, wind_from_deg, precip_pct=0):
         return {"tempF": round(temp_f), "windMph": round(wind_mph),
                 "windFromDeg": round(wind_from_deg), "effect": "indoor",
                 "hrMult": 1.0, "precipPct": round(precip_pct),
-                "summary": "Roofed — weather neutral"}
+                "summary": "Roofed ? weather neutral"}
     cf = (park or {}).get("cfBearing", 0)
     toward = (wind_from_deg + 180) % 360          # direction the wind blows toward
     diff = abs((toward - cf + 180) % 360 - 180)    # angular gap to center field
@@ -579,7 +579,7 @@ def main():
     idmap = {tid: t["abbr"] for tid, t in teams.items()}
     TEAM_ABBR.update(idmap)
 
-    print("[JTT MLB] loading Statcast (Baseball Savant)…")
+    print("[JTT MLB] loading Statcast (Baseball Savant)?")
     STATCAST_BAT, STATCAST_PIT = load_statcast(season)
     print(f"[JTT MLB]   statcast: {len(STATCAST_BAT)} batters, {len(STATCAST_PIT)} pitchers")
 
@@ -587,7 +587,7 @@ def main():
     games = load_schedule(date, tomorrow)
     print(f"[JTT MLB] {len(games)} games on schedule ({date} + {tomorrow})")
     if not games:
-        print("[JTT MLB] no games — writing empty slate")
+        print("[JTT MLB] no games ? writing empty slate")
 
     slate, starter_ids, team_ids_playing = [], {}, set()
     for g in games:
