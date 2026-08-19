@@ -798,7 +798,42 @@
       h += '<div class="tp-body-meta" style="border:0;margin-top:8px">Method notes: no look-ahead \u2014 a Week 9 signal only knew Weeks 1\u20138. Chunk and Tackle grades use the same qualification gates as the live tiles; Tuddy uses the TD-rate \u00d7 soft-defence core. Streakers grade continuation of the streak.</div>';
       return h;
     }
+    function _covBusterCard(r) {
+      var q = esc(r.p.name).replace(/'/g, "\\'");
+      var isB = r.flag === 'Coverage Buster', col = isB ? '#ef4444' : '#3b82f6';
+      var ypt = (isB ? r.mypt : r.zypt).toFixed(1), rate = Math.round(isB ? r.od.manRate : r.od.zoneRate);
+      return '<div style="padding:6px 0;border-top:1px solid var(--line);cursor:pointer" onclick="openPlayer(\'' + q + '\')">' +
+        '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px">' +
+        '<span style="font-weight:700;font-size:12px">' + esc(r.p.name) + ' <span style="color:var(--text-3);font-weight:400">' + posShort(r.p.position) + ' \u00b7 ' + abbr(r.p.team) + ' v ' + abbr(r.opp) + '</span></span>' +
+        '<span style="color:' + col + ';font-weight:700;font-size:11px;white-space:nowrap">' + r.flag + '</span></div>' +
+        '<div style="font-size:11px;color:var(--text-3);margin-top:2px">' + ypt + ' y/tgt vs ' + (isB ? 'man' : 'zone') + ' \u00b7 ' + abbr(r.opp) + ' plays ' + rate + '% ' + (isB ? 'man' : 'zone') + '</div></div>';
+    }
+
     var tiles = {
+      coverageBusters: function () {
+        var cc = (typeof window !== 'undefined' && window.SPORT_CONFIG && window.SPORT_CONFIG.coverage) || {};
+        var manH = cc.manHeavy != null ? cc.manHeavy : 45, zoneH = cc.zoneHeavy != null ? cc.zoneHeavy : 60, leanT = cc.lean != null ? cc.lean : 1.5;
+        var tm = teamMap(), teams = _fixtureSet(), rows = [];
+        Array.from(teams).forEach(function (team) {
+          var opp = nextOpp(team); if (!opp) return;
+          var od = (tm[opp] || {}).cov; if (!od || !od.plays) return;
+          var manHeavy = od.manRate >= manH, zoneHeavy = od.zoneRate >= zoneH;
+          if (!manHeavy && !zoneHeavy) return;
+          playersOnTeam(team).forEach(function (p) {
+            if (!p.cov || !isPlaying(p.name, team)) return;
+            var m = p.cov.man || { tgt: 0, yds: 0 }, z = p.cov.zone || { tgt: 0, yds: 0 };
+            if (((m.tgt || 0) + (z.tgt || 0)) < 10) return;
+            var mypt = m.tgt ? m.yds / m.tgt : 0, zypt = z.tgt ? z.yds / z.tgt : 0, lean = mypt - zypt, flag = '', edge = 0;
+            if (lean >= leanT && manHeavy) { flag = 'Coverage Buster'; edge = lean * (od.manRate / 50); }
+            else if (lean <= -leanT && zoneHeavy) { flag = 'Zone Beater'; edge = -lean * (od.zoneRate / 60); }
+            if (!flag) return;
+            rows.push({ p: p, opp: opp, flag: flag, mypt: mypt, zypt: zypt, od: od, edge: edge });
+          });
+        });
+        rows.sort(function (a, b) { return b.edge - a.edge; });
+        if (!rows.length) return isFocused() ? '' : emptyState('ti-shield-half', 'Coverage Busters quiet', 'No receiver on the slate has a strong man/zone edge against a scheme-heavy defence. Needs the coverage build to have run.');
+        return degWrap('ti-shield-half', 'Coverage Busters', rows.slice(0, 12).map(_covBusterCard), 'c-red');
+      },
       ledger: function () { return ledgerPage(); },
       next: function () {
         var arr = _fc(nextManUp(), 6, 30);
