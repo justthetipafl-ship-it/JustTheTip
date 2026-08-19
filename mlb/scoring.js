@@ -66,7 +66,9 @@ window.JTTScoring = (function () {
   function batProb(bat, stat, line) {
     var r = projBat(bat, stat), model = poissonAtLeast(r.proj, Math.ceil(line));
     if (stat === 'HR' || stat === 'SB' || stat === 'BB') return _clamp(model, .01, .99);
-    var emp = hitRateLogs(bat.name, stat, line);
+    var empRecent = hitRateLogs(bat.name, stat, line);          // last RECENT_WIN games (noisy)
+    var seasonHR = getHitRate(bat.name, stat, line, false);     // full-sample rate (now spans 2 full seasons)
+    var emp = seasonHR ? (0.6 * empRecent + 0.4 * seasonHR.rate) : empRecent;
     return _clamp(0.6 * model + 0.4 * emp, .01, .99);
   }
 
@@ -89,7 +91,9 @@ window.JTTScoring = (function () {
     if (!p) return 0;
     var prob;
     if (p.role === 'pitch' && stat === 'K') {
-      var kp = pitcherKProj(p), emp = hitRateLogs(p.name, 'K', line), model = poissonAtLeast(kp.proj, Math.ceil(line));
+      var kp = pitcherKProj(p), model = poissonAtLeast(kp.proj, Math.ceil(line));
+      var empR = hitRateLogs(p.name, 'K', line), seasonHR = getHitRate(p.name, 'K', line, false);
+      var emp = seasonHR ? (0.6 * empR + 0.4 * seasonHR.rate) : empR;   // stabilize the thin start sample
       prob = _clamp(0.6 * model + 0.4 * emp, .01, .99);
     } else if (p.role !== 'pitch') { prob = batProb(p, stat, line); }
     else { prob = hitRateLogs(p.name, stat, line); }
@@ -192,6 +196,12 @@ window.JTTScoring = (function () {
     ctx = ctx || {};
     players = ctx.players || []; teams = ctx.teams || []; dvp = ctx.dvp || [];
     logs = ctx.logsByName || {}; fixture = ctx.fixture || []; meta = ctx.meta || {};
+    // Gamelogs arrive newest-first per season with seasons concatenated (2026 then 2025), so a raw
+    // slice(-N) was grabbing ~14-month-old games as "recent". Sort each player oldest->newest so
+    // slice(-N) / getRecentAvg reflect the genuinely most recent games.
+    Object.keys(logs).forEach(function (nm) {
+      logs[nm].sort(function (a, b) { var da = a.Date || a.date || '', db = b.Date || b.date || ''; return da < db ? -1 : da > db ? 1 : 0; });
+    });
     curSeason = ctx.currentSeason || '2026';
     byName = {}; players.forEach(function (p) { byName[p.name] = p; });
     byTeamGame = {};
