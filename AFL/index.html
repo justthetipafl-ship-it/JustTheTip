@@ -3406,37 +3406,56 @@
   }
 
   // ---- per-team column: stat leaders + matchup + scoped Degen signals ----
-  // ===================== AFL Positional Disposal Distribution (For / Against) =====================
+  // ===================== Positional Distribution (For / Against) - AFL/AFLW disposals, NFL targets =====================
   var AFL_POS=[
-    {k:'Key Defender',s:'KD',c:'#1d4ed8'},
-    {k:'Gen. Defender',s:'GD',c:'#38bdf8'},
-    {k:'Midfielder',s:'MID',c:'#22c55e'},
-    {k:'Mid-Forward',s:'MF',c:'#eab308'},
-    {k:'Gen. Forward',s:'GF',c:'#f97316'},
-    {k:'Key Forward',s:'KF',c:'#ef4444'},
-    {k:'Ruck',s:'RUC',c:'#a855f7'}
+    {k:'Key Defender',s:'KD',c:'#1d4ed8'},{k:'Gen. Defender',s:'GD',c:'#38bdf8'},{k:'Midfielder',s:'MID',c:'#22c55e'},
+    {k:'Mid-Forward',s:'MF',c:'#eab308'},{k:'Gen. Forward',s:'GF',c:'#f97316'},{k:'Key Forward',s:'KF',c:'#ef4444'},{k:'Ruck',s:'RUC',c:'#a855f7'}
   ];
-  function _aflPosDist(team){
-    var fd={},ad={}; AFL_POS.forEach(function(p){fd[p.k]=0;ad[p.k]=0;});
-    (state.idx.players||[]).forEach(function(p){ if(p.team===team && fd[p.position]!=null) fd[p.position]+=(+p.disposals||0)*(+p.matches||0); }); // games-weighted -> true season share
-    (state.data.dvp||[]).forEach(function(r){ if(r.team===team && ad[r.pos]!=null) ad[r.pos]+=(+r.disposals||0); });
-    var ft=0,at=0; AFL_POS.forEach(function(p){ft+=fd[p.k];at+=ad[p.k];});
-    var fp={},ap={}; AFL_POS.forEach(function(p){ fp[p.k]=ft?fd[p.k]/ft*100:0; ap[p.k]=at?ad[p.k]/at*100:0; });
-    return {fp:fp,ap:ap,ft:ft,at:at};
+  var NFL_POS=[ {k:'WR',s:'WR',c:'#dc2626'},{k:'RB',s:'RB',c:'#1f2937'},{k:'TE',s:'TE',c:'#9ca3af'} ];
+  var POS_DIST_CFG={
+    afl:{stat:'disposals',label:'Disposal',groups:AFL_POS,against:'dvp'},
+    aflw:{stat:'disposals',label:'Disposal',groups:AFL_POS,against:'dvp'},
+    nfl:{stat:'targets',label:'Target',groups:NFL_POS,against:'gamelog'}
+  };
+  var _GL_AGAINST={};
+  function _gamelogAgainst(stat, groups){
+    if(_GL_AGAINST[stat]) return _GL_AGAINST[stat];
+    var gk={}; groups.forEach(function(p){gk[p.k]=1;});
+    var posMap={}; (state.idx.players||[]).forEach(function(p){ if(p.name) posMap[p.name]=p.position; });
+    var yr=0; (state.data.gamelogs||[]).forEach(function(r){ if(+r.Year>yr) yr=+r.Year; });   // most recent season only
+    var ag={};
+    (state.data.gamelogs||[]).forEach(function(r){
+      if(yr && +r.Year!==yr) return;
+      var pos=posMap[r.Player]; if(!pos||!gk[pos]) return;
+      var opp=r.Opp; if(!opp) return;
+      (ag[opp]=ag[opp]||{})[pos]=(ag[opp][pos]||0)+(+r[stat]||0);
+    });
+    return _GL_AGAINST[stat]=ag;
   }
-  function _aflPieGrad(dist){ var seg=[],acc=0; AFL_POS.forEach(function(p){ var v=dist[p.k]||0; if(v<=0) return; seg.push(p.c+' '+acc.toFixed(2)+'% '+(acc+v).toFixed(2)+'%'); acc+=v; }); return seg.length?'conic-gradient('+seg.join(',')+')':'var(--surface-2)'; }
-  function _aflPosDistribution(team){
-    var d=_aflPosDist(team); if(!d.ft && !d.at) return '';
-    var h='<div class="tp-sec"><div class="sec-title"><i class="ti ti-chart-pie"></i> Disposal Distribution</div></div>';
+  function _posDist(team){
+    var cfg=POS_DIST_CFG[(window.SPORT&&SPORT.key)]; if(!cfg) return null;
+    var G=cfg.groups, stat=cfg.stat, fd={}, ad={};
+    G.forEach(function(p){fd[p.k]=0;ad[p.k]=0;});
+    (state.idx.players||[]).forEach(function(p){ if(p.team===team && fd[p.position]!=null) fd[p.position]+=(+p[stat]||0)*(+p.matches||0); }); // games-weighted season share
+    if(cfg.against==='dvp'){ (state.data.dvp||[]).forEach(function(r){ if(r.team===team && ad[r.pos]!=null) ad[r.pos]+=(+r[stat]||0); }); }
+    else if(cfg.against==='gamelog'){ var t=(_gamelogAgainst(stat,G)[team])||{}; G.forEach(function(p){ ad[p.k]=+t[p.k]||0; }); }
+    var ft=0,at=0; G.forEach(function(p){ft+=fd[p.k];at+=ad[p.k];});
+    var fp={},ap={}; G.forEach(function(p){ fp[p.k]=ft?fd[p.k]/ft*100:0; ap[p.k]=at?ad[p.k]/at*100:0; });
+    return {fp:fp,ap:ap,ft:ft,at:at,cfg:cfg};
+  }
+  function _pieGrad(dist,G){ var seg=[],acc=0; G.forEach(function(p){ var v=dist[p.k]||0; if(v<=0) return; seg.push(p.c+' '+acc.toFixed(2)+'% '+(acc+v).toFixed(2)+'%'); acc+=v; }); return seg.length?'conic-gradient('+seg.join(',')+')':'var(--surface-2)'; }
+  function _posDistribution(team){
+    var d=_posDist(team); if(!d || (!d.ft && !d.at)) return '';
+    var G=d.cfg.groups;
+    var h='<div class="tp-sec"><div class="sec-title"><i class="ti ti-chart-pie"></i> '+d.cfg.label+' Distribution</div></div>';
     h+='<div class="afl-dist"><div class="afl-pies">'+
-       '<div class="afl-pie-wrap"><div class="afl-pie" style="background:'+_aflPieGrad(d.fp)+'"></div><div class="afl-pie-cap">For</div></div>'+
-       '<div class="afl-pie-wrap"><div class="afl-pie" style="background:'+_aflPieGrad(d.ap)+'"></div><div class="afl-pie-cap">Against</div></div>'+
+       '<div class="afl-pie-wrap"><div class="afl-pie" style="background:'+_pieGrad(d.fp,G)+'"></div><div class="afl-pie-cap">For</div></div>'+
+       '<div class="afl-pie-wrap"><div class="afl-pie" style="background:'+_pieGrad(d.ap,G)+'"></div><div class="afl-pie-cap">Against</div></div>'+
        '</div><div class="afl-leg">';
-    AFL_POS.forEach(function(p){ h+='<div class="afl-leg-r"><span class="afl-dot" style="background:'+p.c+'"></span><span class="afl-leg-nm">'+p.s+'</span><span class="afl-leg-v">'+Math.round(d.fp[p.k])+' / '+Math.round(d.ap[p.k])+'</span></div>'; });
+    G.forEach(function(p){ h+='<div class="afl-leg-r"><span class="afl-dot" style="background:'+p.c+'"></span><span class="afl-leg-nm">'+p.s+'</span><span class="afl-leg-v">'+Math.round(d.fp[p.k])+' / '+Math.round(d.ap[p.k])+'</span></div>'; });
     h+='</div><div class="afl-leg-note">For % / Against %</div></div>';
     return h;
   }
-
   function teamPanel(team, opp, isHome){
     const t=state.idx.teamMap[team];
     let h='<div class="team-panel">';
@@ -3466,7 +3485,7 @@
       BET_STATS.filter(([k])=>!_fxHid('mkt',k)).forEach(([k,l])=>{ mt+='<tr><td class="name">'+l+'</td><td>'+fmt(t[k])+'</td><td>'+fmt(ta?ta[k+'_a']:null)+'</td></tr>'; });
       mt+='</tbody></table></div>'; h+=mt;
     }
-    if(SPORT.key==='afl' && !_fxHid('sec','posdist')) h+=_aflPosDistribution(team);
+    if(POS_DIST_CFG[SPORT.key] && !_fxHid('sec','posdist')) h+=_posDistribution(team);
     // Defence vs Play Style (how the opponent concedes vs this team's playstyles)
     h+=fxLineup(team);
     if(!(window.SPORT_CONFIG&&SPORT_CONFIG.hideDvp)){ h+=fxDvpByPos(team,opp); h+=fxDvPS(team,opp); }
