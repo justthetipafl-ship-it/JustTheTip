@@ -518,6 +518,21 @@ def _savant_csv(url):
         print(f"[JTT MLB]   savant fetch error: {e} :: {url}")
         return []
 
+def _pid_from(row):
+    """Savant's id column name varies; identify the MLBAM id by value (6-digit range),
+    preferring named columns but falling back to scanning every cell."""
+    cand = [row.get(k) for k in ("player_id", "playerid", "mlbam_id", "MLBAMID", "id")]
+    cand += list(row.values())
+    for v in cand:
+        try:
+            iv = int(str(v).strip())
+            if 100000 <= iv <= 999999:
+                return iv
+        except (TypeError, ValueError):
+            continue
+    return None
+
+
 def load_statcast(year):
     """Whole-league quality-of-contact pulls (2 CSVs x batter/pitcher, no key).
     Keyed by MLBAM player_id (== our player ids). Returns (batters, pitchers)."""
@@ -530,19 +545,6 @@ def load_statcast(year):
     def fnum(x):
         try: return round(float(x), 3)
         except (TypeError, ValueError): return None
-    def _pid_from(row):
-        # Savant's id column name varies; identify the MLBAM id by value (6-digit range),
-        # preferring named columns but falling back to scanning every cell.
-        cand = [row.get(k) for k in ("player_id", "playerid", "mlbam_id", "MLBAMID", "id")]
-        cand += list(row.values())
-        for v in cand:
-            try:
-                iv = int(str(v).strip())
-                if 100000 <= iv <= 999999:
-                    return iv
-            except (TypeError, ValueError):
-                continue
-        return None
     # expected stats: xBA / xSLG / xwOBA (+ actuals for the luck gap)
     for typ, store in (("batter", bat), ("pitcher", pit)):
         rows = _savant_csv(f"https://baseballsavant.mlb.com/leaderboard/expected_statistics"
@@ -575,6 +577,54 @@ def load_statcast(year):
     if bat: print("[JTT MLB]   statcast key sample (batter):", list(bat.keys())[:6], "(should be 6-digit MLBAM ids)")
     return {k: v for k, v in bat.items() if v}, {k: v for k, v in pit.items() if v}
 
+
+def load_pitch_arsenal(year):
+    """Phase 3 (pitch-mix): pitcher pitch-usage % + batter outcomes by pitch type.
+    Baseball Savant leaderboards, no key. Returns (pit_usage, bat_vs) keyed by MLBAM id:
+      pit_usage[pid] = {PITCH_CODE: usage_pct}
+      bat_vs[pid]    = {PITCH_CODE: {woba,xwoba,whiff,hardHit}}
+    Diagnostic prints the raw column names so parsing can be finalised against the live feed."""
+    def fnum(x):
+        try: return round(float(x), 3)
+        except (TypeError, ValueError): return None
+    pit_usage, bat_vs = {}, {}
+    # ---- pitcher arsenal usage (type=n_ -> per-pitch share, wide: n_ff, n_sl, ...) ----
+    rows = _savant_csv("https://baseballsavant.mlb.com/leaderboard/pitch-arsenals"
+                       "?year=%d&min=100&type=n_&hand=&csv=true" % year)
+    if rows:
+        print("[JTT MLB]   pitch-arsenals columns:", list(rows[0].keys())[:16])
+        for row in rows:
+            pid = _pid_from(row)
+            if pid is None: continue
+            u = {}
+            for k, v in row.items():
+                if k and k.lower().startswith("n_") and v not in (None, "", " "):
+                    val = fnum(v)
+                    if val is not None and val > 0:
+                        u[k[2:].upper()] = val
+            if u: pit_usage[pid] = u
+    # ---- batter outcomes by pitch type (long: one row per batter per pitch type) ----
+    rows = _savant_csv("https://baseballsavant.mlb.com/leaderboard/pitch-arsenal-stats"
+                       "?type=batter&pitchType=&year=%d&team=&min=25&csv=true" % year)
+    if rows:
+        print("[JTT MLB]   pitch-arsenal-stats(batter) columns:", list(rows[0].keys())[:18])
+        def gv(row, *keys):
+            for k in keys:
+                if k in row and row[k] not in (None, "", " "):
+                    return row[k]
+            return None
+        for row in rows:
+            pid = _pid_from(row)
+            pt = (gv(row, "pitch_type", "pitch_name", "pitch") or "").upper()
+            if pid is None or not pt: continue
+            bat_vs.setdefault(pid, {})[pt] = {
+                "woba": fnum(gv(row, "woba")), "xwoba": fnum(gv(row, "est_woba", "xwoba")),
+                "whiff": fnum(gv(row, "whiff_percent", "whiff")),
+                "hardHit": fnum(gv(row, "hard_hit_percent", "hardhit_percent")),
+            }
+    print("[JTT MLB]   pitch arsenal: %d pitchers (usage), %d batters (vs pitch type)" % (len(pit_usage), len(bat_vs)))
+    return pit_usage, bat_vs
+
 # ---------------------------------------------------------------- build
 def main():
     date = sys.argv[1] if len(sys.argv) > 1 else \
@@ -594,6 +644,7 @@ def main():
 
     print("[JTT MLB] loading Statcast (Baseball Savant)?")
     STATCAST_BAT, STATCAST_PIT = load_statcast(season)
+    PIT_ARSENAL, BAT_VSPITCH = load_pitch_arsenal(season)
     print(f"[JTT MLB]   statcast: {len(STATCAST_BAT)} batters, {len(STATCAST_PIT)} pitchers")
     _sc_keys = list(STATCAST_BAT.keys())[:6]
     print(f"[JTT MLB]   statcast batter keys: {_sc_keys}")
@@ -695,6 +746,7 @@ def main():
                 "h2h": h2h_bat(pid, season, idmap, _bat_rows, tid),
                 "bvp": {},
                 "statcast": STATCAST_BAT.get(pid),
+                "vsPitch": BAT_VSPITCH.get(pid),
             }
             for opp_pid in opp_pids:
                 v = bvp(pid, opp_pid, season)
@@ -732,6 +784,7 @@ def main():
             "gameLog": (_pit_rows := gamelog_pit_rows(pid, season, idmap, tid))[:PER_SEASON_CAP] + prior_pit_rows(pid, season, idmap, tid),
             "h2h": h2h_pit(pid, season, idmap, _pit_rows, tid),
             "statcast": STATCAST_PIT.get(pid),
+            "arsenal": PIT_ARSENAL.get(pid),
         }
     print(f"[JTT MLB]   {len(pitchers)} probable starters profiled")
 
