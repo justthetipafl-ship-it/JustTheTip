@@ -88,11 +88,12 @@ def load_teams():
 
 def team_stats(tid, season):
     """Per-game offense (for) and allowed (against) rates, plus batter K-rate."""
-    kr, forS, vsS = LG_KRATE, None, None
+    kr, forS, vsS, games = LG_KRATE, None, None, 0
     try:
         d = api(f"teams/{tid}/stats", stats="season", group="hitting", season=season, sportId=1)
         st = d["stats"][0]["splits"][0]["stat"]
         gp = f(st.get("gamesPlayed")) or 1
+        games = int(gp)
         pa = f(st.get("plateAppearances")); so = f(st.get("strikeOuts"))
         kr = round(so / pa, 3) if pa else LG_KRATE
         forS = {"R": round(f(st.get("runs"))/gp, 2), "H": round(f(st.get("hits"))/gp, 2),
@@ -110,7 +111,7 @@ def team_stats(tid, season):
                "SO": round(f(st.get("strikeOuts"))/gp, 2)}
     except Exception:
         pass
-    return kr, forS, vsS
+    return kr, forS, vsS, games
 
 # ---------------------------------------------------------------- schedule
 def load_schedule(start_date, end_date=None):
@@ -645,8 +646,9 @@ def main():
 
     # team rates: K-rate + per-game offense (for) and allowed (against)
     for tid in team_ids_playing:
-        kr, forS, vsS = team_stats(tid, season)
+        kr, forS, vsS, gp = team_stats(tid, season)
         teams[tid]["kRate"] = kr
+        teams[tid]["games"] = gp
         teams[tid]["forStats"] = forS
         teams[tid]["vsStats"] = vsS
 
