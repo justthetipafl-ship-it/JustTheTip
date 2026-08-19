@@ -1054,6 +1054,7 @@
   .deg-sec-h{font-size:15px;font-weight:800;font-family:var(--font-display);display:flex;align-items:center;gap:8px;margin-bottom:3px}
   .deg-sec-sub{font-size:12px;color:var(--text-3);margin-bottom:10px}
   .ma-vs{display:flex;align-items:center;gap:8px;margin:8px 0 4px}.ma-p{flex:1;min-width:0}.ma-p.r{text-align:right}.ma-nm{font-weight:700;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.ma-sub{font-size:9px;color:var(--text-2);text-transform:uppercase;letter-spacing:.03em}.ma-mid{font-size:11px;color:var(--text-2);font-weight:700}.ma-splitnote{display:flex;justify-content:space-between;font-size:9px;color:var(--text-2);text-transform:uppercase;letter-spacing:.03em;margin-bottom:6px;opacity:.8}.ma-h2h,.ma-cond{font-size:11px;color:var(--text-2);margin-bottom:5px}.ma-h2h b{color:var(--text-1)}.ma-rows{display:flex;flex-direction:column;gap:4px;margin-top:4px}.ma-row{display:grid;grid-template-columns:46px 1fr 74px 1fr 46px;align-items:center;gap:5px;font-size:11px}.ma-v{color:var(--text-1);font-weight:600;font-variant-numeric:tabular-nums;white-space:nowrap}.ma-v.r{text-align:right}.ma-lbl{text-align:center;font-size:9px;color:var(--text-2);text-transform:uppercase;letter-spacing:.02em;line-height:1.1}.ma-bar{position:relative;height:15px;background:var(--surface-2,rgba(128,128,128,.15));border-radius:8px;overflow:hidden}.ma-fill{position:absolute;top:0;bottom:0;border-radius:8px;opacity:.85}.ma-bar.l .ma-fill{right:0}.ma-bar.r .ma-fill{left:0}.ma-pct{position:absolute;top:0;bottom:0;display:flex;align-items:center;font-size:9px;font-weight:700;color:#fff}.ma-bar.l .ma-pct{left:6px}.ma-bar.r .ma-pct{right:6px}.ma-na{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:var(--text-2);font-size:10px;opacity:.6}
+.ma-arsenal{margin:8px 0;padding:8px 9px;background:var(--surface-2,rgba(128,128,128,.08));border-radius:9px}.ma-arsenal-lbl{font-size:9px;color:var(--text-2);text-transform:uppercase;letter-spacing:.03em;margin-bottom:7px}.ma-chips{display:flex;flex-wrap:wrap;gap:5px;margin-bottom:7px}.ma-chip{font-size:10px;padding:3px 9px;border-radius:12px;border:1px solid var(--border);background:transparent;color:var(--text-2);cursor:pointer;font-weight:600;font-family:inherit}.ma-chip.on{background:rgba(34,197,94,.16);border-color:#22c55e;color:var(--text-1)}.ma-arsrow{display:flex;justify-content:space-between;align-items:center;gap:8px;font-size:12px;padding-top:6px;border-top:1px solid var(--border)}.ma-arslbl{color:var(--text-2);text-transform:uppercase;font-size:10px;letter-spacing:.03em}.ma-arsval{font-weight:700;font-variant-numeric:tabular-nums;white-space:nowrap}.ma-na2{color:var(--text-2);font-size:10px}
 .deg-bookbar{display:flex;align-items:center;gap:10px;margin-bottom:12px;flex-wrap:wrap}
   .deg-bl{font-size:12px;color:var(--text-3);font-weight:700}
   .pyr{display:flex;flex-direction:column;gap:10px;align-items:center;padding:6px 0}
@@ -3163,6 +3164,24 @@
     if(pctl==null) return '<div class="ma-bar '+side+'"><span class="ma-na">\u2014</span></div>';
     return '<div class="ma-bar '+side+'"><span class="ma-fill" style="width:'+pctl+'%;background:'+_maColor(edge)+'"></span><span class="ma-pct">'+pctl+'</span></div>';
   }
+  var PITCH_NAMES={FF:'Fastball',FA:'Fastball',SI:'Sinker',FT:'2-Seam',FC:'Cutter',SL:'Slider',CH:'Changeup',CU:'Curveball',KC:'Knuckle-Curve',FS:'Splitter',KN:'Knuckleball',ST:'Sweeper',SV:'Slurve',FO:'Forkball',EP:'Eephus',SC:'Screwball'};
+  function _maPitchName(c){ return PITCH_NAMES[c]||c; }
+  function _maArsWoba(bat,arsenal,off){
+    if(!bat.vsPitch||!arsenal) return null;
+    var num=0,den=0;
+    Object.keys(arsenal).forEach(function(pt){
+      if(off&&off[pt]) return; var u=arsenal[pt]; if(u==null||u<=0) return;
+      var vp=bat.vsPitch[pt]; if(!vp||vp.woba==null) return; num+=u*vp.woba; den+=u;
+    });
+    return den>0?+(num/den).toFixed(3):null;
+  }
+  function _maArsPctl(arsenal,off,val){
+    if(val==null) return null; var arr=[];
+    (state.idx.players||[]).forEach(function(p){ if(p.role==='pitch'||!p.vsPitch) return; var w=_maArsWoba(p,arsenal,off); if(w!=null) arr.push(w); });
+    if(arr.length<8) return null; arr.sort(function(a,b){return a-b;});
+    var n=0; for(var i=0;i<arr.length;i++) if(arr[i]<=val) n++; return Math.round(n/arr.length*100);
+  }
+  window._maTogglePitch=function(code){ state.view.maPitchOff=state.view.maPitchOff||{}; state.view.maPitchOff[code]=!state.view.maPitchOff[code]; (typeof _renderAppPreserving==='function'?_renderAppPreserving:_renderApp)(); };
   function _mlbMatchupAnalyzer(g){
     var bats=(state.idx.players||[]).filter(function(p){return p.role!=='pitch'&&(p.team===g.home||p.team===g.away)&&isPlaying(p.name,p.team);});
     if(!bats.length) return '';
@@ -3185,6 +3204,19 @@
     var pk=g.park||{}, hrF=(pk.hrFactor!=null?pk.hrFactor:(pk.hr!=null?pk.hr:null)), wm=(g.weather&&g.weather.hrMult!=null)?g.weather.hrMult:1;
     var cond=[(pk.name||g.venue||'')]; if(hrF!=null) cond.push('Park HR '+(hrF>=1?'+':'')+Math.round((hrF-1)*100)+'%'); if(wm!==1) cond.push('Wind '+(wm>=1?'+':'')+Math.round((wm-1)*100)+'%');
     h+='<div class="ma-cond"><i class="ti ti-map-pin"></i> '+cond.filter(Boolean).join(' \u00b7 ')+'</div>';
+    if(pit.arsenal && Object.keys(pit.arsenal).length){
+      var off=state.view.maPitchOff||{}, ars=pit.arsenal;
+      var maxU=Math.max.apply(null,Object.keys(ars).map(function(k){return ars[k];})), toPct=function(u){return maxU<=1.5?u*100:u;};
+      var pts=Object.keys(ars).filter(function(k){return ars[k]>0;}).sort(function(a,b){return ars[b]-ars[a];});
+      h+='<div class="ma-arsenal"><div class="ma-arsenal-lbl">'+esc(pit.name)+' arsenal \u00b7 tap to filter</div><div class="ma-chips">';
+      pts.forEach(function(pt){ var on=!off[pt]; h+='<button class="ma-chip'+(on?' on':'')+'" onclick="_maTogglePitch(\''+pt+'\')">'+_maPitchName(pt)+' '+Math.round(toPct(ars[pt]))+'%</button>'; });
+      h+='</div>';
+      var aw=_maArsWoba(bat,ars,off), ap=(aw!=null)?_maArsPctl(ars,off,aw):null;
+      if(aw!=null){ h+='<div class="ma-arsrow"><span class="ma-arslbl">Batter wOBA vs this mix</span><span class="ma-arsval" style="color:'+_maColor(ap)+'">'+_maFmt(aw,3,'')+(ap!=null?' \u00b7 '+ap+'th pctl':'')+'</span></div>'; }
+      else { h+='<div class="ma-arsrow"><span class="ma-arslbl">Batter wOBA vs this mix</span><span class="ma-na2">by-pitch data lands on the next build</span></div>'; }
+      h+='</div>';
+    }
+
     h+='<div class="ma-rows">';
     MA_ROWS.forEach(function(row){
       var bVal=_maBatVal(bat,pH,row.bm), bP=_maPctl('bat',row.bm,bVal), bE=_maEdge(bP,row.bdir);
