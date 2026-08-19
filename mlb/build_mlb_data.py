@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""JTT MLB data adapter — reshapes mlb_bundle.json into the unified shell's split data files.
+"""JTT MLB data adapter ? reshapes mlb_bundle.json into the unified shell's split data files.
 Runs in the GitHub Actions pipeline after fetch_mlb.py produces mlb_bundle.json.
 Batters + pitchers merge into one `players` pool (role: 'bat'|'pitch'); platoon splits,
 batter-vs-pitcher (bvp) and h2h are preserved for mlb/scoring.js."""
@@ -106,7 +106,15 @@ if _pw:
 def w(name, obj):
     json.dump(obj, open(os.path.join(OUT, name), 'w', encoding='utf-8'), separators=(',', ':'))
 
-w('players.json', players); w('gamelogs.json', logs); w('teams.json', teams)
+w('players.json', players); w('teams.json', teams)
+# gamelogs split per season (Cloudflare Pages 25 MiB/file cap); shell loads meta.gamelogFiles
+_by_year = {}
+for _r in logs: _by_year.setdefault(_r['Year'], []).append(_r)
+_gl_files = []
+for _yr in sorted(_by_year, reverse=True):
+    _fn = 'gamelogs_%s.json' % _yr; w(_fn, _by_year[_yr]); _gl_files.append(_fn)
+w('gamelogs.json', _by_year.get(season, []))   # current-season fallback (kept under the file cap)
+meta['gamelogFiles'] = _gl_files
 w('dvp.json', dvp); w('results.json', results); w('fixture.json', fixture)
 w('lineups.json', lineups); w('meta.json', meta)
 w('teams_form.json', teams)   # shell computes WWWLW from results; teams carries the rest
