@@ -6,7 +6,8 @@ name: JTT MLB daily data update
 # morning US (probable pitchers locked) + afternoon US (lineups posting).
 on:
   schedule:
-    - cron: '0 13 * * *'   # 13:00 UTC  (~09:00 ET / ~23:00 AEST)
+    - cron: '0 7 * * *'    # 07:00 UTC  (~03:00 ET) - after the full US slate ends, final gamelogs
+    - cron: '0 13 * * *'   # 13:00 UTC  (~09:00 ET / ~23:00 AEST) - probable pitchers
     - cron: '0 22 * * *'   # 22:00 UTC  (~18:00 ET, lineups firming up)
   workflow_dispatch:
 
@@ -50,6 +51,7 @@ jobs:
           git config user.name  "jtt-bot"
           git config user.email "[email protected]"
           git add mlb/data
+          git reset -q -- mlb/data/mlb_bundle.json 2>/dev/null || true   # intermediate; full-season logs make it large
           git add mlb/assets/logos 2>/dev/null || true
           git diff --cached --quiet && { echo "No changes to commit."; exit 0; }
           git commit -m "data: refresh MLB slate $(date -u +%Y-%m-%dT%H:%MZ)"
