@@ -63,7 +63,7 @@ for t in B.get('teams', {}).values():
     _for = t.get('forStats') or {}
     _vs = t.get('vsStats') or {}
     trow = {'team': ab, 'name': t.get('name'), 'div': t.get('div'), 'park': t.get('park'),
-            'kRate': t.get('kRate'), 'forStats': _for, 'vsStats': _vs}
+            'kRate': t.get('kRate'), 'matches': t.get('games') or 0, 'forStats': _for, 'vsStats': _vs}
     for _k, _v in _for.items(): trow[_k] = _v            # team "For" per-game -> flat t[k]
     for _k, _v in _vs.items(): trow[_k + '_a'] = _v        # opponent "Allows" per-game -> t[k+'_a']
     teams.append(trow)
