@@ -2590,7 +2590,7 @@
   }
 
   // ---- soccer match-trend sections (EPL): By The Halves / Shape Trend / Recent Games ----
-  function _isMatchProps(){ return (window.SPORT&&SPORT.key)==='epl'; }
+  function _isMatchProps(){ return SPORT.key==='epl'; }
   function _teamResults(team){ return (state.data.results||[]).filter(function(r){return r.home===team||r.away===team;}); }
   function gameByHalves(home,away){
     if(!_isMatchProps()) return '';
@@ -3434,7 +3434,7 @@
     return _GL_AGAINST[stat]=ag;
   }
   function _posDist(team){
-    var cfg=POS_DIST_CFG[(window.SPORT&&SPORT.key)]; if(!cfg) return null;
+    var cfg=POS_DIST_CFG[SPORT.key]; if(!cfg) return null;
     var G=cfg.groups, stat=cfg.stat, fd={}, ad={};
     G.forEach(function(p){fd[p.k]=0;ad[p.k]=0;});
     (state.idx.players||[]).forEach(function(p){ if(p.team===team && fd[p.position]!=null) fd[p.position]+=(+p[stat]||0)*(+p.matches||0); }); // games-weighted season share
@@ -5644,7 +5644,7 @@
   };
   const _MB_ALLBDG=Object.assign({},MB_BADGES,MB_SPORT_BADGES);
   function _sportBadges(leg){
-    const out=[], p=leg.p, sk=leg.statKey, k=(window.SPORT&&SPORT.key)||'';
+    const out=[], p=leg.p, sk=leg.statKey, k=SPORT.key||'';
     if(k==='nfl'||k==='ncaaf'){
       if((+p.targets||0)>=7 && (sk==='receptions'||sk==='recYds'||sk==='rushRecYds')) out.push('targethog');
       if((+p.snapPct||0)>=85) out.push('snaplock');
@@ -5682,7 +5682,7 @@
     mlb:  {lambda:0.94, biasCorr:1.02, shrinkK:3, dvpBeta:0.45, dvpCap:0.12, poissonBelow:5, roleStat:'',        roleMkts:[], roleBeta:0, roleLo:0, roleHi:0}
   };
   const _PROJ_DEF={lambda:0.88, shrinkK:5, dvpBeta:0.55, dvpCap:0.12, poissonBelow:6, roleStat:'', roleMkts:[], roleBeta:0, roleLo:-0.06, roleHi:0.08};
-  function _projCfg(){ return PROJ_CONFIG[(window.SPORT&&SPORT.key)||'']||_PROJ_DEF; }
+  function _projCfg(){ return PROJ_CONFIG[SPORT.key||'']||_PROJ_DEF; }
   function _projModel(p, sk, line, opp, ctx){
     var C=_projCfg();
     var logs=_mbLogsFor(p.name), vals=logs.map(function(r){return +r[sk];}).filter(function(v){return isFinite(v);});
@@ -5710,7 +5710,7 @@
         if(seaR>3) mean *= (1 + _clamp((recR-seaR)/seaR*C.roleBeta, C.roleLo, C.roleHi)); }
     }
     mean *= (C.biasCorr||1);                                                    // backtested bias correction (per sport)
-    if(((window.SPORT&&SPORT.key))==='mlb' && ctx){ mean *= _mlbPlatoon(p,sk,ctx.oppHand); mean *= _mlbHomeAway(logs,sk,ctx.isHome,season); }
+    if((SPORT.key)==='mlb' && ctx){ mean *= _mlbPlatoon(p,sk,ctx.oppHand); mean *= _mlbHomeAway(logs,sk,ctx.isHome,season); }
     var vsq=0; for(var j=0;j<n;j++){ var d=w[j]-recMean; vsq+=d*d; }             // dispersion: winsorized sd, shrunk to a mean-scaled prior
     var sampleSD=Math.sqrt(vsq/Math.max(1,n-1)), Ksd=4, priorSD=Math.max(0.8, mean*0.35);
     var sd=Math.max((n*sampleSD + Ksd*priorSD)/(n+Ksd), 0.6);
@@ -5774,7 +5774,7 @@
   function _dejaVuStreak(leg){
     var p=leg.p, sk=leg.statKey, line=leg.line, opp=leg.opp; if(!opp) return 0;
     var vals;
-    if(((window.SPORT&&SPORT.key))==='mlb'){ var rows=(p.h2h&&p.h2h[opp])||[]; vals=rows.slice().reverse().map(function(r){return +r[sk];}).filter(function(v){return isFinite(v);}); }
+    if((SPORT.key)==='mlb'){ var rows=(p.h2h&&p.h2h[opp])||[]; vals=rows.slice().reverse().map(function(r){return +r[sk];}).filter(function(v){return isFinite(v);}); }
     else { var meets=_dvMeetCached(p.team, opp); if(!meets.length) return 0;
       var lg=(state.idx.logsByName&&state.idx.logsByName[p.name])||[];
       vals=meets.map(function(mid){ for(var i=0;i<lg.length;i++){ if(lg[i].MatchId===mid) return +lg[i][sk]; } return null; }).filter(function(v){return v!=null&&isFinite(v);}); }
@@ -5787,7 +5787,7 @@
     const _foc=state.view.mbvFocus;
     const games=_foc?fx.filter(g=>g.home===_foc.home&&g.away===_foc.away):fx;
     let pool=[];
-    var _mlb=(window.SPORT&&SPORT.key)==='mlb';
+    var _mlb=SPORT.key==='mlb';
     games.forEach(g=>{
       pl(g.home).forEach(p=>legCandidates(p,g.away).forEach(c=>{ if(_mlb) c._pctx={isHome:true, oppHand:_mlbHand(g.awayPitcher)}; pool.push(c); }));
       pl(g.away).forEach(p=>legCandidates(p,g.home).forEach(c=>{ if(_mlb) c._pctx={isHome:false, oppHand:_mlbHand(g.homePitcher)}; pool.push(c); }));
@@ -6624,16 +6624,16 @@
     epl:['shots','shotsOn','tackles','keyPasses','foulsCommitted']
   };
   function _pyrStatOpts(){
-    var wl=PYR_STATS[(window.SPORT&&SPORT.key)], mk=(MULTI_MKTS||[]);
+    var wl=PYR_STATS[SPORT.key], mk=(MULTI_MKTS||[]);
     if(!wl) return mk;
     return wl.map(function(k){ for(var i=0;i<mk.length;i++){ if(mk[i][0]===k) return mk[i]; } return [k,_mktLbl(k)]; });
   }
-  function _pyrDefaultStat(){ var d={afl:'disposals',aflw:'disposals',nfl:'recYds',ncaaf:'recYds',nba:'points',wnba:'points',nhl:'shots',mlb:'K',epl:'shots'}[(window.SPORT&&SPORT.key)]; var mk=_pyrStatOpts().map(function(m){return m[0];}); return (d&&mk.indexOf(d)>=0)?d:(mk[0]||'disposals'); }
+  function _pyrDefaultStat(){ var d={afl:'disposals',aflw:'disposals',nfl:'recYds',ncaaf:'recYds',nba:'points',wnba:'points',nhl:'shots',mlb:'K',epl:'shots'}[SPORT.key]; var mk=_pyrStatOpts().map(function(m){return m[0];}); return (d&&mk.indexOf(d)>=0)?d:(mk[0]||'disposals'); }
   window._degSetPyrStat=function(s){ state.view.pyrStat=s; var el=document.getElementById('deg-wrap'); if(el) el.innerHTML=_degBody(); };
   window._pyrSkip=function(name){ var st=(state.view.pyrStat&&_pyrStatOpts().some(function(m){return m[0]===state.view.pyrStat;}))?state.view.pyrStat:_pyrDefaultStat(); state.view.pyrSkip=state.view.pyrSkip||{}; state.view.pyrSkip[st]=state.view.pyrSkip[st]||[]; if(state.view.pyrSkip[st].indexOf(name)<0) state.view.pyrSkip[st].push(name); var el=document.getElementById('deg-wrap'); if(el) el.innerHTML=_degBody(); };
   window._pyrReset=function(){ var st=(state.view.pyrStat&&_pyrStatOpts().some(function(m){return m[0]===state.view.pyrStat;}))?state.view.pyrStat:_pyrDefaultStat(); if(state.view.pyrSkip) state.view.pyrSkip[st]=[]; var el=document.getElementById('deg-wrap'); if(el) el.innerHTML=_degBody(); };
   function _pyramidSection(legs, oddsOn, book){
-    var _pyrMinM=((window.SPORT&&SPORT.key)==='mlb')?2:5;   // pitchers (K) start infrequently
+    var _pyrMinM=(SPORT.key==='mlb')?2:5;   // pitchers (K) start infrequently
     var stat=(state.view.pyrStat&&_pyrStatOpts().some(function(m){return m[0]===state.view.pyrStat;}))?state.view.pyrStat:_pyrDefaultStat();
     var statLbl=_mktLbl(stat);
     var _skc=((state.view.pyrSkip||{})[stat])||[];
