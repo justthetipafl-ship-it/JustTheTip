@@ -1,0 +1,85 @@
+name: API-Football Odds Test
+
+# One-off probe: does API-Football carry player-prop odds (goalscorer / to-score / cards) for EPL?
+# Lists the full bet catalog + pulls real odds for the next EPL fixture. Actions tab -> Run workflow.
+on:
+  workflow_dispatch:
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Probe API-Football odds
+        env:
+          APIFOOTBALL_KEY: ${{ secrets.APIFOOTBALL_KEY }}
+          APIFOOTBALL_SEASON: ${{ secrets.APIFOOTBALL_SEASON }}
+        run: |
+          python - <<'PY'
+          import os, json, urllib.request
+          KEY = os.environ.get("APIFOOTBALL_KEY", "")
+          assert KEY, "APIFOOTBALL_KEY secret not set"
+          BASE = "https://v3.football.api-sports.io"
+          SEASON = os.environ.get("APIFOOTBALL_SEASON") or "2026"
+          KW = ("scorer", "to score", "goalscorer", "player", "booking", "booked", "card", "assist", "shot")
+
+          def af(path):
+              req = urllib.request.Request(BASE + path, headers={"x-apisports-key": KEY, "Accept": "application/json"})
+              with urllib.request.urlopen(req, timeout=30) as r:
+                  return json.loads(r.read().decode("utf-8", "replace"))
+
+          # 1) full bet-type catalog — confirms whether goalscorer/player bets exist in AF at all
+          try:
+              bets = af("/odds/bets").get("response", [])
+              print("=== AF bet catalog: %d types ===" % len(bets))
+              pb = [b for b in bets if any(k in (b.get("name","").lower()) for k in KW)]
+              print("--- player / goal / card / booking bets in catalog ---")
+              for b in pb: print("  id %-4s %s" % (b.get("id"), b.get("name")))
+              if not pb: print("  (none — AF has no player-level bet types)")
+          except Exception as e:
+              print("bets catalog failed:", e)
+
+          # 2) next EPL fixture, then its real odds
+          try:
+              fx = af("/fixtures?league=39&season=%s&next=3" % SEASON).get("response", [])
+              print("\n=== next EPL fixtures (season %s) ===" % SEASON)
+              for f in fx:
+                  print("  %d  %s v %s  %s" % (f["fixture"]["id"], f["teams"]["home"]["name"],
+                                               f["teams"]["away"]["name"], f["fixture"]["date"]))
+              if fx:
+                  fid = fx[0]["fixture"]["id"]
+                  od = af("/odds?fixture=%d" % fid)
+                  json.dump(od, open("af_odds_test.json", "w"), indent=2)
+                  resp = od.get("response", [])
+                  print("\n=== odds for fixture %d: %d entries ===" % (fid, len(resp)))
+                  seen = {}
+                  for entry in resp:
+                      for bk in entry.get("bookmakers", []):
+                          for bet in bk.get("bets", []):
+                              seen.setdefault(bet.get("name",""), set()).add(bk.get("name",""))
+                  for name in sorted(seen):
+                      flag = "   <-- PLAYER PROP" if any(k in name.lower() for k in KW) else ""
+                      print("  %-34s %s%s" % (name, (", ".join(sorted(seen[name])))[:50], flag))
+                  # sample a goalscorer bet's structure if present
+                  sample = None
+                  for entry in resp:
+                      for bk in entry.get("bookmakers", []):
+                          for bet in bk.get("bets", []):
+                              if any(k in bet.get("name","").lower() for k in ("scorer","to score")):
+                                  sample = (bk.get("name"), bet); break
+                          if sample: break
+                      if sample: break
+                  if sample:
+                      print("\n--- sample goalscorer bet (%s / %s) — paste this back ---" % (sample[0], sample[1].get("name")))
+                      print(json.dumps(sample[1], indent=2)[:1800])
+                  else:
+                      print("\n(no goalscorer/to-score bet returned for this fixture's books yet — may post closer to kickoff)")
+          except Exception as e:
+              print("fixture/odds failed:", e)
+          PY
+
+      - name: Upload raw response
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: af-odds-test
+          path: af_odds_test.json
