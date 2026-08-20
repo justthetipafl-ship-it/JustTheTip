@@ -1,0 +1,57 @@
+name: API-Football Odds Structures
+
+# Dumps the exact value shape of the player-prop + totals bets, from Bet365 & Unibet, for the
+# next EPL fixture — so the parser is built against reality. Actions tab -> Run workflow.
+on:
+  workflow_dispatch:
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Dump AF odds structures
+        env:
+          APIFOOTBALL_KEY: ${{ secrets.APIFOOTBALL_KEY }}
+          APIFOOTBALL_SEASON: ${{ secrets.APIFOOTBALL_SEASON }}
+        run: |
+          python - <<'PY'
+          import os, json, urllib.request
+          KEY = os.environ.get("APIFOOTBALL_KEY",""); assert KEY, "APIFOOTBALL_KEY not set"
+          BASE="https://v3.football.api-sports.io"; SEASON=os.environ.get("APIFOOTBALL_SEASON") or "2026"
+          def af(p):
+              rq=urllib.request.Request(BASE+p, headers={"x-apisports-key":KEY,"Accept":"application/json"})
+              with urllib.request.urlopen(rq, timeout=30) as r: return json.loads(r.read().decode("utf-8","replace"))
+
+          BOOKS = {"Bet365","Unibet"}   # the AU-usable ones
+          WANT = [
+            "Anytime Goal Scorer","First Goal Scorer","Home Anytime Goal Scorer","Away Anytime Goal Scorer",
+            "Player Shots On Target","Home Player Shots On Target Total","Away Player Shots On Target Total",
+            "Home Player Shots Total","Away Player Shots Total","Home Player Shots","Away Player Shots",
+            "Player Assists","Away Player Assists","Player Fouls Committed","Goalkeeper Saves","Player to be booked",
+            "Goals Over/Under","Corners Over Under","Cards Over/Under","Home Team Total Cards","Away Team Total Cards",
+          ]
+          wantset = set(WANT)
+
+          fx = af("/fixtures?league=39&season=%s&next=1"%SEASON).get("response",[])
+          assert fx, "no upcoming fixture"
+          f = fx[0]; fid=f["fixture"]["id"]
+          print("fixture %d: %s v %s\n" % (fid, f["teams"]["home"]["name"], f["teams"]["away"]["name"]))
+          od = af("/odds?fixture=%d"%fid).get("response",[])
+          json.dump(od, open("af_odds_test.json","w"), indent=2)
+
+          for entry in od:
+              for bk in entry.get("bookmakers",[]):
+                  if bk.get("name") not in BOOKS: continue
+                  for bet in bk.get("bets",[]):
+                      nm = bet.get("name","")
+                      if nm not in wantset: continue
+                      vals = bet.get("values",[])
+                      print("### %s  [%s]  (%d values)" % (nm, bk.get("name"), len(vals)))
+                      print(json.dumps(vals[:14], indent=1))
+                      print()
+          PY
+
+      - name: Upload raw
+        if: always()
+        uses: actions/upload-artifact@v4
+        with: { name: af-odds-structures, path: af_odds_test.json }
