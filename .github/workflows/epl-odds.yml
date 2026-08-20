@@ -1,0 +1,40 @@
+name: EPL Odds (player props)
+
+# Pulls EPL player-prop odds (goalscorer/assists/shots/SoT/fouls/saves/cards) from API-Football,
+# filtered to Bet365 & Unibet, -> EPL/data/odds.json. Match/team totals come from rapidodds separately.
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 9,15,21 * * *'     # 3x/day; bump frequency closer to matchdays if the AF quota allows
+
+permissions:
+  contents: write
+
+concurrency:
+  group: epl-odds
+  cancel-in-progress: false
+
+jobs:
+  odds:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Fetch player-prop odds
+        env:
+          APIFOOTBALL_KEY: ${{ secrets.APIFOOTBALL_KEY }}
+          APIFOOTBALL_SEASON: ${{ secrets.APIFOOTBALL_SEASON }}
+        run: python EPL/fetch_af_odds.py
+      - name: Commit odds
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add EPL/data/odds.json
+          if git diff --staged --quiet; then
+            echo "No change."
+          else
+            git commit -m "EPL odds $(date -u +%Y-%m-%dT%H:%MZ)"
+            git push
+          fi
