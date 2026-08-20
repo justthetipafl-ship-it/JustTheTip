@@ -5239,10 +5239,23 @@
   }
   // two-way (each-way) lines a player has across books — these are backable, unlike the deep alt ladder
   function _radarTwoWayLines(player, market){
-    // BetR floods a padded alt ladder into the two-way feed, so it's excluded from the Radar entirely.
+    // Some books flood a padded alt ladder into the two-way feed (BetR historically, but others do it too).
+    // Betr stays fully excluded; for any other book that posts a padded ladder (many two-way lines for one
+    // player+market), keep ONLY its main line (closest to the season average) so alt rungs don't reach the Radar.
     const RADAR_EXCLUDE=new Set(['Betr']);
+    const LADDER_MAX=4;   // > this many two-way lines from ONE book on ONE market = a padded alt ladder
     const rows=(((state.idx.bookIdx||{})[player]||{})[market]||[]).filter(r=>_bookOK(r.book)&&!RADAR_EXCLUDE.has(r.book)&&r.over!=null&&r.under!=null);
-    const byL={}; rows.forEach(r=>{ if(!byL[r.line]||r.over>byL[r.line].over) byL[r.line]={line:r.line,over:r.over,under:r.under,book:r.book}; });
+    const avg=+(((state.idx.byName||{})[player]||{})[market]);
+    const byBook={}; rows.forEach(r=>{ (byBook[r.book]=byBook[r.book]||[]).push(r); });
+    let kept=[];
+    Object.keys(byBook).forEach(bk=>{ const brs=byBook[bk];
+      if(brs.length>LADDER_MAX){
+        const ref=isFinite(avg)?avg:brs.map(r=>r.line).sort((a,b)=>a-b)[Math.floor(brs.length/2)];  // avg, else median rung
+        brs.sort((a,b)=>Math.abs(a.line-ref)-Math.abs(b.line-ref));
+        kept.push(brs[0]);   // just the book's main line
+      } else kept=kept.concat(brs);
+    });
+    const byL={}; kept.forEach(r=>{ if(!byL[r.line]||r.over>byL[r.line].over) byL[r.line]={line:r.line,over:r.over,under:r.under,book:r.book}; });
     return Object.values(byL).sort((a,b)=>a.line-b.line);
   }
   // ===== THE RADAR — one 0-100 matchup rating fusing 4 axes: DVP + DVPlaystyle + Opp Def + hit-rate zone =====
@@ -6730,8 +6743,12 @@
       var cand=Object.keys(byPl).map(function(k){return byPl[k];}).sort(function(a,b){return b.prob-a.prob;}).slice(0,8);
       var best=null;
       for(var i=0;i<cand.length;i++) for(var j=i+1;j<cand.length;j++){
-        var od=cand[i].over*cand[j].over; if(od<2.5||od>3.5) continue;
-        var pr=(cand[i].prob||0)*(cand[j].prob||0); if(!best||pr>best.pr) best={legs:[cand[i],cand[j]],od:od,pr:pr};
+        var od2=cand[i].over*cand[j].over;
+        if(od2>=2.5&&od2<=3.5){ var pr2=(cand[i].prob||0)*(cand[j].prob||0); if(!best||pr2>best.pr) best={legs:[cand[i],cand[j]],od:od2,pr:pr2}; }
+        for(var k=j+1;k<cand.length;k++){                                   // 3-leg SGMs too (2-3 legs)
+          var od3=od2*cand[k].over; if(od3<2.5||od3>3.5) continue;
+          var pr3=(cand[i].prob||0)*(cand[j].prob||0)*(cand[k].prob||0); if(!best||pr3>best.pr) best={legs:[cand[i],cand[j],cand[k]],od:od3,pr:pr3};
+        }
       }
       if(best) sgms.push(best);
     });
@@ -6764,6 +6781,11 @@
     var book=(oddsOn&&(state.view.degBook&&books.indexOf(state.view.degBook)>=0?state.view.degBook:books[0]))||null;
     var bar=(oddsOn&&books.length)?('<div class="deg-bookbar"><span class="deg-bl">Bookmaker</span><select class="ob-sel" onchange="_degSetBook(this.value)">'+books.map(function(b){return '<option value="'+b+'"'+(b===book?' selected':'')+'>'+bookName(b)+'</option>';}).join('')+'</select><span class="deg-bl" style="font-weight:400">one book \u2014 legs are stakeable together</span></div>'):'';
     var legs=oddsOn?_degBookLegs(book):_degProjLegs();
+    // Degenerates eligibility: drop tiny-sample players and anyone flagged injured/just-returning
+    var _minG=((window.SPORT_CONFIG&&SPORT_CONFIG.legMinGames)!=null?SPORT_CONFIG.legMinGames:({afl:4,aflw:4,nfl:3,ncaaf:3,mlb:12,nba:8,wnba:6,nhl:8}[SPORT.key]))||3;
+    var _inj=new Set((state.data.injury||[]).map(function(r){return r.Player||r.player||r.name;}).filter(Boolean));
+    var _gp=function(p){return p.matches!=null?+p.matches:(p.G!=null?+p.G:(p.games!=null?+p.games:(p.gp!=null?+p.gp:null)));};
+    legs=legs.filter(function(l){ if(!l||!l.p) return false; var g=_gp(l.p); if(g!=null&&g<_minG) return false; if(_inj.has(l.p.name)) return false; return true; });
     return bar+_ladderSection()+_trainSection(legs,oddsOn,book)+_pyramidSection(legs,oddsOn,book)+_yankeeSection(legs,oddsOn,book);
   }
   window._degSetBook=function(b){ state.view.degBook=b; var el=document.getElementById('deg-wrap'); if(el) el.innerHTML=_degBody(); };
