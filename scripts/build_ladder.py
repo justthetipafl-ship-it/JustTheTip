@@ -3,7 +3,7 @@
 Usage: build_ladder.py <data_dir> [bookmaker]
 
 Preferred mode (odds present): each day's pick is the best ~$2 same-game multi
-(2-4 legs, any stat) from a single bookmaker, chosen by highest combined hit-rate.
+(2-3 legs, any stat) from a single bookmaker, chosen by highest combined hit-rate.
 Fallback mode (no odds, e.g. AFLW): a single-stat banker on [fallback_stat].
 
 Each run grades the previous pending pick (all legs must clear), moves the bankroll,
@@ -99,7 +99,7 @@ def _mkleg(l, byp):
 
 
 def _combo_same_game(legs):
-    """Best 2-4 distinct-player legs from one game, priced ~$2 (SGM)."""
+    """Best 2-3 distinct-player legs from one game, priced ~$2 (SGM)."""
     byname = {}
     for lg in legs:
         if lg['name'] not in byname or lg['hr'] > byname[lg['name']]['hr']:
@@ -107,7 +107,7 @@ def _combo_same_game(legs):
     cand = sorted(byname.values(), key=lambda x: -x['hr'])[:TOP_PER_GAME]
     best = None
     n = len(cand)
-    for size in (2, 3, 4):
+    for size in (2, 3):
         if n < size:
             break
         for combo in combinations(range(n), size):
@@ -120,7 +120,7 @@ def _combo_same_game(legs):
 
 
 def _combo_cross_game(by_game):
-    """Best 2-4 legs, ONE per game, priced ~$2 (cross-game multi -> honest independent pricing)."""
+    """Best 2-3 legs, ONE per game, priced ~$2 (cross-game multi -> honest independent pricing)."""
     games = {}
     for gi, legs in by_game.items():
         byline = {}
@@ -130,7 +130,7 @@ def _combo_cross_game(by_game):
         games[gi] = sorted(byline.values(), key=lambda x: -x['hr'])[:4]
     gis = sorted(games.keys(), key=lambda gi: -games[gi][0]['hr'])[:6]
     best = None
-    for size in (2, 3, 4):
+    for size in (2, 3):
         if len(gis) < size:
             break
         for gset in combinations(gis, size):
