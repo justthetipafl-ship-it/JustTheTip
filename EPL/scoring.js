@@ -14,6 +14,7 @@ window.JTTScoring = (function () {
 
   var players = [], teams = [], dvp = [], logs = {}, fixture = [], meta = {}, curSeason = '2026';
   var byName = {}, byTeamGame = {}, teamByName = {}, dvpByTeam = {}, dvpAvg = {};
+  var _lgCache = null;
   var CFG = {}, SEASON_START = '', LADDERS = {};
 
   function _clamp(x, lo, hi) { return x < lo ? lo : x > hi ? hi : x; }
@@ -161,11 +162,50 @@ window.JTTScoring = (function () {
 
   var POS = ['GK', 'DEF', 'MID', 'FWD'];
 
+  // ===== Match/Team totals engine (soccer markets: total goals / corners / cards + team totals) =====
+  function _epNum(x, d) { var v = +x; return isFinite(v) ? v : (d || 0); }
+  function _leagueAvgs() {
+    if (_lgCache) return _lgCache;
+    var gf = [], cf = [], cd = [], mean = function (a) { return a.length ? a.reduce(function (s, x) { return s + x; }, 0) / a.length : 0; };
+    teams.forEach(function (t) {
+      if (t.gf != null && isFinite(+t.gf)) gf.push(+t.gf);
+      if (t.cornersFor != null && isFinite(+t.cornersFor)) cf.push(+t.cornersFor);
+      if (t.cards != null && isFinite(+t.cards)) cd.push(+t.cards);
+    });
+    return (_lgCache = { g: mean(gf) || 1.4, c: mean(cf) || 5, cd: mean(cd) || 2 });
+  }
+  // Project a fixture's totals. refMult scales cards by the assigned referee's strictness
+  // (shell passes refCardsPG/leagueRefCardsPG when the ref is posted; else 1.0).
+  function projMatchTotals(game, refMult) {
+    if (!game) return null;
+    var H = teamByName[game.home], A = teamByName[game.away];
+    if (!H || !A) return null;
+    var L = _leagueAvgs(), HFA = 1.10, Lg = L.g, Lc = L.c, Lcd = L.cd;
+    // "|| L" so a 0/missing value (common for newly-promoted sides with no top-flight data) falls back to league avg
+    var hgf = _epNum(H.gf, Lg) || Lg, agf = _epNum(A.gf, Lg) || Lg, hgaV = _epNum(H.ga, Lg) || Lg, agaV = _epNum(A.ga, Lg) || Lg;
+    var hG = hgf * (agaV / Lg) * HFA;   // home attack x away leaky defence, home bump
+    var aG = agf * (hgaV / Lg);
+    var hcf = _epNum(H.cornersFor, Lc) || Lc, acf = _epNum(A.cornersFor, Lc) || Lc, hcaV = _epNum(H.cornersAgainst, Lc) || Lc, acaV = _epNum(A.cornersAgainst, Lc) || Lc;
+    var hC = hcf * (acaV / Lc), aC = acf * (hcaV / Lc);
+    var rm = (refMult && isFinite(refMult) && refMult > 0) ? refMult : 1.0;
+    var hCd = _epNum(H.cards, Lcd) * rm, aCd = _epNum(A.cards, Lcd) * rm;
+    return {
+      goals:   { total: hG + aG, home: hG, away: aG },
+      corners: { total: hC + aC, home: hC, away: aC },
+      cards:   { total: hCd + aCd, home: hCd, away: aCd, refMult: rm }
+    };
+  }
+  // Over probability for an X.5 total line given a Poisson mean (goals/corners/cards are counts).
+  function matchTotalProb(lambda, line) {
+    if (!(lambda > 0)) return null;
+    return poissonAtLeast(lambda, Math.floor(line) + 1);   // over X.5 => >= floor(line)+1
+  }
+
   function configure(ctx) {
     ctx = ctx || {};
     players = ctx.players || []; teams = ctx.teams || []; dvp = ctx.dvp || [];
     logs = ctx.logsByName || {}; fixture = ctx.fixture || []; meta = ctx.meta || {};
-    curSeason = ctx.currentSeason || '2026';
+    curSeason = ctx.currentSeason || '2026'; _lgCache = null;
     CFG = (typeof window !== 'undefined' && window.SPORT_CONFIG) || {};
     SEASON_START = CFG.seasonStart || (curSeason + '-08-01');
     LADDERS = CFG.ladders || {};
@@ -193,6 +233,7 @@ window.JTTScoring = (function () {
     // EPL extras used by epl/signals.js
     projPlayer: projPlayer, prob: prob, roundLineFromLadder: roundLineFromLadder,
     seasonForm: seasonForm, seasonFormWeight: seasonFormWeight,
+    projMatchTotals: projMatchTotals, matchTotalProb: matchTotalProb,
     avgOf: avgOf, hitRateLogs: hitRateLogs, slice: slice, logsOf: logsOf, oppOfTeam: oppOfTeam
   };
 })();
