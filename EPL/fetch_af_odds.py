@@ -78,7 +78,7 @@ def api(path, key):
         return json.loads(r.read().decode("utf-8", "replace"))
 
 def build_name_index(players):
-    exact, toksets, last = {}, [], {}
+    exact, toksets, last, nospace = {}, [], {}, []
     for p in players:
         nm = p.get("name", "")
         keys = {nmkey(nm), p.get("nmkey", "")}
@@ -92,12 +92,21 @@ def build_name_index(players):
             toksets.append((ts, nm))
             for t in ts:
                 last.setdefault(t, set()).add(nm)
-    return exact, toksets, last
+        for k in keys:
+            ns = k.replace(" ", "")
+            if len(ns) >= 8:                               # spaceless key catches hyphen/extra-surname splits
+                nospace.append((ns, nm))
+    return exact, toksets, last, nospace
 
-def resolve(af_name, exact, toksets, last):
+def resolve(af_name, exact, toksets, last, nospace):
     k = nmkey(af_name)
     if k in exact:                                         # exact key match
         return exact[k]
+    ns = k.replace(" ", "")
+    if len(ns) >= 8:                                       # prefix match: "dominicsolanke" -> "dominicsolankemitchell"
+        hits = {nm for pk, nm in nospace if pk.startswith(ns) or ns.startswith(pk)}
+        if len(hits) == 1:
+            return next(iter(hits))
     at = set(k.split())
     if len(at) >= 2:                                       # AF tokens subset of a unique player's tokens
         hits = {nm for ts, nm in toksets if at <= ts}
@@ -117,7 +126,7 @@ def main():
     g = time.gmtime()
     season = os.environ.get("APIFOOTBALL_SEASON") or str(g.tm_year - (0 if g.tm_mon >= 7 else 1))
     players = json.load(open(os.path.join(DATA, "players.json")))
-    exact, toksets, last = build_name_index(players)
+    exact, toksets, last, nospace = build_name_index(players)
 
     fx = api("/fixtures?league=%d&season=%s&next=%d" % (LEAGUE, season, NEXT), key).get("response", [])
     alt, books, unmatched, npp = [], set(), {}, 0
@@ -136,7 +145,7 @@ def main():
                 for bet in bk.get("bets", []):
                     for (pl, stat, line, over) in parse_bet(bet.get("name", ""), bet.get("values", []), bn):
                         npp += 1
-                        name = resolve(pl, exact, toksets, last)
+                        name = resolve(pl, exact, toksets, last, nospace)
                         if not name:
                             unmatched[pl] = unmatched.get(pl, 0) + 1
                             continue
