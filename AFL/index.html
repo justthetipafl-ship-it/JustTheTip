@@ -2782,6 +2782,14 @@
     }
     return '<div class="brk-title">Stat breakdown \u00b7 rank \u00b7 vs similar</div><div class="brk-grid">'+card(home,aTier,aSt)+card(away,hTier,hSt)+'</div>';
   }
+  function _eplMatchOdds(g, market){
+    var mo=(state.data.odds&&state.data.odds.matchOdds)||[]; var nk=function(x){return String(x||'').toLowerCase().replace(/[^a-z0-9]/g,'');};
+    var gh=nk(g.home), ga=nk(g.away);
+    for(var i=0;i<mo.length;i++){ var m=mo[i]; if(m.market!==market) continue;
+      if((m.home===g.home&&m.away===g.away)||(nk(m.home)===gh&&nk(m.away)===ga)) return m; }
+    return null;
+  }
+  function _moStr(mo){ return (mo&&mo.over!=null&&mo.under!=null)?('O'+mo.line+' $'+(+mo.over).toFixed(2)+' \u00b7 U'+mo.line+' $'+(+mo.under).toFixed(2)):''; }
   function _eplMarketPanels(g){
     if(!_isMatchProps()) return '';
     var home=g.home, away=g.away, hG=_mmTeamGoals(home), aG=_mmTeamGoals(away);
@@ -2802,21 +2810,21 @@
     var tops='<div class="market-detail" style="margin-top:6px">Top scores: '+m.top.map(function(t){return '<b>'+t[0]+'</b> '+pc(t[1])+'%';}).join(' \u00b7 ')+'</div>';
     var resultCard='<div class="market-card lean-neutral"><div class="market-name"><i class="ti ti-trophy"></i> Match Result</div><div class="market-verdict '+(strong?'over':'neutral')+'" style="display:inline-block;margin:2px 0 8px">'+(strong?strong+abbr(fav):'Line-ball')+'</div>'+resBar+tops+'</div>';
     // Goals
-    var gLean=m.tot>=2.5?'over':'under';
+    var gLean=m.tot>=2.5?'over':'under'; var _mog=_eplMatchOdds(g,'goals');
     var gDetail='<div>'+abbr(home)+' GF <b>'+hG.gf.toFixed(2)+'</b> / GA '+hG.ga.toFixed(2)+'</div><div>'+abbr(away)+' GF <b>'+aG.gf.toFixed(2)+'</b> / GA '+aG.ga.toFixed(2)+'</div><div style="margin-top:4px">BTTS '+pc(m.btts)+'% <span class="market-line">('+abbr(home)+' '+pc(hG.btts)+'% / '+abbr(away)+' '+pc(aG.btts)+'%)</span></div>';
-    var goalsCard=_mkCard({name:'Total Goals',icon:'ti-ball-football',value:m.tot.toFixed(2),line:'O/U 2.5',valueLabel:'proj',lean:gLean,leanLabel:'LEAN '+gLean.toUpperCase(),detail:gDetail,bar:{value:m.tot,line:2.5,max:5}});
+    var goalsCard=_mkCard({name:'Total Goals',icon:'ti-ball-football',value:m.tot.toFixed(2),line:'O/U 2.5',valueLabel:'proj',lean:gLean,leanLabel:'LEAN '+gLean.toUpperCase(),detail:gDetail,bar:{value:m.tot,line:2.5,max:5},oddsBody:_moStr(_mog),oddsBook:(_mog?bookName(_mog.book):'')});
     // Corners
     var cornersCard='', hCn=_mmTeamCorners(home), aCn=_mmTeamCorners(away);
-    if(hCn&&aCn){ var cnProj=((hCn.cf+aCn.ca)/2)+((aCn.cf+hCn.ca)/2), cnLean=cnProj>=9.5?'over':'under';
+    if(hCn&&aCn){ var cnProj=((hCn.cf+aCn.ca)/2)+((aCn.cf+hCn.ca)/2), cnLean=cnProj>=9.5?'over':'under'; var _moc=_eplMatchOdds(g,'corners');
       var cnDetail='<div>'+abbr(home)+' CF <b>'+hCn.cf.toFixed(1)+'</b> / CA '+hCn.ca.toFixed(1)+'</div><div>'+abbr(away)+' CF <b>'+aCn.cf.toFixed(1)+'</b> / CA '+aCn.ca.toFixed(1)+'</div>';
-      cornersCard=_mkCard({name:'Total Corners',icon:'ti-flag',value:cnProj.toFixed(1),line:'O/U 9.5',valueLabel:'proj',lean:cnLean,leanLabel:'LEAN '+cnLean.toUpperCase(),detail:cnDetail,bar:{value:cnProj,line:9.5,max:16}}); }
+      cornersCard=_mkCard({name:'Total Corners',icon:'ti-flag',value:cnProj.toFixed(1),line:'O/U 9.5',valueLabel:'proj',lean:cnLean,leanLabel:'LEAN '+cnLean.toUpperCase(),detail:cnDetail,bar:{value:cnProj,line:9.5,max:16},oddsBody:_moStr(_moc),oddsBook:(_moc?bookName(_moc.book):'')}); }
     // Cards (referee-adjusted)
     var cardsCard='', hY=_mmTeamY(home), aY=_mmTeamY(away);
     if(hY&&aY){ var _ref=(typeof _eplRefFor==='function')?_eplRefFor(g):'', _rs=((state.data.referees||{}).refStats)||{}, _rr=_ref&&_rs[_ref], _rm=1.0, _adj='';
       if(_rr&&_rr.cardsPG){ var _a=Object.keys(_rs).map(function(k){return +_rs[k].cardsPG;}).filter(function(x){return x>0;}); var _lg=_a.length?_a.reduce(function(p,q){return p+q;},0)/_a.length:_rr.cardsPG; if(_lg>0){ _rm=_rr.cardsPG/_lg; _adj='<div style="margin-top:4px" class="market-line">Adj: ref '+((_rm-1)*100).toFixed(0)+'% ('+(hY.f+aY.f).toFixed(1)+' → '+((hY.f+aY.f)*_rm).toFixed(1)+')</div>'; } }
-      var ctot=(hY.f+aY.f)*_rm, cdLean=ctot>=4.5?'over':'under';
+      var ctot=(hY.f+aY.f)*_rm, cdLean=ctot>=4.5?'over':'under'; var _mod=_eplMatchOdds(g,'cards');
       var cdDetail='<div>'+abbr(home)+' Y <b>'+hY.f.toFixed(2)+'</b></div><div>'+abbr(away)+' Y <b>'+aY.f.toFixed(2)+'</b></div>'+_adj;
-      cardsCard=_mkCard({name:'Total Cards',icon:'ti-cards',value:ctot.toFixed(1),line:'O/U 4.5',valueLabel:'proj',lean:cdLean,leanLabel:'LEAN '+cdLean.toUpperCase(),detail:cdDetail,bar:{value:ctot,line:4.5,max:9}}); }
+      cardsCard=_mkCard({name:'Total Cards',icon:'ti-cards',value:ctot.toFixed(1),line:'O/U 4.5',valueLabel:'proj',lean:cdLean,leanLabel:'LEAN '+cdLean.toUpperCase(),detail:cdDetail,bar:{value:ctot,line:4.5,max:9},oddsBody:_moStr(_mod),oddsBook:(_mod?bookName(_mod.book):'')}); }
     return _mkCollapse('Match','ti-trophy','',header+resultCard,true)+
       _mkCollapse('Goals','ti-ball-football',m.tot.toFixed(1),goalsCard+_eplStatBreakdown(g,_EPL_MKT.goals),false)+
       (cornersCard?_mkCollapse('Corners','ti-flag','',cornersCard+_eplStatBreakdown(g,_EPL_MKT.corners),false):'')+
