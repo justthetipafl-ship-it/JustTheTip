@@ -1233,6 +1233,19 @@
 .pm-hitrate-card .market-name { font-family: var(--font-mono); font-size: 9px;
     color: var(--text-3); letter-spacing: 1px; text-transform: uppercase;
     margin-bottom: 4px; }
+
+/* EPL match panel: team header + 1X2 segmented bar */
+.mm-teamhdr{display:flex;align-items:flex-start;justify-content:space-between;gap:8px;padding:12px 10px 8px}
+.mm-th{flex:1;text-align:center;min-width:0}
+.mm-th .team-logo,.mm-th img{margin:0 auto 5px;display:block}
+.mm-th-nm{font-family:var(--font-display);font-weight:700;font-size:15px;line-height:1.15}
+.mm-th-sub{font-family:var(--font-mono);font-size:10px;color:var(--text-3);margin-top:3px}
+.mm-th-st{font-family:var(--font-mono);font-size:9px;color:var(--text-2);margin-top:3px;text-transform:uppercase;letter-spacing:.3px;line-height:1.4}
+.mm-vs{align-self:center;color:var(--text-3);font-size:10px;font-family:var(--font-mono)}
+.mm-meta{text-align:center;font-family:var(--font-mono);font-size:10px;color:var(--text-3);padding:0 10px 10px}
+.mm-probbar{display:flex;height:32px;border-radius:5px;overflow:hidden;margin:4px 0}
+.mm-probseg{display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;color:#0b0f14;white-space:nowrap;overflow:hidden;min-width:0}
+.mm-probseg.h{background:#38bdf8}.mm-probseg.d{background:#64748b;color:#fff}.mm-probseg.a{background:#fb7185}
 </style>
 </head>
 <body class="auth-locked">
@@ -2668,15 +2681,18 @@
     _eplStrength();
     var hT=state.idx.teamMap[home]||{}, aT=state.idx.teamMap[away]||{};
     var lamH=(hG.gf+aG.ga)/2*1.10, lamA=(aG.gf+hG.ga)/2*0.95, m=_mmModel(lamH,lamA);
-    // team header
-    function th(team,t){ var st=(typeof _eplStyle==='function')?_eplStyle(t):[]; return '<div class="mm-th"><div class="mm-th-nm">'+esc(team)+'</div><div class="mm-th-sub">'+(t._rank?'#'+t._rank+' · ':'')+_mmTier(t)+(st&&st.length?' · '+st.join(' · '):'')+'</div></div>'; }
-    var header='<div class="mm-teamhdr">'+th(home,hT)+'<span class="mm-vs">vs</span>'+th(away,aT)+'</div>';
-    // Match Result (1X2)
-    var favP=Math.max(m.pH,m.pD,m.pA), fav=m.pH===favP?home:(m.pA===favP?away:'Draw'), strong=favP>=0.55?'STRONG ':(favP>=0.42?'LEAN ':'');
+    // team header — logos, side-by-side, rank/tier/styles, + match details
     var pc=function(x){return (x*100).toFixed(0);};
-    var resBar='<div class="mm-bar"><div class="mm-seg mm-h" style="width:'+pc(m.pH)+'%"><span>'+abbr(home)+' '+pc(m.pH)+'%</span></div><div class="mm-seg mm-d" style="width:'+pc(m.pD)+'%"><span>Draw '+pc(m.pD)+'%</span></div><div class="mm-seg mm-a" style="width:'+pc(m.pA)+'%"><span>'+abbr(away)+' '+pc(m.pA)+'%</span></div></div>';
-    var tops='<div class="market-detail" style="margin-top:6px">Top scores: '+m.top.map(function(t){return '<b>'+t[0]+'</b> '+pc(t[1])+'%';}).join(' · ')+'</div>';
-    var resultCard='<div class="market-card lean-neutral"><div class="market-name"><i class="ti ti-trophy"></i> Match Result</div><div class="market-verdict '+(strong?'over':'neutral')+'" style="margin:2px 0 8px">'+(strong?strong+abbr(fav):'Line-ball')+'</div>'+resBar+tops+'</div>';
+    function th(team,t){ var st=(typeof _eplStyle==='function')?_eplStyle(t):[];
+      var stc=(st&&st.length)?st.map(function(x){var c=(window._MM_STYLE_C&&_MM_STYLE_C[x])||'';return c?'<span style="color:'+c+'">'+esc(x)+'</span>':esc(x);}).join(' · '):'';
+      return '<div class="mm-th">'+teamLogo(team,38)+'<div class="mm-th-nm">'+esc(team)+'</div><div class="mm-th-sub">'+(t._rank?'#'+t._rank+' · ':'')+_mmTier(t)+'</div>'+(stc?'<div class="mm-th-st">'+stc+'</div>':'')+'</div>'; }
+    var det=[]; if(g.venue)det.push(esc(g.venue)); if(g.gw)det.push('GW'+g.gw); if(g.date)det.push(esc(String(g.date).slice(0,10)));
+    var header='<div class="mm-teamhdr">'+th(home,hT)+'<span class="mm-vs">vs</span>'+th(away,aT)+'</div>'+(det.length?'<div class="mm-meta">'+det.join(' \u00b7 ')+'</div>':'');
+    // Match Result (1X2) — segmented bar inside a market-card
+    var favP=Math.max(m.pH,m.pD,m.pA), fav=m.pH===favP?home:(m.pA===favP?away:'Draw'), strong=favP>=0.55?'STRONG ':(favP>=0.42?'LEAN ':'');
+    var resBar='<div class="mm-probbar"><div class="mm-probseg h" style="width:'+pc(m.pH)+'%"><span>'+abbr(home)+' '+pc(m.pH)+'%</span></div><div class="mm-probseg d" style="width:'+pc(m.pD)+'%"><span>'+pc(m.pD)+'%</span></div><div class="mm-probseg a" style="width:'+pc(m.pA)+'%"><span>'+abbr(away)+' '+pc(m.pA)+'%</span></div></div>';
+    var tops='<div class="market-detail" style="margin-top:6px">Top scores: '+m.top.map(function(t){return '<b>'+t[0]+'</b> '+pc(t[1])+'%';}).join(' \u00b7 ')+'</div>';
+    var resultCard='<div class="market-card lean-neutral"><div class="market-name"><i class="ti ti-trophy"></i> Match Result</div><div class="market-verdict '+(strong?'over':'neutral')+'" style="display:inline-block;margin:2px 0 8px">'+(strong?strong+abbr(fav):'Line-ball')+'</div>'+resBar+tops+'</div>';
     // Goals
     var gLean=m.tot>=2.5?'over':'under';
     var gDetail='<div>'+abbr(home)+' GF <b>'+hG.gf.toFixed(2)+'</b> / GA '+hG.ga.toFixed(2)+'</div><div>'+abbr(away)+' GF <b>'+aG.gf.toFixed(2)+'</b> / GA '+aG.ga.toFixed(2)+'</div><div style="margin-top:4px">BTTS '+pc(m.btts)+'% <span class="market-line">('+abbr(home)+' '+pc(hG.btts)+'% / '+abbr(away)+' '+pc(aG.btts)+'%)</span></div>';
