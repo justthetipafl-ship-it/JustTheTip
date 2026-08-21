@@ -2597,26 +2597,28 @@
   function _isMatchProps(){ return SPORT.key==='epl'; }
   function _teamResults(team){ return (state.data.results||[]).filter(function(r){return r.home===team||r.away===team;}); }
   function _eplTrendBlock(team){
-    const t=state.idx.teamMap[team]||{}, rs=_teamResults(team);
-    let out='<div class="game-sec" style="margin-top:8px">';
-    const EL=[['shots','Shots'],['shotsOn','SoT'],['goals','Goals'],['assists','Assists'],['tackles','Tackles'],['keyPasses','Key Passes']]
-      .filter(function(kv){return t[kv[0]]!=null;})
-      .map(function(kv){return '<div class="statcell"><div class="v">'+(+t[kv[0]]).toFixed(1)+'</div><div class="k">'+kv[1]+'</div></div>';}).join('');
-    if(EL) out+='<div class="gs-title" style="margin-bottom:4px"><i class="ti ti-ruler-2"></i> Expected Lines &middot; season avg/game</div><div class="statgrid" style="margin-bottom:8px">'+EL+'</div>';
+    const rs=_teamResults(team); let out='';
+    // By The Halves — For/Against per half, as a native stat table
     if(rs.length && (state.data.results||[]).some(function(r){return r.htHome!=null;})){
       const hr=rs.slice(-20); let h1f=0,h1a=0,h2f=0,h2a=0,n=0;
       hr.forEach(function(r){var isH=r.home===team;var ftF=isH?r.homeScore:r.awayScore,ftA=isH?r.awayScore:r.homeScore;var htF=(isH?r.htHome:r.htAway)||0,htA=(isH?r.htAway:r.htHome)||0;h1f+=htF;h1a+=htA;h2f+=(ftF-htF);h2a+=(ftA-htA);n++;});
-      if(n) out+='<div class="gs-title" style="margin-bottom:4px"><i class="ti ti-clock-hour-6"></i> By The Halves &middot; for/against</div><div class="tp-body-meta" style="border:0;margin-bottom:8px">1st <b>'+(h1f/n).toFixed(1)+'</b> / '+(h1a/n).toFixed(1)+' &middot; 2nd <b>'+(h2f/n).toFixed(1)+'</b> / '+(h2a/n).toFixed(1)+'</div>';
+      if(n) out+='<div class="tp-sec"><div class="sec-title"><i class="ti ti-clock-hour-6"></i> By The Halves</div></div>'+
+        '<div class="stbl-wrap"><table class="stbl bx"><thead><tr><th>Half</th><th>For</th><th>Against</th></tr></thead><tbody>'+
+        '<tr><td class="name">1st</td><td>'+(h1f/n).toFixed(1)+'</td><td>'+(h1a/n).toFixed(1)+'</td></tr>'+
+        '<tr><td class="name">2nd</td><td>'+(h2f/n).toFixed(1)+'</td><td>'+(h2a/n).toFixed(1)+'</td></tr>'+
+        '</tbody></table></div>';
     }
-    const sr=rs.slice(-6);
-    if(sr.length){ let gf=0,ga=0; const pp=sr.map(function(r){var isH=r.home===team,ff=isH?r.homeScore:r.awayScore,aa=isH?r.awayScore:r.homeScore;gf+=ff;ga+=aa;var res=ff>aa?'W':ff<aa?'L':'D';return '<span class="st-pip st-'+res.toLowerCase()+'">'+res+'</span>';}).join('');
-      out+='<div class="gs-title" style="margin-bottom:4px"><i class="ti ti-trending-up"></i> Shape Trend &middot; L'+sr.length+'</div><div style="margin-bottom:8px">'+pp+' <span class="st-gd">'+gf+'-'+ga+'</span></div>';
-    }
+    // Recent Games — last 5, with the L6 shape (record) in the section title
     const rg=rs.slice(-5).reverse();
-    if(rg.length){ const rows=rg.map(function(r){var isH=r.home===team,o=isH?r.away:r.home,ff=isH?r.homeScore:r.awayScore,aa=isH?r.awayScore:r.homeScore;var res=ff>aa?'W':ff<aa?'L':'D';return '<div class="rg-row"><span class="rg-res st-'+res.toLowerCase()+'">'+res+'</span><span class="rg-opp">'+(isH?'v ':'@ ')+abbr(o)+'</span><span class="rg-sc">'+ff+'-'+aa+'</span></div>';}).join('');
-      out+='<div class="gs-title" style="margin-bottom:4px"><i class="ti ti-list-details"></i> Recent Games</div>'+rows;
+    if(rg.length){
+      const sr=rs.slice(-6); let gf=0,ga=0;
+      sr.forEach(function(r){var isH=r.home===team;gf+=isH?r.homeScore:r.awayScore;ga+=isH?r.awayScore:r.homeScore;});
+      const rows=rg.map(function(r){var isH=r.home===team,o=isH?r.away:r.home,ff=isH?r.homeScore:r.awayScore,aa=isH?r.awayScore:r.homeScore;var res=ff>aa?'W':ff<aa?'L':'D';var c=res==='W'?'#22c55e':res==='L'?'#ef4444':'#94a3b8';
+        return '<tr><td class="name">'+(isH?'v ':'@ ')+abbr(o)+'</td><td><b style="color:'+c+'">'+res+'</b></td><td>'+ff+'&ndash;'+aa+'</td></tr>';}).join('');
+      out+='<div class="tp-sec"><div class="sec-title"><i class="ti ti-list-details"></i> Recent Games <span style="opacity:.55;font-weight:400">&middot; L'+sr.length+' '+gf+'&ndash;'+ga+'</span></div></div>'+
+        '<div class="stbl-wrap"><table class="stbl bx"><thead><tr><th>Opponent</th><th>Res</th><th>Score</th></tr></thead><tbody>'+rows+'</tbody></table></div>';
     }
-    return out+'</div>';
+    return out;
   }
   function gameByHalves(home,away){
     if(!_isMatchProps()) return '';
@@ -3554,7 +3556,6 @@
        '<span class="vs">'+(isHome?'vs ':'@ ')+abbr(opp).toUpperCase()+'</span></div>';
     // form pips
     h+='<div style="margin-bottom:6px">'+pips(team)+'</div>';
-    if(SPORT.key==='epl') h+=_eplTrendBlock(team);
     // Stat Leaders (top of team by a few markets)
     const _pgLead=!!(window.SPORT_CONFIG&&SPORT_CONFIG.leadersPerGame);
     const _lval=(p,k)=>_pgLead?((p[k]||0)/(p.matches||1)):(p[k]||0);
@@ -3577,6 +3578,7 @@
       BET_STATS.filter(([k])=>!_fxHid('mkt',k)).forEach(([k,l])=>{ mt+='<tr><td class="name">'+l+'</td><td>'+fmt(t[k])+'</td><td>'+fmt(ta?ta[k+'_a']:null)+'</td></tr>'; });
       mt+='</tbody></table></div>'; h+=mt;
     }
+    if(SPORT.key==='epl') h+=_eplTrendBlock(team);
     if(POS_DIST_CFG[SPORT.key] && !_fxHid('sec','posdist')) h+=_posDistribution(team);
     if(SPORT.key==='nfl' && !_fxHid('sec','coverage')) h+=_nflCoverage(team,opp);
     // Defence vs Play Style (how the opponent concedes vs this team's playstyles)
