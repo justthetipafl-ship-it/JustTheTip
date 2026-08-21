@@ -2580,9 +2580,13 @@
     // Cards (yellows per match, from /fixtures/statistics via results - reliable + deduped)
     var cards='';
     var hY=_mmTeamY(home), aY=_mmTeamY(away);
-    if(hY&&aY){ var ctot=hY.f+aY.f, cl=_mmLean(ctot,4.5,'OVER','UNDER');
-      cards='<div class="mm-card"><div class="mm-ct"><i class="ti ti-cards"></i> Cards <span class="mm-sub">yellows</span></div>'+
-        '<div class="mm-line"><span class="mm-proj">'+ctot.toFixed(2)+'</span> total &middot; O/U 4.5 <span class="mm-lean" style="color:'+cl.c+'">'+cl.t+'</span></div>'+
+    if(hY&&aY){
+      var _g=(state.data.fixture||[]).find(function(x){return x.home===home&&x.away===away;})||{home:home,away:away};
+      var _ref=(typeof _eplRefFor==='function')?_eplRefFor(_g):'', _rs=((state.data.referees||{}).refStats)||{}, _rr=_ref&&_rs[_ref], _rm=1.0, _rnote='';
+      if(_rr&&_rr.cardsPG){ var _arr=Object.keys(_rs).map(function(k){return +_rs[k].cardsPG;}).filter(function(x){return x>0;}); var _lgr=_arr.length?_arr.reduce(function(a,b){return a+b;},0)/_arr.length:_rr.cardsPG; if(_lgr>0){ _rm=_rr.cardsPG/_lgr; _rnote=' &middot; <span class="mm-sub">'+esc(_ref)+' '+_rm.toFixed(2)+'\u00d7</span>'; } }
+      var ctot=(hY.f+aY.f)*_rm, cl=_mmLean(ctot,4.5,'OVER','UNDER');
+      cards='<div class="mm-card"><div class="mm-ct"><i class="ti ti-cards"></i> Cards <span class="mm-sub">yellows, referee-adjusted</span></div>'+
+        '<div class="mm-line"><span class="mm-proj">'+ctot.toFixed(2)+'</span> total &middot; O/U 4.5 <span class="mm-lean" style="color:'+cl.c+'">'+cl.t+'</span>'+_rnote+'</div>'+
         '<div class="mm-teams"><div class="mm-tr">'+teamLogo(home,18)+abbr(home)+' <b>'+hY.f.toFixed(2)+'</b> Y '+_mmRank(home,'cardsPG',true)+' / '+hY.a.toFixed(2)+' drawn</div>'+
         '<div class="mm-tr">'+teamLogo(away,18)+abbr(away)+' <b>'+aY.f.toFixed(2)+'</b> Y '+_mmRank(away,'cardsPG',true)+' / '+aY.a.toFixed(2)+' drawn</div></div>'+
         _mmVsBreakGen(home,away,aSt,hSt,function(r,isH){if(r.cardsHome==null)return null;return {f:isH?r.cardsHome:r.cardsAway,a:isH?r.cardsAway:r.cardsHome};},'Y','opp')+'</div>'; }
@@ -2592,6 +2596,28 @@
   // ---- soccer match-trend sections (EPL): By The Halves / Shape Trend / Recent Games ----
   function _isMatchProps(){ return SPORT.key==='epl'; }
   function _teamResults(team){ return (state.data.results||[]).filter(function(r){return r.home===team||r.away===team;}); }
+  function _eplTrendBlock(team){
+    const t=state.idx.teamMap[team]||{}, rs=_teamResults(team);
+    let out='<div class="game-sec" style="margin-top:8px">';
+    const EL=[['shots','Shots'],['shotsOn','SoT'],['goals','Goals'],['assists','Assists'],['tackles','Tackles'],['keyPasses','Key Passes']]
+      .filter(function(kv){return t[kv[0]]!=null;})
+      .map(function(kv){return '<div class="statcell"><div class="v">'+(+t[kv[0]]).toFixed(1)+'</div><div class="k">'+kv[1]+'</div></div>';}).join('');
+    if(EL) out+='<div class="gs-title" style="margin-bottom:4px"><i class="ti ti-ruler-2"></i> Expected Lines &middot; season avg/game</div><div class="statgrid" style="margin-bottom:8px">'+EL+'</div>';
+    if(rs.length && (state.data.results||[]).some(function(r){return r.htHome!=null;})){
+      const hr=rs.slice(-20); let h1f=0,h1a=0,h2f=0,h2a=0,n=0;
+      hr.forEach(function(r){var isH=r.home===team;var ftF=isH?r.homeScore:r.awayScore,ftA=isH?r.awayScore:r.homeScore;var htF=(isH?r.htHome:r.htAway)||0,htA=(isH?r.htAway:r.htHome)||0;h1f+=htF;h1a+=htA;h2f+=(ftF-htF);h2a+=(ftA-htA);n++;});
+      if(n) out+='<div class="gs-title" style="margin-bottom:4px"><i class="ti ti-clock-hour-6"></i> By The Halves &middot; for/against</div><div class="tp-body-meta" style="border:0;margin-bottom:8px">1st <b>'+(h1f/n).toFixed(1)+'</b> / '+(h1a/n).toFixed(1)+' &middot; 2nd <b>'+(h2f/n).toFixed(1)+'</b> / '+(h2a/n).toFixed(1)+'</div>';
+    }
+    const sr=rs.slice(-6);
+    if(sr.length){ let gf=0,ga=0; const pp=sr.map(function(r){var isH=r.home===team,ff=isH?r.homeScore:r.awayScore,aa=isH?r.awayScore:r.homeScore;gf+=ff;ga+=aa;var res=ff>aa?'W':ff<aa?'L':'D';return '<span class="st-pip st-'+res.toLowerCase()+'">'+res+'</span>';}).join('');
+      out+='<div class="gs-title" style="margin-bottom:4px"><i class="ti ti-trending-up"></i> Shape Trend &middot; L'+sr.length+'</div><div style="margin-bottom:8px">'+pp+' <span class="st-gd">'+gf+'-'+ga+'</span></div>';
+    }
+    const rg=rs.slice(-5).reverse();
+    if(rg.length){ const rows=rg.map(function(r){var isH=r.home===team,o=isH?r.away:r.home,ff=isH?r.homeScore:r.awayScore,aa=isH?r.awayScore:r.homeScore;var res=ff>aa?'W':ff<aa?'L':'D';return '<div class="rg-row"><span class="rg-res st-'+res.toLowerCase()+'">'+res+'</span><span class="rg-opp">'+(isH?'v ':'@ ')+abbr(o)+'</span><span class="rg-sc">'+ff+'-'+aa+'</span></div>';}).join('');
+      out+='<div class="gs-title" style="margin-bottom:4px"><i class="ti ti-list-details"></i> Recent Games</div>'+rows;
+    }
+    return out+'</div>';
+  }
   function gameByHalves(home,away){
     if(!_isMatchProps()) return '';
     var R=state.data.results||[]; if(!R.some(function(r){return r.htHome!=null;})) return '';
@@ -3414,13 +3440,13 @@
     if(!g) return emptyState('ti-alert-triangle','Match not found','');
     let h='<button class="back-btn" onclick="state.view.fixtureId=null;_renderApp()"><i class="ti ti-arrow-left"></i> Back to fixtures</button>';
     if(SPORT.key==='mlb'){ h+=_mlbFocusHeader(g); h+=_mlbMatchPanels(g); }
-    if(SPORT.key==='epl'){ h+=gameMatchMarkets(g.home,g.away)+_eplCardsPanel(g)+_eplFocusPanels(g); }
+    if(SPORT.key==='epl'){ h+=gameMatchMarkets(g.home,g.away)+_eplFocusPanels(g); }
     else h+='<div class="fixture-header">'+
       '<div class="fixture-team">'+teamLogo(g.home,52)+'<div class="fxr-name">'+g.home+'</div>'+pips(g.home)+'</div>'+
       '<div class="fixture-center"><div class="kickoff">'+esc(_localDate(g))+' '+esc(_localTime(g))+'</div><div class="vs-big">v</div><div class="venue">'+(g.venue||'TBC')+'</div>'+weatherChip(g.home,g.away)+'</div>'+
       '<div class="fixture-team">'+teamLogo(g.away,52)+'<div class="fxr-name">'+g.away+'</div>'+pips(g.away)+'</div></div>';
     if(SPORT.key==='afl' && LIVE_WORKER) h+='<button class="live-open-btn" onclick="_aflLiveOpenCurrent()"><span class="live-dot on"></span>Watch Live</button>';
-    h+=((SPORT.key==='epl'||_fxHid('sec','matchMkts'))?'':gameMatchMarkets(g.home,g.away))+(_fxHid('sec','matchOdds')?'':gameMatchOdds(g.home,g.away))+(_fxHid('sec','h2h')?'':gameHeadToHead(g.home,g.away))+((SPORT.key==='epl'||_fxHid('sec','clash'))?'':gameClash(g.home,g.away))+(_fxHid('sec','lastMeeting')?'':gameLastMeeting(g.home,g.away))+(_fxHid('sec','byHalves')?'':gameByHalves(g.home,g.away))+(_fxHid('sec','shapeTrend')?'':gameShapeTrend(g.home,g.away))+(_fxHid('sec','recentGames')?'':gameRecentGames(g.home,g.away));
+    h+=((SPORT.key==='epl'||_fxHid('sec','matchMkts'))?'':gameMatchMarkets(g.home,g.away))+(_fxHid('sec','matchOdds')?'':gameMatchOdds(g.home,g.away))+((SPORT.key==='epl'||_fxHid('sec','h2h'))?'':gameHeadToHead(g.home,g.away))+((SPORT.key==='epl'||_fxHid('sec','clash'))?'':gameClash(g.home,g.away))+(_fxHid('sec','lastMeeting')?'':gameLastMeeting(g.home,g.away))+((SPORT.key==='epl'||_fxHid('sec','byHalves'))?'':gameByHalves(g.home,g.away))+((SPORT.key==='epl'||_fxHid('sec','shapeTrend'))?'':gameShapeTrend(g.home,g.away))+((SPORT.key==='epl'||_fxHid('sec','recentGames'))?'':gameRecentGames(g.home,g.away));
     h+='<div class="team-cols">'+teamPanel(g.home,g.away,true)+teamPanel(g.away,g.home,false)+'</div>';
     if(SPORT.key==='mlb' && !_fxHid('sec','matchupAnalyzer')) h+=_mlbMatchupAnalyzer(g);
     // mode toggle now sits directly above the signals it controls
@@ -3528,6 +3554,7 @@
        '<span class="vs">'+(isHome?'vs ':'@ ')+abbr(opp).toUpperCase()+'</span></div>';
     // form pips
     h+='<div style="margin-bottom:6px">'+pips(team)+'</div>';
+    if(SPORT.key==='epl') h+=_eplTrendBlock(team);
     // Stat Leaders (top of team by a few markets)
     const _pgLead=!!(window.SPORT_CONFIG&&SPORT_CONFIG.leadersPerGame);
     const _lval=(p,k)=>_pgLead?((p[k]||0)/(p.matches||1)):(p[k]||0);
