@@ -20,6 +20,7 @@ window.JTTSignals = (function () {
     var players = deps.players || [];
     var JS = deps.JTTScoring || window.JTTScoring;
     var priceForLine = deps.priceForLine;
+    var bookName = deps.bookName || function(b){return b||'';};
     var CFG = (typeof window !== 'undefined' && window.SPORT_CONFIG) || {};
     var MKT = CFG.mktNames || {};
     function mktLabel(k) { return MKT[k] || k; }
@@ -64,7 +65,7 @@ window.JTTSignals = (function () {
       var oddsMkt = (c.mkt === 'foulsCommitted' || c.mkt === 'foulsDrawn') ? 'fouls' : c.mkt;
       var lineRow = '';
       if (c.line != null && c.mkt) { var pr = (typeof priceForLine === 'function') ? priceForLine(c.p.name, oddsMkt, c.line) : null;
-        lineRow = '<div class="lc-line"><span class="lc-line-pick">O' + c.line + ' ' + esc(mktLabel(c.mkt)) + '</span>' + (pr ? '<span class="lc-odds">$' + (+pr).toFixed(2) + '</span>' : '<span class="lc-odds noodds">no line</span>') + '</div>'; }
+        lineRow = '<div class="lc-line"><span class="lc-line-pick">O' + c.line + ' ' + esc(mktLabel(c.mkt)) + '</span>' + ((pr && pr.price != null) ? '<span class="lc-odds">$' + (+pr.price).toFixed(2) + (pr.book ? ' <span class="lc-book">' + esc(bookName(pr.book)) + '</span>' : '') + '</span>' : '<span class="lc-odds noodds">no line</span>') + '</div>'; }
       return '<div class="lc-card" onclick="openPlayer(\'' + q + '\')">' +
         '<div class="lc-hd"><span class="lc-nm">' + esc(c.p.name) + '</span>' + _degBadges(c.p.name) +
         '<span class="lc-meta">' + posShort(c.p.pos) + ' \u00b7 ' + abbr(c.p.team) + (c.opp ? ' v ' + abbr(c.opp) : '') + '</span></div>' +
