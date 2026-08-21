@@ -26,12 +26,25 @@ jobs:
           FORCE=""
           if [ "${{ github.event.schedule }}" = "55 22 * * *" ] || [ "${{ github.event_name }}" = "workflow_dispatch" ]; then FORCE="--force"; fi
           python scripts/fetch_odds.py MLB  mlb/data/odds.json  $FORCE --window 3 || true
+      # AFL live odds live in the Cloudflare worker (the shell reads them via oddsUrl); the ladder
+      # reads the COMMITTED file, so snapshot the worker into it just before the 9:01 ladder build.
+      - name: Snapshot AFL odds (worker -> committed file for the ladder)
+        run: |
+          if [ "${{ github.event.schedule }}" = "55 22 * * *" ] || [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            if curl -sf --max-time 30 "https://jtt-odds.justthetipafl.workers.dev/odds.json?sport=AFL" -o /tmp/afl_odds.json \
+               && python -c "import json,sys; d=json.load(open('/tmp/afl_odds.json')); sys.exit(0 if (d.get('lines') or d.get('alt')) else 1)"; then
+              mv /tmp/afl_odds.json AFL/data/odds.json
+              echo "AFL odds snapshotted from worker"
+            else
+              echo "AFL odds snapshot skipped (worker unavailable / empty / bad JSON) — keeping existing file"
+            fi
+          fi
       - name: Commit
         run: |
           git config user.name "jtt-bot"
           git config user.email "bot@justthetip"
-          git add mlb/data/odds.json
+          git add mlb/data/odds.json AFL/data/odds.json
           git diff --staged --quiet && { echo "no change"; exit 0; }
           git pull --rebase origin main || true
-          git commit -m "odds: mlb refresh"
+          git commit -m "odds: mlb + afl refresh"
           git push
