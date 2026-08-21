@@ -3392,19 +3392,35 @@
     return _eplWrap('Match',' ti-chart-arcs',res,'c-green')+_eplWrap('Goals','ti-ball-football',goals)+_eplWrap('Cards','ti-cards',cards);
   }
 
-  function _eplFocusPanels(g){ return _eplMatchPanel(g)+_eplLineupDropPanel(g)+_eplRefereePanel(g)+_eplLineupPanel(g)+_eplVenuePanel(g); }
+  function _eplCardsPanel(g){
+    const hT=(state.idx.teamMap||{})[g.home]||{}, aT=(state.idx.teamMap||{})[g.away]||{};
+    if(hT.cards==null&&aT.cards==null&&hT.cornersFor==null) return '';
+    const projCorn=(hT.cornersFor!=null&&aT.cornersFor!=null)?((hT.cornersFor+aT.cornersAgainst)/2+(aT.cornersFor+hT.cornersAgainst)/2):null;
+    const _ref=_eplRefFor(g), _rs=((state.data.referees||{}).refStats)||{}, _rr=_ref&&_rs[_ref];
+    let _rm=1.0, _rnote='league-average referee';
+    if(_rr&&_rr.cardsPG){ const _arr=Object.keys(_rs).map(function(k){return +_rs[k].cardsPG;}).filter(function(x){return x>0;}); const _lg=_arr.length?_arr.reduce(function(a,b){return a+b;},0)/_arr.length:_rr.cardsPG; if(_lg>0){ _rm=_rr.cardsPG/_lg; _rnote=esc(_ref)+' \u00b7 '+(+_rr.cardsPG).toFixed(1)+' cards/game'; } }
+    const _mt=(window.JTTScoring&&JTTScoring.projMatchTotals)?JTTScoring.projMatchTotals(g,_rm):null;
+    const projCd=_mt?_mt.cards.total:(((hT.cards||0)+(aT.cards||0))*_rm);
+    let body='<div class="statgrid">';
+    if(projCorn!=null) body+='<div class="statcell"><div class="v">'+projCorn.toFixed(1)+'</div><div class="k">proj. total corners</div></div>';
+    body+='<div class="statcell"><div class="v">'+projCd.toFixed(1)+'</div><div class="k">proj. total cards</div></div>'+
+      '<div class="statcell"><div class="v">'+_rm.toFixed(2)+'\u00d7</div><div class="k">referee factor</div></div></div>'+
+      '<div class="tp-body-meta" style="border:0;margin-top:6px">'+_rnote+(_ref?'':' \u2014 pick a referee in the panel below to sharpen the cards line')+'</div>';
+    return _eplWrap('Corners & Cards','ti-cards',body);
+  }
+  function _eplFocusPanels(g){ return _eplLineupDropPanel(g)+_eplRefereePanel(g)+_eplLineupPanel(g)+_eplVenuePanel(g); }
 
   function renderFocusedFixture(g){
     if(!g) return emptyState('ti-alert-triangle','Match not found','');
     let h='<button class="back-btn" onclick="state.view.fixtureId=null;_renderApp()"><i class="ti ti-arrow-left"></i> Back to fixtures</button>';
     if(SPORT.key==='mlb'){ h+=_mlbFocusHeader(g); h+=_mlbMatchPanels(g); }
-    if(SPORT.key==='epl'){ h+=_eplFocusPanels(g); }
+    if(SPORT.key==='epl'){ h+=gameMatchMarkets(g.home,g.away)+_eplCardsPanel(g)+_eplFocusPanels(g); }
     else h+='<div class="fixture-header">'+
       '<div class="fixture-team">'+teamLogo(g.home,52)+'<div class="fxr-name">'+g.home+'</div>'+pips(g.home)+'</div>'+
       '<div class="fixture-center"><div class="kickoff">'+esc(_localDate(g))+' '+esc(_localTime(g))+'</div><div class="vs-big">v</div><div class="venue">'+(g.venue||'TBC')+'</div>'+weatherChip(g.home,g.away)+'</div>'+
       '<div class="fixture-team">'+teamLogo(g.away,52)+'<div class="fxr-name">'+g.away+'</div>'+pips(g.away)+'</div></div>';
     if(SPORT.key==='afl' && LIVE_WORKER) h+='<button class="live-open-btn" onclick="_aflLiveOpenCurrent()"><span class="live-dot on"></span>Watch Live</button>';
-    h+=(_fxHid('sec','matchMkts')?'':gameMatchMarkets(g.home,g.away))+(_fxHid('sec','matchOdds')?'':gameMatchOdds(g.home,g.away))+(_fxHid('sec','h2h')?'':gameHeadToHead(g.home,g.away))+(_fxHid('sec','clash')?'':gameClash(g.home,g.away))+(_fxHid('sec','lastMeeting')?'':gameLastMeeting(g.home,g.away))+(_fxHid('sec','byHalves')?'':gameByHalves(g.home,g.away))+(_fxHid('sec','shapeTrend')?'':gameShapeTrend(g.home,g.away))+(_fxHid('sec','recentGames')?'':gameRecentGames(g.home,g.away));
+    h+=((SPORT.key==='epl'||_fxHid('sec','matchMkts'))?'':gameMatchMarkets(g.home,g.away))+(_fxHid('sec','matchOdds')?'':gameMatchOdds(g.home,g.away))+(_fxHid('sec','h2h')?'':gameHeadToHead(g.home,g.away))+((SPORT.key==='epl'||_fxHid('sec','clash'))?'':gameClash(g.home,g.away))+(_fxHid('sec','lastMeeting')?'':gameLastMeeting(g.home,g.away))+(_fxHid('sec','byHalves')?'':gameByHalves(g.home,g.away))+(_fxHid('sec','shapeTrend')?'':gameShapeTrend(g.home,g.away))+(_fxHid('sec','recentGames')?'':gameRecentGames(g.home,g.away));
     h+='<div class="team-cols">'+teamPanel(g.home,g.away,true)+teamPanel(g.away,g.home,false)+'</div>';
     if(SPORT.key==='mlb' && !_fxHid('sec','matchupAnalyzer')) h+=_mlbMatchupAnalyzer(g);
     // mode toggle now sits directly above the signals it controls
@@ -3414,7 +3430,7 @@
       '<button class="fxm-btn'+(fxMode==='nerd'?' on':'')+'" onclick="setFxMode(\'nerd\')"><i class="ti ti-math-function"></i> Nerd Mode</button></div>';
     if(fxMode==='nerd') h+=nerdFilterBar();
     h+='<div class="team-cols">'+teamSignals(g.home,g.away,true)+teamSignals(g.away,g.home,false)+'</div>';
-    if(!_fxHid('sec','insouts')) h+=insOutsSection(g.home,g.away);
+    if(SPORT.key!=='epl' && !_fxHid('sec','insouts')) h+=insOutsSection(g.home,g.away);
     if(!_fxHid('sec','radar')) h+=radarSection(g.home,g.away,g.venue||(g.park&&g.park.name));
     if(fxMode!=='nerd' && !_fxHid('sec','jupiter')) h+=jupiter(g);
     if(fxMode!=='nerd' && !_fxHid('sec','deja')) h+=dejaVuSGM(g.home,g.away);
