@@ -19,6 +19,7 @@ window.JTTSignals = (function () {
     var logsFor = deps.logsFor || function () { return []; };
     var players = deps.players || [];
     var JS = deps.JTTScoring || window.JTTScoring;
+    var priceForLine = deps.priceForLine;
     var CFG = (typeof window !== 'undefined' && window.SPORT_CONFIG) || {};
     var MKT = CFG.mktNames || {};
     function mktLabel(k) { return MKT[k] || k; }
@@ -56,14 +57,19 @@ window.JTTSignals = (function () {
 
     function card(c) {
       var q = esc(c.p.name).replace(/'/g, "\\'");
-      var spark = c.l5 ? '<span class="lc-spark">' + c.l5.map(function (v) {
+      var spark = c.l5 ? '<div class="lc-l5"><span class="lc-l5-lbl">LAST 5</span><span class="lc-spark">' + c.l5.map(function (v) {
         var d = Number.isInteger(v) ? v : (+v).toFixed(1);
         return '<span class="v ' + (c.line != null && v >= c.line ? 'hit' : 'miss') + '">' + d + '</span>';
-      }).join('') + '</span>' : '';
+      }).join('') + '</span></div>' : '';
+      var oddsMkt = (c.mkt === 'foulsCommitted' || c.mkt === 'foulsDrawn') ? 'fouls' : c.mkt;
+      var lineRow = '';
+      if (c.line != null && c.mkt) { var pr = (typeof priceForLine === 'function') ? priceForLine(c.p.name, oddsMkt, c.line) : null;
+        lineRow = '<div class="lc-line"><span class="lc-line-pick">O' + c.line + ' ' + esc(mktLabel(c.mkt)) + '</span>' + (pr ? '<span class="lc-odds">$' + (+pr).toFixed(2) + '</span>' : '<span class="lc-odds noodds">no line</span>') + '</div>'; }
       return '<div class="lc-card" onclick="openPlayer(\'' + q + '\')">' +
         '<div class="lc-hd"><span class="lc-nm">' + esc(c.p.name) + '</span>' + _degBadges(c.p.name) +
         '<span class="lc-meta">' + posShort(c.p.pos) + ' \u00b7 ' + abbr(c.p.team) + (c.opp ? ' v ' + abbr(c.opp) : '') + '</span></div>' +
-        '<div class="tp-body-meta" style="border:0;padding:2px 0 6px"><b>' + esc(c.headline) + '</b> \u00b7 ' + esc(c.detail) + spark + '</div></div>';
+        lineRow + spark +
+        '<div class="tp-body-meta" style="border:0;padding:2px 0 6px"><b>' + esc(c.headline) + '</b> \u00b7 ' + esc(c.detail) + '</div></div>';
     }
     function wrap(icon, title, out, cls, emptyMsg) {
       out.sort(function (a, b) { return b.sc - a.sc; });
@@ -91,7 +97,7 @@ window.JTTSignals = (function () {
       var out = [];
       slatePlayers().forEach(function (p) {
         var b = bestOver(p, 4); if (!b) return;
-        out.push({ p: p, opp: JS.oppOfTeam(p.team), sc: b.sc, line: b.line, l5: l5vals(p.name, b.mkt),
+        out.push({ p: p, opp: JS.oppOfTeam(p.team), sc: b.sc, line: b.line, mkt: b.mkt, l5: l5vals(p.name, b.mkt),
           headline: b.hits + '/' + b.n + ' \u00b7 O' + b.line + ' ' + b.label,
           detail: 'hitting ' + b.label + ' O' + b.line + ' in ' + b.hits + ' of last ' + b.n });
       });
@@ -108,7 +114,7 @@ window.JTTSignals = (function () {
           var olderAvg = older.reduce(function (s, r) { return s + (r[mkt] || 0); }, 0) / older.length;
           if (olderAvg <= 0 || recent >= olderAvg * 0.6) return;   // recent form collapsed vs prior
           var drop = 1 - recent / olderAvg;
-          out.push({ p: p, opp: JS.oppOfTeam(p.team), sc: drop * 10, l5: l5vals(p.name, mkt), line: olderAvg,
+          out.push({ p: p, opp: JS.oppOfTeam(p.team), sc: drop * 10, mkt: mkt, l5: l5vals(p.name, mkt), line: olderAvg,
             headline: mktLabel(mkt) + ' trending under',
             detail: 'L5 ' + recent.toFixed(1) + ' vs prior ' + olderAvg.toFixed(1) + ' (' + Math.round(drop * 100) + '% down)' });
         });
@@ -124,7 +130,7 @@ window.JTTSignals = (function () {
           var lg = recentLogs(p.name), streak = 0;
           for (var i = 0; i < lg.length; i++) { if ((lg[i][mkt] || 0) >= line) streak++; else break; }
           if (streak < 3) return;
-          out.push({ p: p, opp: JS.oppOfTeam(p.team), sc: streak + line / 10, line: line, l5: l5vals(p.name, mkt),
+          out.push({ p: p, opp: JS.oppOfTeam(p.team), sc: streak + line / 10, line: line, mkt: mkt, l5: l5vals(p.name, mkt),
             headline: streak + '-game run \u00b7 O' + line + ' ' + mktLabel(mkt),
             detail: 'cleared ' + mktLabel(mkt) + ' O' + line + ' in ' + streak + ' straight' });
         });
@@ -138,9 +144,9 @@ window.JTTSignals = (function () {
           if (!marketHasData(mkt)) return;
           var avg = l5avg(p.name, mkt), line = JS.drLine(avg, mkt); if (line == null) return;
           var sf = JS.seasonForm(p.name, mkt, line); if (!sf || sf.games < 3) return;
-          if (sf.rate >= 0.8) out.push({ p: p, opp: JS.oppOfTeam(p.team), sc: sf.rate * 10, line: line, l5: l5vals(p.name, mkt),
+          if (sf.rate >= 0.8) out.push({ p: p, opp: JS.oppOfTeam(p.team), sc: sf.rate * 10, line: line, mkt: mkt, l5: l5vals(p.name, mkt),
             headline: 'Hot \u00b7 ' + mktLabel(mkt), detail: sf.hits + '/' + sf.games + ' this season at O' + line });
-          else if (sf.rate <= 0.2) out.push({ p: p, opp: JS.oppOfTeam(p.team), sc: (1 - sf.rate) * 8, line: line, l5: l5vals(p.name, mkt),
+          else if (sf.rate <= 0.2) out.push({ p: p, opp: JS.oppOfTeam(p.team), sc: (1 - sf.rate) * 8, line: line, mkt: mkt, l5: l5vals(p.name, mkt),
             headline: 'Cold \u00b7 ' + mktLabel(mkt), detail: 'only ' + sf.hits + '/' + sf.games + ' this season at O' + line });
         });
       });
@@ -154,7 +160,7 @@ window.JTTSignals = (function () {
         if (p.pos === 'GK' || p.pos === 'FWD') return;
         var avg = l5avg(p.name, 'tackles'), line = JS.drLine(avg, 'tackles'); if (line == null || line < 1.5) return;
         var hr = JS.getHitRate(p.name, 'tackles', line, false); if (!hr || hr.rate < 0.55) return;
-        out.push({ p: p, opp: JS.oppOfTeam(p.team), sc: hr.rate * 10 + line, line: line, l5: l5vals(p.name, 'tackles'),
+        out.push({ p: p, opp: JS.oppOfTeam(p.team), sc: hr.rate * 10 + line, line: line, mkt: 'tackles', l5: l5vals(p.name, 'tackles'),
           headline: 'O' + line + ' Tackles', detail: 'L5 ' + avg.toFixed(1) + ' \u00b7 hit ' + Math.round(hr.rate * 100) + '% (' + hr.n + ')' });
       });
       return wrap('ti-shield-half', 'Tackle Machines', out, 'c-soft', 'No standout tackle volume on the slate.');
@@ -165,7 +171,7 @@ window.JTTSignals = (function () {
         if (p.pos !== 'GK') return;
         var avg = l5avg(p.name, 'saves'), line = JS.drLine(avg, 'saves'); if (line == null || line < 1.5) return;
         var hr = JS.getHitRate(p.name, 'saves', line, false); if (!hr || hr.rate < 0.5) return;
-        out.push({ p: p, opp: JS.oppOfTeam(p.team), sc: hr.rate * 10 + line, line: line, l5: l5vals(p.name, 'saves'),
+        out.push({ p: p, opp: JS.oppOfTeam(p.team), sc: hr.rate * 10 + line, line: line, mkt: 'saves', l5: l5vals(p.name, 'saves'),
           headline: 'O' + line + ' Saves', detail: 'L5 ' + avg.toFixed(1) + ' \u00b7 hit ' + Math.round(hr.rate * 100) + '% (' + hr.n + ')' });
       });
       return wrap('ti-shield', 'Brick Wall', out, 'c-soft', 'No goalkeeper save spots stand out.');
@@ -196,19 +202,10 @@ window.JTTSignals = (function () {
       slatePlayers().forEach(function (p) {
         if (p.pos === 'GK') return;
         var line = 0.5, hr = JS.getHitRate(p.name, 'goals', line, false); if (!hr || hr.n < 4) return;
-        if (hr.rate >= 0.45) out.push({ p: p, opp: JS.oppOfTeam(p.team), sc: hr.rate * 10, line: line, l5: l5vals(p.name, 'goals'),
+        if (hr.rate >= 0.45) out.push({ p: p, opp: JS.oppOfTeam(p.team), sc: hr.rate * 10, line: line, mkt: 'goals', l5: l5vals(p.name, 'goals'),
           headline: 'Anytime scorer', detail: 'scored in ' + Math.round(hr.rate * 100) + '% (' + hr.n + ') \u00b7 xG ' + (p.xG != null ? (+p.xG).toFixed(2) : 'n/a') });
       });
       return wrap('ti-arrows-up-down', 'Goals Galore', out, 'c-soft', 'No standout anytime-scorer spots.');
-    }
-    function goldenBoot() {
-      var out = [];
-      slatePlayers().forEach(function (p) {
-        if (p.pos === 'GK' || (p.G || 0) < 1) return;
-        out.push({ p: p, opp: JS.oppOfTeam(p.team), sc: (p.G || 0) + (p.xG || 0) * 0.3,
-          headline: (p.G || 0) + ' goals', detail: 'season: ' + (p.G || 0) + 'G ' + (p.A || 0) + 'A \u00b7 xG ' + (p.xG != null ? (+p.xG).toFixed(1) : 'n/a') });
-      });
-      return wrap('ti-shoe', 'Golden Boot', out, 'c-fav', 'Scoring race populates once the season is under way.');
     }
     function firstGoal() {
       var out = [];
@@ -231,7 +228,7 @@ window.JTTSignals = (function () {
         var sh = l5avg(p.name, 'shots'), sot = l5avg(p.name, 'shotsOn'); if (sh < 1) return;
         var conv = sot / sh;
         if (conv < 0.5) return;
-        out.push({ p: p, opp: JS.oppOfTeam(p.team), sc: conv * 10 + sot, l5: l5vals(p.name, 'shotsOn'), line: 0.5,
+        out.push({ p: p, opp: JS.oppOfTeam(p.team), sc: conv * 10 + sot, mkt: 'shotsOn', l5: l5vals(p.name, 'shotsOn'), line: 0.5,
           headline: 'High conversion', detail: 'L5 ' + sh.toFixed(1) + ' shots \u00b7 ' + Math.round(conv * 100) + '% on target' });
       });
       return wrap('ti-hand-finger', 'Tap-Ins', out, 'c-soft', 'No high-conversion shooters on the slate.');
@@ -242,7 +239,7 @@ window.JTTSignals = (function () {
       slatePlayers().forEach(function (p) {
         var avg = l5avg(p.name, mkt), line = JS.drLine(avg, 'foulsCommitted'); if (line == null || line < 0.5) return;
         var hr = JS.getHitRate(p.name, mkt, line, false); if (!hr || hr.rate < 0.55) return;
-        out.push({ p: p, opp: JS.oppOfTeam(p.team), sc: hr.rate * 10 + line, line: line, l5: l5vals(p.name, mkt),
+        out.push({ p: p, opp: JS.oppOfTeam(p.team), sc: hr.rate * 10 + line, line: line, mkt: mkt, l5: l5vals(p.name, mkt),
           headline: 'O' + line + ' ' + mktLabel(mkt), detail: 'L5 ' + avg.toFixed(1) + ' \u00b7 hit ' + Math.round(hr.rate * 100) + '%' });
       });
       return wrap('ti-hand-stop', 'Fouled Again', out, 'c-soft', 'No foul magnets on the slate.');
@@ -269,7 +266,7 @@ window.JTTSignals = (function () {
       'locked-in': lockedIn, 'falling-off': fallingOff, 'on-a-run': onARun, 'form-alerts': formAlerts,
       'first-goal': firstGoal, 'tap-ins': tapIns, 'penalty-kings': penaltyKings, 'spam-square': spamSquare,
       'goals-galore': goalsGalore, 'corner-storm': cornerStorm, 'mismatch': mismatch, 'brick-wall': brickWall,
-      'tackle-machines': tackleMachines, 'fouled-again': fouledAgain, 'golden-boot': goldenBoot
+      'tackle-machines': tackleMachines, 'fouled-again': fouledAgain
     };
 
     function playStyles(p, pg) { return [pg]; }
