@@ -72,6 +72,29 @@ def parse_bet(name, values, book):
             out.append((val, stat, 0.5, over))
     return out
 
+MATCH_MKT = {"goals over/under": "goals", "corners over under": "corners", "corners over/under": "corners",
+             "cards over/under": "cards", "cards over under": "cards", "over/under": "goals"}
+STD_LINE = {"goals": 2.5, "corners": 9.5, "cards": 4.5}
+
+def parse_match_bet(name, values):
+    n = (name or "").strip().lower()
+    if any(x in n for x in ("team", "player", "1st", "half", "asian", "handicap")):
+        return None, {}
+    m = MATCH_MKT.get(n)
+    if not m:
+        return None, {}
+    lines = {}
+    for v in values:
+        parts = (v.get("value") or "").strip().split()
+        if len(parts) < 2 or parts[0].lower() not in ("over", "under"):
+            continue
+        try:
+            odd = round(float(v.get("odd")), 2); ln = float(parts[1])
+        except (TypeError, ValueError):
+            continue
+        lines.setdefault(ln, {})[parts[0].lower()] = odd
+    return m, lines
+
 def api(path, key):
     req = urllib.request.Request(BASE + path, headers={"x-apisports-key": key, "Accept": "application/json"})
     with urllib.request.urlopen(req, timeout=30) as r:
@@ -129,13 +152,16 @@ def main():
     exact, toksets, last, nospace = build_name_index(players)
 
     fx = api("/fixtures?league=%d&season=%s&next=%d" % (LEAGUE, season, NEXT), key).get("response", [])
-    alt, books, unmatched, npp = [], set(), {}, 0
+    alt, match_odds, books, unmatched, npp = [], [], set(), {}, 0
     for f in fx:
         fid = f["fixture"]["id"]
+        home = (f.get("teams") or {}).get("home", {}).get("name")
+        away = (f.get("teams") or {}).get("away", {}).get("name")
         try:
             od = api("/odds?fixture=%d" % fid, key).get("response", [])
         except Exception as e:
             print("  odds fetch failed for %d: %s" % (fid, e)); od = []
+        mm = {}
         for entry in od:
             for bk in entry.get("bookmakers", []):
                 bn = bk.get("name", "")
@@ -143,7 +169,8 @@ def main():
                     continue
                 books.add(bn)
                 for bet in bk.get("bets", []):
-                    for (pl, stat, line, over) in parse_bet(bet.get("name", ""), bet.get("values", []), bn):
+                    bname = bet.get("name", "")
+                    for (pl, stat, line, over) in parse_bet(bname, bet.get("values", []), bn):
                         npp += 1
                         name = resolve(pl, exact, toksets, last, nospace)
                         if not name:
@@ -151,15 +178,33 @@ def main():
                             continue
                         alt.append({"player": name, "market": stat, "line": line,
                                     "over": over, "under": None, "book": bn})
+                    mk, lns = parse_match_bet(bname, bet.get("values", []))
+                    if mk:
+                        for ln, d in lns.items():
+                            cur = mm.setdefault(mk, {}).setdefault(ln, {})
+                            if d.get("over") is not None and "over" not in cur:
+                                cur["over"] = d["over"]; cur["book"] = bn
+                            if d.get("under") is not None and "under" not in cur:
+                                cur["under"] = d["under"]
+        for mk, lns in mm.items():
+            std = STD_LINE.get(mk)
+            cands = [ln for ln, d in lns.items() if d.get("over") is not None and d.get("under") is not None]
+            if not cands or not (home and away):
+                continue
+            best = min(cands, key=lambda x: abs(x - std)) if std is not None else cands[0]
+            d = lns[best]
+            match_odds.append({"home": home, "away": away, "market": mk, "line": best,
+                               "over": d.get("over"), "under": d.get("under"), "book": d.get("book")})
         time.sleep(PACE)
 
     out = {"updated": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%MZ"),
-           "source": "api-football (player props: Bet365/Unibet)",
-           "books": sorted(books), "lines": [], "alt": alt, "matchOdds": []}
+           "source": "api-football (player props + match totals: Bet365/Unibet)",
+           "books": sorted(books), "lines": [], "alt": alt, "matchOdds": match_odds}
     os.makedirs(DATA, exist_ok=True)
     json.dump(out, open(os.path.join(DATA, "odds.json"), "w"), separators=(",", ":"))
     matched = len(alt)
-    print("EPL player props: %d priced (%d matched / %d unmatched) | books %s | %d fixtures" % (
+    print("EPL match totals: %d lines | player props: %d priced (%d matched / %d unmatched) | books %s | %d fixtures" % (
+        len(match_odds),
         npp, matched, sum(unmatched.values()), ",".join(sorted(books)) or "-", len(fx)))
     if unmatched:
         top = sorted(unmatched.items(), key=lambda x: -x[1])[:20]
