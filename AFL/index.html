@@ -1246,6 +1246,20 @@
 .mm-probbar{display:flex;height:32px;border-radius:5px;overflow:hidden;margin:4px 0}
 .mm-probseg{display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;color:#0b0f14;white-space:nowrap;overflow:hidden;min-width:0}
 .mm-probseg.h{background:#38bdf8}.mm-probseg.d{background:#64748b;color:#fff}.mm-probseg.a{background:#fb7185}
+
+/* EPL stat breakdown (rank / vs-tier / vs-style) */
+.brk-title{font-family:var(--font-mono);font-size:10px;color:var(--text-3);text-transform:uppercase;letter-spacing:.4px;margin:12px 0 8px}
+.brk-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+@media(max-width:520px){.brk-grid{grid-template-columns:1fr}}
+.brk-team{background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:8px 10px}
+.brk-team-hdr{display:flex;align-items:center;gap:5px;font-family:var(--font-display);font-weight:700;font-size:12px;margin-bottom:4px;flex-wrap:wrap}
+.brk-rank{font-family:var(--font-mono);font-size:9px;color:var(--text-3);background:var(--surface-3);padding:1px 5px;border-radius:3px}
+.brk-substat{font-family:var(--font-mono);font-size:10px;color:var(--accent);text-transform:uppercase;letter-spacing:.3px;margin:6px 0 1px}
+.tier-row{display:flex;justify-content:space-between;align-items:baseline;font-size:11px;padding:1px 0}
+.tier-row-lbl{color:var(--text-2)}
+.tier-row-val{color:var(--text);font-weight:600}
+.tier-row-val em{color:var(--text-3);font-style:italic;font-weight:400}
+.tier-row-n{color:var(--text-3);font-size:9px;margin-left:4px;font-weight:400}
 </style>
 </head>
 <body class="auth-locked">
@@ -2674,6 +2688,36 @@
     return '<details class="mk-collapse"'+(open?' open':'')+'><summary class="tp-collapse-sum"><i class="ti '+icon+'"></i><span class="tp-collapse-title">'+esc(title)+'</span>'+(meta?'<span class="tp-collapse-meta">'+meta+'</span>':'')+'<i class="ti ti-chevron-down tp-collapse-chev"></i></summary><div class="tp-collapse-body">'+body+'</div></details>';
   }
   function _mmTier(t){ var n=_eplStrength()||20; if(!t||!t._rank) return 'Mid'; var r=t._rank/n; return r<=0.3?'Strong':(r<=0.7?'Mid':'Weak'); }
+  function _eplTeamTier(team){ var n=_eplStrength()||20, t=state.idx.teamMap[team]; if(!t||!t._rank) return 'Mid'; var r=t._rank;
+    if(r<=Math.ceil(n*0.20)) return 'Elite'; if(r<=Math.ceil(n*0.45)) return 'Strong'; if(r<=Math.ceil(n*0.72)) return 'Mid'; return 'Weak'; }
+  function _eplStyleName(team){ var t=state.idx.teamMap[team]; var st=(typeof _eplStyle==='function')?_eplStyle(t):[]; return (st&&st.length)?st[0]:null; }
+  function _eplRankOf(team,key,hb){ var ts=Object.values(state.idx.teamMap||{}).filter(function(t){return t[key]!=null;}); if(!ts.length) return null;
+    ts.sort(function(a,b){return hb?(b[key]-a[key]):(a[key]-b[key]);}); var i=ts.indexOf(state.idx.teamMap[team]); return i>=0?(i+1):null; }
+  function _eplSplits(team,oppTier,oppStyle,fn){ var rs=_teamResults(team),all=[],bt=[],bs=[];
+    rs.forEach(function(r){ var isH=r.home===team, opp=isH?r.away:r.home, v=fn(r,isH); if(v==null||isNaN(v)) return; all.push(v);
+      if(oppTier && _eplTeamTier(opp)===oppTier) bt.push(v); if(oppStyle && _eplStyleName(opp)===oppStyle) bs.push(v); });
+    var avg=function(a){return a.length?a.reduce(function(p,q){return p+q;},0)/a.length:null;};
+    return {season:{v:avg(all),n:all.length}, tier:{v:avg(bt),n:bt.length}, style:{v:avg(bs),n:bs.length}}; }
+  var _EPL_MKT={
+    goals:[{key:'gf',label:'GF',hb:true,fn:function(r,isH){return isH?r.homeScore:r.awayScore;}},
+           {key:'ga',label:'GA',hb:false,fn:function(r,isH){return isH?r.awayScore:r.homeScore;}}],
+    corners:[{key:'cornersFor',label:'CF',hb:true,fn:function(r,isH){return r.cornersHome==null?null:(isH?r.cornersHome:r.cornersAway);}},
+             {key:'cornersAgainst',label:'CA',hb:false,fn:function(r,isH){return r.cornersHome==null?null:(isH?r.cornersAway:r.cornersHome);}}],
+    cards:[{key:'cards',label:'Yel',hb:true,fn:function(r,isH){return r.cardsHome==null?null:(isH?r.cardsHome:r.cardsAway);}}]
+  };
+  function _eplRow(lbl,d){ return '<div class="tier-row"><span class="tier-row-lbl">'+esc(lbl)+'</span><span class="tier-row-val">'+(d&&d.v!=null?d.v.toFixed(1):'<em>\u2014</em>')+(d&&d.n?'<span class="tier-row-n">'+d.n+'g</span>':'')+'</span></div>'; }
+  function _eplStatBreakdown(g,stats){
+    var home=g.home, away=g.away, hTier=_eplTeamTier(home), aTier=_eplTeamTier(away), hSt=_eplStyleName(home), aSt=_eplStyleName(away);
+    function card(team,oppTier,oppStyle){
+      var t=state.idx.teamMap[team]||{};
+      var chips=stats.map(function(st){ var rk=_eplRankOf(team,st.key,st.hb); return rk?'<span class="brk-rank">'+st.label+' #'+rk+'</span>':''; }).join('');
+      var rows=stats.map(function(st){ var sp=_eplSplits(team,oppTier,oppStyle,st.fn); var seasonV=(t[st.key]!=null)?+t[st.key]:sp.season.v;
+        return '<div class="brk-substat">'+st.label+'</div>'+_eplRow('Season',{v:seasonV,n:sp.season.n})+
+          (oppTier?_eplRow('vs '+oppTier+' tier',sp.tier):'')+(oppStyle?_eplRow('vs '+oppStyle,sp.style):''); }).join('');
+      return '<div class="brk-team"><div class="brk-team-hdr">'+teamLogo(team,18)+'<span>'+esc(abbr(team))+'</span>'+chips+'</div>'+rows+'</div>';
+    }
+    return '<div class="brk-title">Stat breakdown \u00b7 rank \u00b7 vs similar</div><div class="brk-grid">'+card(home,aTier,aSt)+card(away,hTier,hSt)+'</div>';
+  }
   function _eplMarketPanels(g){
     if(!_isMatchProps()) return '';
     var home=g.home, away=g.away, hG=_mmTeamGoals(home), aG=_mmTeamGoals(away);
@@ -2710,9 +2754,9 @@
       var cdDetail='<div>'+abbr(home)+' Y <b>'+hY.f.toFixed(2)+'</b></div><div>'+abbr(away)+' Y <b>'+aY.f.toFixed(2)+'</b></div>'+_adj;
       cardsCard=_mkCard({name:'Total Cards',icon:'ti-cards',value:ctot.toFixed(1),line:'O/U 4.5',valueLabel:'proj',lean:cdLean,leanLabel:'LEAN '+cdLean.toUpperCase(),detail:cdDetail,bar:{value:ctot,line:4.5,max:9}}); }
     return _mkCollapse('Match','ti-trophy','',header+resultCard,true)+
-      _mkCollapse('Goals','ti-ball-football',m.tot.toFixed(1),goalsCard,false)+
-      (cornersCard?_mkCollapse('Corners','ti-flag','',cornersCard,false):'')+
-      (cardsCard?_mkCollapse('Cards','ti-cards','',cardsCard,false):'');
+      _mkCollapse('Goals','ti-ball-football',m.tot.toFixed(1),goalsCard+_eplStatBreakdown(g,_EPL_MKT.goals),false)+
+      (cornersCard?_mkCollapse('Corners','ti-flag','',cornersCard+_eplStatBreakdown(g,_EPL_MKT.corners),false):'')+
+      (cardsCard?_mkCollapse('Cards','ti-cards','',cardsCard+_eplStatBreakdown(g,_EPL_MKT.cards),false):'');
   }
   function gameMatchMarkets(home,away){
     if(!_isMatchProps()) return '';
