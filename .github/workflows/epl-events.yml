@@ -1,0 +1,48 @@
+name: EPL Events (goal/card/sub timing)
+
+# Backfills per-fixture goal/card/sub events from API-Football, aggregates per team ->
+# EPL/data/events.json (feeds First & Last, Substitution Trends, goal-timing buckets).
+# Raw events cached in af_events_raw.json so finished fixtures are never re-fetched.
+# First runs backfill up to EPL_EVENTS_MAX new fixtures each; run it a few times to catch up.
+on:
+  workflow_dispatch:
+    inputs:
+      seasons:
+        description: "Seasons e.g. 2025,2026 (blank = default)"
+        required: false
+      max_new:
+        description: "Max new fixtures to fetch this run (blank = 300)"
+        required: false
+  schedule:
+    - cron: '30 7 * * *'     # daily after the build — picks up newly-finished fixtures
+
+permissions:
+  contents: write
+concurrency:
+  group: epl-events
+  cancel-in-progress: false
+
+jobs:
+  events:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Fetch + aggregate events
+        env:
+          APIFOOTBALL_KEY: ${{ secrets.APIFOOTBALL_KEY }}
+          EPL_EVENTS_SEASONS: ${{ github.event.inputs.seasons }}
+          EPL_EVENTS_MAX: ${{ github.event.inputs.max_new }}
+        run: python EPL/fetch_af_events.py
+      - name: Commit
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add EPL/data/events.json EPL/data/af_events_raw.json
+          if git diff --staged --quiet; then echo "no change"; else
+            git commit -m "EPL events $(date -u +%Y-%m-%dT%H:%MZ)"
+            git pull --rebase --autostash origin main || true
+            git push
+          fi
