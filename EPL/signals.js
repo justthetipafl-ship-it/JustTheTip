@@ -21,6 +21,7 @@ window.JTTSignals = (function () {
     var JS = deps.JTTScoring || window.JTTScoring;
     var priceForLine = deps.priceForLine;
     var bookName = deps.bookName || function(b){return b||'';};
+    var degRow = deps.degRow || function(){return '';};
     var CFG = (typeof window !== 'undefined' && window.SPORT_CONFIG) || {};
     var MKT = CFG.mktNames || {};
     function mktLabel(k) { return MKT[k] || k; }
@@ -115,12 +116,16 @@ window.JTTSignals = (function () {
           var olderAvg = older.reduce(function (s, r) { return s + (r[mkt] || 0); }, 0) / older.length;
           if (olderAvg <= 0 || recent >= olderAvg * 0.6) return;   // recent form collapsed vs prior
           var drop = 1 - recent / olderAvg;
-          out.push({ p: p, opp: JS.oppOfTeam(p.team), sc: drop * 10, mkt: mkt, l5: l5vals(p.name, mkt), line: olderAvg,
-            headline: mktLabel(mkt) + ' trending under',
-            detail: 'L5 ' + recent.toFixed(1) + ' vs prior ' + olderAvg.toFixed(1) + ' (' + Math.round(drop * 100) + '% down)' });
+          out.push({ p: p, opp: JS.oppOfTeam(p.team), sc: drop * 10, mkt: mkt, recent: recent, older: olderAvg, drop: drop });
         });
       });
-      return wrap('ti-trending-down', 'Falling Off', out, 'c-tough', 'Nobody in a notable downtrend on the slate.');
+      out.sort(function (a, b) { return b.sc - a.sc; });
+      if (!out.length) return emptyState('ti-trending-down', 'Falling Off', 'Nobody in a notable downtrend on the slate.');
+      var rows = out.slice(0, 12).map(function (c) {
+        var sub = posShort(c.p.pos) + ' \u00b7 ' + abbr(c.p.team) + (c.opp ? ' v ' + abbr(c.opp) : '') + ' \u00b7 ' + mktLabel(c.mkt) + ' L5 ' + c.recent.toFixed(1) + ' vs ' + c.older.toFixed(1) + ' prior';
+        return degRow(c.p.name, '#ef4444', '\u2193 ' + Math.round(c.drop * 100) + '%', sub, c.p.name);
+      });
+      return degWrap('ti-trending-down', 'Falling Off', rows, 'c-tough');
     }
     function onARun() {
       var out = [];
