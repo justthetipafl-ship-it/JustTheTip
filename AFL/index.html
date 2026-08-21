@@ -3373,7 +3373,23 @@
       '<div class="statcell"><div class="v">'+pct(ou)+'%</div><div class="k">O 2.5 \u00b7 '+ouLean+'</div></div>'+
       '<div class="statcell"><div class="v">'+pct(btts)+'%</div><div class="k">BTTS \u00b7 '+bttsLean+'</div></div>'+((hT.cornersFor!=null&&aT.cornersFor!=null)?'<div class="statcell"><div class="v">'+(((hT.cornersFor+aT.cornersAgainst)/2+(aT.cornersFor+hT.cornersAgainst)/2)).toFixed(1)+'</div><div class="k">proj. corners</div></div>':'')+'</div>'+
       '<div class="tp-body-meta" style="border:0;margin-top:6px">'+abbr(g.home)+' xG '+lamH.toFixed(2)+' \u00b7 '+abbr(g.away)+' xG '+lamA.toFixed(2)+' (from season GF/GA)</div>';
-    return _eplWrap('Match',' ti-chart-arcs',res,'c-green')+_eplWrap('Goals','ti-ball-football',goals);
+    // Cards (referee-driven — team discipline x the assigned/picked ref's strictness)
+    const _ref=_eplRefFor(g), _rs=((state.data.referees||{}).refStats)||{}, _rr=_ref&&_rs[_ref];
+    let _rm=1.0, _rnote='league-average referee';
+    if(_rr&&_rr.cardsPG){
+      const _arr=Object.keys(_rs).map(function(k){return +_rs[k].cardsPG;}).filter(function(x){return x>0;});
+      const _lg=_arr.length?_arr.reduce(function(a,b){return a+b;},0)/_arr.length:_rr.cardsPG;
+      if(_lg>0){ _rm=_rr.cardsPG/_lg; _rnote=esc(_ref)+' \u00b7 '+(+_rr.cardsPG).toFixed(1)+' cards/game'; }
+    }
+    const _mt=(window.JTTScoring&&JTTScoring.projMatchTotals)?JTTScoring.projMatchTotals(g,_rm):null;
+    const _projCd=_mt?_mt.cards.total:(((hT.cards||0)+(aT.cards||0))*_rm);
+    let cards='<div class="section-title" style="margin:2px 0 6px">Cards</div>'+
+      '<div class="statgrid">'+
+      '<div class="statcell"><div class="v">'+_projCd.toFixed(1)+'</div><div class="k">proj. total cards</div></div>'+
+      '<div class="statcell"><div class="v">'+_rm.toFixed(2)+'\u00d7</div><div class="k">referee factor</div></div>'+
+      '<div class="statcell"><div class="v" style="font-size:12px">'+(hT.cards!=null?(+hT.cards).toFixed(1):'\u2014')+' / '+(aT.cards!=null?(+aT.cards).toFixed(1):'\u2014')+'</div><div class="k">'+esc(abbr(g.home))+' / '+esc(abbr(g.away))+' cards/g</div></div></div>'+
+      '<div class="tp-body-meta" style="border:0;margin-top:6px">'+_rnote+(_ref?'':' \u2014 pick a referee in the panel below to sharpen this')+'</div>';
+    return _eplWrap('Match',' ti-chart-arcs',res,'c-green')+_eplWrap('Goals','ti-ball-football',goals)+_eplWrap('Cards','ti-cards',cards);
   }
 
   function _eplFocusPanels(g){ return _eplMatchPanel(g)+_eplLineupDropPanel(g)+_eplRefereePanel(g)+_eplLineupPanel(g)+_eplVenuePanel(g); }
