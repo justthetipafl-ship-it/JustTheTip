@@ -1283,6 +1283,33 @@
 .rg2-tags{display:flex;gap:3px;flex-shrink:0;flex-wrap:wrap;justify-content:flex-end;margin-left:auto}
 .rg-tag{font-family:var(--font-mono);font-size:8.5px;padding:1px 4px;border-radius:3px;background:var(--surface-3);color:var(--text-3);white-space:nowrap}
 .rg-tag.on{background:rgba(34,197,94,.18);color:#22c55e}
+
+/* EPL goal-timing buckets / First & Last / Sub Trends */
+.bth-sub{font-family:var(--font-mono);font-size:10px;color:var(--text-3);text-transform:uppercase;margin:12px 0 6px}
+.gtb-row{display:flex;gap:4px;align-items:flex-end}
+.gtb-col{flex:1;display:flex;flex-direction:column;align-items:center}
+.gtb-bars{display:flex;gap:2px;align-items:flex-end;height:60px;width:100%;justify-content:center}
+.gtb-bar{width:9px;border-radius:2px 2px 0 0;min-height:1px}
+.gtb-bar.sc{background:#22c55e}.gtb-bar.cc{background:#ef4444}
+.gtb-lbl{font-family:var(--font-mono);font-size:8px;color:var(--text-3);margin-top:3px}
+.gtb-n{font-family:var(--font-mono);font-size:8px;color:var(--text-2)}
+.gtb-legend{display:flex;align-items:center;gap:5px;font-family:var(--font-mono);font-size:9px;color:var(--text-3);margin-top:8px}
+.gtb-key{width:8px;height:8px;border-radius:2px;display:inline-block;margin-left:6px}
+.gtb-key.sc{background:#22c55e}.gtb-key.cc{background:#ef4444}
+.fl-stats{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-bottom:8px}
+.fl-mins{grid-template-columns:repeat(2,1fr)}
+.fl-stat{background:var(--surface);border:1px solid var(--border);border-radius:5px;padding:7px 4px;text-align:center}
+.fl-v{font-family:var(--font-display);font-weight:700;font-size:14px}
+.fl-l{font-family:var(--font-mono);font-size:8.5px;color:var(--text-3);text-transform:uppercase;margin-top:2px}
+.fl-sec{font-family:var(--font-mono);font-size:10px;color:var(--accent);text-transform:uppercase;margin:10px 0 4px;letter-spacing:.3px}
+.fl-row{display:flex;justify-content:space-between;padding:3px 0;border-bottom:1px solid var(--border);font-size:12px}
+.fl-row:last-child{border-bottom:0}
+.fl-nm{font-weight:600}
+.fl-c{font-family:var(--font-mono);font-size:10px;color:#22c55e}
+.st2-row{display:flex;justify-content:space-between;align-items:center;padding:5px 0;border-bottom:1px solid var(--border)}
+.st2-row:last-child{border-bottom:0}
+.st2-nm{font-weight:600;font-size:12px}
+.st2-meta{font-family:var(--font-mono);font-size:10px;color:var(--text-3)}
 </style>
 </head>
 <body class="auth-locked">
@@ -2848,8 +2875,11 @@
     var body='<div class="bth-meta">'+n+' matches \u00b7 1H vs 2H</div>'+
       '<div class="bth-callout">'+co+co2+'</div>'+
       '<div class="bth-grid">'+cell('1H GF',(h1f/n).toFixed(2))+cell('2H GF',(h2f/n).toFixed(2))+cell('1H GA',(h1a/n).toFixed(2))+cell('2H GA',(h2a/n).toFixed(2))+'</div>'+
-      '<div class="bth-grid bth-pct">'+cell('Scored 1H',pct(s1)+'%')+cell('Scored 2H',pct(s2)+'%')+cell('Conceded 1H',pct(c1)+'%')+cell('Conceded 2H',pct(c2)+'%')+'</div>'+
-      '<div class="bth-note">Goal-timing buckets need per-goal events \u2014 coming with the events fetch.</div>';
+      '<div class="bth-grid bth-pct">'+cell('Scored 1H',pct(s1)+'%')+cell('Scored 2H',pct(s2)+'%')+cell('Conceded 1H',pct(c1)+'%')+cell('Conceded 2H',pct(c2)+'%')+'</div>';
+    var _ev=(state.data.events&&state.data.events.byTeam&&state.data.events.byTeam[team]);
+    if(_ev&&_ev.timing){ var sc=_ev.timing.scored,cc=_ev.timing.conceded,mx=Math.max.apply(null,[1].concat(sc,cc)),L=['0-15','16-30','31-45','46-60','61-75','76-90'];
+      var bars=L.map(function(l,i){return '<div class="gtb-col"><div class="gtb-bars"><div class="gtb-bar sc" style="height:'+Math.round((sc[i]||0)/mx*100)+'%"></div><div class="gtb-bar cc" style="height:'+Math.round((cc[i]||0)/mx*100)+'%"></div></div><div class="gtb-lbl">'+l+'</div><div class="gtb-n">'+(sc[i]||0)+'-'+(cc[i]||0)+'</div></div>';}).join('');
+      body+='<div class="bth-sub">Goal timing \u00b7 15-min buckets</div><div class="gtb-row">'+bars+'</div><div class="gtb-legend"><span class="gtb-key sc"></span>Scored<span class="gtb-key cc"></span>Conceded</div>'; }
     return _mkCollapse('By The Halves','ti-ball-football',n+'g',body,false);
   }
   function _eplRecentGames(team){
@@ -2872,10 +2902,27 @@
     }).join('');
     return _mkCollapse('Recent Games','ti-history',rs.length+'',rows,false);
   }
+  function _eplFirstLast(team){
+    var ev=(state.data.events&&state.data.events.byTeam&&state.data.events.byTeam[team]); if(!ev) return '';
+    var pc=function(x){return Math.round((x||0)*100)+'%';};
+    function sc(l,v){return '<div class="fl-stat"><div class="fl-v">'+v+'</div><div class="fl-l">'+l+'</div></div>';}
+    var top='<div class="fl-stats">'+sc('Opens scoring',pc(ev.opensScoring))+sc('Concedes 1st',pc(ev.concedesFirst))+sc('No 1H goal',pc(ev.no1hGoal))+sc('Carded 1st',pc(ev.cardedFirst))+'</div>'+
+      '<div class="fl-stats fl-mins">'+sc('Avg 1st scored',ev.avgFirstScored?ev.avgFirstScored+'\u2032':'\u2014')+sc('Avg 1st conceded',ev.avgFirstConceded?ev.avgFirstConceded+'\u2032':'\u2014')+'</div>';
+    function lst(t,a,sfx){ if(!a||!a.length) return ''; return '<div class="fl-sec">'+t+'</div>'+a.map(function(p){return '<div class="fl-row"><span class="fl-nm">'+esc(p[0])+'</span><span class="fl-c">'+p[1]+' '+sfx+'</span></div>';}).join(''); }
+    var body=top+lst('First goal scorers',ev.firstScorers,'opens')+lst('Last goal scorers',ev.lastScorers,'last')+lst('Late merchants (\u226576\u2032)',ev.lateScorers,'late')+lst('First to be carded',ev.firstCarded,'bookings');
+    return _mkCollapse('First & Last','ti-flag',(ev.matches||0)+'g',body,false);
+  }
+  function _eplSubTrends(team){
+    var ev=(state.data.events&&state.data.events.byTeam&&state.data.events.byTeam[team]); if(!ev||!ev.hooked||!ev.hooked.length) return '';
+    var rows=ev.hooked.map(function(h){return '<div class="st2-row"><span class="st2-nm">'+esc(h.player)+'</span><span class="st2-meta">off ~'+h.offAvg+'\u2032 \u00b7 '+h.n+'\u00d7</span></div>';}).join('');
+    return _mkCollapse('Substitution Trends','ti-arrows-shuffle',ev.hooked.length+'','<div class="bth-meta">Hooked early \u00b7 prop-carryover risk</div>'+rows,false);
+  }
   function _eplTrendBlock(team){
     const rs=_teamResults(team); let out='';
     out+=_eplByTheHalves(team);
     out+=_eplRecentGames(team);
+    out+=_eplFirstLast(team);
+    out+=_eplSubTrends(team);
     return out;
   }
   function gameByHalves(home,away){
