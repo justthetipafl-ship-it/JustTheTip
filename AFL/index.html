@@ -1324,6 +1324,10 @@
 .lc-spark .v{font-family:var(--font-mono);font-size:11px;font-weight:700;min-width:20px;text-align:center;padding:2px 5px;border-radius:4px}
 .lc-spark .v.hit{background:rgba(34,197,94,.2);color:#22c55e}
 .lc-spark .v.miss{background:var(--surface-3);color:var(--text-3)}
+
+/* fixture-list local kickoff (date + time) */
+.fxr-ko-date{display:block;font-size:9px;color:var(--text-3);font-family:var(--font-mono);text-transform:uppercase;letter-spacing:.3px;line-height:1.3}
+.fxr-ko-time{display:block;font-size:12px;font-weight:700;color:var(--text);line-height:1.2}
 </style>
 </head>
 <body class="auth-locked">
@@ -2195,10 +2199,16 @@
   // display the game time/date in the USER's timezone (games ship in venue/source tz)
   function _localTime(g){ const ms=gameStart(g); if(ms==null) return (g&&g.time)||''; return new Date(ms).toLocaleTimeString([], {hour:'numeric', minute:'2-digit'}); }
   function _localDate(g){ const ms=gameStart(g); if(ms==null) return (g&&g.date)||''; const d=new Date(ms); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
+  // local date + time for the fixture list (user's timezone)
+  function _localKickoff(g){ const ms=gameStart(g); if(ms==null) return esc((g&&g.time)||'TBC');
+    const d=new Date(ms);
+    return '<span class="fxr-ko-date">'+d.toLocaleDateString([],{weekday:'short',day:'numeric',month:'short'})+'</span>'+
+           '<span class="fxr-ko-time">'+d.toLocaleTimeString([],{hour:'numeric',minute:'2-digit'})+'</span>'; }
   // best-effort kickoff instant: prefer raw utc; else parse date+time (current data is UTC 24h, post-rebuild is venue-local 12h)
   function gameStart(g){
     const _u=g&&(g.utc||g.gameTimeUTC||g.startTimeUTC);
     if(_u){ const s=/[zZ]|[+-]\d\d:?\d\d$/.test(_u)?_u:(_u+'Z'); const t=Date.parse(s); if(!isNaN(t)) return t; }
+    if(g&&g.date&&/T\d/.test(g.date)){ const s=/[zZ]|[+-]\d\d:?\d\d$/.test(g.date)?g.date:(g.date+'Z'); const t=Date.parse(s); if(!isNaN(t)) return t; }
     if(g&&g.date&&g.time){ const ap=g.time.match(/(am|pm)/i), mm=g.time.match(/(\d{1,2}):(\d{2})/);
       if(!mm) return null; let h=+mm[1]; const m=+mm[2];
       if(ap){ const pm=/pm/i.test(ap[1]); if(pm&&h<12)h+=12; if(!pm&&h===12)h=0; }
@@ -2604,7 +2614,7 @@
       if(SPORT.key==='mlb'){ _mlbStatusEnsure(); h+=_mlbFxRow(g,i); return; }
       h+='<div class="fixture-row'+(gameDone(g)?' fxr-done':'')+'" onclick="state.view.fixtureId='+i+';_renderApp();window.scrollTo({top:0})">'+
         '<div class="fxr-team">'+teamLogo(g.home,40)+'<div class="fxr-name">'+g.home+'</div>'+pips(g.home)+'</div>'+
-        '<div class="fxr-center"><div class="fxr-kickoff">'+esc(_localTime(g))+'</div><div class="fxr-vs">'+(gameDone(g)?'<span class="fxr-ft">FT</span>':'v')+'</div><div class="fxr-venue">'+(g.venue||'TBC')+'</div>'+weatherChip(g.home,g.away)+'</div>'+
+        '<div class="fxr-center"><div class="fxr-kickoff">'+_localKickoff(g)+'</div><div class="fxr-vs">'+(gameDone(g)?'<span class="fxr-ft">FT</span>':'v')+'</div><div class="fxr-venue">'+(g.venue||'TBC')+'</div>'+weatherChip(g.home,g.away)+'</div>'+
         '<div class="fxr-team">'+teamLogo(g.away,40)+'<div class="fxr-name">'+g.away+'</div>'+pips(g.away)+'</div></div>';
     });
     return h;
