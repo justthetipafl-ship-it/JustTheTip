@@ -63,13 +63,32 @@ window.JTTScoring = (function () {
   function gameForTeam(team) { return byTeamGame[team] || null; }
   function oppOfTeam(team) { var g = gameForTeam(team); return g ? (g.home === team ? g.away : g.home) : null; }
 
-  // ---- projection: base rate x opponent leaky-defence ----
+  // ---- minutes-aware rate: per-90 scaled by expected minutes, shrunk to a season prior ----
+  function _expMin(name) {
+    var s = slice(name); if (!s.length) return 90;
+    var m = s.slice(-6).map(function (r) { return +r.min || 0; }).filter(function (x) { return x > 0; });
+    if (!m.length) return 90;
+    return _clamp(m.reduce(function (a, b) { return a + b; }, 0) / m.length, 0, 90);
+  }
+  function _minAwareRate(name, stat) {
+    var s = slice(name), n = s.length;
+    if (!n) return seasonBaseline(byName[name], stat);
+    var tot = 0, mins = 0;
+    for (var i = 0; i < n; i++) { tot += (s[i][stat] || 0); mins += (+s[i].min || 0); }
+    var rate = mins > 0 ? (tot / mins * 90) * (_expMin(name) / 90) : (tot / n);   // per-90 x expected share of 90'
+    var basePG = seasonBaseline(byName[name], stat) || rate, prior = 5;
+    return (rate * n + basePG * prior) / (n + prior);                              // Bayesian shrink to season baseline
+  }
+
+  // ---- projection: minutes-aware base, xG/xA overlay, opponent leaky-defence, home tilt ----
   function projPlayer(p, stat) {
-    var base = blendedRate(p.name, stat), f = 1, opp = oppOfTeam(p.team), pct = null;
-    if (opp) {
-      pct = getDVPPct(opp, p.pos, stat);
-      if (pct != null) f *= _clamp(1 + (pct / 100) * DVP_WEIGHT, 0.75, 1.3);
-    }
+    var base = _minAwareRate(p.name, stat);
+    if (stat === 'goals') { var xg = _minAwareRate(p.name, 'xg'); if (xg != null && isFinite(xg)) base = 0.40 * base + 0.60 * xg; }        // xG is the less-noisy goal predictor
+    else if (stat === 'assists') { var xa = _minAwareRate(p.name, 'xa'); if (xa != null && isFinite(xa)) base = 0.45 * base + 0.55 * xa; }
+    var f = 1, opp = oppOfTeam(p.team), pct = null, g = gameForTeam(p.team);
+    if (opp) { pct = getDVPPct(opp, p.pos, stat); if (pct != null) f *= _clamp(1 + (pct / 100) * DVP_WEIGHT, 0.75, 1.3); }
+    if (g && (stat === 'shots' || stat === 'shotsOn' || stat === 'goals' || stat === 'assists' || stat === 'keyPasses'))
+      f *= (g.home === p.team) ? 1.04 : 0.97;                                       // modest home/away tilt on attacking output
     return { proj: base * f, opp: opp, dvpPct: pct };
   }
   function prob(p, stat, line) {
@@ -134,7 +153,18 @@ window.JTTScoring = (function () {
   // ---- matchup tags: leaky defence, set-piece role, hot/cold season form ----
   function getContextSignals(p, stat, line, opp) {
     var tags = []; if (!p) return tags;
-    var oppT = opp || oppOfTeam(p.team);
+    var oppT = opp || oppOfTeam(p.team), _g = gameForTeam(p.team);
+    if (_g && _g.home === p.team && (stat === 'shots' || stat === 'shotsOn' || stat === 'goals' || stat === 'assists')) tags.push({ t: 'At home', good: true });
+    if (stat === 'goals') {                                                          // xG regression: over/under-performing finishers mean-revert
+      var _ga = avgOf(p.name, 'goals'), _xa = avgOf(p.name, 'xg');
+      if (_xa > 0.06) {
+        if (_ga > _xa * 1.6 && (_ga - _xa) > 0.15) tags.push({ t: 'Overperforming xG \u2014 due to cool', good: false });
+        else if (_ga < _xa * 0.6 && (_xa - _ga) > 0.12) tags.push({ t: 'Underperforming xG \u2014 due a goal', good: true });
+      }
+    }
+    var _em = _expMin(p.name);
+    if (_em < 65) tags.push({ t: 'Rotation risk (' + Math.round(_em) + '\u2032 avg)', good: false });
+    else if (_em >= 85 && (stat === 'shots' || stat === 'shotsOn' || stat === 'goals' || stat === 'tackles' || stat === 'passes')) tags.push({ t: 'Nailed starter', good: true });
     if (oppT && (stat === 'shots' || stat === 'shotsOn' || stat === 'goals' || stat === 'assists')) {
       var pct = getDVPPct(oppT, p.pos, stat);
       if (pct != null && pct > 8) tags.push({ t: 'vs leaky defence', good: true });
@@ -231,7 +261,7 @@ window.JTTScoring = (function () {
     muInfo: muInfo, getContextSignals: getContextSignals, cmpFactors: cmpFactors,
     getL: getL, POS: POS, POS_TO_DVP: POS_TO_DVP,
     // EPL extras used by epl/signals.js
-    projPlayer: projPlayer, prob: prob, roundLineFromLadder: roundLineFromLadder,
+    projPlayer: projPlayer, prob: prob, roundLineFromLadder: roundLineFromLadder, expMin: _expMin,
     seasonForm: seasonForm, seasonFormWeight: seasonFormWeight,
     projMatchTotals: projMatchTotals, matchTotalProb: matchTotalProb,
     avgOf: avgOf, hitRateLogs: hitRateLogs, slice: slice, logsOf: logsOf, oppOfTeam: oppOfTeam
