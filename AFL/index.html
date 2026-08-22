@@ -1334,6 +1334,17 @@
 .cmb-val.good{color:#22c55e;background:#22c55e18;border:1px solid #22c55e44}
 .cmb-val.fair{color:var(--text-3);background:var(--surface-2)}
 .cmb-val.bad{color:#ef4444;background:#ef444414}
+
+/* Top Value Bets */
+.vb-grid{display:flex;flex-direction:column;gap:6px;margin:4px 0 10px}
+.vb-card{display:flex;align-items:center;gap:10px;padding:8px 10px;border:1px solid var(--border);border-left:3px solid #22c55e;border-radius:7px;background:var(--surface-2);cursor:pointer;transition:background .12s}
+.vb-card:hover{background:var(--surface-3,var(--surface))}
+.vb-edge{flex:0 0 auto;font-family:var(--font-mono);font-weight:800;font-size:14px;color:#22c55e;min-width:42px;text-align:center}
+.vb-main{flex:1 1 auto;min-width:0}
+.vb-nm{font-weight:700;font-size:13px;color:var(--text)}
+.vb-ln{font-size:11px;color:var(--text-2);margin-top:1px}
+.vb-sub{font-size:9px;color:var(--text-3);font-family:var(--font-mono);margin-top:1px}
+.vb-chev{flex:0 0 auto;color:var(--text-3);font-size:16px}
 </style>
 </head>
 <body class="auth-locked">
@@ -3802,6 +3813,7 @@
       '<button class="fxm-btn'+(fxMode==='nerd'?' on':'')+'" onclick="setFxMode(\'nerd\')"><i class="ti ti-math-function"></i> Nerd Mode</button></div>';
     if(fxMode==='nerd') h+=nerdFilterBar();
     h+='<div class="team-cols">'+teamSignals(g.home,g.away,true)+teamSignals(g.away,g.home,false)+'</div>';
+    if(!_fxHid('sec','value')) h+=valueBetsSection(g.home,g.away);
     if(SPORT.key!=='epl' && !_fxHid('sec','insouts')) h+=insOutsSection(g.home,g.away);
     if(!_fxHid('sec','radar')) h+=radarSection(g.home,g.away,g.venue||(g.park&&g.park.name));
     if(SPORT.key!=='epl' && fxMode!=='nerd' && !_fxHid('sec','jupiter')) h+=jupiter(g);
@@ -5117,6 +5129,38 @@
   }
   // greedy ONE-leg-per-player pick of `need` legs from the ranked pool
   function _dvSel1pp(pool,need){ const seen=new Set(),idx=[]; for(let i=0;i<pool.length&&idx.length<need;i++){ if(!seen.has(pool[i].name)){ seen.add(pool[i].name); idx.push(i); } } return idx; }
+  // ---- Top Value Bets: rank every playing player x market by model-vs-priced edge ----
+  function valueBetsSection(home,away){
+    if(!(window.JTTScoring&&JTTScoring.prob)||!hasAnyOdds())return '';
+    var mkts=(BET_STATS||[]).map(function(m){return m[0];}), pool=playersOnTeam(home).concat(playersOnTeam(away)), bets=[];
+    pool.forEach(function(p){
+      if(!isPlaying(p.name,p.team))return;
+      mkts.forEach(function(stat){
+        if(_fxHid('mkt',stat))return;
+        var od=oddsFor(p.name,stat); if(!od||od.over==null||od.line==null)return;
+        if(od.over<1.2||od.over>6)return;
+        var mp; try{mp=JTTScoring.prob(p,stat,od.line);}catch(e){return;}
+        if(mp==null||!isFinite(mp))return;
+        var imp=(od.under!=null&&od.under>0)?(1/od.over)/((1/od.over)+(1/od.under)):(1/od.over);
+        var edge=mp-imp;
+        if(edge>=0.06)bets.push({p:p,stat:stat,line:od.line,over:od.over,book:od.book,mp:mp,imp:imp,edge:edge});
+      });
+    });
+    if(!bets.length)return '';
+    bets.sort(function(a,b){return b.edge-a.edge;});
+    bets=bets.slice(0,6);
+    var cards=bets.map(function(b){
+      var qn=esc(b.p.name).replace(/\x27/g,"\\\x27"), lbl=(CMP_STAT_LABELS[b.stat]||b.stat);
+      return '<div class="vb-card" onclick="_pmToCMB(\''+qn+'\',\''+b.stat+'\','+b.line+')">'+
+        '<div class="vb-edge">+'+Math.round(b.edge*100)+'%</div>'+
+        '<div class="vb-main"><div class="vb-nm">'+esc(b.p.name)+'</div>'+
+        '<div class="vb-ln">'+esc(lbl)+' O'+b.line+' · $'+b.over.toFixed(2)+(b.book?' '+_bookShort(b.book):'')+'</div>'+
+        '<div class="vb-sub">'+posShort(b.p.position)+' · '+esc(b.p.team)+' · model '+Math.round(b.mp*100)+'% vs priced '+Math.round(b.imp*100)+'%</div></div>'+
+        '<i class="ti ti-chevron-right vb-chev"></i></div>';
+    }).join('');
+    return '<div class="tp-sec"><div class="sec-title"><i class="ti ti-diamond"></i> Top Value Bets</div><div class="sec-meta">model vs priced edge · tap to check</div></div><div class="vb-grid">'+cards+'</div>';
+  }
+
   function dejaVuSGM(home,away){
     const S=_dvState(); S.home=home; S.away=away;
     const avail=Math.max(1,_dvMeetings(home,away,999).length);   // total H2H meetings available (respects the Same Team/Same SP filter)
