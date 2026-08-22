@@ -109,6 +109,7 @@ window.JTTSignals = (function () {
       var out = [];
       slatePlayers().forEach(function (p) {
         marketsFor(p).forEach(function (mkt) {
+          if (mkt === 'keyPasses' || mkt === 'assists') return;   // not surfaced in Falling Off
           if (!marketHasData(mkt)) return;
           var all = recentLogs(p.name); if (all.length < 8) return;
           var recent = l5avg(p.name, mkt), older = all.slice(5, 10);
@@ -269,10 +270,10 @@ window.JTTSignals = (function () {
     }
 
     var tiles = {
-      'locked-in': lockedIn, 'falling-off': fallingOff, 'on-a-run': onARun, 'form-alerts': formAlerts,
+      'locked-in': lockedIn, 'on-a-run': onARun, 'form-alerts': formAlerts,
       'first-goal': firstGoal, 'tap-ins': tapIns, 'penalty-kings': penaltyKings, 'spam-square': spamSquare,
       'goals-galore': goalsGalore, 'corner-storm': cornerStorm, 'mismatch': mismatch, 'brick-wall': brickWall,
-      'tackle-machines': tackleMachines, 'fouled-again': fouledAgain
+      'tackle-machines': tackleMachines, 'fouled-again': fouledAgain, 'falling-off': fallingOff
     };
 
     function playStyles(p, pg) { return [pg]; }
