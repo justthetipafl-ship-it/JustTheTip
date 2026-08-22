@@ -3807,8 +3807,8 @@
     h+='<div class="team-cols">'+teamPanel(g.home,g.away,true)+teamPanel(g.away,g.home,false)+'</div>';
     if(SPORT.key==='mlb' && !_fxHid('sec','matchupAnalyzer')) h+=_mlbMatchupAnalyzer(g);
     // mode toggle now sits directly above the signals it controls
-    const fxMode=(state.view.fxMode||'degen');
-    h+='<div class="fx-mode">'+
+    const fxMode=(SPORT.key==='epl')?'degen':(state.view.fxMode||'degen');   // Nerd Mode hidden for EPL until an AU multi-book odds feed lands
+    if(SPORT.key!=='epl') h+='<div class="fx-mode">'+
       '<button class="fxm-btn'+(fxMode==='degen'?' on':'')+'" onclick="setFxMode(\'degen\')"><i class="ti ti-flame"></i> Degen Mode</button>'+
       '<button class="fxm-btn'+(fxMode==='nerd'?' on':'')+'" onclick="setFxMode(\'nerd\')"><i class="ti ti-math-function"></i> Nerd Mode</button></div>';
     if(fxMode==='nerd') h+=nerdFilterBar();
@@ -3817,7 +3817,7 @@
     if(SPORT.key!=='epl' && !_fxHid('sec','insouts')) h+=insOutsSection(g.home,g.away);
     if(!_fxHid('sec','radar')) h+=radarSection(g.home,g.away,g.venue||(g.park&&g.park.name));
     if(SPORT.key!=='epl' && fxMode!=='nerd' && !_fxHid('sec','jupiter')) h+=jupiter(g);
-    if(fxMode!=='nerd' && !_fxHid('sec','deja')) h+=dejaVuSGM(g.home,g.away);
+    if(fxMode!=='nerd' && !_fxHid('sec','deja') && _dvMeetings(g.home,g.away,999).length) h+=dejaVuSGM(g.home,g.away);
     if(fxMode!=='nerd' && !_fxHid('sec','multiTool')) h+=_fxMultiCards(g);
     return h;
   }
@@ -6315,7 +6315,7 @@
     if(chosen.length>=2){ h+='<button class="mbv-save" onclick="_mbSaveCards()">Save '+chosen.length+'-leg multi to Bet Slip</button>'; }
     return h;
   }
-  function _fxMultiCards(g){ if(!g) return ''; state.view.mbvFocus={home:g.home,away:g.away}; state.view.mbvPage=0; return '<div class="fx-mtool" style="margin-top:14px">'+_multiCardsView()+'</div>'; }
+  function _fxMultiCards(g){ if(!g) return ''; state.view.mbvFocus={home:g.home,away:g.away}; state.view.mbvPage=0; var _b=_multiCardsView(); if(/class="empty"|deg-empty|No qualifying legs/.test(_b)) return ''; return '<div class="fx-mtool" style="margin-top:14px">'+_b+'</div>'; }
   function _multiCardsView(){ return '<div id="mbv-wrap">'+_mbvBody()+'</div>'; }
   window._mbvRerender=function(){ var el=document.getElementById('mbv-wrap'); if(el) el.innerHTML=_mbvBody(); };
   function _mbBalance(pool){ var foc=state.view.mbvFocus; if(!foc) return pool;
