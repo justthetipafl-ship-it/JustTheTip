@@ -115,7 +115,7 @@ window.JTTSignals = (function () {
           var recent = l5avg(p.name, mkt), older = all.slice(5, 10);
           if (!older.length) return;
           var olderAvg = older.reduce(function (s, r) { return s + (r[mkt] || 0); }, 0) / older.length;
-          if (olderAvg <= 0 || recent >= olderAvg * 0.6) return;   // recent form collapsed vs prior
+          if (olderAvg < 0.5 || recent >= olderAvg * 0.6) return;   // needs a meaningful prior baseline (>=0.5) so trivial ~0.2->0 drops don't surface, and recent form collapsed vs prior
           var drop = 1 - recent / olderAvg;
           out.push({ p: p, opp: JS.oppOfTeam(p.team), sc: drop * 10, mkt: mkt, recent: recent, older: olderAvg, drop: drop });
         });
