@@ -27,7 +27,7 @@ window.JTTSignals = (function () {
     function mktLabel(k) { return MKT[k] || k; }
 
     // markets a player's position can be graded on
-    var OUTFIELD = ['shots', 'shotsOn', 'goals', 'assists', 'keyPasses', 'tackles', 'foulsCommitted', 'cards'];
+    var OUTFIELD = ['shots', 'shotsOn', 'goals', 'assists', 'tackles', 'foulsCommitted', 'cards'];   // bettable markets only (no key passes)
     function marketsFor(p) { return p.pos === 'GK' ? ['saves'] : OUTFIELD.slice(); }
 
     function slatePlayers() {
@@ -128,7 +128,8 @@ window.JTTSignals = (function () {
       });
       return degWrap('ti-trending-down', 'Falling Off', rows, 'c-tough');
     }
-    function onARun() {
+    // Streakers — cleared their line in N straight games (AFL Streakers).
+    function streakers() {
       var out = [];
       slatePlayers().forEach(function (p) {
         marketsFor(p).forEach(function (mkt) {
@@ -138,29 +139,33 @@ window.JTTSignals = (function () {
           for (var i = 0; i < lg.length; i++) { if ((lg[i][mkt] || 0) >= line) streak++; else break; }
           if (streak < 3) return;
           out.push({ p: p, opp: JS.oppOfTeam(p.team), sc: streak + line / 10, line: line, mkt: mkt, l5: l5vals(p.name, mkt),
-            headline: streak + '-game run \u00b7 O' + line + ' ' + mktLabel(mkt),
+            headline: streak + '-game streak \u00b7 O' + line + ' ' + mktLabel(mkt),
             detail: 'cleared ' + mktLabel(mkt) + ' O' + line + ' in ' + streak + ' straight' });
         });
       });
-      return wrap('ti-run', 'On a Run', out, 'c-soft', 'No active streaks worth riding right now.');
+      return wrap('ti-flame', 'Streakers', out, 'c-soft', 'No active streaks worth riding right now.');
     }
     function formAlerts() {
       var out = [];
       slatePlayers().forEach(function (p) {
         marketsFor(p).forEach(function (mkt) {
           if (!marketHasData(mkt)) return;
-          var avg = l5avg(p.name, mkt), line = JS.drLine(avg, mkt); if (line == null) return;
-          var sf = JS.seasonForm(p.name, mkt, line); if (!sf || sf.games < 3) return;
-          if (sf.rate >= 0.8) out.push({ p: p, opp: JS.oppOfTeam(p.team), sc: sf.rate * 10, line: line, mkt: mkt, l5: l5vals(p.name, mkt),
-            headline: 'Hot \u00b7 ' + mktLabel(mkt), detail: sf.hits + '/' + sf.games + ' this season at O' + line });
-          else if (sf.rate <= 0.2) out.push({ p: p, opp: JS.oppOfTeam(p.team), sc: (1 - sf.rate) * 8, line: line, mkt: mkt, l5: l5vals(p.name, mkt),
-            headline: 'Cold \u00b7 ' + mktLabel(mkt), detail: 'only ' + sf.hits + '/' + sf.games + ' this season at O' + line });
+          var all = recentLogs(p.name); if (all.length < 6) return;                 // most-recent first
+          var l3 = all.slice(0, 3).reduce(function (t, r) { return t + (r[mkt] || 0); }, 0) / 3;
+          var base = all.slice(0, 10), baseAvg = base.reduce(function (t, r) { return t + (r[mkt] || 0); }, 0) / base.length;
+          if (baseAvg <= 0.3) return;
+          var swing = (l3 - baseAvg) / baseAvg;
+          if (Math.abs(swing) < 0.35) return;                                        // needs a real swing
+          var up = swing > 0;
+          if (up && l3 < 0.5) return;                                                // spike must reach a real number
+          if (!up && baseAvg < 0.5) return;                                          // cool only off a real baseline (>=0.5)
+          out.push({ p: p, opp: JS.oppOfTeam(p.team), sc: Math.abs(swing) * 10, line: null, mkt: mkt, l5: l5vals(p.name, mkt), good: up,
+            headline: (up ? '\u2191 Spiking \u00b7 ' : '\u2193 Cooling \u00b7 ') + mktLabel(mkt),
+            detail: 'L3 ' + l3.toFixed(1) + ' vs ' + baseAvg.toFixed(1) + ' baseline (' + (up ? '+' : '') + Math.round(swing * 100) + '%)' });
         });
       });
-      return wrap('ti-temperature-celsius', 'Form Alerts', out, 'c-neu', 'No hot or cold streaks flagged this week.');
+      return wrap('ti-temperature-celsius', 'Form Alerts', out, 'c-neu', 'No hot or cold form swings on the slate.');
     }
-
-    // ---------- FPL-ready stat engines ----------
     function tackleMachines() {
       var out = [];
       slatePlayers().forEach(function (p) {
@@ -269,11 +274,50 @@ window.JTTSignals = (function () {
       return wrap('ti-bolt', 'Mismatch Alert', out, 'c-soft', 'No standout attacker-vs-defence mismatches.');
     }
 
+    // Green Lights — the strongest overs: high hit rate + model agreement + soft matchup.
+    function greenLights() {
+      var out = [];
+      slatePlayers().forEach(function (p) {
+        marketsFor(p).forEach(function (mkt) {
+          if (!marketHasData(mkt)) return;
+          var avg = l5avg(p.name, mkt), line = JS.drLine(avg, mkt); if (line == null) return;
+          var hr = JS.getHitRate(p.name, mkt, line, false); if (!hr || hr.n < 5 || hr.rate < 0.7) return;
+          var pr = JS.prob(p, mkt, line); if (pr < 0.62) return;                     // model backs the over
+          var opp = JS.oppOfTeam(p.team), dvp = opp ? JS.getDVPPct(opp, p.pos, mkt) : null;
+          out.push({ p: p, opp: opp, sc: hr.rate * 10 + (pr - 0.5) * 4 + (dvp && dvp > 0 ? dvp / 12 : 0), line: line, mkt: mkt, l5: l5vals(p.name, mkt),
+            headline: 'O' + line + ' ' + mktLabel(mkt),
+            detail: Math.round(hr.rate * 100) + '% hit (' + hr.n + ') \u00b7 model ' + Math.round(pr * 100) + '%' + (dvp != null && dvp > 4 ? ' \u00b7 soft matchup' : '') });
+        });
+      });
+      return wrap('ti-traffic-lights', 'Green Lights', out, 'c-green', 'No strong-enough overs to green-light this week.');
+    }
+    // Bunnies — feasts on this opponent historically (>=3 meetings, best matchup of any team faced).
+    function bunnies() {
+      var out = [];
+      slatePlayers().forEach(function (p) {
+        var opp = JS.oppOfTeam(p.team); if (!opp) return;
+        var byOpp = {}; recentLogs(p.name).forEach(function (r) { var o = r.Opp || r.opp; if (o) (byOpp[o] = byOpp[o] || []).push(r); });
+        var vt = byOpp[opp]; if (!vt || vt.length < 3) return;
+        marketsFor(p).forEach(function (mkt) {
+          if (!marketHasData(mkt)) return;
+          var thisAvg = vt.reduce(function (t, r) { return t + (r[mkt] || 0); }, 0) / vt.length;
+          if (thisAvg < 0.5) return;
+          var best = null;
+          Object.keys(byOpp).forEach(function (o) { if (o === opp || byOpp[o].length < 2) return; var a = byOpp[o].reduce(function (t, r) { return t + (r[mkt] || 0); }, 0) / byOpp[o].length; if (best == null || a > best) best = a; });
+          if (best == null || thisAvg <= best) return;                               // genuinely their best matchup
+          var diff = best > 0 ? (thisAvg - best) / best * 100 : 0;
+          out.push({ p: p, opp: opp, sc: diff + thisAvg, line: null, mkt: mkt, l5: vt.slice(0, 5).map(function (r) { return r[mkt] || 0; }),
+            headline: 'Feasts on ' + abbr(opp) + ' \u00b7 ' + mktLabel(mkt),
+            detail: thisAvg.toFixed(1) + ' avg vs ' + abbr(opp) + ' (' + vt.length + ' mtgs) vs ' + best.toFixed(1) + ' elsewhere' });
+        });
+      });
+      return wrap('ti-carrot', 'Bunnies', out, 'c-soft', 'No standout opponent history on the slate.');
+    }
     var tiles = {
-      'locked-in': lockedIn, 'on-a-run': onARun, 'form-alerts': formAlerts,
+      'locked-in': lockedIn, 'green-lights': greenLights, 'streakers': streakers, 'bunnies': bunnies, 'form-alerts': formAlerts,
       'first-goal': firstGoal, 'tap-ins': tapIns, 'penalty-kings': penaltyKings, 'spam-square': spamSquare,
       'goals-galore': goalsGalore, 'corner-storm': cornerStorm, 'mismatch': mismatch, 'brick-wall': brickWall,
-      'tackle-machines': tackleMachines, 'fouled-again': fouledAgain, 'falling-off': fallingOff
+      'tackle-machines': tackleMachines, 'fouled-again': fouledAgain
     };
 
     function playStyles(p, pg) { return [pg]; }
