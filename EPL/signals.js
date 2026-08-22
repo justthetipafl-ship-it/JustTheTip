@@ -14,6 +14,7 @@ window.JTTSignals = (function () {
     var degWrap = deps.degWrap || function (i, t, items) { return (items && items.length) ? items.join('') : ''; };
     var posShort = deps.posShort || function (p) { return p || ''; };
     var abbr = deps.abbr || function (t) { return t || ''; };
+    var teamLogo = deps.teamLogo || function () { return ''; };
     var _degBadges = deps._degBadges || function () { return ''; };
     var _fixtureSet = deps._fixtureSet || function () { return { has: function () { return true; } }; };
     var logsFor = deps.logsFor || function () { return []; };
@@ -145,26 +146,39 @@ window.JTTSignals = (function () {
       });
       return wrap('ti-flame', 'Streakers', out, 'c-soft', 'No active streaks worth riding right now.');
     }
+    // Form Alerts — AFL-style compact list: L3 vs last-10 baseline, both ways, grouped by team.
     function formAlerts() {
-      var out = [];
+      var all = [];
       slatePlayers().forEach(function (p) {
         marketsFor(p).forEach(function (mkt) {
           if (!marketHasData(mkt)) return;
-          var all = recentLogs(p.name); if (all.length < 6) return;                 // most-recent first
-          var l3 = all.slice(0, 3).reduce(function (t, r) { return t + (r[mkt] || 0); }, 0) / 3;
-          var base = all.slice(0, 10), baseAvg = base.reduce(function (t, r) { return t + (r[mkt] || 0); }, 0) / base.length;
+          var lg = recentLogs(p.name); if (lg.length < 6) return;                    // most-recent first
+          var l3 = lg.slice(0, 3).reduce(function (t, r) { return t + (r[mkt] || 0); }, 0) / 3;
+          var base = lg.slice(0, 10), baseAvg = base.reduce(function (t, r) { return t + (r[mkt] || 0); }, 0) / base.length;
           if (baseAvg <= 0.3) return;
           var swing = (l3 - baseAvg) / baseAvg;
-          if (Math.abs(swing) < 0.35) return;                                        // needs a real swing
+          if (Math.abs(swing) < 0.35) return;
           var up = swing > 0;
-          if (up && l3 < 0.5) return;                                                // spike must reach a real number
-          if (!up && baseAvg < 0.5) return;                                          // cool only off a real baseline (>=0.5)
-          out.push({ p: p, opp: JS.oppOfTeam(p.team), sc: Math.abs(swing) * 10, line: null, mkt: mkt, l5: l5vals(p.name, mkt), good: up,
-            headline: (up ? '\u2191 Spiking \u00b7 ' : '\u2193 Cooling \u00b7 ') + mktLabel(mkt),
-            detail: 'L3 ' + l3.toFixed(1) + ' vs ' + baseAvg.toFixed(1) + ' baseline (' + (up ? '+' : '') + Math.round(swing * 100) + '%)' });
+          if (up && l3 < 0.5) return;
+          if (!up && baseAvg < 0.5) return;
+          all.push({ p: p, mkt: mkt, l3: l3, baseAvg: baseAvg, swing: swing, up: up });
         });
       });
-      return wrap('ti-temperature-celsius', 'Form Alerts', out, 'c-neu', 'No hot or cold form swings on the slate.');
+      if (!all.length) return emptyState('ti-temperature-celsius', 'Form Alerts', 'No hot or cold form swings on the slate.');
+      var byTeam = {}; all.forEach(function (a) { (byTeam[a.p.team] = byTeam[a.p.team] || []).push(a); });
+      var order = Object.keys(byTeam).sort(function (x, y) { return byTeam[y].length - byTeam[x].length; });
+      var pfRow = function (a) {
+        var col = a.up ? '#22c55e' : '#ef4444', arr = a.up ? '\u25b2' : '\u25bc', sign = a.up ? '+' : '';
+        return '<div class="pf-row" onclick="openPlayer(\'' + esc(a.p.name).replace(/\x27/g, "\\\x27") + '\')">' +
+          '<span class="pf-sw" style="color:' + col + '">' + arr + ' ' + sign + Math.round(a.swing * 100) + '%</span>' +
+          '<span class="pf-nm">' + esc(a.p.name) + '</span>' +
+          '<span class="pf-info">' + mktLabel(a.mkt) + ' \u00b7 L3 ' + a.l3.toFixed(1) + ' vs ' + a.baseAvg.toFixed(1) + '</span></div>';
+      };
+      var items = order.map(function (t) {
+        return '<div class="pf-team">' + teamLogo(t, 16) + '<span>' + esc(t) + '</span><span class="pf-ct">' + byTeam[t].length + '</span></div>' +
+          byTeam[t].sort(function (x, y) { return Math.abs(y.swing) - Math.abs(x.swing); }).map(pfRow).join('');
+      });
+      return degWrap('ti-temperature-celsius', 'Form Alerts', items, 'c-green');
     }
     function tackleMachines() {
       var out = [];
