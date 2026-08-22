@@ -322,15 +322,16 @@ def build_teams(fpl_players, boot, tstats):
 
 def build_fixtures(boot, fixtures, boot_teams, meta, tstats):
     id2name = {t["id"]: t["name"] for t in (boot or {}).get("teams", [])}
-    # next unfinished gameweek
-    nxt = None
-    for e in (boot or {}).get("events", []):
-        if e.get("is_next"):
-            nxt = e["id"]
-            break
-    if nxt is None:
-        unfinished = [f for f in (fixtures or []) if not f.get("finished")]
-        nxt = min((f.get("event") for f in unfinished if f.get("event")), default=None)
+    # Gameweek to show: the EARLIEST GW that still has an unfinished fixture -- i.e. THIS week
+    # while its games are live/upcoming, only rolling to next once all of them are done. (The old
+    # is_next-first logic jumped to next week the moment the current GW kicked off.)
+    unfinished = [f for f in (fixtures or []) if not f.get("finished") and f.get("event")]
+    nxt = min((f["event"] for f in unfinished), default=None)
+    if nxt is None:                                   # whole season finished -> FPL's next-GW flag
+        for e in (boot or {}).get("events", []):
+            if e.get("is_next"):
+                nxt = e["id"]
+                break
     # index the API-Football fixture meta by (canon home, canon away, date10) for matching
     mfx = (meta or {}).get("fixtures", {})
     mlu = (meta or {}).get("lineups", {})
