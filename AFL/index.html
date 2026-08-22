@@ -1328,6 +1328,12 @@
 /* fixture-list local kickoff (date + time) */
 .fxr-ko-date{display:block;font-size:9px;color:var(--text-3);font-family:var(--font-mono);text-transform:uppercase;letter-spacing:.3px;line-height:1.3}
 .fxr-ko-time{display:block;font-size:12px;font-weight:700;color:var(--text);line-height:1.2}
+
+/* CMB bet-value badge (model vs priced) */
+.cmb-val{display:inline-block;margin-left:6px;padding:1px 6px;border-radius:4px;font-size:10px;font-weight:700;font-family:var(--font-mono)}
+.cmb-val.good{color:#22c55e;background:#22c55e18;border:1px solid #22c55e44}
+.cmb-val.fair{color:var(--text-3);background:var(--surface-2)}
+.cmb-val.bad{color:#ef4444;background:#ef444414}
 </style>
 </head>
 <body class="auth-locked">
@@ -8350,6 +8356,16 @@
     legsEl.innerHTML=M.legs.map((l,i)=>cmbMultiLegCard(l,i)).join('');
     sum.innerHTML=cmbMultiSummary();
   }
+  function _cmbValue(leg,od){
+    if(!od||od.over==null||!(window.JTTScoring&&JTTScoring.prob))return '';
+    var mp; try{ mp=JTTScoring.prob(leg.p,leg.stat,leg.line); }catch(e){ return ''; }
+    if(mp==null||!isFinite(mp))return '';
+    var imp=(od.under!=null&&od.under>0)?(1/od.over)/((1/od.over)+(1/od.under)):(1/od.over);
+    var edge=mp-imp, mt='Model '+Math.round(mp*100)+'% vs priced '+Math.round(imp*100)+'%';
+    if(edge>=0.05)  return '<span class="cmb-val good" title="'+mt+'"><i class="ti ti-trending-up"></i> Value +'+Math.round(edge*100)+'%</span>';
+    if(edge<=-0.07) return '<span class="cmb-val bad" title="'+mt+'">Below price</span>';
+    return '<span class="cmb-val fair" title="'+mt+'">Fair price</span>';
+  }
   function cmbMultiLegCard(leg,idx){
     const opp=nextOpp(leg.p.team), label=CMP_STAT_LABELS[leg.stat]||leg.stat;
     const v=(opp&&!isNaN(leg.line))?JTTScoring.verdict(leg.p,leg.stat,leg.line,opp):null;
@@ -8357,7 +8373,7 @@
     let h='<div class="cmb-leg" style="border-left:3px solid '+(v?v.col:'var(--border)')+'">'+
       '<div class="cmb-leg-top" onclick="cmbMultiToggleLeg('+idx+')">'+
         '<div class="cmb-leg-main"><div class="cmb-leg-nm">'+esc(leg.p.name)+' <span class="cmb-leg-ln">'+label+' '+leg.line+'+</span></div>'+
-        '<div class="cmb-leg-sub">'+posShort(leg.p.position)+' · '+esc(leg.p.team)+(opp?' · vs '+esc(opp):'')+(od?' · $'+od.over.toFixed(2)+' '+_bookShort(od.book):'')+'</div></div>'+
+        '<div class="cmb-leg-sub">'+posShort(leg.p.position)+' · '+esc(leg.p.team)+(opp?' · vs '+esc(opp):'')+(od?' · $'+od.over.toFixed(2)+' '+_bookShort(od.book):'')+_cmbValue(leg,od)+'</div></div>'+
         (v?'<div class="cmb-leg-vd" style="color:'+v.col+'">'+v.label+'</div>':'')+
         '<button class="cmb-leg-x" onclick="event.stopPropagation();cmbMultiRemoveLeg('+idx+')">&times;</button>'+
       '</div>';
