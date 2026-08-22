@@ -10,7 +10,8 @@ suppressMessages({ library(fitzRoy); library(jsonlite); library(dplyr) })
 num  <- function(x) suppressWarnings(as.numeric(x))
 pick <- function(df, candidates) { for (c in candidates) if (c %in% names(df)) return(df[[c]]); rep(NA, nrow(df)) }
 
-SEASON <- as.integer(Sys.getenv("AFL_SEASON", format(Sys.Date(), "%Y")))
+SEASON <- suppressWarnings(as.integer(Sys.getenv("AFL_SEASON", "")))
+if (is.na(SEASON) || SEASON < 2000) SEASON <- as.integer(format(Sys.Date(), "%Y"))
 OUT    <- Sys.getenv("LADDER_STATS", "AFL/data/ladder_gamelogs.json")
 if (!dir.exists("scripts")) dir.create("scripts")
 
