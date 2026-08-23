@@ -2659,7 +2659,7 @@
   const bookLabel=k=>BOOK_LABEL[k]||(k?k.replace(/_au$/,'').replace(/^\w/,c=>c.toUpperCase()):'');
   function gameMatchOdds(home,away){
     const g=(state.idx.matchOddsIdx||{})[[home,away].sort().join('|')];
-    if(!g||(!g.h2h&&!g.line&&!g.total)) return '';
+    if(!g||(!g.h2h&&!g.line&&!g.total&&!g.totalCorners&&!g.totalCards)) return '';
     const odd=v=>v==null?'—':(+v).toFixed(2);
     const books=new Set();
     let blocks='';
@@ -2683,6 +2683,12 @@
         '<div class="mo-row"><span class="mo-t">Over <b>'+g.total.points+'</b></span><span class="mo-o">'+odd(g.total.over)+'</span></div>'+
         '<div class="mo-row"><span class="mo-t">Under <b>'+g.total.points+'</b></span><span class="mo-o">'+odd(g.total.under)+'</span></div></div>';
     }
+    [['totalCorners','Corners'],['totalCards','Cards']].forEach(function(tc){
+      var t=g[tc[0]]; if(!t||t.over==null||t.under==null) return; books.add(t.book);
+      blocks+='<div class="mo-block"><div class="mo-lab">'+tc[1]+'</div>'+
+        '<div class="mo-row"><span class="mo-t">Over <b>'+t.points+'</b></span><span class="mo-o">'+odd(t.over)+'</span></div>'+
+        '<div class="mo-row"><span class="mo-t">Under <b>'+t.points+'</b></span><span class="mo-o">'+odd(t.under)+'</span></div></div>';
+    });
     const bl=[...books].filter(Boolean).map(bookLabel).join(' · ');
     return '<div class="game-sec"><div class="gs-title"><i class="ti ti-coin"></i> Match Odds</div>'+
       '<div class="mo-grid">'+blocks+'</div>'+(bl?'<div class="mo-book">'+bl+'</div>':'')+'</div>';
@@ -5321,7 +5327,9 @@
     return pick!=null?pick:lad[0];
   }
   function _genericCandidates(p,opp){
-    const mkts=(SETTINGS.multi.markets&&SETTINGS.multi.markets.length)?SETTINGS.multi.markets:MULTI_MKTS.map(m=>m[0]);
+    var _validMk=MULTI_MKTS.map(m=>m[0]);
+    var _savedMk=SETTINGS.multi.markets||[];
+    const mkts=(_savedMk.length && _savedMk.every(m=>_validMk.indexOf(m)>=0))?_savedMk:_validMk;   // saved list only applies if every market is valid for this sport (stops AFL markets leaking into EPL etc.)
     const NM=Object.fromEntries(MULTI_MKTS); const c=[];
     mkts.forEach(function(sk){
       var avg=+p[sk]; if(!isFinite(avg)||avg<=0) return;
