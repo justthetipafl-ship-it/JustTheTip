@@ -65,31 +65,66 @@ done    <- pick(sched, c("completed", "status_completed"))
 neu     <- pick(sched, c("neutral_site", "neutral", "neutralSite"))
 conf    <- pick(sched, c("conference_game", "conferenceGame"))
 ven     <- pick(sched, c("venue", "venue_name"))
+hconf   <- as.character(pick(sched, c("home_conference", "home_conf")))
+aconf   <- as.character(pick(sched, c("away_conference", "away_conf")))
 
-hid <- vapply(home_nm, resolve, character(1)); aid <- vapply(away_nm, resolve, character(1))
+# the cfbfastR schedule is ESPN-keyed, so home_id/away_id ARE ESPN team ids -> use directly
+# (resolves every team, incl. the ~25 FBS teams missing from teams.json); name-map only as fallback
+hid <- as.character(pick(sched, c("home_id", "home_team_id", "homeId")))
+aid <- as.character(pick(sched, c("away_id", "away_team_id", "awayId")))
+mh <- is.na(hid) | hid == "" | hid == "NA"; if (any(mh)) hid[mh] <- vapply(home_nm[mh], resolve, character(1))
+ma <- is.na(aid) | aid == "" | aid == "NA"; if (any(ma)) aid[ma] <- vapply(away_nm[ma], resolve, character(1))
 iso <- ifelse(is.na(sd) | sd == "", "", ifelse(grepl("T", sd), sd, paste0(substr(sd, 1, 10), "T00:00:00Z")))
 day <- substr(iso, 1, 10)
 is_done <- !is.na(done) & (done %in% c(TRUE, "true", "TRUE", 1, "1"))
 
-ok <- !is.na(hid) & !is.na(aid)
+ok <- !is.na(hid) & !is.na(aid) & nzchar(hid) & nzchar(aid)
 unmatched <- unique(c(home_nm[is.na(hid)], away_nm[is.na(aid)]))
 unmatched <- unmatched[!is.na(unmatched) & nzchar(unmatched)]
 if (length(unmatched)) { message("[ncaaf-fixture] ", length(unmatched), " teams unmatched to ESPN ids (likely FCS, skipped):")
   for (n in head(sort(unmatched), 40)) message("    - ", n) }
 
+hdiv <- tolower(as.character(pick(sched, c("home_division", "home_classification", "home_div"))))
+adiv <- tolower(as.character(pick(sched, c("away_division", "away_classification", "away_div"))))
+is_fbs <- (hdiv %in% c("fbs")) | (adiv %in% c("fbs"))   # keep games with >=1 FBS team (drops pure FCS/D2/D3)
+if (!any(is_fbs)) is_fbs <- rep(TRUE, length(hid))       # no division field -> keep all rather than drop everything
 today <- format(Sys.Date(), "%Y-%m-%d")
-cand <- ok & !is_done & !is.na(day) & day >= today & !is.na(wk)
+cand <- ok & is_fbs & !is_done & !is.na(day) & day >= today & !is.na(wk)
 if (!any(cand)) { message("[ncaaf-fixture] no upcoming unplayed games — leaving fixture untouched"); quit(status = 0) }
 nxt <- min(wk[cand], na.rm = TRUE)                      # earliest UPCOMING week -> week-0 safe
 sel <- which(cand & wk == nxt)
+
+# ---- AP / CFP rankings via CFBD (needs CFBD_API_KEY; schedule still ships without it) ----
+rank_by_id <- new.env(parent = emptyenv())
+ck <- Sys.getenv("CFBD_API_KEY", "")
+if (nzchar(ck)) {
+  if (exists("cfbd_key")) try(cfbd_key(ck), silent = TRUE)
+  rk <- tryCatch(cfbd_rankings(year = SEASON), error = function(e) { message("  (cfbd_rankings failed: ", conditionMessage(e), ")"); NULL })
+  if (!is.null(rk) && nrow(rk)) {
+    wc <- if ("week" %in% names(rk)) suppressWarnings(as.integer(rk$week)) else rep(1L, nrow(rk))
+    latest <- suppressWarnings(max(wc, na.rm = TRUE)); if (!is.finite(latest)) latest <- NA
+    if (!is.na(latest)) rk <- rk[!is.na(wc) & wc == latest, , drop = FALSE]
+    polls <- if ("poll" %in% names(rk)) as.character(rk$poll) else rep("", nrow(rk))
+    pref <- c("Playoff Committee Rankings", "AP Top 25", "Coaches Poll")
+    chosen <- pref[pref %in% unique(polls)]; chosen <- if (length(chosen)) chosen[1] else unique(polls)[1]
+    if (!is.na(chosen)) rk <- rk[polls == chosen, , drop = FALSE]
+    schools <- as.character(pick(rk, c("school", "team")))
+    ranks   <- suppressWarnings(as.integer(pick(rk, c("rank", "ranking"))))
+    n <- 0L
+    for (i in seq_along(schools)) { id <- resolve(schools[i]); if (!is.na(id) && !is.na(ranks[i])) { assign(id, ranks[i], envir = rank_by_id); n <- n + 1L } }
+    message(sprintf("[ncaaf-fixture] rankings: %s week %s (%d teams mapped)", chosen, latest, n))
+  }
+} else message("[ncaaf-fixture] no CFBD_API_KEY -> rankings skipped")
+rkOf <- function(id) { r <- mget(as.character(id), envir = rank_by_id, ifnotfound = list(NA_integer_))[[1]]; if (is.na(r)) NULL else as.integer(r) }
 
 rows <- lapply(sel, function(i) list(
   home = hid[i], away = aid[i], homeName = as.character(home_nm[i]), awayName = as.character(away_nm[i]),
   week = wk[i], season = SEASON, utc = iso[i], date = day[i],
   venue = if (is.na(ven[i])) "TBC" else as.character(ven[i]),
+  homeConf = if (is.na(hconf[i])) NULL else hconf[i], awayConf = if (is.na(aconf[i])) NULL else aconf[i],
   neutral = if (isTRUE(neu[i]) || (!is.na(neu[i]) && neu[i] %in% c("true","1",1,TRUE))) 1L else 0L,
   confGame = if (isTRUE(conf[i]) || (!is.na(conf[i]) && conf[i] %in% c("true","1",1,TRUE))) 1L else 0L,
-  spread = NULL, total = NULL, hasLine = 0L, homeRank = NULL, awayRank = NULL,
+  spread = NULL, total = NULL, hasLine = 0L, homeRank = rkOf(hid[i]), awayRank = rkOf(aid[i]),
   p4 = 0L, fbsVfbs = 1L, realistic = 1L))
 rows <- rows[order(vapply(rows, function(r) r$utc, character(1)))]
 
