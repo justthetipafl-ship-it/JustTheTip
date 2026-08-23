@@ -97,7 +97,8 @@ SPORTS = {
 MILESTONES_ONLY = {'EPL'}
 
 # game-level markets to also request per sport (feed the matchOdds h2h/total the shell renders)
-GAME_MARKETS = {'EPL': ['head_to_head_3_way', 'alternate_total_goals']}
+GAME_MARKETS = {'EPL': ['head_to_head_3_way', 'alternate_total_goals', 'alternate_total_corners', 'alternate_total_cards']}
+TOTAL_KEYS = {'alternate_total_goals': 'total', 'alternate_total_corners': 'totalCorners', 'alternate_total_cards': 'totalCards'}
 
 
 def jtt_market(key, mkmap):
@@ -137,12 +138,13 @@ def transform(resp, mkmap, sport):
                             h['book'] = book
                             mo['h2h'] = h
                     continue
-                if key == 'alternate_total_goals':
+                if key in TOTAL_KEYS:
+                    tl = totals.setdefault(TOTAL_KEYS[key], {})
                     for o in outs:
                         pt, pr, nm = o.get('point'), o.get('price'), (o.get('name') or '').lower()
                         if pt is None or not pr:
                             continue
-                        rec = totals.setdefault((float(pt), book), {'over': None, 'under': None})
+                        rec = tl.setdefault((float(pt), book), {'over': None, 'under': None})
                         if nm.startswith('u'):
                             rec['under'] = pr
                         else:
@@ -165,15 +167,16 @@ def transform(resp, mkmap, sport):
                         rec['under'] = price
                     else:
                         rec['over'] = price
-        best = None
-        for (pt, book), rec in totals.items():
-            if rec['over'] and rec['under']:
-                d = abs(rec['over'] - 1.90)                   # the balanced main line
-                if best is None or d < best[0]:
-                    best = (d, {'points': pt, 'over': rec['over'], 'under': rec['under'], 'book': book})
-        if best:
-            mo['total'] = best[1]
-        if mo.get('h2h') or mo.get('total'):
+        for tk, tl in totals.items():
+            best = None
+            for (pt, book), rec in tl.items():
+                if rec['over'] and rec['under']:
+                    d = abs(rec['over'] - 1.90)               # the balanced main line
+                    if best is None or d < best[0]:
+                        best = (d, {'points': pt, 'over': rec['over'], 'under': rec['under'], 'book': book})
+            if best:
+                mo[tk] = best[1]
+        if mo.get('h2h') or mo.get('total') or mo.get('totalCorners') or mo.get('totalCards'):
             match_odds.append(mo)
 
     def emit(m):
