@@ -1,15 +1,17 @@
-name: EPL Odds (player props)
+name: EPL Odds (rapidodds)
 
-# Pulls EPL player-prop odds (goalscorer/assists/shots/SoT/fouls/saves/cards) from API-Football,
-# filtered to Bet365 & Unibet, -> EPL/data/odds.json. Match/team totals come from rapidodds separately.
+# Two pulls per game day from RapidOddsAPI (all AU books, player-prop milestones):
+#   morning sweep (--force)  -> so the Degenerates page can trigger
+#   1h before first game     -> --window 1 pulls once when the pre-game window opens
+# Branches on which cron fired via github.event.schedule. Manual runs force a pull.
 on:
-  workflow_dispatch:
+  workflow_dispatch: {}
   schedule:
-    - cron: '0 9,15,21 * * *'     # 3x/day; bump frequency closer to matchdays if the AF quota allows
+    - cron: "0 21 * * *"     # 07:00 AEST — morning sweep (--force)
+    - cron: "0 8-18 * * *"   # hourly UTC across EPL kickoff windows — --window 1 gates the actual pull
 
 permissions:
   contents: write
-
 concurrency:
   group: epl-odds
   cancel-in-progress: false
@@ -21,20 +23,25 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: '3.12'
-      - name: Fetch player-prop odds
+          python-version: "3.11"
+      - name: Install RapidOddsAPI
+        run: pip install rapidoddsapi
+      - name: Pull EPL odds
         env:
-          APIFOOTBALL_KEY: ${{ secrets.APIFOOTBALL_KEY }}
-          APIFOOTBALL_SEASON: ${{ secrets.APIFOOTBALL_SEASON }}
-        run: python EPL/fetch_af_odds.py
-      - name: Commit odds
+          ROA_API_KEY: ${{ secrets.ROA_API_KEY }}
+        run: |
+          if [ "${{ github.event.schedule }}" = "0 8-18 * * *" ]; then
+            python3 scripts/fetch_odds.py EPL EPL/data/odds.json --window 1
+          else
+            python3 scripts/fetch_odds.py EPL EPL/data/odds.json --force
+          fi
+      - name: Commit
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add EPL/data/odds.json
-          if git diff --staged --quiet; then
-            echo "No change."
-          else
-            git commit -m "EPL odds $(date -u +%Y-%m-%dT%H:%MZ)"
+          git add EPL/data/odds.json 2>/dev/null || true
+          if git diff --staged --quiet; then echo "no change"; else
+            git commit -m "chore(epl): odds $(date -u +%Y-%m-%dT%H:%MZ)"
+            git pull --rebase --autostash origin main || true
             git push
           fi
