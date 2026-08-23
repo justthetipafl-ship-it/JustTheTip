@@ -12,8 +12,8 @@ Season: NCAAF_SEASON (defaults to the current calendar year).
 import os, re, json, sys, datetime, urllib.request
 
 KEY    = os.environ.get("NCAAF_APIFOOTBALL_KEY") or os.environ.get("APIFOOTBALL_KEY") or ""
-SEASON = int(os.environ.get("NCAAF_SEASON", str(datetime.datetime.utcnow().year)))
-LEAGUE = int(os.environ.get("NCAAF_AF_LEAGUE", "2"))          # 2 = NCAA
+SEASON = int(os.environ.get("NCAAF_SEASON") or datetime.datetime.utcnow().year)   # empty env -> current year
+LEAGUE = int(os.environ.get("NCAAF_AF_LEAGUE") or 2)          # 2 = NCAA; empty env -> 2
 BASE   = "https://v1.american-football.api-sports.io"
 OUT    = os.environ.get("NCAAF_FIXTURE", "ncaaf/data/fixture.json")
 TEAMS  = os.environ.get("NCAAF_TEAMS", "ncaaf/data/teams.json")
