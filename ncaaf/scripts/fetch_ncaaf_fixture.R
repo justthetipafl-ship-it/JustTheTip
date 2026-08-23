@@ -66,12 +66,17 @@ neu     <- pick(sched, c("neutral_site", "neutral", "neutralSite"))
 conf    <- pick(sched, c("conference_game", "conferenceGame"))
 ven     <- pick(sched, c("venue", "venue_name"))
 
-hid <- vapply(home_nm, resolve, character(1)); aid <- vapply(away_nm, resolve, character(1))
+# the cfbfastR schedule is ESPN-keyed, so home_id/away_id ARE ESPN team ids -> use directly
+# (resolves every team, incl. the ~25 FBS teams missing from teams.json); name-map only as fallback
+hid <- as.character(pick(sched, c("home_id", "home_team_id", "homeId")))
+aid <- as.character(pick(sched, c("away_id", "away_team_id", "awayId")))
+mh <- is.na(hid) | hid == "" | hid == "NA"; if (any(mh)) hid[mh] <- vapply(home_nm[mh], resolve, character(1))
+ma <- is.na(aid) | aid == "" | aid == "NA"; if (any(ma)) aid[ma] <- vapply(away_nm[ma], resolve, character(1))
 iso <- ifelse(is.na(sd) | sd == "", "", ifelse(grepl("T", sd), sd, paste0(substr(sd, 1, 10), "T00:00:00Z")))
 day <- substr(iso, 1, 10)
 is_done <- !is.na(done) & (done %in% c(TRUE, "true", "TRUE", 1, "1"))
 
-ok <- !is.na(hid) & !is.na(aid)
+ok <- !is.na(hid) & !is.na(aid) & nzchar(hid) & nzchar(aid)
 unmatched <- unique(c(home_nm[is.na(hid)], away_nm[is.na(aid)]))
 unmatched <- unmatched[!is.na(unmatched) & nzchar(unmatched)]
 if (length(unmatched)) { message("[ncaaf-fixture] ", length(unmatched), " teams unmatched to ESPN ids (likely FCS, skipped):")
