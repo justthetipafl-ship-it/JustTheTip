@@ -1,0 +1,41 @@
+name: NCAAF Fixture (API-Football)
+
+# Pulls the upcoming NCAA week from the API-Football American Football API and maps
+# teams to the ESPN ids the tool uses, writing ncaaf/data/fixture.json. Uses the same
+# APIFOOTBALL_KEY secret as the EPL feed (or set NCAAF_APIFOOTBALL_KEY to override).
+on:
+  workflow_dispatch: {}
+  schedule:
+    - cron: "0 15 * * 1,2,3"   # Mon/Tue/Wed — refresh the upcoming week's slate
+
+permissions:
+  contents: write
+concurrency:
+  group: ncaaf-fixture
+  cancel-in-progress: false
+
+jobs:
+  fixture:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Fetch NCAAF fixture
+        env:
+          APIFOOTBALL_KEY: ${{ secrets.APIFOOTBALL_KEY }}
+          NCAAF_APIFOOTBALL_KEY: ${{ secrets.NCAAF_APIFOOTBALL_KEY }}
+          NCAAF_SEASON: ${{ vars.NCAAF_SEASON }}
+          NCAAF_AF_LEAGUE: ${{ vars.NCAAF_AF_LEAGUE }}
+        run: python3 ncaaf/fetch_fixture_apifootball.py
+      - name: Commit
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add ncaaf/data/fixture.json 2>/dev/null || true
+          if git diff --staged --quiet; then echo "no change"; else
+            git commit -m "chore(ncaaf): fixture $(date -u +%Y-%m-%dT%H:%MZ)"
+            git pull --rebase --autostash origin main || true
+            git push
+          fi
