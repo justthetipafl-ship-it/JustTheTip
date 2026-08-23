@@ -96,6 +96,9 @@ SPORTS = {
 # soccer props are milestone-only (X+) ladders -> skip the base-market request to halve credits
 MILESTONES_ONLY = {'EPL'}
 
+# game-level markets to also request per sport (feed the matchOdds h2h/total the shell renders)
+GAME_MARKETS = {'EPL': ['head_to_head_3_way', 'alternate_total_goals']}
+
 
 def jtt_market(key, mkmap):
     base = key[:-len('_milestones')] if key.endswith('_milestones') else key
@@ -108,16 +111,42 @@ def transform(resp, mkmap, sport):
     for g in games:
         game = g.get('game', {})
         home, away = game.get('home_team', ''), game.get('away_team', '')
-        mo = {'home': home, 'away': away, 'commence': game.get('commence_time'), 'books': {}}
+        mo = {'home': home, 'away': away}
+        totals = {}
         for bk in g.get('bookmakers', []):
             book = bk.get('name', '')
             books.add(book)
             for mkt in bk.get('markets', []):
                 key = mkt.get('key', '')
-                if key == 'head_to_head':
-                    for o in mkt.get('outcomes', []):
-                        if o.get('name') and o.get('price'):
-                            mo['books'].setdefault(book, {})[o['name']] = o['price']
+                outs = mkt.get('outcomes', [])
+                if key in ('head_to_head', 'head_to_head_3_way'):
+                    if 'h2h' not in mo:                       # first book that carries it
+                        h = {}
+                        for o in outs:
+                            nm, pr = (o.get('name') or ''), o.get('price')
+                            if not pr:
+                                continue
+                            low = nm.lower()
+                            if low == 'home' or nm == home:
+                                h['home'] = pr
+                            elif low == 'away' or nm == away:
+                                h['away'] = pr
+                            elif low == 'draw':
+                                h['draw'] = pr
+                        if h.get('home') and h.get('away'):
+                            h['book'] = book
+                            mo['h2h'] = h
+                    continue
+                if key == 'alternate_total_goals':
+                    for o in outs:
+                        pt, pr, nm = o.get('point'), o.get('price'), (o.get('name') or '').lower()
+                        if pt is None or not pr:
+                            continue
+                        rec = totals.setdefault((float(pt), book), {'over': None, 'under': None})
+                        if nm.startswith('u'):
+                            rec['under'] = pr
+                        else:
+                            rec['over'] = pr
                     continue
                 jm, is_alt = jtt_market(key, mkmap)
                 if not jm:
@@ -136,7 +165,15 @@ def transform(resp, mkmap, sport):
                         rec['under'] = price
                     else:
                         rec['over'] = price
-        if mo['books']:
+        best = None
+        for (pt, book), rec in totals.items():
+            if rec['over'] and rec['under']:
+                d = abs(rec['over'] - 1.90)                   # the balanced main line
+                if best is None or d < best[0]:
+                    best = (d, {'points': pt, 'over': rec['over'], 'under': rec['under'], 'book': book})
+        if best:
+            mo['total'] = best[1]
+        if mo.get('h2h') or mo.get('total'):
             match_odds.append(mo)
 
     def emit(m):
@@ -177,7 +214,7 @@ def main():
         print('ROA_API_KEY not set'); sys.exit(1)
     mkmap = SPORTS[sport]
     if sport in MILESTONES_ONLY:
-        markets = [k + '_milestones' for k in mkmap]
+        markets = [k + '_milestones' for k in mkmap] + GAME_MARKETS.get(sport, [])
     else:
         markets = list(mkmap.keys()) + [k + '_milestones' for k in mkmap]
     client = RapidOddsAPI(api_key=key)
