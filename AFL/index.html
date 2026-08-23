@@ -1756,6 +1756,11 @@
     state.idx.byName={}; state.idx.players.forEach(p=>state.idx.byName[p.name]=p);
     state.idx.injuryByName={}; (d.injury||[]).forEach(r=>{ if(r&&r.Player) state.idx.injuryByName[_normName(r.Player)]=r; });
     state.idx.teamMap={}; (d.teams||[]).forEach(t=>{ if(t.name==null) t.name=t.school||t.displayName||t.team; state.idx.teamMap[t.team]=t; });   // id-based sports (NCAAF) carry school/displayName, not name
+    (d.fixture||[]).forEach(g=>{                                        // supplement from the fixture so teams missing from teams.json still resolve (name via homeName, logo via id)
+      [[g.home,g.homeName],[g.away,g.awayName]].forEach(([id,nm])=>{
+        if(id!=null && !state.idx.teamMap[id]){ var _n=nm||String(id); state.idx.teamMap[id]={team:id,name:_n,school:_n,displayName:_n,abbr:String(_n).replace(/[^A-Za-z0-9]/g,'').slice(0,4).toUpperCase()}; }
+      });
+    });
     // gamelogs by player and by match
     state.idx.logsByName={}; state.idx.matchTeams={}; state.idx.matchScore={};
     (d.gamelogs||[]).forEach(r=>{
