@@ -85,7 +85,16 @@ SPORTS = {
         'batter_rbis': 'RBI', 'batter_runs': 'R', 'batter_walks': 'BB',
         'pitcher_strikeouts': 'K',
     },
+    'EPL': {
+        'player_goals': 'goals', 'player_shots': 'shots', 'player_shots_on_target': 'shotsOn',
+        'player_assists': 'assists', 'player_tackles': 'tackles',
+        'player_fouls_committed': 'foulsCommitted', 'player_cards': 'cards',
+        'goalkeeper_saves': 'saves',
+    },
 }
+
+# soccer props are milestone-only (X+) ladders -> skip the base-market request to halve credits
+MILESTONES_ONLY = {'EPL'}
 
 
 def jtt_market(key, mkmap):
@@ -167,7 +176,10 @@ def main():
     if not key:
         print('ROA_API_KEY not set'); sys.exit(1)
     mkmap = SPORTS[sport]
-    markets = list(mkmap.keys()) + [k + '_milestones' for k in mkmap]
+    if sport in MILESTONES_ONLY:
+        markets = [k + '_milestones' for k in mkmap]
+    else:
+        markets = list(mkmap.keys()) + [k + '_milestones' for k in mkmap]
     client = RapidOddsAPI(api_key=key)
     resp = client.get_odds(sport, markets, BOOKMAKERS)
     data = transform(resp, mkmap, sport)
