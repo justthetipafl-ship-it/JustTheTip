@@ -6261,6 +6261,11 @@
       vals=meets.map(function(mid){ for(var i=0;i<lg.length;i++){ if(lg[i].MatchId===mid) return +lg[i][sk]; } return null; }).filter(function(v){return v!=null&&isFinite(v);}); }
     var st=0; for(var i=0;i<vals.length;i++){ if(vals[i]>=line) st++; else break; } return st;
   }
+  function _matchLeg(g, sk, price, book, label, team, opp){
+    return { p:{name:label, team:team, position:'MATCH'}, statKey:sk, line:0, avg:0, proj:null, opp:opp,
+      prob: price?1/price:0, probReal:false, score:0, _odds:{price:price, book:book}, reasons:[],
+      _match:true, matchLabel:label, id:'m|'+g.home+'|'+g.away+'|'+sk+'|'+label };
+  }
   function _mbCandPool(){
     const banned=new Set((SETTINGS.multi&&SETTINGS.multi.banned)||[]);
     const pl=t=>(state.idx.players||[]).filter(p=>p.team===t&&(p.matches||0)>=3&&!banned.has(p.name)&&isPlaying(p.name,p.team));
@@ -6273,9 +6278,20 @@
       pl(g.home).forEach(p=>legCandidates(p,g.away).forEach(c=>{ if(_mlb) c._pctx={isHome:true, oppHand:_mlbHand(g.awayPitcher)}; pool.push(c); }));
       pl(g.away).forEach(p=>legCandidates(p,g.home).forEach(c=>{ if(_mlb) c._pctx={isHome:false, oppHand:_mlbHand(g.homePitcher)}; pool.push(c); }));
     });
-    if(_oddsLive()) pool=pool.filter(c=>c._odds);   // odds live -> only players/markets with a posted price
+    (state.data.matchOdds||[]).forEach(function(g){          // game markets (h2h + total) so the builder works off match markets too
+      if(_foc && !(g.home===_foc.home && g.away===_foc.away)) return;
+      if(g.h2h){
+        if(g.h2h.home) pool.push(_matchLeg(g,'h2h',g.h2h.home,g.h2h.book,abbr(g.home)+' to win',g.home,g.away));
+        if(g.h2h.away) pool.push(_matchLeg(g,'h2h',g.h2h.away,g.h2h.book,abbr(g.away)+' to win',g.away,g.home));
+      }
+      if(g.total){
+        if(g.total.over)  pool.push(_matchLeg(g,'total',g.total.over,g.total.book,'Over '+g.total.points+' Goals',g.home,g.away));
+        if(g.total.under) pool.push(_matchLeg(g,'total',g.total.under,g.total.book,'Under '+g.total.points+' Goals',g.home,g.away));
+      }
+    });
+    if(_oddsLive()) pool=pool.filter(c=>c._odds||c._match);   // odds live -> only players with a posted price (match legs already carry one)
     const best={}; pool.forEach(c=>{ const key=c.p.name+'|'+c.statKey; if(!best[key]||c.score>best[key].score) best[key]=c; });
-    const arr=Object.values(best); arr.forEach(function(c){ var m=_projModel(c.p,c.statKey,c.line,c.opp,c._pctx); c.proj=m.mean; c._deja=_dejaVuStreak(c); c.projSd=m.sd; if(m.prob!=null){ c.prob=m.prob; c.probReal=true; } });
+    const arr=Object.values(best); arr.forEach(function(c){ if(c._match){ return; } var m=_projModel(c.p,c.statKey,c.line,c.opp,c._pctx); c.proj=m.mean; c._deja=_dejaVuStreak(c); c.projSd=m.sd; if(m.prob!=null){ c.prob=m.prob; c.probReal=true; } });
     return arr.sort((a,b)=>(b.score-a.score)||(b.prob-a.prob));
   }
   function _mbvBody(){
@@ -6289,7 +6305,7 @@
     if(mSel!=='all') pool=pool.filter(c=>c.statKey===mSel);
     if(oddsOn&&bSel!=='all') pool=pool.filter(c=>c._odds&&c._odds.book===bSel);
     pool.forEach(l=>{ l._bd=_legBadges(l); });
-    pool=pool.filter(l=>l._bd.base.length>0);                 // only legs that actually earn a badge
+    pool=pool.filter(l=>l._match||l._bd.base.length>0);       // only legs that earn a badge (match legs always kept)
     pool=_mbBalance(pool);                                    // even split between the two teams
     const slip=state.view.mbSlip||(state.view.mbSlip={});
     const chosen=pool.filter(c=>slip[c.id]);
@@ -6320,7 +6336,7 @@
       return '<div class="mbv-card'+(on?' on':'')+'" onclick="_mbToggleLeg(\''+l.id.replace(/'/g,"\\'")+'\')">'
         +'<div class="mbv-row1">'+teamLogo(l.p.team,30)
           +'<div class="mbv-pn"><div class="mbv-nm">'+esc(l.p.name)+'<span class="mbv-tm">'+abbr(l.p.team)+' \u00b7 '+posShort(l.p.position)+'</span></div>'
-          +'<div class="mbv-mk">'+l.line+'+ '+_lbl(l.statKey)+'<span class="mbv-proj">proj '+fmt(l.proj!=null?l.proj:l.avg,l.statKey==='goals'?1:l.statKey==='dreamteam'?0:1)+'</span></div></div>'
+          +(l._match?'<div class="mbv-mk">'+(l.statKey==='h2h'?'Head to Head':'Total Goals')+'</div></div>':'<div class="mbv-mk">'+l.line+'+ '+_lbl(l.statKey)+'<span class="mbv-proj">proj '+fmt(l.proj!=null?l.proj:l.avg,l.statKey==='goals'?1:l.statKey==='dreamteam'?0:1)+'</span></div></div>')
           +oddsPill+'<div class="mbv-add"><i class="ti '+(on?'ti-circle-check-filled':'ti-circle-plus')+'"></i></div></div>'
         +'<div class="mbv-row2"><span class="mbv-dots">'+dots+'</span>'
           +'<span class="mbv-hit">'+(l.probReal?Math.round(l.prob*100)+'% hit':'~'+Math.round(l.prob*100)+'%')+'</span>'
