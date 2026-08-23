@@ -834,7 +834,6 @@
         if (!rows.length) return isFocused() ? '' : emptyState('ti-shield-half', 'Coverage Busters quiet', 'No receiver on the slate has a strong man/zone edge against a scheme-heavy defence. Needs the coverage build to have run.');
         return degWrap('ti-shield-half', 'Coverage Busters', rows.slice(0, 12).map(_covBusterCard), 'c-red');
       },
-      ledger: function () { return ledgerPage(); },
       next: function () {
         var arr = _fc(nextManUp(), 6, 30);
         if (!arr.length) return isFocused() ? '' : emptyState('ti-user-plus', 'Next Man Up is quiet', 'No meaningful starter on the slate is listed Out/Doubtful. Alerts fire from the injury report as it fills through the week.');
