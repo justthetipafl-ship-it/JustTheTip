@@ -1345,6 +1345,9 @@
 .vb-ln{font-size:11px;color:var(--text-2);margin-top:1px}
 .vb-sub{font-size:9px;color:var(--text-3);font-family:var(--font-mono);margin-top:1px}
 .vb-chev{flex:0 0 auto;color:var(--text-3);font-size:16px}
+.fxr-rk{font-size:11px;font-weight:800;color:#f5c518;margin-right:4px;vertical-align:top}
+.fx-confbar{margin:8px 0 2px}
+.fx-conf-sel{background:var(--surface-2,#1a1d24);color:var(--text-1,#e8eaed);border:1px solid var(--border,#2a2e37);border-radius:8px;padding:6px 10px;font-size:12px;font-family:inherit}
 </style>
 </head>
 <body class="auth-locked">
@@ -1531,7 +1534,7 @@
     DVP_PLAY_STYLE_POS=CFG.dvpStylePos||{'Accumulator Mid':'Midfielder','Contested Mid':'Midfielder','Running Mid':'Midfielder','Handball Mid':'Midfielder','Scoring MF':'Mid-Forward','Bear in the Square':'Key Forward','Key Target':'Key Forward','Pressure Fwd':'Gen. Forward','Small Forwards':'Gen. Forward','Clearance Beast':'Midfielder','Intercept Def':'Key Defender','Uncontested Marker':'Gen. Defender','Defensive Ball User':'Gen. Defender','Ruck Mid':'Ruck','Dominant Ruck':'Ruck','Winger':'Midfielder','Shankers':'All Positions','Cuddle Monsters':'All Positions','Fantasy Stars':'All Positions','Entry Man':'All Positions'};
   }
   function _renderSportToggle(){ const el=document.getElementById('sport-toggle'); if(!el)return; const keys=Object.keys(SPORTS).filter(function(k){return !SPORTS[k].hidden;}); if(keys.length<2){ el.innerHTML=''; return; } el.innerHTML='<select class="sport-sel" onchange="_switchSport(this.value)" aria-label="Sport">'+keys.map(k=>'<option value="'+k+'"'+(k===SPORT.key?' selected':'')+'>'+SPORTS[k].name+'</option>').join('')+'</select>'; }
-  const DATA_FILES_COMMON = { meta:'data/meta.json', players:'data/players.json', teams:'data/teams.json',
+  const DATA_FILES_COMMON = { meta:'data/meta.json', players:'data/players.json', teams:'data/teams.json', teamsExtra:'data/teams_extra.json',
                        teams_form:'data/teams_form.json', dvp:'data/dvp.json',
                        gamelogs:'data/gamelogs.json', fixture:'data/fixture.json',
                        injury:'data/injury.json', odds:'data/odds.json',
@@ -1761,6 +1764,8 @@
         if(id!=null && !state.idx.teamMap[id]){ var _n=nm||String(id); state.idx.teamMap[id]={team:id,name:_n,school:_n,displayName:_n,abbr:String(_n).replace(/[^A-Za-z0-9]/g,'').slice(0,4).toUpperCase()}; }
       });
     });
+    var _tx=d.teamsExtra;                                              // complete id->name map (results/H2H opponents beyond the gamelog teams)
+    if(_tx&&typeof _tx==='object'&&!Array.isArray(_tx)){ Object.keys(_tx).forEach(function(id){ if(!state.idx.teamMap[id]){ var e=_tx[id]||{}; var _n=(e&&e.name)||String(id); state.idx.teamMap[id]={team:id,name:_n,school:_n,displayName:_n,abbr:(e&&e.abbr)||String(_n).replace(/[^A-Za-z0-9]/g,'').slice(0,4).toUpperCase()}; } }); }
     // gamelogs by player and by match
     state.idx.logsByName={}; state.idx.matchTeams={}; state.idx.matchScore={};
     (d.gamelogs||[]).forEach(r=>{
@@ -2591,6 +2596,8 @@
     h+='<div class="live-box-cols">'+_aflLiveBox(g.home,_aflLive.home)+_aflLiveBox(g.away,_aflLive.away)+'</div>';
     return h+'</div>';
   }
+  function _fxSetConf(c){ state.view.fxConf=c; _renderApp(); }
+  function _rkBadge(r){ return (r!=null && r!=='' && +r>0 && +r<=25) ? '<span class="fxr-rk">#'+r+'</span>' : ''; }
   function renderFixture(){
     const fx=state.data.fixture||[];
     if(SPORT.key==='mlb' && state.view.mlbLive!=null){ const _lg=(fx||[]).find(x=>x.gamePk==state.view.mlbLive); if(_lg) return renderMlbLive(_lg); }
@@ -2600,6 +2607,10 @@
     const doneCount=fx.filter(gameDone).length;
     let games=fx.map((g,i)=>({g,i}));
     if(SETTINGS.hideCompleted) games=games.filter(x=>!gameDone(x.g));
+    // conference filter (NCAAF/any sport whose fixtures or teamMap carry a conference)
+    var _confOf=function(g,side){ var c=side==='h'?g.homeConf:g.awayConf; if(c) return c; var tm=state.idx.teamMap[side==='h'?g.home:g.away]; return (tm&&tm.conference)||null; };
+    var _fxConfs=Array.from(new Set(games.reduce(function(a,x){ a.push(_confOf(x.g,'h'),_confOf(x.g,'a')); return a; },[]).filter(Boolean))).sort();
+    if(state.view.fxConf) games=games.filter(function(x){ return _confOf(x.g,'h')===state.view.fxConf || _confOf(x.g,'a')===state.view.fxConf; });
     const toggle=doneCount>0?'<button class="fx-hidebtn'+(SETTINGS.hideCompleted?' on':'')+'" onclick="_sHideCompleted()"><i class="ti ti-'+(SETTINGS.hideCompleted?'eye-off':'eye')+'"></i> '+(SETTINGS.hideCompleted?'Completed hidden ('+doneCount+')':'Hide completed ('+doneCount+')')+'</button>':'';
     // MLB: Today / Tomorrow day tabs (like the standalone tool)
     let mlbDayNav='';
@@ -2631,13 +2642,14 @@
     const _fxSub=_dailySched()?(games.length+' game'+(games.length!==1?'s':'')+' \u00b7 tap for the matchup breakdown'):'Tap a match for the matchup breakdown';
     let h='<div class="page-header"><div style="display:flex;align-items:flex-start;justify-content:space-between;gap:10px"><div><div class="page-title">'+_fxTitle+'</div><div class="page-sub">'+_fxSub+'</div></div>'+toggle+'</div></div>';
     h+=mlbDayNav;
+    if(_fxConfs.length>1) h+='<div class="fx-confbar"><select class="fx-conf-sel" onchange="_fxSetConf(this.value)"><option value="">All conferences</option>'+_fxConfs.map(function(c){return '<option value="'+esc(c)+'"'+(c===state.view.fxConf?' selected':'')+'>'+esc(c)+'</option>';}).join('')+'</select></div>';
     if(!games.length) return h+emptyState('ti-calendar-check','No games','No games scheduled for this day.');
     games.forEach(({g,i})=>{
       if(SPORT.key==='mlb'){ _mlbStatusEnsure(); h+=_mlbFxRow(g,i); return; }
       h+='<div class="fixture-row'+(gameDone(g)?' fxr-done':'')+'" onclick="state.view.fixtureId='+i+';_renderApp();window.scrollTo({top:0})">'+
-        '<div class="fxr-team">'+teamLogo(g.home,40)+'<div class="fxr-name">'+((state.idx.teamMap[g.home]||{}).name||g.home)+'</div>'+pips(g.home)+'</div>'+
+        '<div class="fxr-team">'+teamLogo(g.home,40)+'<div class="fxr-name">'+_rkBadge(g.homeRank)+((state.idx.teamMap[g.home]||{}).name||g.home)+'</div>'+pips(g.home)+'</div>'+
         '<div class="fxr-center"><div class="fxr-kickoff">'+_localKickoff(g)+'</div><div class="fxr-vs">'+(gameDone(g)?'<span class="fxr-ft">FT</span>':'v')+'</div><div class="fxr-venue">'+(g.venue||'TBC')+'</div>'+weatherChip(g.home,g.away)+'</div>'+
-        '<div class="fxr-team">'+teamLogo(g.away,40)+'<div class="fxr-name">'+((state.idx.teamMap[g.away]||{}).name||g.away)+'</div>'+pips(g.away)+'</div></div>';
+        '<div class="fxr-team">'+teamLogo(g.away,40)+'<div class="fxr-name">'+_rkBadge(g.awayRank)+((state.idx.teamMap[g.away]||{}).name||g.away)+'</div>'+pips(g.away)+'</div></div>';
     });
     return h;
   }
@@ -3806,9 +3818,9 @@
     if(SPORT.key==='mlb'){ h+=_mlbFocusHeader(g); h+=_mlbMatchPanels(g); }
     if(SPORT.key==='epl'){ h+=_eplMarketPanels(g)+_eplFocusPanels(g); }
     else h+='<div class="fixture-header">'+
-      '<div class="fixture-team">'+teamLogo(g.home,52)+'<div class="fxr-name">'+((state.idx.teamMap[g.home]||{}).name||g.home)+'</div>'+pips(g.home)+'</div>'+
+      '<div class="fixture-team">'+teamLogo(g.home,52)+'<div class="fxr-name">'+_rkBadge(g.homeRank)+((state.idx.teamMap[g.home]||{}).name||g.home)+'</div>'+pips(g.home)+'</div>'+
       '<div class="fixture-center"><div class="kickoff">'+esc(_localDate(g))+' '+esc(_localTime(g))+'</div><div class="vs-big">v</div><div class="venue">'+(g.venue||'TBC')+'</div>'+weatherChip(g.home,g.away)+'</div>'+
-      '<div class="fixture-team">'+teamLogo(g.away,52)+'<div class="fxr-name">'+((state.idx.teamMap[g.away]||{}).name||g.away)+'</div>'+pips(g.away)+'</div></div>';
+      '<div class="fixture-team">'+teamLogo(g.away,52)+'<div class="fxr-name">'+_rkBadge(g.awayRank)+((state.idx.teamMap[g.away]||{}).name||g.away)+'</div>'+pips(g.away)+'</div></div>';
     if(SPORT.key==='afl' && LIVE_WORKER) h+='<button class="live-open-btn" onclick="_aflLiveOpenCurrent()"><span class="live-dot on"></span>Watch Live</button>';
     h+=((SPORT.key==='epl'||_fxHid('sec','matchMkts'))?'':gameMatchMarkets(g.home,g.away))+(_fxHid('sec','matchOdds')?'':gameMatchOdds(g.home,g.away))+((SPORT.key==='epl'||_fxHid('sec','h2h'))?'':gameHeadToHead(g.home,g.away))+((SPORT.key==='epl'||_fxHid('sec','clash'))?'':gameClash(g.home,g.away))+(_fxHid('sec','lastMeeting')?'':gameLastMeeting(g.home,g.away))+((SPORT.key==='epl'||_fxHid('sec','byHalves'))?'':gameByHalves(g.home,g.away))+((SPORT.key==='epl'||_fxHid('sec','shapeTrend'))?'':gameShapeTrend(g.home,g.away))+((SPORT.key==='epl'||_fxHid('sec','recentGames'))?'':gameRecentGames(g.home,g.away));
     h+='<div class="team-cols">'+teamPanel(g.home,g.away,true)+teamPanel(g.away,g.home,false)+'</div>';
