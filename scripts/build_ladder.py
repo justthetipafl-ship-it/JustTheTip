@@ -9,6 +9,7 @@ Fallback mode (no odds, e.g. AFLW): a single-stat banker on [fallback_stat].
 Each run grades the previous pending pick (all legs must clear), moves the bankroll,
 then adds the next pick. Keeps a rolling 10 days. Handles split game-log files."""
 import json
+import math
 import os
 import re
 import sys
@@ -84,12 +85,27 @@ def build_index(gl):
     return byp
 
 
+def _wilson_lower(hits, n, z=1.28):
+    """~80% one-sided lower confidence bound on the hit rate. Rewards sample size:
+    a 25/30 outranks a 4/4, so the ladder stops favouring thin-record players."""
+    if n <= 0:
+        return 0.0
+    p = hits / float(n)
+    z2 = z * z
+    denom = 1.0 + z2 / n
+    centre = p + z2 / (2.0 * n)
+    margin = z * math.sqrt((p * (1.0 - p) + z2 / (4.0 * n)) / n)
+    return max(0.0, (centre - margin) / denom)
+
+
 def hit_rate(rec, field, line):
     vals = [r.get(field) for r in rec['games'][-HIT_WINDOW:] if r.get(field) is not None]
     vals = [float(v) for v in vals]
-    if len(vals) < 4:
+    n = len(vals)
+    if n < 4:
         return None
-    return sum(1 for v in vals if v >= line) / float(len(vals))
+    hits = sum(1 for v in vals if v >= line)
+    return _wilson_lower(hits, n)
 
 
 def _mkleg(l, byp):
@@ -134,7 +150,15 @@ def _combo_cross_game(by_game):
         for lg in legs:
             if lg['line'] not in byline or lg['hr'] > byline[lg['line']]['hr']:
                 byline[lg['line']] = lg
-        games[gi] = sorted(byline.values(), key=lambda x: -x['hr'])[:4]
+        vals = list(byline.values())
+        safe = sorted(vals, key=lambda x: -x['hr'])[:4]                       # safest bankers
+        longer = sorted([l for l in vals if l['hr'] >= 0.55], key=lambda x: -x['over'])[:4]   # + longer legs so a combo can reach the ~$2 window even with few games
+        seen, pool = set(), []
+        for l in safe + longer:
+            k = (l['name'], l['line'])
+            if k in seen: continue
+            seen.add(k); pool.append(l)
+        games[gi] = pool
     gis = sorted(games.keys(), key=lambda gi: -games[gi][0]['hr'])[:6]
     best = None
     for size in (2, 3, 4):
@@ -185,8 +209,28 @@ def best_pick(base, gl, byp, book=LADDER_BOOK):
             return False
         return (st + aest).date() == today              # same AEST calendar day
 
-    games = [(g.get('home'), g.get('away')) for g in fx
-             if g.get('home') and g.get('away') and _today_upcoming(g)]
+    def _gdate(g):
+        st = _start(g)
+        if st is not None:
+            return (st + aest).date().isoformat()
+        return str(g.get('date') or '')[:10]
+
+    def _future(g):
+        st = _start(g)
+        if st is not None:
+            return st > now                              # hasn't started yet
+        return bool(g.get('date')) and _gdate(g) >= today.isoformat()
+
+    playable = [g for g in fx if g.get('home') and g.get('away') and _future(g)]
+    todays = [g for g in playable if _gdate(g) == today.isoformat()]
+    if todays:                                           # prefer today's slate
+        slate = todays
+    elif playable:                                       # else the SOONEST upcoming slate, so the ladder keeps climbing between game days
+        soonest = min(_gdate(g) for g in playable if _gdate(g))
+        slate = [g for g in playable if _gdate(g) == soonest]
+    else:
+        return None
+    games = [(g.get('home'), g.get('away')) for g in slate]
     if not games:
         return None
     team_game = {}
