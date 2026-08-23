@@ -1,0 +1,43 @@
+name: NCAAF Gamelogs (cfbfastR bulk)
+
+# One-shot: pulls the full-season player_box + schedule from the sportsdataverse ESPN
+# releases (keyless, ESPN-keyed) and writes ncaaf/data/gamelogs_{season}.json complete —
+# replaces the slow per-game ESPN summary backfill.
+on:
+  workflow_dispatch:
+    inputs:
+      season:
+        description: "Season (blank = 2025)"
+        required: false
+        default: ""
+  schedule:
+    - cron: "0 8 * * 2"   # Tue mornings during the season
+
+permissions:
+  contents: write
+concurrency:
+  group: ncaaf-gamelogs
+  cancel-in-progress: false
+
+jobs:
+  gamelogs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Fetch gamelogs
+        env:
+          NCAAF_SEASON: ${{ github.event.inputs.season }}
+        run: python3 ncaaf/fetch_gamelogs_cfbdata.py
+      - name: Commit
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add ncaaf/data/gamelogs_*.json 2>/dev/null || true
+          if git diff --staged --quiet; then echo "no change"; else
+            git commit -m "chore(ncaaf): gamelogs $(date -u +%Y-%m-%dT%H:%MZ)"
+            git pull --rebase --autostash origin main || true
+            git push
+          fi
