@@ -3,6 +3,7 @@ window.SPORT_CONFIG = {
   // official team logos — ESPN CDN by lowercase abbreviation (onerror falls back to the jersey)
   logoCdn: 'https://a.espncdn.com/i/teamlogos/ncaa/500/', logoCdnExt: '.png', teamIds: {},
   key: 'ncaaf',
+  noPlayerOdds: true,   // no odds feed yet -> hide the Odds screen (falls back to fixture)
   name: 'NCAAF',
   jupiter: {
     markets: [['passYds','Pass Yd'],['rushYds','Rush Yd'],['recYds','Rec Yd'],['receptions','Rec'],['rushAtt','Rush Att'],['passTds','Pass TD'],['tackles','Tackles']],
