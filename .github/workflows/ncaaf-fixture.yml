@@ -1,12 +1,12 @@
-name: NCAAF Fixture (API-Football)
+name: NCAAF Fixture (cfbfastR)
 
-# Pulls the upcoming NCAA week from the API-Football American Football API and maps
-# teams to the ESPN ids the tool uses, writing ncaaf/data/fixture.json. Uses the same
-# APIFOOTBALL_KEY secret as the EPL feed (or set NCAAF_APIFOOTBALL_KEY to override).
+# Pulls the upcoming NCAA week from cfbfastR (keyless) and maps team names to the ESPN
+# ids the tool uses, writing ncaaf/data/fixture.json. Week-0 safe (earliest upcoming week
+# by date). If load_cfb_schedules needs a CFBD key on your setup, add CFBD_API_KEY.
 on:
   workflow_dispatch: {}
   schedule:
-    - cron: "0 15 * * 1,2,3"   # Mon/Tue/Wed — refresh the upcoming week's slate
+    - cron: "0 15 * * 1,2,3"   # Mon/Tue/Wed — refresh the upcoming week
 
 permissions:
   contents: write
@@ -19,21 +19,26 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - name: Set up R
+        uses: r-lib/actions/setup-r@v2
         with:
-          python-version: "3.11"
+          use-public-rspm: true
+      - name: Install R packages (cached)
+        uses: r-lib/actions/setup-r-dependencies@v2
+        with:
+          packages: |
+            any::cfbfastR
+            any::jsonlite
       - name: Fetch NCAAF fixture
         env:
-          APIFOOTBALL_KEY: ${{ secrets.APIFOOTBALL_KEY }}
-          NCAAF_APIFOOTBALL_KEY: ${{ secrets.NCAAF_APIFOOTBALL_KEY }}
           NCAAF_SEASON: ${{ vars.NCAAF_SEASON }}
-          NCAAF_AF_LEAGUE: ${{ vars.NCAAF_AF_LEAGUE }}
-        run: python3 ncaaf/fetch_fixture_apifootball.py
+          CFBD_API_KEY: ${{ secrets.CFBD_API_KEY }}
+        run: Rscript ncaaf/scripts/fetch_ncaaf_fixture.R
       - name: Commit
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add ncaaf/data/fixture.json 2>/dev/null || true
+          git add ncaaf/data/fixture.json ncaaf/_schedule_columns.txt 2>/dev/null || true
           if git diff --staged --quiet; then echo "no change"; else
             git commit -m "chore(ncaaf): fixture $(date -u +%Y-%m-%dT%H:%MZ)"
             git pull --rebase --autostash origin main || true
