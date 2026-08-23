@@ -82,8 +82,12 @@ unmatched <- unmatched[!is.na(unmatched) & nzchar(unmatched)]
 if (length(unmatched)) { message("[ncaaf-fixture] ", length(unmatched), " teams unmatched to ESPN ids (likely FCS, skipped):")
   for (n in head(sort(unmatched), 40)) message("    - ", n) }
 
+hdiv <- tolower(as.character(pick(sched, c("home_division", "home_classification", "home_div"))))
+adiv <- tolower(as.character(pick(sched, c("away_division", "away_classification", "away_div"))))
+is_fbs <- (hdiv %in% c("fbs")) | (adiv %in% c("fbs"))   # keep games with >=1 FBS team (drops pure FCS/D2/D3)
+if (!any(is_fbs)) is_fbs <- rep(TRUE, length(hid))       # no division field -> keep all rather than drop everything
 today <- format(Sys.Date(), "%Y-%m-%d")
-cand <- ok & !is_done & !is.na(day) & day >= today & !is.na(wk)
+cand <- ok & is_fbs & !is_done & !is.na(day) & day >= today & !is.na(wk)
 if (!any(cand)) { message("[ncaaf-fixture] no upcoming unplayed games — leaving fixture untouched"); quit(status = 0) }
 nxt <- min(wk[cand], na.rm = TRUE)                      # earliest UPCOMING week -> week-0 safe
 sel <- which(cand & wk == nxt)
