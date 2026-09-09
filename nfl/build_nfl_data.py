@@ -141,7 +141,23 @@ def load_frames(seasons, pbp_seasons, current):
         try:
             pbp = nfl.load_pbp(seasons=pbp_seasons).to_pandas()
         except Exception as e:
-            print(f"  (pbp unavailable - red-zone/first-TD skipped: {e})")
+            # nflreadpy validates the whole season LIST against its own "current season"
+            # (Thursday after Labor Day) - a brand-new season isn't a valid ask until that
+            # date, and the WHOLE call throws, not just the new-season slice. Retry with
+            # just the seasons it currently considers valid instead of losing pbp entirely.
+            try:
+                cap = int(nfl.get_current_season())
+            except Exception:
+                cap = None
+            trimmed = [s for s in pbp_seasons if cap is None or 1999 <= s <= cap]
+            if trimmed and trimmed != list(pbp_seasons):
+                print(f"  (pbp: {e} -> retrying with valid seasons only: {trimmed})")
+                try:
+                    pbp = nfl.load_pbp(seasons=trimmed).to_pandas()
+                except Exception as e2:
+                    print(f"  (pbp unavailable - red-zone/first-TD skipped: {e2})")
+            else:
+                print(f"  (pbp unavailable - red-zone/first-TD skipped: {e})")
     adv = ros = None
     try:
         adv = nfl.load_pfr_advstats(seasons=[current], stat_type="def",
