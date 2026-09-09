@@ -91,13 +91,26 @@ SPORTS = {
         'player_fouls_committed': 'foulsCommitted', 'player_cards': 'cards',
         'goalkeeper_saves': 'saves',
     },
+    'NFL': {
+        'player_passing_yds': 'passYds', 'player_passing_tds': 'passTds',
+        'player_passing_attempts': 'passAtt', 'player_rushing_yds': 'rushYds',
+        'player_rushing_attempts': 'rushAtt', 'player_receptions': 'receptions',
+        'player_receiving_yds': 'recYds', 'player_rushing_receiving_yds': 'rushRecYds',
+        # NOTE: anytimeTd + tackles are in the NFL config's oddsMkts but no matching market_type
+        # was in the confirmed list (only Passing/Rushing/Receiving props) -> left unmapped on
+        # purpose rather than guessing a market name that could silently return zero rows.
+    },
 }
 
 # soccer props are milestone-only (X+) ladders -> skip the base-market request to halve credits
 MILESTONES_ONLY = {'EPL'}
 
 # game-level markets to also request per sport (feed the matchOdds h2h/total the shell renders)
-GAME_MARKETS = {'EPL': ['head_to_head_3_way', 'alternate_total_goals', 'alternate_total_corners', 'alternate_total_cards']}
+GAME_MARKETS = {
+    'EPL': ['head_to_head_3_way', 'alternate_total_goals', 'alternate_total_corners', 'alternate_total_cards'],
+    'NFL': ['head_to_head', 'alternate_lines', 'alternate_total_points'],
+}
+H2H_2WAY = {'NFL'}   # 2-way moneyline (no draw) vs soccer's 3-way
 TOTAL_KEYS = {'alternate_total_goals': 'total', 'alternate_total_corners': 'totalCorners', 'alternate_total_cards': 'totalCards'}
 
 
@@ -114,6 +127,7 @@ def transform(resp, mkmap, sport):
         home, away = game.get('home_team', ''), game.get('away_team', '')
         mo = {'home': home, 'away': away}
         totals = {}
+        spreads = {}   # (book) -> {'home':{point,price}, 'away':{point,price}}
         for bk in g.get('bookmakers', []):
             book = bk.get('name', '')
             books.add(book)
@@ -137,6 +151,18 @@ def transform(resp, mkmap, sport):
                         if h.get('home') and h.get('away'):
                             h['book'] = book
                             mo['h2h'] = h
+                    continue
+                if key == 'alternate_lines':
+                    rec = spreads.setdefault(book, {})
+                    for o in outs:
+                        pt, pr = o.get('point'), o.get('price')
+                        nm = (o.get('name') or '')
+                        if pt is None or not pr:
+                            continue
+                        if nm == home or nm.lower() == 'home':
+                            rec['home'] = (float(pt), pr)
+                        elif nm == away or nm.lower() == 'away':
+                            rec['away'] = (float(pt), pr)
                     continue
                 if key in TOTAL_KEYS:
                     tl = totals.setdefault(TOTAL_KEYS[key], {})
@@ -167,6 +193,15 @@ def transform(resp, mkmap, sport):
                         rec['under'] = price
                     else:
                         rec['over'] = price
+        best_sp = None
+        for book, rec in spreads.items():
+            if 'home' in rec and 'away' in rec:
+                d = abs(rec['home'][1] - 1.90)
+                if best_sp is None or d < best_sp[0]:
+                    best_sp = (d, {'home': rec['home'][0], 'homeOdds': rec['home'][1],
+                                    'away': rec['away'][0], 'awayOdds': rec['away'][1], 'book': book})
+        if best_sp:
+            mo['line'] = best_sp[1]
         for tk, tl in totals.items():
             best = None
             for (pt, book), rec in tl.items():
@@ -176,7 +211,7 @@ def transform(resp, mkmap, sport):
                         best = (d, {'points': pt, 'over': rec['over'], 'under': rec['under'], 'book': book})
             if best:
                 mo[tk] = best[1]
-        if mo.get('h2h') or mo.get('total') or mo.get('totalCorners') or mo.get('totalCards'):
+        if mo.get('h2h') or mo.get('line') or mo.get('total') or mo.get('totalCorners') or mo.get('totalCards'):
             match_odds.append(mo)
 
     def emit(m):
@@ -217,9 +252,10 @@ def main():
         print('ROA_API_KEY not set'); sys.exit(1)
     mkmap = SPORTS[sport]
     if sport in MILESTONES_ONLY:
-        markets = [k + '_milestones' for k in mkmap] + GAME_MARKETS.get(sport, [])
+        markets = [k + '_milestones' for k in mkmap]
     else:
         markets = list(mkmap.keys()) + [k + '_milestones' for k in mkmap]
+    markets += GAME_MARKETS.get(sport, [])   # game markets requested for every sport that defines them, not just milestones-only ones
     client = RapidOddsAPI(api_key=key)
     resp = client.get_odds(sport, markets, BOOKMAKERS)
     data = transform(resp, mkmap, sport)
