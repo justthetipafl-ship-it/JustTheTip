@@ -1,0 +1,45 @@
+name: NFL Odds (rapidodds)
+
+# Same two-pull pattern as EPL: morning sweep (--force) so Degenerates can trigger, and
+# an hourly window that --window 1 gates to fire once, 1h before the first game.
+on:
+  workflow_dispatch: {}
+  schedule:
+    - cron: "0 21 * * *"     # 07:00 AEST — morning sweep (--force)
+    - cron: "0 8-18 * * *"   # hourly UTC across NFL kickoff windows — --window 1 gates the actual pull
+
+permissions:
+  contents: write
+concurrency:
+  group: nfl-odds
+  cancel-in-progress: false
+
+jobs:
+  odds:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install RapidOddsAPI
+        run: pip install rapidoddsapi
+      - name: Pull NFL odds
+        env:
+          ROA_API_KEY: ${{ secrets.ROA_API_KEY }}
+        run: |
+          if [ "${{ github.event.schedule }}" = "0 8-18 * * *" ]; then
+            python3 scripts/fetch_odds.py NFL nfl/data/odds.json --window 1
+          else
+            python3 scripts/fetch_odds.py NFL nfl/data/odds.json --force
+          fi
+      - name: Commit
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add nfl/data/odds.json 2>/dev/null || true
+          if git diff --staged --quiet; then echo "no change"; else
+            git commit -m "chore(nfl): odds $(date -u +%Y-%m-%dT%H:%MZ)"
+            git pull --rebase --autostash origin main || true
+            git push
+          fi
