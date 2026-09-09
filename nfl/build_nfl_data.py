@@ -347,15 +347,50 @@ def build_dbs(adv, ros, current, players=None):
 
 # ?? pbp ? Tuddy Targets red-zone splits (season totals, zone splits, team share %) ??
 def build_redzone(pbp, short_idx, current):
-    """Season totals for the Tuddy Targets boards. Zones: rz (<=20), i10 (<=10),
-    i5 (<=5, rushing only). Shares are the player's slice of his TEAM's zone volume."""
+    """Tuddy Targets boards. Zones: rz (<=20), i10 (<=10), i5 (<=5, rushing only).
+    Shares are the player's slice of his TEAM's zone volume.
+
+    Season-to-date once the current season has real sample (>=5 weeks of pbp for
+    `current`). Before that (new season, first few weeks), each TEAM's rolling last
+    10 games is used instead - so early weeks blend in the tail of the prior season
+    rather than showing nothing / a tiny sample, and it naturally rolls over to
+    season-to-date as `current` accumulates its own weeks."""
     if pbp is None or getattr(pbp, "empty", True):
         return []
-    se = col(pbp, "season"); yl = col(pbp, "yardline_100"); pt = col(pbp, "play_type")
+    se = col(pbp, "season"); wk = col(pbp, "week"); yl = col(pbp, "yardline_100"); pt = col(pbp, "play_type")
     rusher = col(pbp, "rusher_player_name", "rusher")
     recv = col(pbp, "receiver_player_name", "receiver")
     posteam = col(pbp, "posteam")
     comp = col(pbp, "complete_pass"); ptd = col(pbp, "pass_touchdown"); rtd = col(pbp, "rush_touchdown")
+
+    # how many distinct weeks of the CURRENT season are already in the pbp pool?
+    current_weeks = set()
+    for _, r in pbp.iterrows():
+        try:
+            if int(g(r, se, 0)) == int(current):
+                current_weeks.add(int(g(r, wk, 0)))
+        except (TypeError, ValueError):
+            continue
+    mature = len(current_weeks) >= 5
+    print(f"  redzone: current season has {len(current_weeks)} week(s) of pbp -> "
+          + ("season-to-date" if mature else "last-10-games-per-team window"))
+
+    # per-team rolling last-10-games window, only needed while the season isn't mature
+    team_games = {}
+    if not mature:
+        team_weeks = {}
+        for _, r in pbp.iterrows():
+            try:
+                season = int(g(r, se, 0)); week = int(g(r, wk, 0))
+            except (TypeError, ValueError):
+                continue
+            team = str(g(r, posteam, "") or "").upper()
+            if not team:
+                continue
+            team_weeks.setdefault(team, set()).add((season, week))
+        for team, wks in team_weeks.items():
+            team_games[team] = set(sorted(wks, reverse=True)[:10])
+
     P = {}          # full name -> zone counters
     T = {}          # team -> zone volume {rzTgt, i10Tgt, rzAtt, i10Att, i5Att}
     def pl(full, team):
@@ -366,9 +401,13 @@ def build_redzone(pbp, short_idx, current):
         return T.setdefault(team, {"rzTgt": 0, "i10Tgt": 0, "rzAtt": 0, "i10Att": 0, "i5Att": 0})
     unresolved = set()
     for _, r in pbp.iterrows():
-        try: season = int(g(r, se, 0))
+        try: season = int(g(r, se, 0)); week = int(g(r, wk, 0))
         except (TypeError, ValueError): continue
-        if season != int(current): continue
+        team_chk = str(g(r, posteam, "") or "").upper()
+        if mature:
+            if season != int(current): continue
+        else:
+            if (season, week) not in team_games.get(team_chk, ()): continue
         try: y = float(g(r, yl))
         except (TypeError, ValueError): continue
         if not (y == y) or y > 20: continue
