@@ -1449,7 +1449,7 @@
   const SPORTS = {
     afl: { key:'afl', dir:'AFL', name:'AFL', oddsUrl:'https://jtt-odds.justthetipafl.workers.dev/odds.json?sport=AFL', liveWorker:'https://health.justthetipafl.workers.dev', resultsWorker:'https://jtt-afl-results.justthetipafl.workers.dev' },
     aflw: { key:'aflw', dir:'aflw', name:'AFLW', oddsUrl:'https://jtt-aflw-odds.justthetipafl.workers.dev/odds.json', liveWorker:'', resultsWorker:'' },
-    nfl: { key:'nfl', dir:'nfl', name:'NFL', oddsUrl:'https://jtt-odds.justthetipafl.workers.dev/odds.json?sport=NFL', liveWorker:'' },
+    nfl: { key:'nfl', dir:'nfl', name:'NFL', oddsUrl:'', liveWorker:'' },   // NFL odds are committed (rapidodds via workflow), not live-worker
     mlb: { key:'mlb', dir:'mlb', name:'MLB', oddsUrl:'https://jtt-odds.justthetipafl.workers.dev/odds.json?sport=MLB', liveWorker:'' },
     epl: { key:'epl', dir:'EPL', name:'EPL', oddsUrl:'', liveWorker:'' },   // EPL odds are committed (API-Football via workflow), not live-worker
     nbl: { hidden:true, key:'nbl', dir:'nbl', name:'NBL', oddsUrl:'https://jtt-odds.justthetipafl.workers.dev/odds.json?sport=NBL', liveWorker:'' },
@@ -1751,6 +1751,18 @@
     (d.players||[]).forEach(p=>{ if(games[p.name]) p.matches=games[p.name].size; });
     d._dedupedMatches=drop.size;
   }
+  var _TEAM_ALIAS={
+    'manchester city':'mancity','man city':'mancity',
+    'manchester united':'manutd','man utd':'manutd','man united':'manutd',
+    'tottenham hotspur':'tottenham','spurs':'tottenham',
+    'brighton and hove albion':'brighton',
+    'newcastle united':'newcastle',
+    'wolverhampton wanderers':'wolves','wolverhampton':'wolves',
+    'nottingham forest':'nottmforest','nott m forest':'nottmforest','nottm forest':'nottmforest',
+    'west ham united':'westham','leeds united':'leeds','afc bournemouth':'bournemouth'
+  };
+  function _normTeam(n){ var t=(n||'').toLowerCase().replace(/&/g,'and').replace(/[^a-z0-9 ]/g,' ').replace(/\s+/g,' ').trim(); return _TEAM_ALIAS[t]||t.replace(/ /g,''); }
+  function _moKey(a,b){ return [_normTeam(a),_normTeam(b)].sort().join('|'); }
   function adaptData(){
     const d=state.data; _venueMap=null; _wwCache=null;
     _dedupeGamelogs(d);
@@ -1881,7 +1893,7 @@
     state.idx.oddsIdx=idx;
     // match-level odds keyed by unordered team pair
     const mo=(src&&src.matchOdds)||[]; const moIdx={};
-    mo.forEach(g=>{ if(!g||!g.home||!g.away) return; moIdx[[g.home,g.away].sort().join('|')]=g; });
+    mo.forEach(g=>{ if(!g||!g.home||!g.away) return; moIdx[_moKey(g.home,g.away)]=g; });
     state.idx.matchOddsIdx=moIdx;
     try{ _snapClosingLines(); }catch(e){}
     // alternate line ladders (e.g. disposals 20+/25+/30+): altIdx[name][market] = [{line,over,book}] asc
@@ -2466,14 +2478,14 @@
     let store; try{ store=JSON.parse(localStorage.getItem(CLOSING_KEY)||'{}'); }catch(e){ store={}; }
     let changed=false;
     (state.data.fixture||[]).forEach(g=>{ const t=gameStart(g); if(t==null||Date.now()>=t) return;   // only update while still pre-game
-      const key=[g.home,g.away].sort().join('|');
+      const key=_moKey(g.home,g.away);
       const go=(state.idx.matchOddsIdx||{})[key];
       if(go && (go.total||go.line)){ store[key]={ total:go.total?go.total.points:null, line:(go.line&&go.line.home!=null)?go.line.home:null, at:Date.now() }; changed=true; }
     });
     if(changed){ try{ localStorage.setItem(CLOSING_KEY, JSON.stringify(store)); }catch(e){} }
   }
   function _gameLineTotal(g){
-    const key=[g.home,g.away].sort().join('|');
+    const key=_moKey(g.home,g.away);
     const cl=_closingLines()[key], st=gameStart(g);
     // once the game has started, lock to the pre-game closing line — the live feed drifts to in-play handicaps
     if(st!=null && Date.now()>=st && cl && (cl.total!=null||cl.line!=null)) return { total:cl.total, line:cl.line };
@@ -2658,7 +2670,7 @@
     betr_au:'Betr',unibet:'Unibet',betfair_ex_au:'Betfair'};
   const bookLabel=k=>BOOK_LABEL[k]||(k?k.replace(/_au$/,'').replace(/^\w/,c=>c.toUpperCase()):'');
   function gameMatchOdds(home,away){
-    const g=(state.idx.matchOddsIdx||{})[[home,away].sort().join('|')];
+    const g=(state.idx.matchOddsIdx||{})[_moKey(home,away)];
     if(!g||(!g.h2h&&!g.line&&!g.total&&!g.totalCorners&&!g.totalCards)) return '';
     const odd=v=>v==null?'—':(+v).toFixed(2);
     const books=new Set();
