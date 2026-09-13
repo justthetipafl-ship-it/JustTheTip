@@ -96,11 +96,14 @@ SPORTS = {
         'player_passing_attempts': 'passAtt', 'player_rushing_yds': 'rushYds',
         'player_rushing_attempts': 'rushAtt', 'player_receptions': 'receptions',
         'player_receiving_yds': 'recYds', 'player_rushing_receiving_yds': 'rushRecYds',
-        # NOTE: anytimeTd + tackles are in the NFL config's oddsMkts but no matching market_type
-        # was in the confirmed list (only Passing/Rushing/Receiving props) -> left unmapped on
-        # purpose rather than guessing a market name that could silently return zero rows.
+        'player_touchdowns': 'anytimeTd', 'player_tackles_assists': 'tackles',
     },
 }
+
+# some props only exist as ONE of {flat over/under, milestone ladder} -> requesting the
+# other side just wastes a credit for zero rows, so handle these two shapes explicitly
+MILESTONE_ONLY_MARKETS = {'player_touchdowns'}        # anytime/2+/3+ has no flat market
+BASE_ONLY_MARKETS      = {'player_tackles_assists'}   # no milestones ladder is offered for this one
 
 # soccer props are milestone-only (X+) ladders -> skip the base-market request to halve credits
 MILESTONES_ONLY = {'EPL'}
@@ -254,7 +257,15 @@ def main():
     if sport in MILESTONES_ONLY:
         markets = [k + '_milestones' for k in mkmap]
     else:
-        markets = list(mkmap.keys()) + [k + '_milestones' for k in mkmap]
+        markets = []
+        for k in mkmap:
+            if k in MILESTONE_ONLY_MARKETS:
+                markets.append(k + '_milestones')
+            elif k in BASE_ONLY_MARKETS:
+                markets.append(k)
+            else:
+                markets.append(k)
+                markets.append(k + '_milestones')
     markets += GAME_MARKETS.get(sport, [])   # game markets requested for every sport that defines them, not just milestones-only ones
     client = RapidOddsAPI(api_key=key)
     resp = client.get_odds(sport, markets, BOOKMAKERS)
