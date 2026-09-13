@@ -37,6 +37,7 @@ window.SPORT_CONFIG = {
   tileOrder: ['paydirt','elite','bunnies','bogey','streak','chunk','wrap','usage','next','stack','wx','push','clamp','form'],
   posColors: {'QB':'#ef4444','RB':'#22c55e','WR':'#3b82f6','TE':'#f59e0b','LB':'#a855f7','DL':'#f97316','DB':'#06b6d4'},
   crew: [{k:'multi',n:'Multi Builder',i:'ti-stack-2',d:'Stacked legs'},
+    {k:'radar',n:'The Radar',i:'ti-radar',d:'4-axis matchup ratings'},
     {k:'green',n:'Green Lights',i:'ti-traffic-lights',d:'Strong OVER'},
     {k:'paydirt',n:'Tuddy Targets',i:'ti-ball-american-football',d:'Redzone royalty'},
     {k:'elite',n:'Elite Matchups',i:'ti-trophy',d:'Top v soft'},
