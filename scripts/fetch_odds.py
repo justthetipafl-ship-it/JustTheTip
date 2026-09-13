@@ -97,6 +97,7 @@ SPORTS = {
         'player_rushing_attempts': 'rushAtt', 'player_receptions': 'receptions',
         'player_receiving_yds': 'recYds', 'player_rushing_receiving_yds': 'rushRecYds',
         'player_touchdowns': 'anytimeTd', 'player_tackles_assists': 'tackles',
+        'player_sacks': 'sacks', 'player_kicking_points': 'kickingPts', 'player_field_goals_made': 'fgMade',
     },
 }
 
@@ -111,10 +112,27 @@ MILESTONES_ONLY = {'EPL'}
 # game-level markets to also request per sport (feed the matchOdds h2h/total the shell renders)
 GAME_MARKETS = {
     'EPL': ['head_to_head_3_way', 'alternate_total_goals', 'alternate_total_corners', 'alternate_total_cards'],
-    'NFL': ['head_to_head', 'alternate_lines', 'alternate_total_points'],
+    'NFL': ['head_to_head', 'alternate_lines', 'alternate_total_points', 'alternate_total_touchdowns',
+            'alternate_team_total_points', 'head_to_head_1st_half', 'alternate_lines_1st_half',
+            'alternate_total_points_1st_half', 'alternate_team_total_points_1st_half'],
 }
 H2H_2WAY = {'NFL'}   # 2-way moneyline (no draw) vs soccer's 3-way
-TOTAL_KEYS = {'alternate_total_goals': 'total', 'alternate_total_corners': 'totalCorners', 'alternate_total_cards': 'totalCards'}
+
+# NOTE on the markets below `alternate_total_points` in NFL's list: team totals and the
+# 1st-half splits are a market shape we haven't seen a real ROA payload for yet (unlike
+# everything above, which was verified against actual returned data). They're wired using
+# the same outcome-naming convention that h2h/spread/totals turned out to use - but if they
+# come back empty or wrong after the first run, send a sample matchOdds/game entry and it's
+# a quick fix, same as every other market so far.
+H2H_1H_KEY   = 'head_to_head_1st_half'
+LINE_1H_KEY  = 'alternate_lines_1st_half'
+TEAM_TOTAL_KEYS = {'alternate_team_total_points': 'teamTotal', 'alternate_team_total_points_1st_half': 'teamTotal1H'}
+FIELD_MARKETS = {'player_1st_touchdown_scorer': 'firstTd'}   # "player X to do Y" bets: no line, one price per player
+TOTAL_KEYS = {
+    'alternate_total_goals': 'total', 'alternate_total_corners': 'totalCorners', 'alternate_total_cards': 'totalCards',
+    'alternate_total_points': 'total', 'alternate_total_touchdowns': 'totalTds',
+    'alternate_total_points_1st_half': 'total1H',
+}
 
 
 def jtt_market(key, mkmap):
@@ -130,13 +148,75 @@ def transform(resp, mkmap, sport):
         home, away = game.get('home_team', ''), game.get('away_team', '')
         mo = {'home': home, 'away': away}
         totals = {}
-        spreads = {}   # (book) -> {'home':{point,price}, 'away':{point,price}}
+        spreads = {}       # (book) -> {'home':{point,price}, 'away':{point,price}}
+        spreads1h = {}     # same shape, for the 1st-half line
+        team_totals = {}   # jk -> {(side,book): {'points','over','under'}}
+        h2h1h = {}
         for bk in g.get('bookmakers', []):
             book = bk.get('name', '')
             books.add(book)
             for mkt in bk.get('markets', []):
                 key = mkt.get('key', '')
                 outs = mkt.get('outcomes', [])
+                if key in FIELD_MARKETS:
+                    jk = FIELD_MARKETS[key]
+                    for o in outs:
+                        player, price = o.get('player_name') or o.get('name'), o.get('price')
+                        if not player or not price:
+                            continue
+                        rec = alt_map.setdefault((player, jk, 0.0, book), {'over': None, 'under': None})
+                        rec['over'] = price   # a field bet: one price per player, no line
+                    continue
+                if key == H2H_1H_KEY:
+                    if 'h2h1H' not in mo:
+                        h = {}
+                        for o in outs:
+                            nm, pr = (o.get('name') or ''), o.get('price')
+                            if not pr:
+                                continue
+                            low = nm.lower()
+                            if low == 'home' or nm == home:
+                                h['home'] = pr
+                            elif low == 'away' or nm == away:
+                                h['away'] = pr
+                        if h.get('home') and h.get('away'):
+                            h['book'] = book
+                            mo['h2h1H'] = h
+                    continue
+                if key == LINE_1H_KEY:
+                    rec = spreads1h.setdefault(book, {})
+                    for o in outs:
+                        pt, pr = o.get('point'), o.get('price')
+                        nm = (o.get('name') or '')
+                        if pt is None or not pr:
+                            continue
+                        if nm == home or nm.lower() == 'home':
+                            rec['home'] = (float(pt), pr)
+                        elif nm == away or nm.lower() == 'away':
+                            rec['away'] = (float(pt), pr)
+                    continue
+                if key in TEAM_TOTAL_KEYS:
+                    jk = TEAM_TOTAL_KEYS[key]
+                    for o in outs:
+                        pt, pr = o.get('point'), o.get('price')
+                        nm = (o.get('name') or '')
+                        side_src = o.get('team') or o.get('description') or nm
+                        low_side = (side_src or '').lower()
+                        if pt is None or not pr:
+                            continue
+                        if side_src == home or 'home' in low_side or home.lower() in low_side:
+                            side = 'home'
+                        elif side_src == away or 'away' in low_side or away.lower() in low_side:
+                            side = 'away'
+                        else:
+                            continue
+                        uo = nm.lower()
+                        rec = team_totals.setdefault((jk, side, book), {'points': float(pt), 'over': None, 'under': None})
+                        if uo.startswith('u'):
+                            rec['under'] = pr
+                        else:
+                            rec['over'] = pr
+                    continue
                 if key in ('head_to_head', 'head_to_head_3_way'):
                     if 'h2h' not in mo:                       # first book that carries it
                         h = {}
@@ -205,6 +285,25 @@ def transform(resp, mkmap, sport):
                                     'away': rec['away'][0], 'awayOdds': rec['away'][1], 'book': book})
         if best_sp:
             mo['line'] = best_sp[1]
+        best_sp1h = None
+        for book, rec in spreads1h.items():
+            if 'home' in rec and 'away' in rec:
+                d = abs(rec['home'][1] - 1.90)
+                if best_sp1h is None or d < best_sp1h[0]:
+                    best_sp1h = (d, {'home': rec['home'][0], 'homeOdds': rec['home'][1],
+                                      'away': rec['away'][0], 'awayOdds': rec['away'][1], 'book': book})
+        if best_sp1h:
+            mo['line1H'] = best_sp1h[1]
+        team_best = {}   # jk -> {'home':{...}, 'away':{...}}
+        for (jk, side, book), rec in team_totals.items():
+            if rec['over'] and rec['under']:
+                d = abs(rec['over'] - 1.90)
+                cur = team_best.setdefault(jk, {})
+                if side not in cur or d < cur[side][0]:
+                    cur[side] = (d, {'points': rec['points'], 'over': rec['over'], 'under': rec['under'], 'book': book})
+        for jk, sides in team_best.items():
+            if 'home' in sides and 'away' in sides:
+                mo[jk] = {'home': sides['home'][1], 'away': sides['away'][1]}
         for tk, tl in totals.items():
             best = None
             for (pt, book), rec in tl.items():
@@ -214,7 +313,7 @@ def transform(resp, mkmap, sport):
                         best = (d, {'points': pt, 'over': rec['over'], 'under': rec['under'], 'book': book})
             if best:
                 mo[tk] = best[1]
-        if mo.get('h2h') or mo.get('line') or mo.get('total') or mo.get('totalCorners') or mo.get('totalCards'):
+        if mo.get('h2h') or mo.get('line') or mo.get('total') or mo.get('totalCorners') or mo.get('totalCards') or mo.get('h2h1H') or mo.get('line1H') or mo.get('total1H') or mo.get('totalTds') or mo.get('teamTotal') or mo.get('teamTotal1H'):
             match_odds.append(mo)
 
     def emit(m):
