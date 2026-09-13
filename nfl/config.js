@@ -36,6 +36,16 @@ window.SPORT_CONFIG = {
   oddsMkts: [['passYds','Pass Yds'],['passTds','Pass TDs'],['passAtt','Pass Att'],['rushYds','Rush Yds'],['rushAtt','Rush Att'],['receptions','Receptions'],['recYds','Rec Yds'],['rushRecYds','Rush+Rec'],['anytimeTd','Anytime TD'],['tackles','Tackles+Ast'],['sacks','Sacks'],['kickingPts','Kicking Pts'],['fgMade','FG Made']],
   tileOrder: ['paydirt','elite','bunnies','bogey','streak','chunk','wrap','usage','next','stack','wx','push','clamp','form'],
   posColors: {'QB':'#ef4444','RB':'#22c55e','WR':'#3b82f6','TE':'#f59e0b','LB':'#a855f7','DL':'#f97316','DB':'#06b6d4'},
+  jupiter: {
+    markets: [['passYds','PassYd'],['passTds','PassTD'],['passAtt','PassAtt'],['rushYds','RushYd'],
+              ['rushAtt','RushAtt'],['receptions','Rec'],['recYds','RecYd'],['rushRecYds','R+R'],
+              ['anytimeTd','ATD'],['tackles','Tkl'],['sacks','Sack'],['kickingPts','KPts'],['fgMade','FG']],
+    mlab: { passYds:'pass yds', passTds:'pass TDs', passAtt:'pass att', rushYds:'rush yds', rushAtt:'rush att',
+            receptions:'receptions', recYds:'rec yds', rushRecYds:'rush+rec', anytimeTd:'anytime TD',
+            tackles:'tackles+ast', sacks:'sacks', kickingPts:'kicking pts', fgMade:'FGs made' },
+    base: { passYds:230, passTds:1.5, passAtt:33, rushYds:60, rushAtt:14, receptions:4, recYds:55,
+            rushRecYds:65, anytimeTd:0.5, tackles:5, sacks:0.5, kickingPts:7, fgMade:1.5 }
+  },
   crew: [{k:'multi',n:'Multi Builder',i:'ti-stack-2',d:'Stacked legs'},
     {k:'radar',n:'The Radar',i:'ti-radar',d:'4-axis matchup ratings'},
     {k:'green',n:'Green Lights',i:'ti-traffic-lights',d:'Strong OVER'},
