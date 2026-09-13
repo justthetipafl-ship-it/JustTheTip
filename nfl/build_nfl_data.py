@@ -575,10 +575,24 @@ def build_pbp_derived(pbp, short_idx):
     return out, firsttd, longest
 
 # ?? players + gamelogs ??????????????????????????????????????????????????????
-def build_players_gamelogs(ps, snap_idx, game_idx, current):
+def build_players_gamelogs(ps, snap_idx, game_idx, current, ros=None):
     name_c = col(ps, "player_display_name", "player_name")
+    id_c = col(ps, "player_id")
     pos_c = col(ps, "position", "position_group")
     team_c = col(ps, "team", "recent_team")
+
+    # current-team override: a player's own last-played game can be stale (off-season trade
+    # or free-agent signing before they've suited up for the new team) - the roster feed is
+    # the actual source of truth for "who's on what team right now", joined by gsis_id
+    # (matches ps's player_id format exactly).
+    roster_team = {}
+    if ros is not None and not getattr(ros, "empty", True):
+        rid = col(ros, "gsis_id"); rteam = col(ros, "team")
+        for _, r in ros.iterrows():
+            pid = g(r, rid); tm = g(r, rteam)
+            if pid and tm:
+                roster_team[str(pid)] = str(tm).upper()
+        print(f"  roster current-team lookup: {len(roster_team)} players")
     opp_c = col(ps, "opponent_team", "opponent")
     se_c = col(ps, "season"); wk_c = col(ps, "week")
     st_c = col(ps, "season_type")
@@ -620,6 +634,7 @@ def build_players_gamelogs(ps, snap_idx, game_idx, current):
             continue
         season, week = int(g(r, se_c)), int(g(r, wk_c))
         team = str(g(r, team_c, "")).upper()
+        pid = str(g(r, id_c, "") or "")
         opp = str(g(r, opp_c, "")).upper()
         gi = game_idx.get((season, week, team), {})
         row = {"Year": str(season), "Week": week,
@@ -645,7 +660,8 @@ def build_players_gamelogs(ps, snap_idx, game_idx, current):
 
         P = agg.setdefault(_norm(name), {"name": name, "position": pos,
                                          "team": team, "rows": []})
-        P["team"] = team; P["position"] = pos
+        cur_team = roster_team.get(pid, team)   # roster wins over a stale last-played team (trades/FA signings)
+        P["team"] = cur_team; P["position"] = pos
         P["rawPos"] = str(g(r, pos_c, "")).strip().upper()
         P["rows"].append(row)
         sk = (team, _short(name))
@@ -994,7 +1010,7 @@ def run_build(frames, out_dir, seasons, current, password, skip_weather=False):
     results = build_results(sch)
     fixture, next_week = build_fixture(sch)
     snap_idx = build_snap_idx(sc)
-    players, gamelogs, short_idx = build_players_gamelogs(ps, snap_idx, game_idx, current)
+    players, gamelogs, short_idx = build_players_gamelogs(ps, snap_idx, game_idx, current, ros=ros)
     rz_usage, firsttd, longest = build_pbp_derived(pbp, short_idx)
     redzone = build_redzone(pbp, short_idx, current)
     dbs = build_dbs(adv, ros, current, players)
