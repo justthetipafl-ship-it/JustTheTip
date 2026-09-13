@@ -70,7 +70,7 @@ def should_pull(out_path, force, window_hours):
     return True, 'window open (first game %s UTC)' % fg.strftime('%Y-%m-%d %H:%M')
 
 
-BOOKMAKERS = ['Sportsbet', 'TAB', 'Pointsbet', 'Ladbrokes', 'Unibet', 'BetRight', 'Dabble']
+BOOKMAKERS = ['Sportsbet', 'TAB', 'Pointsbet', 'Ladbrokes', 'Unibet', 'BetRight', 'Dabble', 'Bet365']
 
 # per-sport: rapidoddsapi main market key -> JTT market key (config.js uses the JTT keys).
 # milestone (X+) ladders are the same base key + '_milestones'; they feed the `alt` array.
