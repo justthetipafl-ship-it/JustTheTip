@@ -2671,7 +2671,7 @@
   const bookLabel=k=>BOOK_LABEL[k]||(k?k.replace(/_au$/,'').replace(/^\w/,c=>c.toUpperCase()):'');
   function gameMatchOdds(home,away){
     const g=(state.idx.matchOddsIdx||{})[_moKey(home,away)];
-    if(!g||(!g.h2h&&!g.line&&!g.total&&!g.totalCorners&&!g.totalCards)) return '';
+    if(!g||(!g.h2h&&!g.line&&!g.total&&!g.totalCorners&&!g.totalCards&&!g.totalTds&&!g.total1H&&!g.h2h1H&&!g.line1H&&!g.teamTotal&&!g.teamTotal1H)) return '';
     const odd=v=>v==null?'—':(+v).toFixed(2);
     const books=new Set();
     let blocks='';
@@ -2695,11 +2695,29 @@
         '<div class="mo-row"><span class="mo-t">Over <b>'+g.total.points+'</b></span><span class="mo-o">'+odd(g.total.over)+'</span></div>'+
         '<div class="mo-row"><span class="mo-t">Under <b>'+g.total.points+'</b></span><span class="mo-o">'+odd(g.total.under)+'</span></div></div>';
     }
-    [['totalCorners','Corners'],['totalCards','Cards']].forEach(function(tc){
+    [['totalCorners','Corners'],['totalCards','Cards'],['totalTds','Total TDs'],['total1H','1st Half Total']].forEach(function(tc){
       var t=g[tc[0]]; if(!t||t.over==null||t.under==null) return; books.add(t.book);
       blocks+='<div class="mo-block"><div class="mo-lab">'+tc[1]+'</div>'+
         '<div class="mo-row"><span class="mo-t">Over <b>'+t.points+'</b></span><span class="mo-o">'+odd(t.over)+'</span></div>'+
         '<div class="mo-row"><span class="mo-t">Under <b>'+t.points+'</b></span><span class="mo-o">'+odd(t.under)+'</span></div></div>';
+    });
+    if(g.h2h1H){ books.add(g.h2h1H.book);
+      blocks+='<div class="mo-block"><div class="mo-lab">1st Half</div>'+
+        '<div class="mo-row"><span class="mo-t">'+esc(home)+'</span><span class="mo-o">'+odd(g.h2h1H.home)+'</span></div>'+
+        '<div class="mo-row"><span class="mo-t">'+esc(away)+'</span><span class="mo-o">'+odd(g.h2h1H.away)+'</span></div></div>';
+    }
+    if(g.line1H){ books.add(g.line1H.book);
+      blocks+='<div class="mo-block"><div class="mo-lab">1st Half Line</div>'+
+        '<div class="mo-row"><span class="mo-t">'+esc(home)+' <b>'+(g.line1H.home>0?'+':'')+g.line1H.home+'</b></span><span class="mo-o">'+odd(g.line1H.homeOdds)+'</span></div>'+
+        '<div class="mo-row"><span class="mo-t">'+esc(away)+' <b>'+(g.line1H.away>0?'+':'')+g.line1H.away+'</b></span><span class="mo-o">'+odd(g.line1H.awayOdds)+'</span></div></div>';
+    }
+    [['teamTotal','Team Total'],['teamTotal1H','1st Half Team Total']].forEach(function(tt){
+      var tm=g[tt[0]]; if(!tm||!tm.home||!tm.away) return; books.add(tm.home.book); books.add(tm.away.book);
+      blocks+='<div class="mo-block"><div class="mo-lab">'+tt[1]+'</div>'+
+        '<div class="mo-row"><span class="mo-t">'+esc(home)+' O<b>'+tm.home.points+'</b></span><span class="mo-o">'+odd(tm.home.over)+'</span></div>'+
+        '<div class="mo-row"><span class="mo-t">'+esc(home)+' U<b>'+tm.home.points+'</b></span><span class="mo-o">'+odd(tm.home.under)+'</span></div>'+
+        '<div class="mo-row"><span class="mo-t">'+esc(away)+' O<b>'+tm.away.points+'</b></span><span class="mo-o">'+odd(tm.away.over)+'</span></div>'+
+        '<div class="mo-row"><span class="mo-t">'+esc(away)+' U<b>'+tm.away.points+'</b></span><span class="mo-o">'+odd(tm.away.under)+'</span></div></div>';
     });
     const bl=[...books].filter(Boolean).map(bookLabel).join(' · ');
     return '<div class="game-sec"><div class="gs-title"><i class="ti ti-coin"></i> Match Odds</div>'+
