@@ -1085,6 +1085,11 @@
   .yk-sys-r{display:flex;justify-content:space-between;font-size:13px;padding:3px 0}
   .yk-sys-max{font-weight:800;color:var(--ok,#22c55e);border-top:1px solid var(--border);margin-top:4px;padding-top:7px}
   .yk-sys-note{font-size:11px;color:var(--text-3);margin-top:6px;line-height:1.4}
+  .yk-swap{margin-left:auto;background:none;border:1px solid var(--border);border-radius:8px;width:26px;height:26px;display:flex;align-items:center;justify-content:center;color:var(--text-2);cursor:pointer;flex-shrink:0}
+  .yk-swap:hover{background:var(--surface-3,var(--surface));color:var(--accent);border-color:var(--accent)}
+  .yk-swap i{font-size:14px}
+  .yk-reset{margin-top:8px;width:100%;display:flex;align-items:center;justify-content:center;gap:6px;background:var(--surface-2);border:1px solid var(--border);border-radius:10px;padding:8px;font-size:12px;font-weight:600;color:var(--text-2);cursor:pointer}
+  .yk-reset:hover{color:var(--accent);border-color:var(--accent)}
   .lad-grid{display:flex;flex-direction:column;gap:8px}
   .lad-day{background:var(--surface-2);border:1px solid var(--border);border-left-width:3px;border-radius:10px;padding:9px 11px}
   .lad-day-h{display:flex;align-items:center;gap:8px;font-size:12px;font-weight:700}
@@ -7251,9 +7256,11 @@
       head+'<div class="lad-grid">'+rows+'</div>');
   }
   // --- The Yankee: 4 SGMs (~$3 each) across 4 games, staked as an 11-bet system ---
-  function _sgmCard(sgm){
+  function _sgmCard(sgm, hasAlt){
+    var gk=_gameKey(sgm.legs[0].p.team, sgm.legs[0].opp);
+    var swapBtn=hasAlt?('<button class="yk-swap" title="Swap to the next best game" onclick="_ykSwap(\''+gk.replace(/\x27/g,"\\\x27")+'\')"><i class="ti ti-arrows-shuffle"></i></button>'):'';
     return '<div class="mbv-card yk-sgm">'
-      +'<div class="yk-sgm-h">'+teamLogo(sgm.legs[0].p.team,20)+'<span class="yk-sgm-g">'+abbr(sgm.legs[0].p.team)+' v '+abbr(sgm.legs[0].opp)+'</span><span class="yk-sgm-od">$'+sgm.od.toFixed(2)+' SGM</span></div>'
+      +'<div class="yk-sgm-h">'+teamLogo(sgm.legs[0].p.team,20)+'<span class="yk-sgm-g">'+abbr(sgm.legs[0].p.team)+' v '+abbr(sgm.legs[0].opp)+'</span><span class="yk-sgm-od">$'+sgm.od.toFixed(2)+' SGM</span>'+swapBtn+'</div>'
       +sgm.legs.map(function(l){return '<div class="yk-leg"><span class="yk-lp">'+esc(l.p.name)+'</span><span class="yk-lm">'+l.line+'+ '+_mktLbl(l.statKey)+'</span><span class="yk-lo">$'+l.over.toFixed(2)+'</span></div>';}).join('')
       +'</div>';
   }
@@ -7274,7 +7281,7 @@
       }
       if(best) sgms.push(best);
     });
-    return sgms.sort(function(a,b){return b.pr-a.pr;}).slice(0,4);
+    return sgms.sort(function(a,b){return b.pr-a.pr;});   // full ranked pool — caller takes top 4, honouring any swaps
   }
   function _yankeeSystem(o){
     var doubles=[],trebles=[],four=1,i,j,k;
@@ -7286,16 +7293,26 @@
   }
   function _yankeeSection(legs, oddsOn, book){
     if(!oddsOn) return _degWrap('The Yankee','ti-versions','','<div class="deg-empty"><i class="ti ti-lock"></i> Needs live odds \u2014 four priced ~$3 SGMs.</div>');
-    var sgms=_yankeeSGMs(legs);
-    if(sgms.length<4) return _degWrap('The Yankee','ti-versions','','<div class="deg-empty">Not enough games with a ~$3 SGM at '+bookName(book)+'.</div>');
+    var pool=_yankeeSGMs(legs);
+    var excl=state.view.ykExcluded||{};
+    var avail=pool.filter(function(s){ return !excl[_gameKey(s.legs[0].p.team, s.legs[0].opp)]; });
+    var sgms=avail.slice(0,4);
+    if(sgms.length<4){                          // ran out of alternates from swapping too many out — fall back to the full pool
+      sgms=pool.slice(0,4);
+      if(sgms.length<4) return _degWrap('The Yankee','ti-versions','','<div class="deg-empty">Not enough games with a ~$3 SGM at '+bookName(book)+'.</div>');
+    }
+    var hasAlt=pool.length>4;                    // only show the swap control when there's actually a next-best to swap in
     var sys=_yankeeSystem(sgms.map(function(s){return s.od;}));
-    var cards='<div class="mbv-list">'+sgms.map(_sgmCard).join('')+'</div>';
+    var cards='<div class="mbv-list">'+sgms.map(function(sg){return _sgmCard(sg,hasAlt);}).join('')+'</div>';
+    var resetBtn=Object.keys(excl).length?'<button class="yk-reset" onclick="_ykResetSwaps()"><i class="ti ti-refresh"></i> Reset swaps</button>':'';
     var box='<div class="yk-sys"><div class="yk-sys-r"><span>Stake</span><span>$11 ($1 \u00d7 11 bets)</span></div>'
       +'<div class="yk-sys-r"><span>6 doubles + 4 trebles + 1 four-fold</span><span></span></div>'
       +'<div class="yk-sys-r yk-sys-max"><span>Return if all 4 land</span><span>$'+sys.allWin.toFixed(2)+'</span></div>'
-      +'</div>';
+      +'</div>'+resetBtn;
     return _degWrap('The Yankee','ti-versions','', cards+box);
   }
+  window._ykSwap=function(gk){ state.view.ykExcluded=state.view.ykExcluded||{}; state.view.ykExcluded[gk]=1; var el=document.getElementById('deg-wrap'); if(el) el.innerHTML=_degBody(); };
+  window._ykResetSwaps=function(){ state.view.ykExcluded={}; var el=document.getElementById('deg-wrap'); if(el) el.innerHTML=_degBody(); };
 
   function _degBody(){
     var oddsOn=_oddsLive();
