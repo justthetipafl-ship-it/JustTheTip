@@ -769,6 +769,8 @@
   .dvpp-pos{font-size:9px;font-weight:800;letter-spacing:.04em;padding:1px 6px;border-radius:3px;border:1px solid;flex-shrink:0;}
   .dvpp-v{flex:1;text-align:right;font-size:13px;font-weight:800;color:var(--text);font-variant-numeric:tabular-nums;}
   .dvpp-p{font-size:10px;font-weight:800;min-width:34px;text-align:right;font-variant-numeric:tabular-nums;}
+  .mu-tag{font-size:11px;font-weight:800;white-space:nowrap;font-variant-numeric:tabular-nums;}
+  .mu-na{color:var(--text-3);}
   .lu-grid{display:flex;flex-wrap:wrap;gap:4px;margin-bottom:8px;}
   .lu-p{font-size:11px;font-weight:600;color:var(--text-2);background:var(--surface-2);border:1px solid var(--border);border-radius:5px;padding:3px 7px;}
   .lu-p i{font-style:normal;color:var(--text-3);font-size:9px;font-weight:700;margin-left:4px;}
@@ -4073,9 +4075,22 @@
     // Matchup: this team For vs what the OPPONENT allows (the edges this team's players face)
     if(t && !_fxHid('sec','matchup')){
       let mt='<div class="tp-sec"><div class="sec-title"><i class="ti ti-shield-half"></i> Matchup vs '+abbr(opp)+'</div></div>';
-      mt+='<div class="stbl-wrap"><table class="stbl bx"><thead><tr><th>Stat</th><th>'+abbr(team)+' For</th><th>'+abbr(opp)+' Allows</th></tr></thead><tbody>';
+      mt+='<div class="stbl-wrap"><table class="stbl bx"><thead><tr><th>Stat</th><th>'+abbr(team)+' For</th><th>'+abbr(opp)+' Allows</th><th>Matchup</th></tr></thead><tbody>';
       const ta=state.idx.teamMap[opp];
-      BET_STATS.filter(([k])=>!_fxHid('mkt',k)).forEach(([k,l])=>{ mt+='<tr><td class="name">'+l+'</td><td>'+fmt(t[k])+'</td><td>'+fmt(ta?ta[k+'_a']:null)+'</td></tr>'; });
+      // Matchup grade: what the OPPONENT allows vs the league average for that stat.
+      // Conceding more than average = softer spot for this team's players (good to back).
+      const _allRows=Object.values(state.idx.teamMap||{});
+      const _lgAllow=k=>{ const v=_allRows.map(r=>r&&r[k+'_a']).filter(x=>x!=null&&isFinite(+x)).map(Number); return v.length?v.reduce((a,b)=>a+b,0)/v.length:null; };
+      BET_STATS.filter(([k])=>!_fxHid('mkt',k)).forEach(([k,l])=>{
+        const av=ta?ta[k+'_a']:null, lg=_lgAllow(k);
+        let muCell='<td class="mu-na">\u2014</td>';
+        if(av!=null&&isFinite(+av)&&lg){
+          const pct=((+av)-lg)/lg*100;
+          const muCol=pct>10?'#22c55e':pct>3?'#86efac':pct>-3?'var(--text-3)':pct>-10?'#f97316':'#ef4444';
+          muCell='<td><span class="mu-tag" style="color:'+muCol+'" title="'+abbr(opp)+' allows '+(pct>=0?'+':'')+pct.toFixed(0)+'% vs league average">'+(pct>=0?'+':'')+pct.toFixed(0)+'%</span></td>';
+        }
+        mt+='<tr><td class="name">'+l+'</td><td>'+fmt(t[k])+'</td><td>'+fmt(av)+'</td>'+muCell+'</tr>';
+      });
       mt+='</tbody></table></div>'; h+=mt;
     }
     if(SPORT.key==='epl') h+=_eplTrendBlock(team);
