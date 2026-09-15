@@ -784,6 +784,8 @@
   .lu-cell.empty{opacity:.35;cursor:default;justify-content:center;min-height:34px;}
   .lu-cell.empty:hover{border-color:var(--border);}
   .lu-emg{font-size:10px;color:var(--text-3);margin-top:8px;text-align:center;line-height:1.4;}
+  .lu-starter{border-color:var(--accent)!important;}
+  .lu-inj{font-size:8px;font-weight:800;color:#ef4444;text-transform:uppercase;letter-spacing:.04em;margin-top:1px;}
   .cmb-fab-logo{height:19px;width:auto;display:block;}
   .cmb-hdr-logo{height:22px;width:auto;flex-shrink:0;}
   @media(max-width:480px){ .cmb-fab-logo{height:22px;} }
@@ -3214,7 +3216,39 @@
     };
     return '<details class="tp-collapse" open><summary class="tp-collapse-sum"><i class="ti ti-arrows-exchange"></i><span class="tp-collapse-title">Ins &amp; Outs</span><i class="ti ti-chevron-down tp-collapse-chev"></i></summary><div class="tp-collapse-body"><div class="tp-body-meta">Team changes from last week\u2019s side.</div><div class="io-cols">'+col(home,ho)+col(away,ao)+'</div></div></details>';
   }
+  // ===== NFL depth chart — realistic skill-position starters, not the full 36-man board =====
+  const NFL_LU_DEPTH = {QB:1, RB:2, WR:3, TE:2};                 // how many of each actually see meaningful snaps
+  const NFL_LU_ORDER = ['QB','RB','WR','TE'];
+  function _nflLineup(team){
+    const lu=(state.data.lineups||[]).filter(r=>r.team===team && r.player);
+    if(!lu.length) return '';
+    const keep=lu.filter(r=>{
+      const pos=(r.position||'').toUpperCase(), d=+r.depth||99;
+      return NFL_LU_DEPTH[pos]!=null && d<=NFL_LU_DEPTH[pos];
+    });
+    if(!keep.length) return '';
+    const byPos={}; keep.forEach(r=>{ const p=(r.position||'').toUpperCase(); (byPos[p]=byPos[p]||[]).push(r); });
+    NFL_LU_ORDER.forEach(p=>{ if(byPos[p]) byPos[p].sort((a,b)=>(+a.depth||99)-(+b.depth||99)); });
+    let rows='';
+    NFL_LU_ORDER.forEach(pos=>{
+      const arr=byPos[pos]; if(!arr||!arr.length) return;
+      const cells=arr.map(r=>{
+        const q=esc(r.player).replace(/\x27/g,"\\\x27");
+        const starter=(r.status||'').toUpperCase()==='STARTER';
+        const inj=_injuryFor?_injuryFor(r.player):null;
+        const tag=inj?('<span class="lu-inj" title="'+esc(inj.Injury||'')+'">'+esc(inj.Status||inj.status||'')+'</span>'):'';
+        return '<div class="lu-cell'+(starter?' lu-starter':'')+'" onclick="openPlayer(\''+q+'\')">'
+          +'<span class="nm">'+esc(r.player)+'</span>'
+          +'<span class="pos">'+(starter?'Starter':'Depth '+(r.depth||''))+'</span>'+tag+'</div>';
+      }).join('');
+      rows+='<div class="lu-line"><div class="lu-line-lab">'+pos+'</div><div class="lu-int">'+cells+'</div></div>';
+    });
+    return '<details class="tp-collapse"><summary class="tp-collapse-sum"><i class="ti ti-clipboard-list"></i>'
+      +'<span class="tp-collapse-title">Lineup</span><span class="tp-collapse-meta">'+keep.length+'</span></summary>'
+      +'<div class="lu-form">'+rows+'</div></details>';
+  }
   function fxLineup(team){
+    if(SPORT.key==='nfl') return _nflLineup(team);
     const lu=(state.data.lineups||[]).filter(r=>r.team===team);
     if(!lu.length) return '';
     const named=lu.filter(r=>{ const nm=(r.player||'').trim(); return nm && !/^na( na)?$/i.test(nm) && !/^NA\b/i.test(nm); });
