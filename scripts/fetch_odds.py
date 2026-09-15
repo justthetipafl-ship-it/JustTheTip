@@ -121,6 +121,24 @@ GAME_MARKETS = {
 }
 H2H_2WAY = {'NFL'}   # 2-way moneyline (no draw) vs soccer's 3-way
 
+# matchOdds must use the same team codes as fixture.json / teams.json, or the shell can't
+# join them (it keys on [home,away]). ROA returns full names for NFL, so map them here.
+NFL_ABBR = {
+    'arizona cardinals':'ARI','atlanta falcons':'ATL','baltimore ravens':'BAL','buffalo bills':'BUF',
+    'carolina panthers':'CAR','chicago bears':'CHI','cincinnati bengals':'CIN','cleveland browns':'CLE',
+    'dallas cowboys':'DAL','denver broncos':'DEN','detroit lions':'DET','green bay packers':'GB',
+    'houston texans':'HOU','indianapolis colts':'IND','jacksonville jaguars':'JAX','kansas city chiefs':'KC',
+    'las vegas raiders':'LV','los angeles chargers':'LAC','los angeles rams':'LA','miami dolphins':'MIA',
+    'minnesota vikings':'MIN','new england patriots':'NE','new orleans saints':'NO','new york giants':'NYG',
+    'new york jets':'NYJ','philadelphia eagles':'PHI','pittsburgh steelers':'PIT','san francisco 49ers':'SF',
+    'seattle seahawks':'SEA','tampa bay buccaneers':'TB','tennessee titans':'TEN','washington commanders':'WAS',
+}
+
+def team_code(name, sport):
+    if sport == 'NFL':
+        return NFL_ABBR.get((name or '').strip().lower(), name)
+    return name
+
 # NOTE on the markets below `alternate_total_points` in NFL's list: team totals and the
 # 1st-half splits are a market shape we haven't seen a real ROA payload for yet (unlike
 # everything above, which was verified against actual returned data). They're wired using
@@ -149,6 +167,7 @@ def transform(resp, mkmap, sport):
     for g in games:
         game = g.get('game', {})
         home, away = game.get('home_team', ''), game.get('away_team', '')
+        home, away = team_code(home, sport), team_code(away, sport)
         mo = {'home': home, 'away': away}
         totals = {}
         spreads = {}       # (book) -> {'home':{point,price}, 'away':{point,price}}
