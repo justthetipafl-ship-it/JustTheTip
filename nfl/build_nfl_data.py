@@ -43,8 +43,7 @@ DEF_GROUP = {"LB": "LB", "ILB": "LB", "OLB": "LB", "MLB": "LB",
              "CB": "DB", "S": "DB", "FS": "DB", "SS": "DB", "DB": "DB", "SAF": "DB"}
 DEF_POS = ["LB", "DL", "DB"]
 KEEP_POS = POSITIONS + DEF_POS
-PLAYER_MIN_SAMPLE = 4           # current-season games needed before we stop blending in prior games
-PLAYER_ROLL_N = 10              # rolling window size while the new season is still thin
+PLAYER_ROLL_N = 10              # rolling window: most recent N games, current season first
 FORM_N = 5                      # teams_form window (games)
 SNAP_PCT_SCALE_CUTOFF = 1.01    # nflverse offense_pct is 0..1 in some releases
 
@@ -682,20 +681,18 @@ def build_players_gamelogs(ps, snap_idx, game_idx, current, ros=None):
     players = []
     for P in agg.values():
         rows = P["rows"]
-        # Early-season blend. A hard "current season only" lock breaks in weeks 1-3: an active
-        # starter is judged on 1 game (and gets cut by every matches>=N filter), while a player
-        # who HASN'T featured this season falls back to a full prior season and outranks him.
-        # That inverted the boards - backups/inactives on top, real starters missing. So: use
-        # the current season once it has a real sample, otherwise top up with the most recent
-        # prior games. Rolls over to pure current-season data automatically as weeks accrue.
+        # Rolling last-N games, regardless of season. A hard "current season only" lock breaks
+        # in the opening weeks: an active starter is judged on 1 game (and gets cut by every
+        # matches>=N filter), while a player who HASN'T featured this season falls back to a
+        # full prior season and outranks him - which inverted the boards (backups on top, real
+        # starters missing). A rolling window also avoids a cliff: current-season games displace
+        # prior ones one at a time, so the sample stays stable and the data is fully
+        # current-season by game N. Same approach as the redzone and target-distribution windows.
         cur = [x for x in rows if x["Year"] == str(current)]
-        if len(cur) >= PLAYER_MIN_SAMPLE:
-            src = cur
-        else:
-            prior = [x for x in rows if x["Year"] != str(current)]
-            prior.sort(key=lambda x: (x["Year"], x["Week"]), reverse=True)
-            src = cur + prior[:max(0, PLAYER_ROLL_N - len(cur))]
-            src = src or rows
+        cur.sort(key=lambda x: int(x["Week"]), reverse=True)
+        prior = [x for x in rows if x["Year"] != str(current)]
+        prior.sort(key=lambda x: (x["Year"], x["Week"]), reverse=True)
+        src = (cur + prior)[:PLAYER_ROLL_N] or rows
         n = len(src)
         p = {"name": P["name"], "team": P["team"], "position": P["position"],
              "posDetail": P.get("rawPos", P["position"]), "matches": n}
