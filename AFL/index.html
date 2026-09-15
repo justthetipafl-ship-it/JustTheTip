@@ -771,6 +771,20 @@
   .dvpp-p{font-size:10px;font-weight:800;min-width:34px;text-align:right;font-variant-numeric:tabular-nums;}
   .mu-tag{font-size:11px;font-weight:800;white-space:nowrap;font-variant-numeric:tabular-nums;}
   .mu-na{color:var(--text-3);}
+  .rdr-chips{display:flex;flex-wrap:wrap;gap:4px;margin:8px 0 10px;}
+  .rdr-chip{font-size:10px;font-weight:700;padding:4px 8px;border-radius:6px;border:1px solid var(--border);background:var(--surface-2);color:var(--text-2);cursor:pointer;white-space:nowrap;}
+  .rdr-chip.on{border-color:var(--accent);color:var(--accent);background:color-mix(in srgb,var(--accent) 12%,transparent);}
+  .rdr-card{border:1px solid var(--border);border-radius:10px;background:var(--surface-2);padding:8px;}
+  .rdr-hd{display:flex;align-items:baseline;gap:8px;margin-bottom:2px;}
+  .rdr-nm{font-weight:800;font-size:13px;}
+  .rdr-vs{font-size:10px;color:var(--text-3);letter-spacing:.04em;text-transform:uppercase;}
+  .rdr-svg{width:100%;height:auto;display:block;}
+  .rdr-lab{font-size:7.5px;font-weight:800;fill:var(--text-3);letter-spacing:.04em;text-transform:uppercase;}
+  .rdr-val{font-size:9px;font-weight:800;fill:var(--text);}
+  .rdr-rk{font-size:8px;font-weight:800;}
+  .rdr-key{display:flex;flex-wrap:wrap;gap:8px;font-size:8.5px;color:var(--text-3);margin-top:4px;align-items:center;}
+  .rdr-key i{display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:3px;vertical-align:-1px;}
+  .rdr-key-rk{margin-left:auto;opacity:.75;}
   .lu-grid{display:flex;flex-wrap:wrap;gap:4px;margin-bottom:8px;}
   .lu-p{font-size:11px;font-weight:600;color:var(--text-2);background:var(--surface-2);border:1px solid var(--border);border-radius:5px;padding:3px 7px;}
   .lu-p i{font-style:normal;color:var(--text-3);font-size:9px;font-weight:700;margin-left:4px;}
@@ -3943,6 +3957,7 @@
     h+='<div class="team-cols">'+teamSignals(g.home,g.away,true)+teamSignals(g.away,g.home,false)+'</div>';
     if(!_fxHid('sec','value')) h+=valueBetsSection(g.home,g.away);
     if(SPORT.key==='nfl' && !_fxHid('sec','insouts')) h+=medicalRoomSection(g.home,g.away);
+    if(!_fxHid('sec','radar')) h+=matchupRadarSection(g);
     else if(SPORT.key!=='epl' && SPORT.key!=='nfl' && !_fxHid('sec','insouts')) h+=insOutsSection(g.home,g.away);
     if(!_fxHid('sec','radar')) h+=radarSection(g.home,g.away,g.venue||(g.park&&g.park.name));
     if(SPORT.key!=='epl' && fxMode!=='nerd' && !_fxHid('sec','jupiter')) h+=jupiter(g);
@@ -5289,6 +5304,149 @@
   // greedy ONE-leg-per-player pick of `need` legs from the ranked pool
   function _dvSel1pp(pool,need){ const seen=new Set(),idx=[]; for(let i=0;i<pool.length&&idx.length<need;i++){ if(!seen.has(pool[i].name)){ seen.add(pool[i].name); idx.push(i); } } return idx; }
   // ---- Top Value Bets: rank every playing player x market by model-vs-priced edge ----
+  // ===== MATCHUP RADAR — player profile vs the defence he's facing, on shared percentile axes =====
+  // Each axis plots two things on the same 0-1 scale: the player's percentile among his
+  // position peers, and the opponent's percentile among the 32 defences for what they ALLOW
+  // (higher = more generous). Green where the player's edge beats the defence's generosity,
+  // red where the defence is the stronger side. Def rank badge: #1 = allows the least.
+  const RADAR_AXES = {
+    QB: [ ['passYds','Pass Yds','passYds'],
+          ['_ypa','Yds/Att','_ypa'],
+          ['passComp','Comp','passComp'],
+          ['passTds','Pass TDs','passTds'],
+          ['passAtt','Attempts','passAtt'],
+          ['_sackTaken','Sacks','sacks',1] ],   // inverted: more sacks = WORSE for the QB
+    WR: [ ['recYds','Rec Yds','recYds'],
+          ['receptions','Receptions','receptions'],
+          ['ypr','Yds/Rec','_ypr'],
+          ['targets','Targets','targets'],
+          ['_catch','Catch %','_catch'],
+          ['recTds','Rec TDs','recTds'] ],
+    RB: [ ['rushYds','Rush Yds','rushYds'],
+          ['rushAtt','Carries','rushAtt'],
+          ['ypc','YPC','_ypc'],
+          ['rushTds','Rush TDs','rushTds'],
+          ['receptions','Receptions','receptions'],
+          ['recYds','Rec Yds','recYds'] ]
+  };
+  RADAR_AXES.TE = RADAR_AXES.WR;
+  const RADAR_POS = { QB:'QB', RB:'RB', WR:'WR', TE:'TE' };
+  // derived player metrics that aren't stored directly
+  function _radarPVal(p,k){
+    if(k==='_ypa') return (p.passAtt>0)?p.passYds/p.passAtt:0;
+    if(k==='_catch') return (p.targets>0)?p.receptions/p.targets*100:0;
+    if(k==='_sackTaken') return p.sacks||0;
+    return +(p[k]||0);
+  }
+  // defence side reads the per-POSITION DVP row, not a team-wide total: a defence can be
+  // stout against WRs and leaky to TEs, and a team-level number hides exactly that.
+  function _radarDVal(row,k){
+    if(!row) return null;
+    if(k==='_ypa') return (row.passAtt>0)?row.passYds/row.passAtt:null;
+    if(k==='_ypr') return (row.receptions>0)?row.recYds/row.receptions:null;
+    if(k==='_ypc') return (row.rushAtt>0)?row.rushYds/row.rushAtt:null;
+    if(k==='_catch') return (row.targets>0)?row.receptions/row.targets*100:null;
+    return (row[k]!=null)?+row[k]:null;
+  }
+  function _pctOf(v,arr){ if(!arr.length) return 0; let n=0; for(let i=0;i<arr.length;i++) if(arr[i]<v) n++; return n/arr.length; }
+  function _radarBuild(p,opp){
+    const pos=RADAR_POS[p.position]; if(!pos) return null;
+    const axes=RADAR_AXES[pos]; if(!axes) return null;
+    const dRows=(state.data.dvp||[]).filter(r=>r.pos===p.position);   // position-specific DVP
+    if(dRows.length<10) return null;
+    const oppRow=dRows.find(r=>r.team===opp); if(!oppRow) return null;
+    const peers=(state.idx.players||[]).filter(x=>x.position===p.position&&(x.matches||0)>=3);
+    if(peers.length<5) return null;
+    const out=[];
+    for(const [pk,lab,dk,inv] of axes){
+      const pv=_radarPVal(p,pk);
+      const dv=_radarDVal(oppRow,dk);
+      if(dv==null) continue;
+      const dAll=dRows.map(r=>_radarDVal(r,dk)).filter(x=>x!=null);
+      if(dAll.length<10) continue;
+      let pPct=_pctOf(pv,peers.map(x=>_radarPVal(x,pk)));
+      if(inv) pPct=1-pPct;                                          // fewer is better on an inverted axis
+      // tool convention (matches "#N SOFTEST" elsewhere): rank 1 = softest = best for the
+      // player. Normally that's whoever allows the MOST; on an inverted axis (sacks) the
+      // softest defence is the one that records the FEWEST, so the sort flips.
+      const ord=dAll.slice().sort((a,b)=>inv?(a-b):(b-a));
+      let rank=1; for(let i=0;i<ord.length;i++){ if(inv?(ord[i]<dv):(ord[i]>dv)) rank++; }
+      const dPct=(dAll.length>1)?(1-(rank-1)/(dAll.length-1)):0.5;   // softer = further out
+      out.push({k:pk,lab:lab,pv:pv,dv:dv,pPct:pPct,dPct:dPct,rank:rank,total:dAll.length});
+    }
+    return out.length>=5?out:null;
+  }
+  function _rkColor(rank,total){
+    const q=rank/total;                 // rank 1 = softest = best for the player
+    if(q<=0.20) return '#22c55e';
+    if(q<=0.40) return '#86efac';
+    if(q<=0.60) return '#eab308';
+    if(q<=0.80) return '#f97316';
+    return '#ef4444';
+  }
+  function _radarSVG(rows,pName){
+    const N=rows.length, R=86, CX=132, CY=118, rMin=14;
+    const ang=i=>(Math.PI*2*i/N)-Math.PI/2;
+    const pt=(i,v)=>{ const r=rMin+(R-rMin)*Math.max(0,Math.min(1,v)); return [CX+Math.cos(ang(i))*r, CY+Math.sin(ang(i))*r]; };
+    let grid='';
+    for(const f of [0.25,0.5,0.75,1]){
+      const d=rows.map((_,i)=>pt(i,f).map(n=>n.toFixed(1)).join(',')).join(' ');
+      grid+='<polygon points="'+d+'" fill="none" stroke="var(--border)" stroke-width="1" opacity="'+(f===1?0.55:0.28)+'"/>';
+    }
+    rows.forEach((_,i)=>{ const [x,y]=pt(i,1); grid+='<line x1="'+CX+'" y1="'+CY+'" x2="'+x.toFixed(1)+'" y2="'+y.toFixed(1)+'" stroke="var(--border)" stroke-width="1" opacity="0.28"/>'; });
+    const pPoly=rows.map((r,i)=>pt(i,r.pPct).map(n=>n.toFixed(1)).join(',')).join(' ');
+    const dPoly=rows.map((r,i)=>pt(i,r.dPct).map(n=>n.toFixed(1)).join(',')).join(' ');
+    // per-wedge fill: green where the player leads, red where the defence does
+    let wedges='';
+    rows.forEach((r,i)=>{
+      const j=(i+1)%N, lead=Math.min(r.pPct,rows[j].pPct), dLead=Math.min(r.dPct,rows[j].dPct);
+      const win=lead>dLead;
+      const a=pt(i,win?r.pPct:r.dPct), b=pt(j,win?rows[j].pPct:rows[j].dPct);
+      const a2=pt(i,win?r.dPct:r.pPct), b2=pt(j,win?rows[j].dPct:rows[j].pPct);
+      wedges+='<polygon points="'+[a,b,b2,a2].map(q=>q.map(n=>n.toFixed(1)).join(',')).join(' ')+'" fill="'+(win?'#22c55e':'#ef4444')+'" opacity="0.20"/>';
+    });
+    let labels='';
+    rows.forEach((r,i)=>{
+      const [lx,ly]=pt(i,1.34);
+      const anchor=(Math.abs(lx-CX)<12)?'middle':(lx>CX?'start':'end');
+      const c=_rkColor(r.rank,r.total);
+      const val=(r.pv>=100?Math.round(r.pv):r.pv.toFixed(1));
+      labels+='<text x="'+lx.toFixed(1)+'" y="'+(ly-4).toFixed(1)+'" text-anchor="'+anchor+'" class="rdr-lab">'+esc(r.lab)+'</text>'
+           +'<text x="'+lx.toFixed(1)+'" y="'+(ly+7).toFixed(1)+'" text-anchor="'+anchor+'" class="rdr-val">'+val+'</text>'
+           +'<text x="'+lx.toFixed(1)+'" y="'+(ly+18).toFixed(1)+'" text-anchor="'+anchor+'" class="rdr-rk" fill="'+c+'">#'+r.rank+'</text>';
+    });
+    return '<svg viewBox="0 0 264 250" class="rdr-svg">'+grid+wedges
+      +'<polygon points="'+dPoly+'" fill="none" stroke="var(--text-3)" stroke-width="1.5" stroke-dasharray="3 3"/>'
+      +'<polygon points="'+pPoly+'" fill="none" stroke="#7dd3fc" stroke-width="2"/>'
+      +labels+'</svg>';
+  }
+  function _radarFor(name,opp){
+    const p=(state.idx.byName||{})[name]; if(!p) return '';
+    const rows=_radarBuild(p,opp); if(!rows) return '';
+    return '<div class="rdr-card">'
+      +'<div class="rdr-hd"><span class="rdr-nm">'+esc(name)+'</span><span class="rdr-vs">'+posShort(p.position)+' \u00b7 vs '+esc(abbr(opp))+'</span></div>'
+      +_radarSVG(rows,name)
+      +'<div class="rdr-key"><span><i style="background:#7dd3fc"></i>Player</span><span><i style="background:var(--text-3)"></i>Defence</span>'
+      +'<span><i style="background:#22c55e;opacity:.5"></i>Player ahead</span><span><i style="background:#ef4444;opacity:.5"></i>Defence ahead</span>'
+      +'<span class="rdr-key-rk">#N = DVP rank vs this position (1 = softest)</span></div></div>';
+  }
+  function _radarPick(g,name){ state.view.rdrPick=name; _renderApp(); }
+  function matchupRadarSection(g){
+    if(!g) return '';
+    const teams=[g.home,g.away];
+    // the skill players worth showing: highest snap share, one row of chips
+    const cands=(state.idx.players||[]).filter(p=>teams.indexOf(p.team)>=0 && RADAR_POS[p.position] && (p.matches||0)>=3
+                  && (typeof isPlaying!=='function'||isPlaying(p.name,p.team)))
+      .sort((a,b)=>(b.snapPct||0)-(a.snapPct||0)).slice(0,14);
+    if(cands.length<2) return '';
+    const sel=(state.view.rdrPick && cands.some(c=>c.name===state.view.rdrPick))?state.view.rdrPick:cands[0].name;
+    const oppOf=n=>{ const p=(state.idx.byName||{})[n]; if(!p) return null; return p.team===g.home?g.away:g.home; };
+    const chips=cands.map(c=>'<button class="rdr-chip'+(c.name===sel?' on':'')+'" onclick="_radarPick(null,\''+esc(c.name).replace(/\x27/g,"\\\x27")+'\')">'+esc(c.name)+'</button>').join('');
+    const body=_radarFor(sel,oppOf(sel));
+    if(!body) return '';
+    return '<details class="tp-collapse" open><summary class="tp-collapse-sum"><i class="ti ti-radar-2"></i><span class="tp-collapse-title">Matchup Radar</span></summary>'
+      +'<div class="rdr-chips">'+chips+'</div>'+body+'</details>';
+  }
   function valueBetsSection(home,away){
     if(!(window.JTTScoring&&JTTScoring.prob)||!hasAnyOdds())return '';
     var mkts=(BET_STATS||[]).map(function(m){return m[0];}), pool=playersOnTeam(home).concat(playersOnTeam(away)), bets=[];
