@@ -491,6 +491,7 @@
 
     // ---- Next Man Up — who absorbs volume when a starter sits (splits without the absent player) ----
     var DEF_POS = (typeof Set !== 'undefined') ? new Set(['LB', 'DL', 'DB']) : { has: function (x) { return x === 'LB' || x === 'DL' || x === 'DB'; } };
+    var PASS_CATCH = (typeof Set !== 'undefined') ? new Set(['WR', 'TE', 'RB']) : { has: function (x) { return x === 'WR' || x === 'TE' || x === 'RB'; } };
     function _outList() {
       var outRe = /out|injured reserve|\bir\b|doubt/i;
       return ((getData().injury) || []).filter(function (r) { return outRe.test(String(r.Status || '')); });
@@ -664,6 +665,66 @@
       var pr = arr.slice().sort(function (a, b) { return (b.plays || 0) - (a.plays || 0); }).findIndex(function (x) { return x.team === opp; }) + 1;
       var rr = arr.slice().sort(function (a, b) { return (b.rushAtt || 0) - (a.rushAtt || 0); }).findIndex(function (x) { return x.team === opp; }) + 1;
       return { plays: t.plays, playsRank: pr, rushAtt: t.rushAtt, rushRank: rr, n: arr.length };
+    }
+    // ===== GAME SCRIPT signals — read the posted total + spread, which nothing else used =====
+    function _scriptFor(team) {
+      var D = getData(), mo = D.matchOdds || [];
+      for (var i = 0; i < mo.length; i++) {
+        var g = mo[i];
+        if (g.home !== team && g.away !== team) continue;
+        if (!g.total || !g.line) return null;
+        var isHome = g.home === team;
+        var spread = isHome ? +g.line.home : +g.line.away;      // negative = favourite
+        return { total: +g.total.points, spread: spread, opp: isHome ? g.away : g.home, isHome: isHome };
+      }
+      return null;
+    }
+    // Shootout: high total + tight spread -> both sides throwing to keep up (pass-catcher volume)
+    function shootout() {
+      var teams = _fixtureSet(), out = [];
+      (players || []).filter(function (p) {
+        return teams.has(p.team) && PASS_CATCH.has(p.position) && (p.matches || 0) >= 3;
+      }).forEach(function (p) {
+        var sc = _scriptFor(p.team); if (!sc) return;
+        if (sc.total < 47 || Math.abs(sc.spread) > 4.5) return;   // shootout shape only
+        var vals = (logsFor(p.name) || []).map(function (r) { return r.recYds; }).filter(function (v) { return v != null; });
+        if (vals.length < 4) return;
+        var avg = _avg(vals); if (avg < 35) return;                // must be a real contributor
+        var tgt = (logsFor(p.name) || []).map(function (r) { return r.targets; }).filter(function (v) { return v != null; });
+        var tAvg = tgt.length ? _avg(tgt) : null;
+        var score = sc.total * 1.5 + avg + (tAvg ? tAvg * 2 : 0) - Math.abs(sc.spread);
+        out.push({ p: p, opp: sc.opp, total: sc.total, spread: sc.spread, avg: avg, tAvg: tAvg, n: vals.length, score: score });
+      });
+      return out.sort(function (a, b) { return b.score - a.score; });
+    }
+    function shootoutCard(c) {
+      var sub = abbr(c.p.team) + ' v ' + abbr(c.opp) + ' \u00b7 O/U ' + c.total.toFixed(1)
+        + ' \u00b7 ' + (c.spread > 0 ? '+' : '') + c.spread.toFixed(1)
+        + (c.tAvg ? ' \u00b7 ' + c.tAvg.toFixed(1) + ' tgt/g' : '');
+      return degRow(esc(c.p.name), '#22c55e', c.avg.toFixed(0) + ' yds/g', sub, c.p.name);
+    }
+    // Ground Control: heavy favourite -> lead protected on the ground (RB carry volume)
+    function groundControl() {
+      var teams = _fixtureSet(), out = [];
+      (players || []).filter(function (p) {
+        return teams.has(p.team) && p.position === 'RB' && (p.matches || 0) >= 3;
+      }).forEach(function (p) {
+        var sc = _scriptFor(p.team); if (!sc) return;
+        if (sc.spread > -6.5) return;                              // must be a clear favourite
+        var vals = (logsFor(p.name) || []).map(function (r) { return r.rushAtt; }).filter(function (v) { return v != null; });
+        if (vals.length < 4) return;
+        var avg = _avg(vals); if (avg < 8) return;                 // real workload, not a change-of-pace back
+        var yds = (logsFor(p.name) || []).map(function (r) { return r.rushYds; }).filter(function (v) { return v != null; });
+        var yAvg = yds.length ? _avg(yds) : null;
+        var score = Math.abs(sc.spread) * 3 + avg * 2 + (yAvg ? yAvg / 10 : 0);
+        out.push({ p: p, opp: sc.opp, spread: sc.spread, avg: avg, yAvg: yAvg, n: vals.length, score: score });
+      });
+      return out.sort(function (a, b) { return b.score - a.score; });
+    }
+    function groundCard(c) {
+      var sub = abbr(c.p.team) + ' v ' + abbr(c.opp) + ' \u00b7 ' + c.spread.toFixed(1) + ' fav'
+        + (c.yAvg ? ' \u00b7 ' + c.yAvg.toFixed(0) + ' yds/g' : '');
+      return degRow(esc(c.p.name), '#22c55e', c.avg.toFixed(1) + ' carries/g', sub, c.p.name);
     }
     function tackleMachines() {
       var teams = _fixtureSet(), out = [];
@@ -857,6 +918,14 @@
             t.threat.position + ' \u00b7 ' + abbr(t.threat.team) + ' \u2014 likely ' + t.db.player + ' (' + abbr(t.oppTeam) + ')' + (t.db.grade ? ' \u00b7 ' + t.db.grade + ' rating allowed' : '') + (t.db.cmpPct ? ' \u00b7 ' + t.db.cmpPct.toFixed(0) + '% cmp' : '') + (t.threat.tgtShare ? ' \u00b7 ' + t.threat.tgtShare.toFixed(0) + '% tgt share' : ''), t.threat.name);
         });
         return degWrap('ti-lock', 'Clamp Watch', rows);
+      },
+      shootout: function () {
+        var rows = _byGame(_fc(shootout(), 6, 30), function (c) { return c.p.team; }, shootoutCard);
+        return degWrap('ti-flame', 'Shootout Script', rows, 'c-red');
+      },
+      ground: function () {
+        var rows = _byGame(_fc(groundControl(), 6, 30), function (c) { return c.p.team; }, groundCard);
+        return degWrap('ti-truck', 'Ground Control', rows, 'c-amber');
       },
       wrap: function () {
         var rows = _byGame(_fc(tackleMachines(), 6, 30), function (c) { return c.p.team; }, tackleCard);
