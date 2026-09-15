@@ -666,6 +666,41 @@
       var rr = arr.slice().sort(function (a, b) { return (b.rushAtt || 0) - (a.rushAtt || 0); }).findIndex(function (x) { return x.team === opp; }) + 1;
       return { plays: t.plays, playsRank: pr, rushAtt: t.rushAtt, rushRank: rr, n: arr.length };
     }
+    // ===== SPLIT THE UPRIGHTS — kicker volume off game total + the offence's own FG lean =====
+    function splitUprights() {
+      var teams = _fixtureSet(), out = [];
+      (players || []).filter(function (p) {
+        return teams.has(p.team) && p.position === 'K' && (p.matches || 0) >= 3;
+      }).forEach(function (p) {
+        var logs = logsFor(p.name) || [];
+        var kp = logs.map(function (r) { return r.kickingPts; }).filter(function (v) { return v != null; });
+        var fg = logs.map(function (r) { return r.fgMade; }).filter(function (v) { return v != null; });
+        if (kp.length < 4) return;
+        var kpAvg = _avg(kp), fgAvg = fg.length ? _avg(fg) : 0;
+        if (kpAvg < 6) return;                                   // needs a real scoring workload
+        var sc = _scriptFor(p.team);                             // posted total/spread, when we have it
+        var total = sc ? sc.total : null;
+        var opp = sc ? sc.opp : nextOpp(p.team);
+        // posted line if a book has one, else estimate off his own average
+        var postedK = oddsFor(p.name, 'kickingPts'), postedF = oddsFor(p.name, 'fgMade');
+        var line = (postedK && postedK.line != null) ? postedK.line : Math.max(5.5, Math.round(kpAvg) - 1.5);
+        var hits = kp.filter(function (v) { return v > line; }).length, rate = hits / kp.length;
+        if (rate < 0.55) return;
+        var score = rate * 100 + kpAvg * 2 + fgAvg * 3 + (total ? (total - 44) * 2 : 0);
+        out.push({ p: p, opp: opp, line: line, rate: rate, n: kp.length, kpAvg: kpAvg, fgAvg: fgAvg,
+                   total: total, score: score, posted: !!(postedK && postedK.line != null),
+                   fgLine: (postedF && postedF.line != null) ? postedF.line : null });
+      });
+      return out.sort(function (a, b) { return b.score - a.score; });
+    }
+    function kickCard(c) {
+      var sub = abbr(c.p.team) + (c.opp ? ' v ' + abbr(c.opp) : '')
+        + ' \u00b7 ' + Math.round(c.rate * 100) + '% over ' + c.line + ' (' + c.n + 'g)'
+        + (c.total ? ' \u00b7 O/U ' + c.total.toFixed(1) : '')
+        + (c.fgLine != null ? ' \u00b7 FG line ' + c.fgLine : '')
+        + (c.posted ? '' : ' \u00b7 est line');
+      return degRow(esc(c.p.name), '#22c55e', c.kpAvg.toFixed(1) + ' pts/g', sub, c.p.name);
+    }
     // ===== GAME SCRIPT signals — read the posted total + spread, which nothing else used =====
     function _scriptFor(team) {
       var D = getData(), mo = D.matchOdds || [];
@@ -918,6 +953,10 @@
             t.threat.position + ' \u00b7 ' + abbr(t.threat.team) + ' \u2014 likely ' + t.db.player + ' (' + abbr(t.oppTeam) + ')' + (t.db.grade ? ' \u00b7 ' + t.db.grade + ' rating allowed' : '') + (t.db.cmpPct ? ' \u00b7 ' + t.db.cmpPct.toFixed(0) + '% cmp' : '') + (t.threat.tgtShare ? ' \u00b7 ' + t.threat.tgtShare.toFixed(0) + '% tgt share' : ''), t.threat.name);
         });
         return degWrap('ti-lock', 'Clamp Watch', rows);
+      },
+      kicking: function () {
+        var rows = _byGame(_fc(splitUprights(), 6, 30), function (c) { return c.p.team; }, kickCard);
+        return degWrap('ti-target-arrow', 'Split the Uprights', rows, 'c-cyan');
       },
       shootout: function () {
         var rows = _byGame(_fc(shootout(), 6, 30), function (c) { return c.p.team; }, shootoutCard);
