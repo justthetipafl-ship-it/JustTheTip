@@ -323,10 +323,18 @@ def transform(resp, mkmap, sport):
         return [{'player': p, 'market': mk, 'line': ln, 'over': pr['over'],
                  'under': pr['under'], 'book': bk} for (p, mk, ln, bk), pr in m.items()]
 
+    # `books` must be per-book PRICE ROWS, not bookmaker names: the shell builds bookIdx from
+    # it, and bookIdx is what the Radar (_radarTwoWayLines) and the arb/middle/EV tools read.
+    # Emitting a bare name list left bookIdx empty, so the Radar saw no each-way markets at all.
+    # Two-way rows only (both sides priced) - that's what those tools need.
+    book_rows = [r for r in emit(lines_map)
+                 if r.get('over') is not None and r.get('under') is not None]
+
     return {
         'updated': datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%MZ'),
         'source': 'rapidoddsapi (%s fetcher)' % sport,
-        'books': sorted(books), 'lines': emit(lines_map), 'alt': emit(alt_map),
+        'bookNames': sorted(books),
+        'books': book_rows, 'lines': emit(lines_map), 'alt': emit(alt_map),
         'matchOdds': match_odds,
     }
 
@@ -376,7 +384,7 @@ def main():
     with open(out_path, 'w') as fh:
         json.dump(data, fh, separators=(',', ':'))
     print('%s odds: %d lines, %d alt, %d books, %d games (credits ~%d)' % (
-        sport, len(data['lines']), len(data['alt']), len(data['books']), len(data['matchOdds']),
+        sport, len(data['lines']), len(data['alt']), len(data['bookNames']), len(data['matchOdds']),
         len(markets) * math.ceil(len(BOOKMAKERS) / 5)))
 
 
