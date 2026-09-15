@@ -37,7 +37,7 @@ Self-test (no network; validates every transform on synthetic frames):
 import argparse, datetime as dt, hashlib, json, os, sys, time
 from collections import defaultdict
 
-POSITIONS = ["QB", "RB", "WR", "TE"]          # offense (lineups/depth-chart scope)
+POSITIONS = ["QB", "RB", "WR", "TE", "K"]     # offense + kickers (lineups/depth-chart scope)
 DEF_GROUP = {"LB": "LB", "ILB": "LB", "OLB": "LB", "MLB": "LB",
              "DE": "DL", "DT": "DL", "NT": "DL", "DL": "DL", "EDGE": "DL",
              "CB": "DB", "S": "DB", "FS": "DB", "SS": "DB", "DB": "DB", "SAF": "DB"}
@@ -611,6 +611,11 @@ def build_players_gamelogs(ps, snap_idx, game_idx, current, ros=None):
         "recYds":   col(ps, "receiving_yards"),
         "recTds":   col(ps, "receiving_tds"),
         "fanPts":   col(ps, "fantasy_points_ppr", "fantasy_points"),
+        "fgMade":   col(ps, "fg_made"),
+        "fgAtt":    col(ps, "fg_att"),
+        "fgLong":   col(ps, "fg_long"),
+        "patMade":  col(ps, "pat_made"),
+        "patAtt":   col(ps, "pat_att"),
         "soloTk":   col(ps, "def_tackles_solo", "def_tackles"),
         "astTk":    col(ps, "def_tackle_assists", "def_tackles_with_assist"),
         "tfl":      col(ps, "def_tackles_for_loss"),
@@ -648,6 +653,8 @@ def build_players_gamelogs(ps, snap_idx, game_idx, current, ros=None):
         row["tackles"] = r1(row["soloTk"] + row["astTk"])
         if pos in POSITIONS:                      # offense: def keys stay 0, no false signal
             row["soloTk"] = row["astTk"] = row["tfl"] = row["defSacks"] = row["tackles"] = 0.0
+        # kicking points as the books price them: FG = 3, PAT = 1
+        row["kickingPts"] = r1(row.get("fgMade", 0) * 3 + row.get("patMade", 0))
         # TD convention matches the books' "anytime TD": rushing + receiving only
         row["totalTds"] = r1(row["rushTds"] + row["recTds"])
         row["anytimeTd"] = 1 if (row["rushTds"] + row["recTds"]) > 0 else 0
