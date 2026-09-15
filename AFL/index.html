@@ -3932,12 +3932,29 @@
     if(_GL_AGAINST[stat]) return _GL_AGAINST[stat];
     var gk={}; groups.forEach(function(p){gk[p.k]=1;});
     var posMap={}; (state.idx.players||[]).forEach(function(p){ if(p.name) posMap[p.name]=p.position; });
-    var yr=0; (state.data.gamelogs||[]).forEach(function(r){ if(+r.Year>yr) yr=+r.Year; });   // most recent season only
-    var ag={};
+    // Rolling last-10-games-per-DEFENSE window, not a hard season lock: early in a new season
+    // almost no team has current-year sample yet, which left the Against side empty for
+    // everyone but the few teams already played. This blends in last season's tail per
+    // opponent until that defense has 10 games of its own this season, then rolls over to
+    // pure current-season data automatically (same approach as the redzone fallback).
+    var byOppGame={};
     (state.data.gamelogs||[]).forEach(function(r){
-      if(yr && +r.Year!==yr) return;
       var pos=posMap[r.Player]; if(!pos||!gk[pos]) return;
       var opp=r.Opp; if(!opp) return;
+      var yw=(+r.Year||0)*100+(+r.Week||0);
+      (byOppGame[opp]=byOppGame[opp]||{})[yw]=1;
+    });
+    var keepGames={};
+    Object.keys(byOppGame).forEach(function(opp){
+      var yws=Object.keys(byOppGame[opp]).map(Number).sort(function(a,b){return b-a;}).slice(0,10);
+      keepGames[opp]={}; yws.forEach(function(yw){keepGames[opp][yw]=1;});
+    });
+    var ag={};
+    (state.data.gamelogs||[]).forEach(function(r){
+      var pos=posMap[r.Player]; if(!pos||!gk[pos]) return;
+      var opp=r.Opp; if(!opp) return;
+      var yw=(+r.Year||0)*100+(+r.Week||0);
+      if(!keepGames[opp]||!keepGames[opp][yw]) return;
       (ag[opp]=ag[opp]||{})[pos]=(ag[opp][pos]||0)+(+r[stat]||0);
     });
     return _GL_AGAINST[stat]=ag;
