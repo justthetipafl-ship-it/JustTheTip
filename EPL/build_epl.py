@@ -276,7 +276,7 @@ def build_players(fpl_players, match_counts, gamelogs):
         nm = p.get("name")
         logs = by_name.get(nm, [])[-15:]           # recent-form window for per-game averages
         row = {
-            "name": nm, "team": p.get("team"), "teamShort": p.get("teamShort"),
+            "name": nm, "code": p.get("code"), "team": p.get("team"), "teamShort": p.get("teamShort"),
             "position": p.get("pos"), "pos": p.get("pos"), "nmkey": p.get("nmkey"),
             "matches": match_counts.get(nm, 0),
             "price": p.get("price"), "owned": p.get("owned"), "form": p.get("form"),
