@@ -241,7 +241,10 @@ def build_fixture(sch):
     fx = []
     for _, r in pend.iterrows():
         date = str(g(r, gd, "")); tme = str(g(r, gt, "") or "")
-        utc = f"{date}T{tme}:00Z" if (date and tme) else date  # ET stored raw; shell formats
+        # nflverse `gametime` is US EASTERN, not UTC. Appending "Z" labelled ET as UTC and
+        # threw every kickoff out by 4-5 hours for anyone outside the US - and it also made
+        # the weather step sample the wrong hour. Convert ET -> UTC properly (DST-aware).
+        utc = _et_to_utc(date, tme) or (f"{date}T{tme}:00Z" if (date and tme) else date)
         fx.append({"home": str(g(r, ht, "")).upper(), "away": str(g(r, at, "")).upper(),
                    "week": week, "season": season, "date": date, "time": tme, "utc": utc,
                    "venue": str(g(r, st, "") or ""), "roof": str(g(r, rf, "") or "").lower()})
@@ -1021,6 +1024,22 @@ def build_divisions(tm):
     return out
 
 # ?? weather (Open-Meteo; outdoor fixtures only) ?????????????????????????????
+def _et_to_utc(date_str, time_str):
+    """nflverse schedules carry kickoff in US Eastern. Convert to a real UTC stamp so the
+    tool can localise it for any user. DST-aware: the NFL season straddles EDT and EST."""
+    if not date_str or not time_str:
+        return None
+    try:
+        from zoneinfo import ZoneInfo
+        hh, _, mm = str(time_str).partition(":")
+        naive = datetime.datetime(int(date_str[0:4]), int(date_str[5:7]), int(date_str[8:10]),
+                                  int(hh), int(mm or 0))
+        et = naive.replace(tzinfo=ZoneInfo("America/New_York"))
+        return et.astimezone(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    except Exception:
+        return None
+
+
 def build_weather(fixture):
     import requests
     WMO = {0:"Clear",1:"Mostly clear",2:"Partly cloudy",3:"Overcast",
