@@ -387,8 +387,9 @@
         .concat(c.chips.map(function (ch) { return '<span class="lu-p">' + esc(ch.l) + '</span>'; })).join(' ');
       var od = tdOddsTag(c.p.name);
       var detail = _tuddyProfile(c) + _tuddyOpportunity(c) + _tuddyZones(c.p.name, logsFor(c.p.name) || []) + _tuddyCoverage(c.p);
+      var img = (typeof window !== 'undefined' && window.playerImg) ? window.playerImg(c.p.name, 34) : '';
       return '<div class="lc-card">' +
-        '<div class="lc-hd" onclick="openPlayer(\'' + q + '\')"><span class="lc-nm">' + esc(c.p.name) + '</span>' + _degBadges(c.p.name) +
+        '<div class="lc-hd" onclick="openPlayer(\'' + q + '\')">' + img + '<span class="lc-nm">' + esc(c.p.name) + '</span>' + _degBadges(c.p.name) +
         '<span class="lc-meta">' + posShort(c.p.position) + ' \u00b7 ' + abbr(c.p.team) + ' v ' + abbr(c.opp) + (od ? ' \u00b7' + od : '') + '</span></div>' +
         (rates ? '<div class="tp-body-meta" style="border:0;padding:2px 0 6px">TD games: ' + rates + '</div>' : '') +
         '<div class="lu-grid" style="gap:5px">' + chips + '</div>' +
