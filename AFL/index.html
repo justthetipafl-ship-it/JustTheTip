@@ -1776,9 +1776,24 @@
     // players.json match counts were derived from the duplicated rows — recompute from the
     // deduped logs so games floors/filters use real current-season game counts. (Averages
     // are unaffected by the duplication, so only the count needs fixing.)
-    const cs=String((d.meta&&d.meta.currentSeason)||'2026');
-    const games={}; d.gamelogs.forEach(r=>{ if(String(r.Year)===cs){ (games[r.Player]=games[r.Player]||new Set()).add(r.MatchId); } });
-    (d.players||[]).forEach(p=>{ if(games[p.name]) p.matches=games[p.name].size; });
+    // Mirrors the build's rolling window (PLAYER_ROLL_N=10). A current-season-only recount
+    // breaks in the opening weeks: an active starter is recounted to 1 and fails every
+    // matches>=N filter, while a player who HASN'T featured this season keeps his full
+    // prior-season count and outranks him - which empties the boards of real starters.
+    const cs=String((d.meta&&d.meta.currentSeason)||'2026'), ROLL=10;
+    const seen={}, gl2={};
+    d.gamelogs.forEach(r=>{
+      if(!r.Player) return;
+      const k=String(r.Year)+'|'+r.MatchId;
+      const S=(seen[r.Player]=seen[r.Player]||new Set());
+      if(S.has(k)) return; S.add(k);
+      (gl2[r.Player]=gl2[r.Player]||[]).push({y:+r.Year||0,w:+r.Week||0});
+    });
+    (d.players||[]).forEach(p=>{
+      const arr=gl2[p.name]; if(!arr) return;
+      const cur=arr.filter(x=>String(x.y)===cs);
+      p.matches = (cur.length>=ROLL) ? cur.length : Math.min(arr.length, ROLL);
+    });
     d._dedupedMatches=drop.size;
   }
   var _TEAM_ALIAS={
@@ -5469,18 +5484,7 @@
                 || ((_posRank[a.position]||9)-(_posRank[b.position]||9))
                 || (_depthOf(a)-_depthOf(b)))
       .slice(0,16);
-    if(cands.length<2){
-      const P=(state.idx.players||[]);
-      const ja=P.find(p=>p.name==='Josh Allen')||P.find(p=>teams.indexOf(p.team)>=0&&p.position==='QB');
-      const s3=P.filter(p=>teams.indexOf(p.team)>=0&&RADAR_POS[p.position]&&(p.matches||0)>=3);
-      return '<details class="tp-collapse" open><summary class="tp-collapse-sum"><i class="ti ti-radar-2"></i><span class="tp-collapse-title">Matchup Radar</span></summary>'
-        +'<div style="font-size:11px;color:var(--text-3);padding:8px;line-height:1.6">'
-        +'dataVersion='+esc(String(state.dataVersion||'(none)'))
-        +'<br>sample QB: '+esc(ja?ja.name+' matches='+ja.matches:'none')
-        +'<br>matches&gt;=3: '+s3.length+' of '+P.filter(p=>teams.indexOf(p.team)>=0&&RADAR_POS[p.position]).length
-        +'<br>lineups='+((state.data.lineups||[]).length)+' dvp='+((state.data.dvp||[]).length)
-        +'</div></details>';
-    }
+    if(cands.length<2) return '';
     const sel=(state.view.rdrPick && cands.some(c=>c.name===state.view.rdrPick))?state.view.rdrPick:cands[0].name;
     const oppOf=n=>{ const p=(state.idx.byName||{})[n]; if(!p) return null; return p.team===g.home?g.away:g.home; };
     const chips=cands.map(c=>'<button class="rdr-chip'+(c.name===sel?' on':'')+'" onclick="_radarPick(null,\''+esc(c.name).replace(/\x27/g,"\\\x27")+'\')">'+esc(c.name)+'</button>').join('');
