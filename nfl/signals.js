@@ -240,18 +240,47 @@
       return '<div class="tt-row"><span class="tt-lab">' + lab + '</span>' + _tdBar(pct, col) +
              '<span class="tt-val">' + val + '</span></div>';
     }
-    function _tuddyZones(name) {
+    // Scoring zones, rebuilt from the per-game gamelog fields the build now stamps
+    // (i5Att_g / i10Att_g / rzAtt_g / rzTgt_g / rzTd_g). Two upgrades over the old version:
+    // it responds to the Season/L10/L5 toggle, and it's the PLAYER's own games rather than
+    // the team's last-10 window. Falls back to redzone.json season totals pre-rebuild.
+    function _ttZoneGrid(logs, n) {
+      var src = n ? logs.slice(-n) : logs;
+      if (!src.length) return '';
+      var sum = function (k) { var t = 0; src.forEach(function (r) { t += (+r[k] || 0); }); return t; };
+      var i5 = sum('i5Att_g'), i10a = sum('i10Att_g'), i10t = sum('i10Tgt_g');
+      var rza = sum('rzAtt_g'), rzt = sum('rzTgt_g'), td = sum('rzTd_g');
+      var rows = [
+        ['Goal line (in 5)', i5, '-'],
+        ['Inside 10', i10a, i10t],
+        ['Red zone (in 20)', rza, rzt]
+      ].map(function (z) {
+        return '<div class="tt-zrow"><span>' + z[0] + '</span><span>' + z[1] + '</span><span>' + z[2] + '</span></div>';
+      }).join('');
+      return '<div class="tt-zgrid">' +
+        '<div class="tt-zrow tt-zhd"><span>Zone</span><span>Carries</span><span>Tgts</span></div>' +
+        rows + '<div class="tt-zrow tt-ztd"><span>Red-zone TDs</span><span></span><span>' + td + '</span></div>' +
+        '<div class="tt-zn">' + src.length + ' games</div></div>';
+    }
+    function _tuddyZones(name, logs) {
+      var hasG = (logs || []).some(function (r) { return r.i5Att_g != null || r.rzAtt_g != null; });
+      if (hasG) {
+        var cells = [['all', null], ['l10', 10], ['l5', 5]].map(function (w) {
+          return '<span class="tt-w tt-' + w[0] + '">' + _ttZoneGrid(logs, w[1]) + '</span>';
+        }).join('');
+        return '<div class="tt-sec">Scoring zones</div><div class="tt-zwrap">' + cells + '</div>';
+      }
+      // fallback: redzone.json season totals (team's last-10 window, not the player's)
       var rz = (getData().redzone || []).filter(function (r) { return r.player === name; })[0];
       if (!rz) return '';
-      var zones = [
-        ['Goal line (in 5)', +rz.i5Att || 0, null, (+rz.i5RushTd || 0)],
-        ['Red zone (6-20)', (+rz.rzAtt || 0) - (+rz.i10Att || 0), (+rz.rzTgt || 0) - (+rz.i10Tgt || 0), (+rz.rzRushTd || 0) + (+rz.rzRecTd || 0) - (+rz.i5RushTd || 0)],
-        ['Inside 10', +rz.i10Att || 0, +rz.i10Tgt || 0, (+rz.i10RushTd || 0) + (+rz.i10RecTd || 0)]
-      ];
-      var body = zones.map(function (z) {
-        return '<tr><td>' + z[0] + '</td><td>' + (z[1] || 0) + '</td><td>' + (z[2] == null ? '-' : z[2]) + '</td><td class="tt-td">' + Math.max(0, z[3]) + '</td></tr>';
+      var body = [
+        ['Goal line (in 5)', +rz.i5Att || 0, '-', (+rz.i5RushTd || 0)],
+        ['Inside 10', +rz.i10Att || 0, +rz.i10Tgt || 0, (+rz.i10RushTd || 0) + (+rz.i10RecTd || 0)],
+        ['Red zone (in 20)', +rz.rzAtt || 0, +rz.rzTgt || 0, (+rz.rzRushTd || 0) + (+rz.rzRecTd || 0)]
+      ].map(function (z) {
+        return '<tr><td>' + z[0] + '</td><td>' + z[1] + '</td><td>' + z[2] + '</td><td class="tt-td">' + z[3] + '</td></tr>';
       }).join('');
-      return '<div class="tt-sec">Scoring zones</div>' +
+      return '<div class="tt-sec">Scoring zones <span class="tt-note">team\u2019s last 10 games</span></div>' +
         '<table class="tt-tbl"><tr><th>Zone</th><th>Carries</th><th>Tgts</th><th>TD</th></tr>' + body + '</table>';
     }
     function _tuddyCoverage(p) {
@@ -263,7 +292,7 @@
       };
       var rows = mk('vs Man', c.man) + mk('vs Zone', c.zone);
       if (!rows) return '';
-      return '<div class="tt-sec">Coverage split</div>' +
+      return '<div class="tt-sec">Coverage split <span class="tt-note">season \u00b7 player</span></div>' +
         '<table class="tt-tbl"><tr><th>Shell</th><th>Y/Tgt</th><th>Tgt</th><th>Catch</th><th>TD</th></tr>' + rows + '</table>';
     }
     // Window-aware baseline. Only metrics with per-game gamelog fields can vary by window -
@@ -342,7 +371,7 @@
         if (o) {
           var avg = dvpRows.reduce(function (a, r) { return a + (+r.totalTds || 0); }, 0) / dvpRows.length;
           var mult = avg ? (+o.totalTds || 0) / avg : 1;
-          rows.push(_tdRow('Matchup (TDs allowed)', (+o.totalTds || 0).toFixed(2) + ' TD/g', mult * 50, mult > 1.1 ? '#22c55e' : (mult < 0.9 ? '#ef4444' : '#eab308')));
+          rows.push(_tdRow('Matchup (opp D, TDs allowed)', (+o.totalTds || 0).toFixed(2) + ' TD/g', mult * 50, mult > 1.1 ? '#22c55e' : (mult < 0.9 ? '#ef4444' : '#eab308')));
         }
       }
       var logs = logsFor(c.p.name) || [], since = 0;
@@ -357,7 +386,7 @@
       var chips = ['<span class="lu-p" style="color:#f59e0b;border-color:#f59e0b55">#' + c.dvpRank + ' TDs allowed ' + posShort(c.p.position) + '</span>']
         .concat(c.chips.map(function (ch) { return '<span class="lu-p">' + esc(ch.l) + '</span>'; })).join(' ');
       var od = tdOddsTag(c.p.name);
-      var detail = _tuddyProfile(c) + _tuddyOpportunity(c) + _tuddyZones(c.p.name) + _tuddyCoverage(c.p);
+      var detail = _tuddyProfile(c) + _tuddyOpportunity(c) + _tuddyZones(c.p.name, logsFor(c.p.name) || []) + _tuddyCoverage(c.p);
       return '<div class="lc-card">' +
         '<div class="lc-hd" onclick="openPlayer(\'' + q + '\')"><span class="lc-nm">' + esc(c.p.name) + '</span>' + _degBadges(c.p.name) +
         '<span class="lc-meta">' + posShort(c.p.position) + ' \u00b7 ' + abbr(c.p.team) + ' v ' + abbr(c.opp) + (od ? ' \u00b7' + od : '') + '</span></div>' +
