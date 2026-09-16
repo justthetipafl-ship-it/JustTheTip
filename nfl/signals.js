@@ -228,6 +228,85 @@
       });
       return out.sort(function (a, b) { return (a.dvpRank - b.dvpRank) || (b.chips.length - a.chips.length); });
     }
+    // ===== TUDDY TARGETS card — the full scoring profile, not just a hit-rate line =====
+    // Everything below comes from data we already build: redzone.json (zone-by-zone volume),
+    // players.json (goal-line carries, target share, snap share, man/zone coverage splits),
+    // dvp.json (TDs the opponent concedes to the position) and the posted total/spread.
+    function _tdBar(pct, col) {
+      var w = Math.max(0, Math.min(100, pct));
+      return '<div class="tt-bar"><i style="width:' + w.toFixed(0) + '%;background:' + (col || 'var(--accent)') + '"></i></div>';
+    }
+    function _tdRow(lab, val, pct, col) {
+      return '<div class="tt-row"><span class="tt-lab">' + lab + '</span>' + _tdBar(pct, col) +
+             '<span class="tt-val">' + val + '</span></div>';
+    }
+    function _tuddyZones(name) {
+      var rz = (getData().redzone || []).filter(function (r) { return r.player === name; })[0];
+      if (!rz) return '';
+      var zones = [
+        ['Goal line (in 5)', +rz.i5Att || 0, null, (+rz.i5RushTd || 0)],
+        ['Red zone (6-20)', (+rz.rzAtt || 0) - (+rz.i10Att || 0), (+rz.rzTgt || 0) - (+rz.i10Tgt || 0), (+rz.rzRushTd || 0) + (+rz.rzRecTd || 0) - (+rz.i5RushTd || 0)],
+        ['Inside 10', +rz.i10Att || 0, +rz.i10Tgt || 0, (+rz.i10RushTd || 0) + (+rz.i10RecTd || 0)]
+      ];
+      var body = zones.map(function (z) {
+        return '<tr><td>' + z[0] + '</td><td>' + (z[1] || 0) + '</td><td>' + (z[2] == null ? '-' : z[2]) + '</td><td class="tt-td">' + Math.max(0, z[3]) + '</td></tr>';
+      }).join('');
+      return '<div class="tt-sec">Scoring zones</div>' +
+        '<table class="tt-tbl"><tr><th>Zone</th><th>Carries</th><th>Tgts</th><th>TD</th></tr>' + body + '</table>';
+    }
+    function _tuddyCoverage(p) {
+      var c = p.cov; if (!c || !c.man || !c.zone) return '';
+      var mk = function (lab, o) {
+        var tgt = +o.tgt || 0; if (!tgt) return '';
+        var ypt = ((+o.yds || 0) / tgt).toFixed(1), cat = Math.round((+o.rec || 0) / tgt * 100);
+        return '<tr><td>' + lab + '</td><td>' + ypt + '</td><td>' + tgt + '</td><td>' + cat + '%</td><td class="tt-td">' + (+o.td || 0) + '</td></tr>';
+      };
+      var rows = mk('vs Man', c.man) + mk('vs Zone', c.zone);
+      if (!rows) return '';
+      return '<div class="tt-sec">Coverage split</div>' +
+        '<table class="tt-tbl"><tr><th>Shell</th><th>Y/Tgt</th><th>Tgt</th><th>Catch</th><th>TD</th></tr>' + rows + '</table>';
+    }
+    function _tuddyProfile(c) {
+      var p = c.p, n = Math.max(1, p.matches || 1);
+      var tdRate = (+p.totalTds || 0);                                  // per game already
+      var gl = +p.glCarry || 0, rzc = +p.rzCarry || 0, rzt = +p.rzTgt || 0;
+      var vol = (+p.rushAtt || 0) + (+p.targets || 0);
+      var rows = [
+        _tdRow('Goal-line carries', gl.toFixed(2) + '/g', gl / 2.5 * 100, '#22c55e'),
+        _tdRow('Red-zone touches', (rzc + rzt).toFixed(1) + '/g', (rzc + rzt) / 6 * 100, '#22c55e'),
+        _tdRow('Volume', vol.toFixed(1) + ' tch/g', vol / 28 * 100),
+        _tdRow('Snap share', Math.round(+p.snapPct || 0) + '%', +p.snapPct || 0),
+        _tdRow('TD rate', tdRate.toFixed(2) + ' TD/g', tdRate / 1.2 * 100, '#f59e0b')
+      ];
+      if (p.tgtShare) rows.splice(3, 0, _tdRow('Target share', (+p.tgtShare).toFixed(0) + '%', +p.tgtShare * 2.5));
+      return '<div class="tt-sec">Baseline profile</div>' + rows.join('');
+    }
+    function _tuddyOpportunity(c) {
+      var rows = [];
+      var imp = (function (team, opp) {                       // implied points from the posted total + spread
+        var mo = (getData().matchOdds || []).filter(function (m) {
+          return (m.home === team && m.away === opp) || (m.home === opp && m.away === team); })[0];
+        if (!mo || !mo.total) return null;
+        var tot = +mo.total.points; if (!isFinite(tot)) return null;
+        var sp = 0;
+        if (mo.line && isFinite(+mo.line.home)) sp = (mo.home === team) ? +mo.line.home : +mo.line.away;
+        return (tot / 2) - (sp / 2);
+      })(c.p.team, c.opp);
+      if (imp != null) rows.push(_tdRow('Implied team total', imp.toFixed(1) + ' pts', imp / 34 * 100, '#22c55e'));
+      var dvpRows = (getData().dvp || []).filter(function (r) { return r.pos === c.p.position && r.totalTds != null; });
+      if (dvpRows.length > 8) {
+        var o = dvpRows.filter(function (r) { return r.team === c.opp; })[0];
+        if (o) {
+          var avg = dvpRows.reduce(function (a, r) { return a + (+r.totalTds || 0); }, 0) / dvpRows.length;
+          var mult = avg ? (+o.totalTds || 0) / avg : 1;
+          rows.push(_tdRow('Matchup (TDs allowed)', (+o.totalTds || 0).toFixed(2) + ' TD/g', mult * 50, mult > 1.1 ? '#22c55e' : (mult < 0.9 ? '#ef4444' : '#eab308')));
+        }
+      }
+      var logs = logsFor(c.p.name) || [], since = 0;
+      for (var k = logs.length - 1; k >= 0; k--) { if ((+logs[k].anytimeTd || 0) > 0) break; since++; }
+      rows.push(_tdRow('Games since TD', String(since), Math.max(0, 100 - since * 20), since <= 1 ? '#22c55e' : (since >= 4 ? '#ef4444' : '#eab308')));
+      return rows.length ? ('<div class="tt-sec">Opportunity</div>' + rows.join('')) : '';
+    }
     function tuddyCard(c) {
       var q = esc(c.p.name).replace(/'/g, "\\'");
       var rate = function (r, lab) { return r ? ('<span><b>' + lab + '</b> ' + r.h + '/' + r.n + '</span>') : ''; };
@@ -235,19 +314,51 @@
       var chips = ['<span class="lu-p" style="color:#f59e0b;border-color:#f59e0b55">#' + c.dvpRank + ' TDs allowed ' + posShort(c.p.position) + '</span>']
         .concat(c.chips.map(function (ch) { return '<span class="lu-p">' + esc(ch.l) + '</span>'; })).join(' ');
       var od = tdOddsTag(c.p.name);
-      return '<div class="lc-card" onclick="openPlayer(\'' + q + '\')">' +
-        '<div class="lc-hd"><span class="lc-nm">' + esc(c.p.name) + '</span>' + _degBadges(c.p.name) +
+      var detail = _tuddyProfile(c) + _tuddyOpportunity(c) + _tuddyZones(c.p.name) + _tuddyCoverage(c.p);
+      return '<div class="lc-card">' +
+        '<div class="lc-hd" onclick="openPlayer(\'' + q + '\')"><span class="lc-nm">' + esc(c.p.name) + '</span>' + _degBadges(c.p.name) +
         '<span class="lc-meta">' + posShort(c.p.position) + ' \u00b7 ' + abbr(c.p.team) + ' v ' + abbr(c.opp) + (od ? ' \u00b7' + od : '') + '</span></div>' +
         (rates ? '<div class="tp-body-meta" style="border:0;padding:2px 0 6px">TD games: ' + rates + '</div>' : '') +
-        '<div class="lu-grid" style="gap:5px">' + chips + '</div></div>';
+        '<div class="lu-grid" style="gap:5px">' + chips + '</div>' +
+        (detail ? '<details class="tt-more"><summary>Scoring profile</summary><div class="tt-body">' + detail + '</div></details>' : '') +
+        '</div>';
     }
 
     // Elite Matchups — top-10 in the league for a stat, facing a bottom-5 defence for it.
+    // ===== AVAILABILITY =====
+    // Two data quirks make this position-aware rather than a simple isPlaying() call:
+    //   1. lineups.json carries ONLY offensive skill positions (QB/RB/TE/WR) - no defenders -
+    //      so a lineup check would wrongly drop every defensive player (all of Tackle Machines
+    //      and the Tackles elite board).
+    //   2. injury.json DOES cover defence, so the injury report is the reliable gate for them.
+    // Questionable is kept (they usually play); Out/Doubtful are dropped.
+    var OFF_SKILL = (typeof Set !== 'undefined') ? new Set(['QB', 'RB', 'WR', 'TE'])
+      : { has: function (x) { return x === 'QB' || x === 'RB' || x === 'WR' || x === 'TE'; } };
+    var _injMapCache = null, _injMapSrc = null;
+    function _injMap() {
+      var inj = (getData() || {}).injury || [];
+      if (_injMapSrc === inj && _injMapCache) return _injMapCache;
+      var m = {};
+      inj.forEach(function (r) {
+        var n = r.Player || r.player; if (!n) return;
+        m[String(n).toLowerCase()] = String(r.Status || r.status || '').toLowerCase();
+      });
+      _injMapSrc = inj; _injMapCache = m;
+      return m;
+    }
+    function _available(p) {
+      if (!p || !p.name) return true;
+      var st = _injMap()[String(p.name).toLowerCase()];
+      if (st === 'out' || st === 'doubtful') return false;
+      // lineup is ground truth, but only where lineup data actually exists for that position
+      if (OFF_SKILL.has(p.position) && typeof isPlaying === 'function' && !isPlaying(p.name, p.team)) return false;
+      return true;
+    }
     var ELITE_DEFS = [{ k: 'passYds', l: 'Pass Yds' }, { k: 'rushYds', l: 'Rush Yds' }, { k: 'recYds', l: 'Rec Yds' },
                       { k: 'receptions', l: 'Receptions' }, { k: 'rushAtt', l: 'Rush Att' }, { k: 'targets', l: 'Targets' },
                       { k: 'tackles', l: 'Tackles+Ast' }];
     function elite() {
-      var pool = (players || []).filter(function (p) { return (p.matches || 0) >= 4; });
+      var pool = (players || []).filter(function (p) { return (p.matches || 0) >= 4 && _available(p); });
       var out = [];
       ELITE_DEFS.forEach(function (def) {
         pool.slice().sort(function (a, b) { return (b[def.k] || 0) - (a[def.k] || 0); }).slice(0, 10).forEach(function (p, i) {
@@ -267,7 +378,7 @@
                        { k: 'rushYds', l: 'Rush Yds', min: 30 }, { k: 'passYds', l: 'Pass Yds', min: 150 }];
     function bunnies() {
       var out = [];
-      (players || []).filter(function (p) { return (p.matches || 0) >= 3; }).forEach(function (p) {
+      (players || []).filter(function (p) { return (p.matches || 0) >= 3 && _available(p); }).forEach(function (p) {
         var opp = nextOpp(p.team); if (!opp) return;
         if (!sameDivision(p.team, opp)) return;                 // divisional rivals only
         var byOpp = {};
@@ -670,7 +781,7 @@
     function splitUprights() {
       var teams = _fixtureSet(), out = [];
       (players || []).filter(function (p) {
-        return teams.has(p.team) && p.position === 'K' && (p.matches || 0) >= 3;
+        return teams.has(p.team) && p.position === 'K' && (p.matches || 0) >= 3 && _available(p);
       }).forEach(function (p) {
         var logs = logsFor(p.name) || [];
         var kp = logs.map(function (r) { return r.kickingPts; }).filter(function (v) { return v != null; });
@@ -718,7 +829,7 @@
     function shootout() {
       var teams = _fixtureSet(), out = [];
       (players || []).filter(function (p) {
-        return teams.has(p.team) && PASS_CATCH.has(p.position) && (p.matches || 0) >= 3;
+        return teams.has(p.team) && PASS_CATCH.has(p.position) && (p.matches || 0) >= 3 && _available(p);
       }).forEach(function (p) {
         var sc = _scriptFor(p.team); if (!sc) return;
         if (sc.total < 47 || Math.abs(sc.spread) > 4.5) return;   // shootout shape only
@@ -742,7 +853,7 @@
     function groundControl() {
       var teams = _fixtureSet(), out = [];
       (players || []).filter(function (p) {
-        return teams.has(p.team) && p.position === 'RB' && (p.matches || 0) >= 3;
+        return teams.has(p.team) && p.position === 'RB' && (p.matches || 0) >= 3 && _available(p);
       }).forEach(function (p) {
         var sc = _scriptFor(p.team); if (!sc) return;
         if (sc.spread > -6.5) return;                              // must be a clear favourite
@@ -763,7 +874,7 @@
     }
     function tackleMachines() {
       var teams = _fixtureSet(), out = [];
-      (players || []).filter(function (p) { return teams.has(p.team) && DEF_POS.has(p.position) && (p.matches || 0) >= 4 && (p.snapPct || 0) >= 60; }).forEach(function (p) {
+      (players || []).filter(function (p) { return teams.has(p.team) && DEF_POS.has(p.position) && (p.matches || 0) >= 4 && (p.snapPct || 0) >= 60 && _available(p); }).forEach(function (p) {
         var opp = nextOpp(p.team);
         var vals = (logsFor(p.name) || []).map(function (r) { return r.tackles; }).filter(function (v) { return v != null; });
         if (vals.length < WRAP_MIN_G) return;
