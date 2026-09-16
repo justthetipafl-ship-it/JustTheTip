@@ -778,10 +778,24 @@
   .dvpp-p{font-size:10px;font-weight:800;min-width:34px;text-align:right;font-variant-numeric:tabular-nums;}
   .mu-tag{font-size:11px;font-weight:800;white-space:nowrap;font-variant-numeric:tabular-nums;}
   .mu-na{color:var(--text-3);}
-  .rdr-chips{display:flex;flex-wrap:wrap;gap:4px;margin:8px 0 10px;max-height:66px;overflow-y:auto;}
+  .rdr-ctl{display:flex;flex-wrap:wrap;align-items:center;gap:5px;margin:8px 0 10px;}
+  .rdr-tb{font-size:9px;font-weight:800;letter-spacing:.04em;text-transform:uppercase;padding:4px 9px;border-radius:7px;border:1px solid var(--border);background:var(--surface-2);color:var(--text-3);cursor:pointer;}
+  .rdr-tb.on{border-color:var(--accent);color:var(--accent);background:color-mix(in srgb,var(--accent) 12%,transparent);}
+  .rdr-sel{flex:1;min-width:190px;background:var(--surface-2);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:6px 9px;font-size:12px;font-family:inherit;font-weight:600;}
+  .rdr-split{display:flex;gap:12px;align-items:flex-start;flex-wrap:wrap;}
+  .rdr-split>.rdr-card{flex:1 1 300px;margin:0;}
+  .rm-wrap{flex:1 1 260px;min-width:250px;border:1px solid var(--border);border-radius:10px;overflow:hidden;background:var(--surface-2);}
+  .rm-hd,.rm-row{display:flex;align-items:center;gap:6px;padding:5px 8px;font-size:10px;border-top:1px solid var(--border);}
+  .rm-hd{border-top:0;background:var(--surface);font-size:8px;text-transform:uppercase;letter-spacing:.05em;color:var(--text-3);font-weight:700;}
+  .rm-row{cursor:pointer;}
+  .rm-row:hover{background:var(--surface);}
+  .rm-mk{flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .rm-avg{min-width:38px;text-align:right;font-weight:800;font-variant-numeric:tabular-nums;}
+  .rm-ln{min-width:64px;text-align:right;color:var(--text-2);font-variant-numeric:tabular-nums;}
+  .rm-rk{min-width:30px;text-align:right;font-weight:800;font-variant-numeric:tabular-nums;}
+  .rm-dot{width:7px;height:7px;border-radius:50%;flex-shrink:0;}
+  .rm-note{font-size:8px;color:var(--text-3);padding:4px 8px;background:var(--surface);text-align:right;}
   .rdr-card{max-width:520px;margin:0 auto;}
-  .rdr-chip{font-size:10px;font-weight:700;padding:4px 8px;border-radius:6px;border:1px solid var(--border);background:var(--surface-2);color:var(--text-2);cursor:pointer;white-space:nowrap;}
-  .rdr-chip.on{border-color:var(--accent);color:var(--accent);background:color-mix(in srgb,var(--accent) 12%,transparent);}
   .rdr-card{border:1px solid var(--border);border-radius:10px;background:var(--surface-2);padding:8px;}
   .rdr-hd{display:flex;align-items:baseline;gap:8px;margin-bottom:2px;}
   .rdr-nm{font-weight:800;font-size:13px;}
@@ -5555,6 +5569,51 @@
     body.dataset.w=w;
     const bar=btn.parentNode; if(bar) bar.querySelectorAll('.tt-wb').forEach(b=>b.classList.toggle('on',b===btn));
   };
+  // Markets panel — the player's bettable markets with the posted line, his own average,
+  // and how the opponent defends that stat for his position (DVP percentile). The edge chip
+  // is the gap between the two: strong player profile into a generous defence.
+  function _rmLabel(mk){
+    const nm=(window.SPORT_CONFIG&&SPORT_CONFIG.mktNames)||{};
+    if(nm[mk]) return nm[mk];
+    const hit=(BET_STATS||[]).concat(ODDS_MKTS||[]).find(x=>x&&x[0]===mk);
+    return hit?hit[1]:mk;
+  }
+  function _radarMarkets(name, opp){
+    const p=(state.idx.byName||{})[name]; if(!p||!opp) return '';
+    const sets=(typeof DISPLAY_SETS_CFG!=='undefined'&&DISPLAY_SETS_CFG)?DISPLAY_SETS_CFG[p.position]:null;
+    let mkts=(sets&&sets.length)?sets.map(x=>Array.isArray(x)?x[0]:x):BET_STATS.map(m=>m[0]);
+    mkts=mkts.filter((m,i)=>mkts.indexOf(m)===i).slice(0,9);
+    const dRows=(state.data.dvp||[]).filter(r=>r.pos===p.position);
+    const peers=(state.idx.players||[]).filter(x=>x.position===p.position&&(x.matches||0)>=3);
+    const rows=mkts.map(mk=>{
+      const o=(typeof oddsFor==='function')?oddsFor(name,mk):null;
+      const avg=+p[mk]; if(!isFinite(avg)) return '';
+      const pPct=_pctOf(avg,peers.map(x=>+x[mk]||0));
+      let dPct=null,rank=null;
+      const vals=dRows.map(r=>r[mk]).filter(v=>v!=null).map(Number);
+      const o2=dRows.find(r=>r.team===opp);
+      if(vals.length>=10&&o2&&o2[mk]!=null){
+        const dv=+o2[mk], desc=vals.slice().sort((a,b)=>b-a);
+        rank=1; for(let i=0;i<desc.length;i++){ if(desc[i]>dv) rank++; }
+        dPct=1-(rank-1)/(vals.length-1);
+      }
+      const edge=(dPct!=null)?((pPct+dPct)/2):pPct;     // strong player + soft matchup
+      const col=edge>0.7?'#22c55e':edge>0.55?'#86efac':edge>0.42?'#eab308':'#f97316';
+      const lineTxt=(o&&o.line!=null)?(o.line+(o.over?' @'+(+o.over).toFixed(2):'')):'-';
+      return '<div class="rm-row" onclick="openPlayer(\''+esc(name).replace(/\x27/g,"\\\x27")+'\')">'
+        +'<span class="rm-mk">'+esc(_rmLabel(mk))+'</span>'
+        +'<span class="rm-avg">'+(avg>=100?Math.round(avg):avg.toFixed(1))+'</span>'
+        +'<span class="rm-ln">'+esc(lineTxt)+'</span>'
+        +(rank!=null?'<span class="rm-rk" style="color:'+col+'">#'+rank+'</span>':'<span class="rm-rk">-</span>')
+        +'<span class="rm-dot" style="background:'+col+'"></span></div>';
+    }).filter(Boolean).join('');
+    if(!rows) return '';
+    return '<div class="rm-wrap"><div class="rm-hd"><span class="rm-mk">Market</span><span class="rm-avg">Avg</span>'
+      +'<span class="rm-ln">Line</span><span class="rm-rk">DvP</span><span class="rm-dot"></span></div>'+rows
+      +'<div class="rm-note">DvP rank vs '+esc(abbr(opp))+' \u00b7 #1 = softest</div></div>';
+  }
+  function _radarTeam(t){ state.view.rdrTeam=t; state.view.rdrPick=null; _renderApp(); }
+  window._radarTeam=_radarTeam;
   function _radarPick(g,name){ state.view.rdrPick=name; _renderApp(); }
   window._radarPick=_radarPick;   // onclick needs it on window
   function matchupRadarSection(g){
@@ -5580,7 +5639,8 @@
     const RADAR_DEPTH={QB:2,RB:3,WR:5,TE:3};   // wider than the Lineup card - the radar is for
                                               // exploring matchups, so rotational players belong
     const _posRank={QB:1,RB:2,WR:3,TE:4};   // 1-based: 0 is falsy in JS and would sort QBs last
-    const cands=(state.idx.players||[]).filter(p=>teams.indexOf(p.team)>=0 && RADAR_POS[p.position]
+    const _tf=state.view.rdrTeam||'';
+    const cands=(state.idx.players||[]).filter(p=>teams.indexOf(p.team)>=0 && (!_tf||p.team===_tf) && RADAR_POS[p.position]
                   && (p.matches||0)>=3 && _radarOK(p))
       .sort((a,b)=>(teams.indexOf(a.team)-teams.indexOf(b.team))
                 || ((_posRank[a.position]||9)-(_posRank[b.position]||9))
@@ -5589,11 +5649,16 @@
     if(cands.length<2) return '';
     const sel=(state.view.rdrPick && cands.some(c=>c.name===state.view.rdrPick))?state.view.rdrPick:cands[0].name;
     const oppOf=n=>{ const p=(state.idx.byName||{})[n]; if(!p) return null; return p.team===g.home?g.away:g.home; };
-    const chips=cands.map(c=>'<button class="rdr-chip'+(c.name===sel?' on':'')+'" onclick="_radarPick(null,\''+esc(c.name).replace(/\x27/g,"\\\x27")+'\')">'+esc(c.name)+'</button>').join('');
     const body=_radarFor(sel,oppOf(sel));
     if(!body) return '';
+    const tf=state.view.rdrTeam||'';
+    const tbtn=(k,lab)=>'<button class="rdr-tb'+(tf===k?' on':'')+'" onclick="_radarTeam(\''+k+'\')">'+esc(lab)+'</button>';
+    const opts=cands.map(c=>'<option value="'+esc(c.name)+'"'+(c.name===sel?' selected':'')+'>'
+      +esc(c.name)+'  ('+posShort(c.position)+' \u00b7 '+esc(abbr(c.team))+')</option>').join('');
     return '<details class="tp-collapse" open><summary class="tp-collapse-sum"><i class="ti ti-radar-2"></i><span class="tp-collapse-title">Matchup Radar</span></summary>'
-      +'<div class="rdr-chips">'+chips+'</div>'+body+'</details>';
+      +'<div class="rdr-ctl">'+tbtn('',"Both")+tbtn(g.home,abbr(g.home))+tbtn(g.away,abbr(g.away))
+      +'<select class="rdr-sel" onchange="_radarPick(null,this.value)">'+opts+'</select></div>'
+      +'<div class="rdr-split">'+body+_radarMarkets(sel,oppOf(sel))+'</div></details>';
   }
   // ===== FIRST SCORER — field bets (one price per player, no line) =====
   // NFL: player_1st_touchdown_scorer | EPL: player_1st_goalscorer.
