@@ -5463,9 +5463,20 @@
                 || ((_posRank[a.position]||9)-(_posRank[b.position]||9))
                 || (_depthOf(a)-_depthOf(b)))
       .slice(0,16);
-    if(cands.length<2) return _rdrWhy('no candidates ('+cands.length+') - players:'+((state.idx.players||[]).length)
-      +' lineups:'+((state.data.lineups||[]).length)+' dvp:'+((state.data.dvp||[]).length)
-      +' teams:'+teams.join('/'));
+    if(cands.length<2){
+      const P=(state.idx.players||[]);
+      const s1=P.filter(p=>teams.indexOf(p.team)>=0);
+      const s2=s1.filter(p=>RADAR_POS[p.position]);
+      const s3=s2.filter(p=>(p.matches||0)>=3);
+      const s4=s3.filter(p=>NFL_LU_DEPTH[p.position]!=null);
+      const s5=s4.filter(p=>!((state.data.lineups||[]).some(x=>x.team===p.team) && _depthOf(p)>NFL_LU_DEPTH[p.position]));
+      const s6=s5.filter(p=>{const i=(typeof _injuryFor==='function')?_injuryFor(p.name):null;const st=i?String(i.Status||i.status||'').toLowerCase():'';return st!=='out'&&st!=='doubtful';});
+      const s7=s6.filter(p=>(typeof isPlaying!=='function')||isPlaying(p.name,p.team));
+      const ex=s3.slice(0,3).map(p=>p.name+'/'+p.position+'/'+p.team+'/d'+_depthOf(p)).join(', ');
+      return _rdrWhy('team:'+s1.length+' pos:'+s2.length+' matches:'+s3.length+' lim:'+s4.length
+        +' depth:'+s5.length+' inj:'+s6.length+' playing:'+s7.length
+        +' | LU_DEPTH='+JSON.stringify(NFL_LU_DEPTH)+' | ex: '+ex);
+    }
     const sel=(state.view.rdrPick && cands.some(c=>c.name===state.view.rdrPick))?state.view.rdrPick:cands[0].name;
     const oppOf=n=>{ const p=(state.idx.byName||{})[n]; if(!p) return null; return p.team===g.home?g.away:g.home; };
     const chips=cands.map(c=>'<button class="rdr-chip'+(c.name===sel?' on':'')+'" onclick="_radarPick(null,\''+esc(c.name).replace(/\x27/g,"\\\x27")+'\')">'+esc(c.name)+'</button>').join('');
