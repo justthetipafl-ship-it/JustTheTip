@@ -98,6 +98,7 @@ SPORTS = {
         'player_receiving_yds': 'recYds', 'player_rushing_receiving_yds': 'rushRecYds',
         'player_touchdowns': 'anytimeTd', 'player_tackles_assists': 'tackles',
         'player_sacks': 'sacks', 'player_kicking_points': 'kickingPts', 'player_field_goals_made': 'fgMade',
+        'player_passing_interceptions': 'passInt',
         # keys match CHUNK_DEFS in nfl/signals.js exactly so Chunk Plays' existing oddsFor()
         # hook picks up a real posted line instead of its estimated threshold
         'player_longest_reception': 'longRec', 'player_longest_rush': 'longRush', 'player_longest_pass': 'longComp',
