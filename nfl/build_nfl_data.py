@@ -375,6 +375,7 @@ def build_redzone(pbp, short_idx, current):
     if pbp is None or getattr(pbp, "empty", True):
         return []
     se = col(pbp, "season"); wk = col(pbp, "week"); yl = col(pbp, "yardline_100"); pt = col(pbp, "play_type")
+    gidc = col(pbp, "game_id")
     rusher = col(pbp, "rusher_player_name", "rusher")
     recv = col(pbp, "receiver_player_name", "receiver")
     posteam = col(pbp, "posteam")
@@ -410,6 +411,10 @@ def build_redzone(pbp, short_idx, current):
 
     P = {}          # full name -> zone counters
     T = {}          # team -> zone volume {rzTgt, i10Tgt, rzAtt, i10Att, i5Att}
+    PG = {}         # (matchId, full name) -> same counters, per game, so the tool can window them
+    def pg(mid, full):
+        return PG.setdefault((mid, full), {"rzAtt": 0, "i10Att": 0, "i5Att": 0, "rzTgt": 0,
+                                           "i10Tgt": 0, "rzTd": 0})
     def pl(full, team):
         return P.setdefault(full, {"player": full, "team": team,
             "rzTgt": 0, "rzRec": 0, "rzRecTd": 0, "i10Tgt": 0, "i10Rec": 0, "i10RecTd": 0,
@@ -421,6 +426,7 @@ def build_redzone(pbp, short_idx, current):
         try: season = int(g(r, se, 0)); week = int(g(r, wk, 0))
         except (TypeError, ValueError): continue
         team_chk = str(g(r, posteam, "") or "").upper()
+        gid_v = str(g(r, gidc, "") or "")
         if mature:
             if season != int(current): continue
         else:
@@ -446,9 +452,11 @@ def build_redzone(pbp, short_idx, current):
             caught = onev(comp); scored = onev(ptd)
             tt["rzTgt"] += 1
             p["rzTgt"] += 1; p["rzRec"] += 1 if caught else 0; p["rzRecTd"] += 1 if scored else 0
+            _q = pg(gid_v, full); _q["rzTgt"] += 1; _q["rzTd"] += 1 if scored else 0
             if y <= 10:
                 tt["i10Tgt"] += 1
                 p["i10Tgt"] += 1; p["i10Rec"] += 1 if caught else 0; p["i10RecTd"] += 1 if scored else 0
+                _q["i10Tgt"] += 1
         else:
             sn = _norm(g(r, rusher, ""))
             if not sn: continue
@@ -459,14 +467,19 @@ def build_redzone(pbp, short_idx, current):
             scored = onev(rtd)
             tt["rzAtt"] += 1
             p["rzAtt"] += 1; p["rzRushTd"] += 1 if scored else 0
+            _q = pg(gid_v, full); _q["rzAtt"] += 1; _q["rzTd"] += 1 if scored else 0
             if y <= 10:
                 tt["i10Att"] += 1
                 p["i10Att"] += 1; p["i10RushTd"] += 1 if scored else 0
+                _q["i10Att"] += 1
             if y <= 5:
                 tt["i5Att"] += 1
                 p["i5Att"] += 1; p["i5RushTd"] += 1 if scored else 0
+                _q["i5Att"] += 1
     if unresolved:
         print(f"  (redzone: {len(unresolved)} short names unresolved - skipped)")
+    build_redzone.per_game = PG        # consumed by main() to stamp per-game red-zone onto gamelogs
+    print(f"  redzone per-game rows: {len(PG)}")
     out = []
     for p in P.values():
         t = T.get(p["team"], {})
@@ -1045,6 +1058,21 @@ def run_build(frames, out_dir, seasons, current, password, skip_weather=False):
     players, gamelogs, short_idx = build_players_gamelogs(ps, snap_idx, game_idx, current, ros=ros)
     rz_usage, firsttd, longest = build_pbp_derived(pbp, short_idx)
     redzone = build_redzone(pbp, short_idx, current)
+    # stamp per-game red-zone volume onto each gamelog row so the tool can window it
+    # (Season / L10 / L5) instead of only ever showing season aggregates
+    _pg = getattr(build_redzone, "per_game", {}) or {}
+    if _pg:
+        _hit = 0
+        for row in gamelogs:
+            q = _pg.get((row.get("MatchId"), row.get("Player")))
+            if q:
+                row["rzAtt_g"] = q["rzAtt"]; row["i10Att_g"] = q["i10Att"]; row["i5Att_g"] = q["i5Att"]
+                row["rzTgt_g"] = q["rzTgt"]; row["i10Tgt_g"] = q["i10Tgt"]; row["rzTd_g"] = q["rzTd"]
+                _hit += 1
+            else:
+                row["rzAtt_g"] = 0; row["i10Att_g"] = 0; row["i5Att_g"] = 0
+                row["rzTgt_g"] = 0; row["i10Tgt_g"] = 0; row["rzTd_g"] = 0
+        print(f"  per-game red-zone merged onto {_hit}/{len(gamelogs)} gamelog rows")
     dbs = build_dbs(adv, ros, current, players)
     cov_teams = build_coverage(pbp, part, players, short_idx)
     for p in players:
