@@ -701,6 +701,12 @@ def main():
         outputs.append(("referees.json", referees))
     for name, obj in outputs:
         json.dump(obj, open(os.path.join(DATA, name), "w"), separators=(",", ":"))
+    # version.txt is the shell's cache-buster: it appends ?v=<version> to every data fetch.
+    # Without it the browser/CDN can serve stale data files indefinitely, so a rebuilt
+    # dataset never actually reaches the tool.
+    with open(os.path.join(DATA, "version.txt"), "w") as _vf:
+        _vf.write(str(meta_out.get("version", "")))
+    print("  wrote version.txt (%s)" % meta_out.get("version", ""))
     print("built: players %d | gamelogs %d | teams %d | fixture %d | dvp %d | referees %s | meta: %s"
           % (len(players), len(gamelogs), len(teams), len(fixture), len(dvp),
              (len((referees or {}).get("refStats", {})) if referees else "-"),
