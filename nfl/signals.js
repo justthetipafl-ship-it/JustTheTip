@@ -1352,9 +1352,33 @@
         return degWrap('ti-flame', 'Streakers', rows, 'c-amber');
       },
       form: function () {
-        var up = _byGame(_fc(formAlerts('spike'), 6, 25), function (a) { return a.p.team; }, function (a) { return degRow(a.p.name, '#22c55e', { v1: '\u25b2 +' + Math.round(a.swing * 100) + '%', l1: 'swing', v2: M(a.l3), l2: 'L3' }, a.stat + ' \u00b7 L3 ' + M(a.l3) + ' vs season ' + M(a.seasonAvg) + formNote('spike', a.runDvp, a.thisDvp)); });
-        var dn = _byGame(_fc(formAlerts('drop'), 6, 25), function (a) { return a.p.team; }, function (a) { return degRow(a.p.name, '#ef4444', { v1: '\u25bc ' + Math.round(a.swing * 100) + '%', l1: 'swing', v2: M(a.l3), l2: 'L3' }, a.stat + ' \u00b7 L3 ' + M(a.l3) + ' vs season ' + M(a.seasonAvg) + formNote('drop', a.runDvp, a.thisDvp)); });
-        return degWrap('ti-trending-up', 'Spiking', up, 'c-green') + degWrap('ti-trending-down', 'Cooling', dn, 'c-red');
+        // AFL-style Player Form: one compact list, grouped by team, spiking and cooling
+        // together so you read a team's movement in one block instead of two separate boards.
+        var all = formAlerts().filter(function (a) { return a.opp; });
+        if (!all.length) return emptyState('ti-temperature-celsius', 'Player Form', 'No meaningful form swings on this slate.');
+        var seen = {}, rows = [];
+        all.forEach(function (a) {                       // one row per player: his biggest swing
+          var k = a.p.name;
+          if (!seen[k] || Math.abs(a.swing) > Math.abs(seen[k].swing)) seen[k] = a;
+        });
+        Object.keys(seen).forEach(function (k) { rows.push(seen[k]); });
+        var byTeam = {};
+        rows.forEach(function (a) { (byTeam[a.p.team] = byTeam[a.p.team] || []).push(a); });
+        var order = Object.keys(byTeam).sort(function (x, y) { return byTeam[y].length - byTeam[x].length; });
+        var items = order.map(function (t) {
+          var list = byTeam[t].sort(function (x, y) { return Math.abs(y.swing) - Math.abs(x.swing); }).slice(0, 8);
+          var body = list.map(function (a) {
+            var up = a.spiking, col = up ? '#22c55e' : '#ef4444', arr = up ? '\u25b2' : '\u25bc';
+            var q = esc(a.p.name).replace(/'/g, "\\'");
+            return '<div class="pf-row" onclick="openPlayer(\'' + q + '\')">' +
+              '<span class="pf-sw" style="color:' + col + '">' + arr + ' ' + (up ? '+' : '') + Math.round(a.swing * 100) + '%</span>' +
+              '<span class="pf-nm">' + esc(a.p.name) + '</span>' +
+              '<span class="pf-info">' + esc(a.stat) + ' \u00b7 L3 ' + a.l3.toFixed(1) + ' vs ' + a.seasonAvg.toFixed(1) + '</span></div>';
+          }).join('');
+          return '<div class="pf-team">' + (typeof teamLogo === 'function' ? teamLogo(t, 16) : '') +
+                 '<span>' + esc(abbr(t)) + '</span><span class="pf-ct">' + byTeam[t].length + '</span></div>' + body;
+        });
+        return degWrap('ti-temperature-celsius', 'Player Form', items, 'c-green');
       },
       usage: function () {
         var rows = _byGame(_fc(usageTrend(), 8, 30), function (c) { return c.p.team; }, usageCard);
