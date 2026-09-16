@@ -114,7 +114,11 @@ MILESTONES_ONLY = {'EPL'}
 
 # game-level markets to also request per sport (feed the matchOdds h2h/total the shell renders)
 GAME_MARKETS = {
-    'EPL': ['head_to_head_3_way', 'alternate_total_goals', 'alternate_total_corners', 'alternate_total_cards'],
+    'EPL': ['head_to_head_3_way', 'alternate_lines',
+            'alternate_total_goals', 'alternate_total_corners', 'alternate_total_cards',
+            'alternate_total_shots', 'alternate_total_shots_on_target',
+            'alternate_team_total_goals',
+            'head_to_head_3_way_1st_half', 'alternate_total_goals_1st_half'],
     'NFL': ['head_to_head', 'alternate_lines', 'alternate_total_points', 'alternate_total_touchdowns',
             'alternate_team_total_points', 'head_to_head_1st_half', 'alternate_lines_1st_half',
             'alternate_total_points_1st_half', 'alternate_team_total_points_1st_half'],
@@ -145,14 +149,17 @@ def team_code(name, sport):
 # the same outcome-naming convention that h2h/spread/totals turned out to use - but if they
 # come back empty or wrong after the first run, send a sample matchOdds/game entry and it's
 # a quick fix, same as every other market so far.
-H2H_1H_KEY   = 'head_to_head_1st_half'
+H2H_1H_KEYS  = ('head_to_head_1st_half', 'head_to_head_3_way_1st_half')
 LINE_1H_KEY  = 'alternate_lines_1st_half'
-TEAM_TOTAL_KEYS = {'alternate_team_total_points': 'teamTotal', 'alternate_team_total_points_1st_half': 'teamTotal1H'}
+TEAM_TOTAL_KEYS = {'alternate_team_total_points': 'teamTotal', 'alternate_team_total_points_1st_half': 'teamTotal1H',
+                   'alternate_team_total_goals': 'teamTotal'}
 FIELD_MARKETS = {'player_1st_touchdown_scorer': 'firstTd'}   # "player X to do Y" bets: no line, one price per player
 TOTAL_KEYS = {
     'alternate_total_goals': 'total', 'alternate_total_corners': 'totalCorners', 'alternate_total_cards': 'totalCards',
     'alternate_total_points': 'total', 'alternate_total_touchdowns': 'totalTds',
     'alternate_total_points_1st_half': 'total1H',
+    'alternate_total_shots': 'totalShots', 'alternate_total_shots_on_target': 'totalSOT',
+    'alternate_total_goals_1st_half': 'total1H',
 }
 
 
@@ -189,7 +196,7 @@ def transform(resp, mkmap, sport):
                         rec = alt_map.setdefault((player, jk, 0.0, book), {'over': None, 'under': None})
                         rec['over'] = price   # a field bet: one price per player, no line
                     continue
-                if key == H2H_1H_KEY:
+                if key in H2H_1H_KEYS:
                     if 'h2h1H' not in mo:
                         h = {}
                         for o in outs:
@@ -201,6 +208,8 @@ def transform(resp, mkmap, sport):
                                 h['home'] = pr
                             elif low == 'away' or nm == away:
                                 h['away'] = pr
+                            elif low == 'draw':
+                                h['draw'] = pr
                         if h.get('home') and h.get('away'):
                             h['book'] = book
                             mo['h2h1H'] = h
@@ -335,7 +344,7 @@ def transform(resp, mkmap, sport):
                         best = (d, {'points': pt, 'over': rec['over'], 'under': rec['under'], 'book': book})
             if best:
                 mo[tk] = best[1]
-        if mo.get('h2h') or mo.get('line') or mo.get('total') or mo.get('totalCorners') or mo.get('totalCards') or mo.get('h2h1H') or mo.get('line1H') or mo.get('total1H') or mo.get('totalTds') or mo.get('teamTotal') or mo.get('teamTotal1H'):
+        if mo.get('h2h') or mo.get('line') or mo.get('total') or mo.get('totalCorners') or mo.get('totalCards') or mo.get('h2h1H') or mo.get('line1H') or mo.get('total1H') or mo.get('totalTds') or mo.get('teamTotal') or mo.get('teamTotal1H') or mo.get('totalShots') or mo.get('totalSOT'):
             match_odds.append(mo)
 
     def emit(m):
