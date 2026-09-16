@@ -587,12 +587,19 @@ def build_players_gamelogs(ps, snap_idx, game_idx, current, ros=None):
     # the actual source of truth for "who's on what team right now", joined by gsis_id
     # (matches ps's player_id format exactly).
     roster_team = {}
+    roster_espn = {}
     if ros is not None and not getattr(ros, "empty", True):
-        rid = col(ros, "gsis_id"); rteam = col(ros, "team")
+        rid = col(ros, "gsis_id"); rteam = col(ros, "team"); resp = col(ros, "espn_id")
         for _, r in ros.iterrows():
             pid = g(r, rid); tm = g(r, rteam)
             if pid and tm:
                 roster_team[str(pid)] = str(tm).upper()
+            eid = g(r, resp) if resp else None
+            if pid and eid not in (None, "", "nan"):
+                try:
+                    roster_espn[str(pid)] = str(int(float(eid)))   # headshot CDN keys on the ESPN id
+                except (TypeError, ValueError):
+                    pass
         print(f"  roster current-team lookup: {len(roster_team)} players")
     opp_c = col(ps, "opponent_team", "opponent")
     se_c = col(ps, "season"); wk_c = col(ps, "week")
@@ -670,6 +677,7 @@ def build_players_gamelogs(ps, snap_idx, game_idx, current, ros=None):
                                          "team": team, "rows": []})
         cur_team = roster_team.get(pid, team)   # roster wins over a stale last-played team (trades/FA signings)
         P["team"] = cur_team; P["position"] = pos
+        if pid in roster_espn: P["espnId"] = roster_espn[pid]
         P["rawPos"] = str(g(r, pos_c, "")).strip().upper()
         P["rows"].append(row)
         sk = (team, _short(name))
@@ -701,6 +709,7 @@ def build_players_gamelogs(ps, snap_idx, game_idx, current, ros=None):
         n = len(src)
         p = {"name": P["name"], "team": P["team"], "position": P["position"],
              "posDetail": P.get("rawPos", P["position"]), "matches": n}
+        if P.get("espnId"): p["espnId"] = P["espnId"]   # ESPN headshot id, for player images
         for k in STAT_KEYS:
             p[k] = r1(sum(x[k] for x in src) / n)
         p["snapPct"] = r1(sum(x["snapPct"] for x in src) / n)
