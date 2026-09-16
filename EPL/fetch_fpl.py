@@ -79,7 +79,7 @@ def build_player(e, teams):
             "RC": h.get("red_cards"), "starts": h.get("starts"), "pts": h.get("total_points"),
         }
     return {
-        "id": e.get("id"), "name": full, "web_name": e.get("web_name"), "nmkey": nmkey(full),
+        "id": e.get("id"), "code": e.get("code"), "name": full, "web_name": e.get("web_name"), "nmkey": nmkey(full),
         "team": t.get("name"), "teamShort": t.get("short"), "pos": POS.get(e.get("element_type")),
         "price": (e.get("now_cost") or 0) / 10.0, "owned": _f(e.get("selected_by_percent")),
         "form": _f(e.get("form")), "status": e.get("status"), "news": e.get("news") or "",
