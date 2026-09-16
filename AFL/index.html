@@ -692,6 +692,13 @@
   @media(max-width:480px){.pm-overlay{padding:0;}.pm-modal{border-radius:0;max-height:100vh;min-height:100vh;}}
   .pm-hdr{display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:12px;}
   .pm-name{font-family:var(--font-display);font-weight:800;font-size:20px;line-height:1.1;}
+  .pm-idhd{display:flex;align-items:center;gap:10px;}
+  .pimg{display:inline-block;border-radius:50%;overflow:hidden;background:var(--surface-2);border:1px solid var(--border);flex-shrink:0;vertical-align:middle;}
+  .pimg img{width:100%;height:100%;object-fit:cover;object-position:top center;display:block;}
+  .deg-row>.pimg,.deg-row>.pimg-ini{margin-right:9px;}
+  .fs-row>.pimg,.fs-row>.pimg-ini{margin-right:2px;}
+  .rdr-hd>.pimg,.rdr-hd>.pimg-ini{margin-right:2px;}
+  .pimg-ini{display:inline-flex;align-items:center;justify-content:center;border-radius:50%;background:var(--surface-2);border:1px solid var(--border);font-weight:800;color:var(--text-3);flex-shrink:0;vertical-align:middle;letter-spacing:.02em;}
   .pm-meta{font-family:var(--font-mono);font-size:10px;color:var(--text-3);letter-spacing:.5px;margin-top:3px;}
   .pm-close{background:none;border:none;color:var(--text-2);font-size:26px;line-height:1;cursor:pointer;padding:0 6px;}
   .statgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(92px,1fr));gap:8px;}
@@ -4560,7 +4567,7 @@
     }
     if(ctxPills) ctxPills='<div class="pm-odds" style="margin-top:6px">'+ctxPills+'</div>';
     document.getElementById('pm-modal').innerHTML=
-      '<div class="pm-hdr"><div><div class="pm-name">'+p.name+'</div><div class="pm-meta"><span class="pos-dot" style="background:'+(POS_C[p.position]||'#888')+'"></span>'+(p.position||'—')+' · <span style="cursor:pointer;text-decoration:underline dotted" onclick="_openTeamModal(\''+esc(p.team||'').replace(/\x27/g,"\\\x27")+'\')">'+(p.team||'')+'</span> · '+(p.matches||0)+' games'+(p.age?' · '+(+p.age).toFixed(0)+'yo':'')+'</div></div><button class="pm-close" onclick="_pmClose()">&times;</button></div>'+injPill+ctxPills+
+      '<div class="pm-hdr"><div class="pm-idhd">'+playerImg(p.name,44)+'<div><div class="pm-name">'+p.name+'</div><div class="pm-meta"><span class="pos-dot" style="background:'+(POS_C[p.position]||'#888')+'"></span>'+(p.position||'—')+' · <span style="cursor:pointer;text-decoration:underline dotted" onclick="_openTeamModal(\''+esc(p.team||'').replace(/\x27/g,"\\\x27")+'\')">'+(p.team||'')+'</span> · '+(p.matches||0)+' games'+(p.age?' · '+(+p.age).toFixed(0)+'yo':'')+'</div></div><button class="pm-close" onclick="_pmClose()">&times;</button></div>'+injPill+ctxPills+
       edge+oddsHtml+
       '<div class="section-title">Averages <span class="sub-tabs" style="float:right;display:inline-flex">'+seg+'</span></div><div class="statgrid">'+cells+'</div>'+
       _pmSec('Prop Calculator',propCalc(name),true)+
@@ -4615,6 +4622,29 @@
     return [full, sur+ini];          // full-name key + surname+first-initial (handles Nat/Nathan etc.)
   }
   let _luKeySrc=null, _luKeyMap=null;
+  // Player headshots. NFL keys on the ESPN id from the roster feed, EPL on the FPL photo
+  // code - both are stamped onto players.json by their builds. Any player without an id (or
+  // whose image 404s) falls back to initials, so a missing headshot never leaves a hole.
+  function _playerImgUrl(p){
+    if(!p) return '';
+    if(SPORT.key==='nfl' && p.espnId) return 'https://a.espncdn.com/i/headshots/nfl/players/full/'+p.espnId+'.png';
+    if(SPORT.key==='epl' && p.code)   return 'https://resources.premierleague.com/premierleague/photos/players/110x140/p'+p.code+'.png';
+    return '';
+  }
+  function _initials(nm){
+    const parts=String(nm||'').replace(/[^A-Za-z .'-]/g,'').split(/\s+/).filter(Boolean);
+    if(!parts.length) return '?';
+    return ((parts[0][0]||'')+(parts.length>1?(parts[parts.length-1][0]||''):'')).toUpperCase();
+  }
+  function playerImg(name, size){
+    const p=(state.idx.byName||{})[name];
+    const sz=size||34, url=_playerImgUrl(p);
+    const ini='<span class="pimg-ini" style="width:'+sz+'px;height:'+sz+'px;font-size:'+Math.round(sz*0.38)+'px">'+esc(_initials(name))+'</span>';
+    if(!url) return ini;
+    return '<span class="pimg" style="width:'+sz+'px;height:'+sz+'px">'
+      +'<img src="'+url+'" alt="" loading="lazy" onerror="this.parentNode.innerHTML=\''+esc(_initials(name))+'\';this.parentNode.classList.add(\'pimg-ini\')">'
+      +'</span>';
+  }
   function _lineupKeyMap(){
     if(_luKeySrc===state.data.lineups) return _luKeyMap;
     _luKeySrc=state.data.lineups; _luKeyMap={};
@@ -5492,7 +5522,7 @@
     const p=(state.idx.byName||{})[name]; if(!p) return '';
     const rows=_radarBuild(p,opp); if(!rows) return '';
     return '<div class="rdr-card">'
-      +'<div class="rdr-hd"><span class="rdr-nm">'+esc(name)+'</span><span class="rdr-vs">'+posShort(p.position)+' \u00b7 vs '+esc(abbr(opp))+'</span></div>'
+      +'<div class="rdr-hd">'+playerImg(name,28)+'<span class="rdr-nm">'+esc(name)+'</span><span class="rdr-vs">'+posShort(p.position)+' \u00b7 vs '+esc(abbr(opp))+'</span></div>'
       +_radarSVG(rows,name)
       +'<div class="rdr-key"><span><i style="background:#7dd3fc"></i>Player</span><span><i style="background:var(--text-3)"></i>Defence</span>'
       +'<span><i style="background:#22c55e;opacity:.5"></i>Player ahead</span><span><i style="background:#ef4444;opacity:.5"></i>Defence ahead</span>'
@@ -5628,6 +5658,7 @@
       if(r.script>1.12) why.push('high total');
       const whyTag=why.length?'<span class="fs-why">'+esc(why.join(' \u00b7 '))+'</span>':'';
       return '<div class="fs-row" onclick="openPlayer(\''+q+'\')">'
+        +playerImg(r.name,26)
         +'<span class="fs-nm">'+esc(r.name)+'</span>'
         +'<span class="fs-tm">'+esc(abbr(r.p.team))+' \u00b7 '+posShort(r.p.position)+'</span>'
         +'<span class="fs-hist">'+esc(r.histLab||'')+whyTag+'</span>'
@@ -7096,6 +7127,7 @@
   function degRow(name,col,right,sub,onclickName,card){
     const hl=s=>(''+s).replace(/(\$\d+(?:\.\d+)?)/g,'<b class="deg-odds">$1</b>');
     return '<div class="fixture-row deg-row" style="cursor:pointer" onclick="openPlayer(\''+esc(onclickName||name).replace(/\x27/g,"\\\x27")+'\')">'+
+      playerImg(onclickName||name,30)+
       '<div class="deg-main"><div class="fxr-name deg-nm"><span>'+name+'</span>'+_degBadges(name)+(card?_cardBtn(card):'')+'</div><div class="deg-sub">'+hl(sub)+'</div></div>'+
       '<div class="deg-val" style="color:'+col+'">'+_degRight(right,hl)+'</div></div>';
   }
