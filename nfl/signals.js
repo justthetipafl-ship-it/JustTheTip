@@ -877,14 +877,73 @@
       });
       return out.sort(function (a, b) { return b.score - a.score; });
     }
+    function _kSum(logs, k, n) {
+      var src = n ? logs.slice(-n) : logs, t = 0;
+      src.forEach(function (r) { t += (+r[k] || 0); });
+      return t;
+    }
     function kickCard(c) {
+      var logs = logsFor(c.p.name) || [];
       var sub = abbr(c.p.team) + (c.opp ? ' v ' + abbr(c.opp) : '')
         + ' \u00b7 ' + Math.round(c.rate * 100) + '% over ' + c.line + ' (' + c.n + 'g)'
         + (c.total ? ' \u00b7 O/U ' + c.total.toFixed(1) : '')
-        + (c.fgLine != null ? ' \u00b7 FG line ' + c.fgLine : '')
         + (c.posted ? '' : ' \u00b7 est line');
-      return degRow(esc(c.p.name), '#22c55e', c.kpAvg.toFixed(1) + ' pts/g', sub, c.p.name);
+      var img = (typeof window !== 'undefined' && window.playerImg) ? window.playerImg(c.p.name, 34) : '';
+      // distance profile - a 50+ leg is a different bet to a chip-shot kicker
+      var s39 = _kSum(logs, 'fg0_39'), a39 = _kSum(logs, 'fgAtt0_39');
+      var s49 = _kSum(logs, 'fg40_49'), a49 = _kSum(logs, 'fgAtt40_49');
+      var s50 = _kSum(logs, 'fg50p'), a50 = _kSum(logs, 'fgAtt50p');
+      var hasDist = (a39 + a49 + a50) > 0;
+      var band = function (lab, m, a) {
+        if (!a) return '<tr><td>' + lab + '</td><td>-</td><td>-</td></tr>';
+        var pc = Math.round(m / a * 100);
+        var col = pc >= 85 ? '#22c55e' : pc >= 70 ? '#eab308' : '#f97316';
+        return '<tr><td>' + lab + '</td><td>' + m + '/' + a + '</td><td style="color:' + col + ';font-weight:800">' + pc + '%</td></tr>';
+      };
+      var dist = hasDist ? ('<div class="tt-sec">Distance profile</div>' +
+        '<table class="tt-tbl"><tr><th>Range</th><th>Made</th><th>Pct</th></tr>' +
+        band('Under 40', s39, a39) + band('40-49', s49, a49) + band('50+', s50, a50) + '</table>') : '';
+      // volume + scoring context
+      var pts = _kSum(logs, 'kickingPts', 10) / Math.max(1, Math.min(10, logs.length));
+      var fga = _kSum(logs, 'fgAtt', 10) / Math.max(1, Math.min(10, logs.length));
+      var pat = _kSum(logs, 'patAtt', 10) / Math.max(1, Math.min(10, logs.length));
+      var prof = '<div class="tt-sec">Workload <span class="tt-note">last 10</span></div>' +
+        _tdRow('Kicking points', pts.toFixed(1) + '/g', pts / 12 * 100, '#22c55e') +
+        _tdRow('FG attempts', fga.toFixed(1) + '/g', fga / 4 * 100) +
+        _tdRow('XP attempts', pat.toFixed(1) + '/g', pat / 5 * 100);
+      // opportunity: a kicker needs his offence moving but stalling
+      var opp = [];
+      if (c.total) opp.push(_tdRow('Game total', c.total.toFixed(1), (c.total - 36) / 18 * 100, '#22c55e'));
+      var wx = (getData().weather || []).filter(function (w) {
+        return w && (w.home === c.p.team || w.away === c.p.team || w.team === c.p.team); })[0];
+      if (wx) {
+        var roof = String(wx.roof || '').toLowerCase();
+        var indoors = roof.indexOf('dome') >= 0 || roof.indexOf('closed') >= 0 || roof.indexOf('indoor') >= 0;
+        if (indoors) {
+          opp.push(_tdRow('Roof', roof.indexOf('closed') >= 0 ? 'Closed' : 'Dome', 100, '#22c55e'));
+        } else {
+          var wind = +wx.wind || 0;
+          opp.push(_tdRow('Wind', Math.round(wind) + ' km/h',
+            Math.max(0, 100 - wind * 4), wind > 25 ? '#ef4444' : wind > 15 ? '#eab308' : '#22c55e'));
+          if (wx.temp != null && +wx.temp <= 5) {
+            opp.push(_tdRow('Temp', Math.round(+wx.temp) + '\u00b0C', 20, '#60a5fa'));   // cold ball travels less
+          }
+        }
+      }
+      var oppBlk = opp.length ? ('<div class="tt-sec">Conditions</div>' + opp.join('')) : '';
+      var detail = prof + dist + oppBlk;
+      return '<div class="lc-card">' +
+        '<div class="lc-hd" onclick="openPlayer(\'' + esc(c.p.name).replace(/'/g, "\\'") + '\')">' + img +
+        '<span class="lc-nm">' + esc(c.p.name) + '</span>' +
+        '<span class="lc-meta">K \u00b7 ' + sub + '</span></div>' +
+        '<div class="lu-grid" style="gap:5px">' +
+        '<span class="lu-p" style="color:#22c55e;border-color:#22c55e55">' + c.kpAvg.toFixed(1) + ' pts/g</span>' +
+        (c.fgLine != null ? '<span class="lu-p">FG line ' + c.fgLine + '</span>' : '') +
+        (a50 ? '<span class="lu-p">' + s50 + '/' + a50 + ' from 50+</span>' : '') + '</div>' +
+        (detail ? '<details class="tt-more"><summary>Kicking profile</summary><div class="tt-body" data-w="all">' + detail + '</div></details>' : '') +
+        '</div>';
     }
+
     // ===== GAME SCRIPT signals — read the posted total + spread, which nothing else used =====
     function _scriptFor(team) {
       var D = getData(), mo = D.matchOdds || [];
