@@ -816,6 +816,23 @@
   .cv-hl td:first-child{color:var(--accent);}
   .cv-td{font-weight:800;color:#22c55e;}
   .cv-note{font-size:8px;color:var(--text-3);margin-top:6px;opacity:.8;}
+  .ul-wins{display:inline-flex;gap:3px;margin-left:auto;}
+  .ul-chips{display:flex;flex-wrap:wrap;gap:4px;margin-bottom:8px;}
+  .ul-chip{font-size:9px;font-weight:700;padding:4px 8px;border-radius:6px;border:1px solid var(--border);background:var(--surface-2);color:var(--text-3);cursor:pointer;white-space:nowrap;}
+  .ul-chip.on{border-color:var(--accent);color:var(--accent);background:color-mix(in srgb,var(--accent) 12%,transparent);}
+  .ul-list{display:flex;flex-direction:column;gap:3px;}
+  .ul-row{display:flex;align-items:center;gap:8px;padding:5px 8px;border:1px solid var(--border);border-radius:8px;background:var(--surface-2);cursor:pointer;}
+  .ul-row:hover{border-color:var(--accent);}
+  .ul-rk{font-size:10px;font-weight:800;color:var(--text-3);min-width:16px;text-align:right;font-variant-numeric:tabular-nums;}
+  .ul-nm{font-size:12px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;}
+  .ul-tm{font-size:9px;color:var(--text-3);white-space:nowrap;}
+  .ul-bar{flex:1;min-width:40px;height:6px;border-radius:3px;background:var(--surface-3,var(--border));overflow:hidden;}
+  .ul-bar i{display:block;height:100%;background:var(--accent);border-radius:3px;}
+  .ul-v{font-size:11px;font-weight:800;min-width:48px;text-align:right;font-variant-numeric:tabular-nums;}
+  .ul-none{font-size:11px;color:var(--text-3);padding:10px 4px;}
+  .ul-last{font-size:10px;font-weight:700;min-width:46px;text-align:right;font-variant-numeric:tabular-nums;color:var(--text-3);}
+  .ul-hd{display:flex;align-items:center;gap:8px;padding:2px 8px 5px;font-size:8px;text-transform:uppercase;letter-spacing:.05em;color:var(--text-3);font-weight:700;}
+  .ul-hnm{flex:1;}
   .rdr-card{max-width:520px;margin:0 auto;}
   .rdr-card{border:1px solid var(--border);border-radius:10px;background:var(--surface-2);padding:8px;}
   .rdr-hd{display:flex;align-items:baseline;gap:8px;margin-bottom:2px;}
@@ -4077,6 +4094,7 @@
     else if(SPORT.key!=='epl' && SPORT.key!=='nfl' && !_fxHid('sec','insouts')) h+=insOutsSection(g.home,g.away);
     if(!_fxHid('sec','mradar')) h+=matchupRadarSection(g);
     h+=coverageSection(g);
+    h+=usageLeaders(g);
     h+=firstScorerSection(g);   // distinct key: 'radar' is the O/U Radar
     if(SPORT.key!=='epl' && !_fxHid('sec','radar')) h+=radarSection(g.home,g.away,g.venue||(g.park&&g.park.name));   // EPL props are over-only milestones: no each-way board possible
     if(fxMode!=='nerd' && !_fxHid('sec','jupiter')) h+=jupiter(g);
@@ -4618,6 +4636,77 @@
       +'<div class="rdr-ctl">'+tbtn('','Both')+tbtn(g.home,abbr(g.home))+tbtn(g.away,abbr(g.away))
       +'<select class="rdr-sel" onchange="_cvPick(this.value)">'+opts+'</select></div>'
       +'<div class="cv-body">'+body+'</div></details>';
+  }
+  // ===== USAGE LEADERS — who actually gets the work in this fixture =====
+  // Every metric here is computed from the player's own gamelog rows, so the Season/L10/L5
+  // window applies to all of them. (No routes-run: that needs play-level participation data
+  // we don't carry, so target share and snap share stand in as the volume signals.)
+  const USAGE_METRICS=[
+    ['snapPct','Snap %',   r=>+r.snapPct,                              v=>Math.round(v)+'%',    100],
+    ['tgtShare','Target %',r=>+r.tgtShare,                             v=>v.toFixed(1)+'%',      40],
+    ['targets','Targets',  r=>+r.targets||0,                           v=>v.toFixed(1),          12],
+    ['touches','Touches',  r=>(+r.rushAtt||0)+(+r.receptions||0),      v=>v.toFixed(1),          22],
+    ['rzTouch','RZ touches',r=>(+r.rzAtt_g||0)+(+r.rzTgt_g||0),        v=>v.toFixed(1),           6],
+    ['glCarry','Goal line',r=>+r.i5Att_g||0,                           v=>v.toFixed(2),         2.5],
+    ['airYds','Air yards', r=>+r.airYds||0,                            v=>Math.round(v),        120]
+  ];
+  function _ulAvg(logs,fn,n){
+    const src=n?logs.slice(-n):logs; let t=0,c=0;
+    src.forEach(r=>{ const v=fn(r); if(v!=null&&isFinite(v)){t+=v;c++;} });
+    return c?t/c:null;
+  }
+  function _ulPick(k){ state.view.ulMk=k; _renderApp(); }
+  function _ulTeam(t){ state.view.ulTeam=t; _renderApp(); }
+  function _ulWin(w){ state.view.ulWin=w; _renderApp(); }
+  window._ulPick=_ulPick; window._ulTeam=_ulTeam; window._ulWin=_ulWin;
+  function usageLeaders(g){
+    if(!g||_fxHid('sec','usage')) return '';
+    const teams=[g.home,g.away], tf=state.view.ulTeam||'';
+    const win=state.view.ulWin||'all', n=(win==='l5')?5:(win==='l10')?10:null;
+    const mk=USAGE_METRICS.find(m=>m[0]===(state.view.ulMk||'snapPct'))||USAGE_METRICS[0];
+    const pool=(state.idx.players||[]).filter(p=>{
+      if(teams.indexOf(p.team)<0) return false;
+      if(tf&&p.team!==tf) return false;
+      if(!RADAR_POS[p.position]) return false;                      // offensive skill only
+      if(typeof isPlaying==='function'&&!isPlaying(p.name,p.team)) return false;
+      return ((state.idx.logsByName||{})[p.name]||[]).length>=2;
+    });
+    if(pool.length<3) return '';
+    const rows=pool.map(p=>{
+      const logs=(state.idx.logsByName||{})[p.name]||[];
+      const last=logs.length?mk[2](logs[logs.length-1]):null;    // most recent game, for comparison
+      return {p:p, v:_ulAvg(logs,mk[2],n), last:(last!=null&&isFinite(last))?last:null};
+    }).filter(r=>r.v!=null&&r.v>0).sort((a,b)=>b.v-a.v).slice(0,12);
+    if(!rows.length) return '<details class="tp-collapse"><summary class="tp-collapse-sum"><i class="ti ti-chart-bar"></i><span class="tp-collapse-title">Usage Leaders</span></summary><div class="ul-none">No data for this metric yet \u2014 run the data refresh.</div></details>';
+    const max=rows[0].v||1;
+    const body=rows.map((r,i)=>{
+      const q=esc(r.p.name).replace(/\x27/g,"\\\x27");
+      return '<div class="ul-row" onclick="openPlayer(\''+q+'\')">'
+        +'<span class="ul-rk">'+(i+1)+'</span>'
+        +(typeof playerImg==='function'?playerImg(r.p.name,24):'')
+        +'<span class="ul-nm">'+esc(r.p.name)+'</span>'
+        +'<span class="ul-tm">'+esc(abbr(r.p.team))+' \u00b7 '+posShort(r.p.position)+'</span>'
+        +'<span class="ul-bar"><i style="width:'+Math.max(4,r.v/max*100).toFixed(0)+'%"></i></span>'
+        +'<span class="ul-v">'+mk[3](r.v)+'</span>'
+        +(r.last!=null?(function(){
+            const d=r.last-r.v, big=Math.abs(d)>r.v*0.2;
+            const col=!big?'var(--text-3)':(d>0?'#22c55e':'#f97316');
+            const ar=!big?'':(d>0?'\u25b2':'\u25bc');
+            return '<span class="ul-last" style="color:'+col+'" title="most recent game">'+ar+mk[3](r.last)+'</span>';
+          })():'<span class="ul-last">-</span>')
+        +'</div>';
+    }).join('');
+    const chips=USAGE_METRICS.map(m=>'<button class="ul-chip'+(m[0]===mk[0]?' on':'')+'" onclick="_ulPick(\''+m[0]+'\')">'+esc(m[1])+'</button>').join('');
+    const tbtn=(k,lab)=>'<button class="rdr-tb'+(tf===k?' on':'')+'" onclick="_ulTeam(\''+k+'\')">'+esc(lab)+'</button>';
+    const wbtn=(k,lab)=>'<button class="tt-wb'+(win===k?' on':'')+'" onclick="_ulWin(\''+k+'\')">'+esc(lab)+'</button>';
+    return '<details class="tp-collapse"><summary class="tp-collapse-sum"><i class="ti ti-chart-bar"></i>'
+      +'<span class="tp-collapse-title">Usage Leaders</span></summary>'
+      +'<div class="rdr-ctl">'+tbtn('','Both')+tbtn(g.home,abbr(g.home))+tbtn(g.away,abbr(g.away))
+      +'<span class="ul-wins">'+wbtn('all','Season')+wbtn('l10','L10')+wbtn('l5','L5')+'</span></div>'
+      +'<div class="ul-chips">'+chips+'</div>'
+      +'<div class="ul-hd"><span class="ul-hnm">Player</span><span class="ul-v">'
+      +esc(win==='l5'?'L5':win==='l10'?'L10':'Season')+'</span><span class="ul-last">Last</span></div>'
+      +'<div class="ul-list">'+body+'</div></details>';
   }
   function _pmSec(title,body,open){ if(!body) return '';
     return '<details class="pm-sec"'+(open?' open':'')+'><summary>'+title+'<i class="ti ti-chevron-down"></i></summary><div class="pm-sec-body">'+body+'</div></details>'; }
