@@ -1088,6 +1088,12 @@ def run_build(frames, out_dir, seasons, current, password, skip_weather=False):
         meta["password_hash"] = hashlib.sha256(password.encode()).hexdigest()
 
     write_json(f"{out_dir}/meta.json", meta)
+    # version.txt is the shell's cache-buster: it reads this and appends ?v=<version> to every
+    # data fetch. Without it the browser/CDN serves players.json etc. from cache indefinitely,
+    # so a rebuilt dataset never actually reaches the tool.
+    with open(f"{out_dir}/version.txt", "w") as _vf:
+        _vf.write(meta["version"])
+    print(f"  wrote {out_dir}/version.txt ({meta['version']})")
     write_json(f"{out_dir}/players.json", players)
     write_json(f"{out_dir}/teams.json", teams)
     write_json(f"{out_dir}/teams_form.json", teams_form)
