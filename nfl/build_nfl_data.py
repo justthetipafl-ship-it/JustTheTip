@@ -388,7 +388,7 @@ def build_redzone(pbp, short_idx, current):
                 current_weeks.add(int(g(r, wk, 0)))
         except (TypeError, ValueError):
             continue
-    mature = len(current_weeks) >= 5
+    mature = len(current_weeks) >= PLAYER_ROLL_N   # same threshold as the player window
     print(f"  redzone: current season has {len(current_weeks)} week(s) of pbp -> "
           + ("season-to-date" if mature else "last-10-games-per-team window"))
 
@@ -687,12 +687,17 @@ def build_players_gamelogs(ps, snap_idx, game_idx, current, ros=None):
         # full prior season and outranks him - which inverted the boards (backups on top, real
         # starters missing). A rolling window also avoids a cliff: current-season games displace
         # prior ones one at a time, so the sample stays stable and the data is fully
-        # current-season by game N. Same approach as the redzone and target-distribution windows.
+        # current-season by game N, then expands to the FULL current season from there (so a
+        # mature season isn't artificially capped). Same rule as the redzone and
+        # target-distribution windows.
         cur = [x for x in rows if x["Year"] == str(current)]
         cur.sort(key=lambda x: int(x["Week"]), reverse=True)
-        prior = [x for x in rows if x["Year"] != str(current)]
-        prior.sort(key=lambda x: (x["Year"], x["Week"]), reverse=True)
-        src = (cur + prior)[:PLAYER_ROLL_N] or rows
+        if len(cur) >= PLAYER_ROLL_N:
+            src = cur                                   # season mature: use it all, don't cap
+        else:
+            prior = [x for x in rows if x["Year"] != str(current)]
+            prior.sort(key=lambda x: (x["Year"], x["Week"]), reverse=True)
+            src = (cur + prior)[:PLAYER_ROLL_N] or rows
         n = len(src)
         p = {"name": P["name"], "team": P["team"], "position": P["position"],
              "posDetail": P.get("rawPos", P["position"]), "matches": n}
@@ -1202,7 +1207,12 @@ def selftest():
         J("players.json"), J("gamelogs.json"), J("dvp.json"), J("teams.json"),
         J("teams_form.json"), J("fixture.json"), J("results.json"),
         J("lineups.json"), J("firsttd.json"), J("injury.json"))
-    assert len(players) == 8 and all(p["matches"] == 3 for p in players)
+    # rolling window: the fixture has 3 games in the current season + 3 prior, and
+    # PLAYER_ROLL_N=10, so all 6 are in the window (a hard current-season-only lock would
+    # give 3 and would strand active starters on a 1-game sample in the opening weeks).
+    # Per-game values are season-independent in this fixture, so the averages below are
+    # unchanged either way - only the sample size moves.
+    assert len(players) == 8 and all(p["matches"] == 6 for p in players)
     lbp = next(p for p in players if p["name"] == "KC LB1")
     assert lbp["position"] == "LB"                                   # ILB normalised to group
     assert lbp["tackles"] == r1((10 + 11 + 12) / 3)                  # solo(7,8,9)+ast(3) combined
