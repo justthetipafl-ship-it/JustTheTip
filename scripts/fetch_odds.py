@@ -175,8 +175,11 @@ def transform(resp, mkmap, sport):
     lines_map, alt_map, books, match_odds = {}, {}, set(), []
     for g in games:
         game = g.get('game', {})
-        home, away = game.get('home_team', ''), game.get('away_team', '')
-        home, away = team_code(home, sport), team_code(away, sport)
+        home_raw, away_raw = game.get('home_team', ''), game.get('away_team', '')
+        # NOTE: outcome names in h2h / spread markets use the API's FULL team names, so keep
+        # them for matching. The abbreviations are only for the output (they must line up with
+        # fixture.json). Converting before matching silently killed h2h and spreads.
+        home, away = team_code(home_raw, sport), team_code(away_raw, sport)
         mo = {'home': home, 'away': away}
         totals = {}
         spreads = {}       # (book) -> {'home':{point,price}, 'away':{point,price}}
@@ -206,9 +209,9 @@ def transform(resp, mkmap, sport):
                             if not pr:
                                 continue
                             low = nm.lower()
-                            if low == 'home' or nm == home:
+                            if low == 'home' or nm == home_raw or nm == home:
                                 h['home'] = pr
-                            elif low == 'away' or nm == away:
+                            elif low == 'away' or nm == away_raw or nm == away:
                                 h['away'] = pr
                             elif low == 'draw':
                                 h['draw'] = pr
@@ -223,9 +226,9 @@ def transform(resp, mkmap, sport):
                         nm = (o.get('name') or '')
                         if pt is None or not pr:
                             continue
-                        if nm == home or nm.lower() == 'home':
+                        if nm in (home_raw, home) or nm.lower() == 'home':
                             rec['home'] = (float(pt), pr)
-                        elif nm == away or nm.lower() == 'away':
+                        elif nm in (away_raw, away) or nm.lower() == 'away':
                             rec['away'] = (float(pt), pr)
                     continue
                 if key in TEAM_TOTAL_KEYS:
@@ -237,9 +240,9 @@ def transform(resp, mkmap, sport):
                         low_side = (side_src or '').lower()
                         if pt is None or not pr:
                             continue
-                        if side_src == home or 'home' in low_side or home.lower() in low_side:
+                        if side_src in (home_raw, home) or 'home' in low_side or home_raw.lower() in low_side:
                             side = 'home'
-                        elif side_src == away or 'away' in low_side or away.lower() in low_side:
+                        elif side_src in (away_raw, away) or 'away' in low_side or away_raw.lower() in low_side:
                             side = 'away'
                         else:
                             continue
@@ -258,9 +261,9 @@ def transform(resp, mkmap, sport):
                             if not pr:
                                 continue
                             low = nm.lower()
-                            if low == 'home' or nm == home:
+                            if low == 'home' or nm == home_raw or nm == home:
                                 h['home'] = pr
-                            elif low == 'away' or nm == away:
+                            elif low == 'away' or nm == away_raw or nm == away:
                                 h['away'] = pr
                             elif low == 'draw':
                                 h['draw'] = pr
@@ -275,9 +278,9 @@ def transform(resp, mkmap, sport):
                         nm = (o.get('name') or '')
                         if pt is None or not pr:
                             continue
-                        if nm == home or nm.lower() == 'home':
+                        if nm in (home_raw, home) or nm.lower() == 'home':
                             rec['home'] = (float(pt), pr)
-                        elif nm == away or nm.lower() == 'away':
+                        elif nm in (away_raw, away) or nm.lower() == 'away':
                             rec['away'] = (float(pt), pr)
                     continue
                 if key in TOTAL_KEYS:
