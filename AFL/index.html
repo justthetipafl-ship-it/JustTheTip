@@ -5469,7 +5469,18 @@
                 || ((_posRank[a.position]||9)-(_posRank[b.position]||9))
                 || (_depthOf(a)-_depthOf(b)))
       .slice(0,16);
-    if(cands.length<2) return '';
+    if(cands.length<2){
+      const P=(state.idx.players||[]);
+      const ja=P.find(p=>p.name==='Josh Allen')||P.find(p=>teams.indexOf(p.team)>=0&&p.position==='QB');
+      const s3=P.filter(p=>teams.indexOf(p.team)>=0&&RADAR_POS[p.position]&&(p.matches||0)>=3);
+      return '<details class="tp-collapse" open><summary class="tp-collapse-sum"><i class="ti ti-radar-2"></i><span class="tp-collapse-title">Matchup Radar</span></summary>'
+        +'<div style="font-size:11px;color:var(--text-3);padding:8px;line-height:1.6">'
+        +'dataVersion='+esc(String(state.dataVersion||'(none)'))
+        +'<br>sample QB: '+esc(ja?ja.name+' matches='+ja.matches:'none')
+        +'<br>matches&gt;=3: '+s3.length+' of '+P.filter(p=>teams.indexOf(p.team)>=0&&RADAR_POS[p.position]).length
+        +'<br>lineups='+((state.data.lineups||[]).length)+' dvp='+((state.data.dvp||[]).length)
+        +'</div></details>';
+    }
     const sel=(state.view.rdrPick && cands.some(c=>c.name===state.view.rdrPick))?state.view.rdrPick:cands[0].name;
     const oppOf=n=>{ const p=(state.idx.byName||{})[n]; if(!p) return null; return p.team===g.home?g.away:g.home; };
     const chips=cands.map(c=>'<button class="rdr-chip'+(c.name===sel?' on':'')+'" onclick="_radarPick(null,\''+esc(c.name).replace(/\x27/g,"\\\x27")+'\')">'+esc(c.name)+'</button>').join('');
