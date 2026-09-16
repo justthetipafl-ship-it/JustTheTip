@@ -785,6 +785,16 @@
   .rdr-key{display:flex;flex-wrap:wrap;gap:8px;font-size:8.5px;color:var(--text-3);margin-top:4px;align-items:center;}
   .rdr-key i{display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:3px;vertical-align:-1px;}
   .rdr-key-rk{margin-left:auto;opacity:.75;}
+  .fs-hd{display:flex;gap:8px;font-size:9px;text-transform:uppercase;letter-spacing:.05em;color:var(--text-3);padding:6px 8px 2px;}
+  .fs-hd span:first-child{flex:1;}
+  .fs-list{display:flex;flex-direction:column;gap:2px;}
+  .fs-row{display:flex;align-items:center;gap:8px;padding:6px 8px;border:1px solid var(--border);border-radius:8px;background:var(--surface-2);cursor:pointer;}
+  .fs-nm{font-weight:700;font-size:12px;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .fs-tm{font-size:9px;color:var(--text-3);white-space:nowrap;}
+  .fs-hist{font-size:9px;color:var(--text-3);min-width:56px;text-align:right;white-space:nowrap;}
+  .fs-imp{font-size:11px;font-weight:700;color:var(--text-2);min-width:34px;text-align:right;font-variant-numeric:tabular-nums;}
+  .fs-edge{font-size:9px;font-weight:800;color:#22c55e;}
+  .fs-od{font-size:12px;font-weight:800;min-width:40px;text-align:right;font-variant-numeric:tabular-nums;}
   .lu-grid{display:flex;flex-wrap:wrap;gap:4px;margin-bottom:8px;}
   .lu-p{font-size:11px;font-weight:600;color:var(--text-2);background:var(--surface-2);border:1px solid var(--border);border-radius:5px;padding:3px 7px;}
   .lu-p i{font-style:normal;color:var(--text-3);font-size:9px;font-weight:700;margin-left:4px;}
@@ -3980,7 +3990,8 @@
     if(!_fxHid('sec','value')) h+=valueBetsSection(g.home,g.away);
     if(SPORT.key==='nfl' && !_fxHid('sec','insouts')) h+=medicalRoomSection(g.home,g.away);
     else if(SPORT.key!=='epl' && SPORT.key!=='nfl' && !_fxHid('sec','insouts')) h+=insOutsSection(g.home,g.away);
-    if(!_fxHid('sec','mradar')) h+=matchupRadarSection(g);   // distinct key: 'radar' is the O/U Radar
+    if(!_fxHid('sec','mradar')) h+=matchupRadarSection(g);
+    h+=firstScorerSection(g);   // distinct key: 'radar' is the O/U Radar
     if(SPORT.key!=='epl' && !_fxHid('sec','radar')) h+=radarSection(g.home,g.away,g.venue||(g.park&&g.park.name));   // EPL props are over-only milestones: no each-way board possible
     if(fxMode!=='nerd' && !_fxHid('sec','jupiter')) h+=jupiter(g);
     if(fxMode!=='nerd' && !_fxHid('sec','deja') && _dvMeetings(g.home,g.away,999).length) h+=dejaVuSGM(g.home,g.away);
@@ -5502,6 +5513,69 @@
     if(!body) return '';
     return '<details class="tp-collapse" open><summary class="tp-collapse-sum"><i class="ti ti-radar-2"></i><span class="tp-collapse-title">Matchup Radar</span></summary>'
       +'<div class="rdr-chips">'+chips+'</div>'+body+'</details>';
+  }
+  // ===== FIRST SCORER — field bets (one price per player, no line) =====
+  // NFL: player_1st_touchdown_scorer | EPL: player_1st_goalscorer.
+  // Model side differs by sport: NFL has a real historical first-TD log (firsttd.json,
+  // gameFirst flag); EPL has no equivalent, so we fall back to the player's scoring rate.
+  function _fsRows(home,away){
+    const od=state.data.odds||{};
+    const src=[].concat(od.alt||[], od.lines||[]).filter(r=>r&&r.market==='firstScorer'&&r.over);
+    if(!src.length) return null;
+    const best={};
+    src.forEach(r=>{ const k=r.player; if(!k) return;
+      if(!best[k]||r.over>best[k].over) best[k]=r; });   // best available price per player
+    const teams=[home,away];
+    const out=[];
+    Object.keys(best).forEach(nm=>{
+      const p=(state.idx.byName||{})[nm]; if(!p||teams.indexOf(p.team)<0) return;
+      if(typeof isPlaying==='function' && !isPlaying(nm,p.team)) return;
+      const o=best[nm], imp=1/o.over;
+      const logs=(state.idx.logsByName||{})[nm]||[];
+      let hist=null, histLab='';
+      if(SPORT.key==='nfl'){
+        const ftd=(state.data.firsttd||[]).filter(r=>r.player===nm);
+        const firsts=ftd.filter(r=>r.gameFirst).length;
+        // Shrink toward the base rate: exactly one player scores the game's first TD, spread
+        // over ~24 eligible skill players, so the prior is ~4%. A raw 12-in-34 reads as 35%
+        // and would flag false value on every thin sample; k=20 keeps small samples honest.
+        if(logs.length>=4){
+          const K=20, BASE=0.04;
+          hist=(firsts+K*BASE)/(logs.length+K);
+          histLab=firsts+' in '+logs.length+'g';
+        }
+      } else {
+        const gs=logs.map(r=>+(r.goals||0)).filter(v=>isFinite(v));
+        if(gs.length>=4){
+          const gpg=gs.reduce((a,b)=>a+b,0)/gs.length;
+          hist=(1-Math.exp(-gpg))/2.6;                    // P(scores) spread over ~2.6 scorers/match
+          histLab=gpg.toFixed(2)+' g/game';
+        }
+      }
+      out.push({name:nm, p:p, price:o.over, book:o.book, imp:imp, hist:hist, histLab:histLab,
+                edge:(hist!=null)?(hist-imp):null});
+    });
+    return out.length?out.sort((a,b)=>a.price-b.price):null;
+  }
+  function firstScorerSection(g){
+    if(!g||_fxHid('sec','firstscorer')) return '';
+    const rows=_fsRows(g.home,g.away); if(!rows) return '';
+    const lab=SPORT.key==='nfl'?'First TD Scorer':'First Goalscorer';
+    const body=rows.slice(0,18).map(r=>{
+      const q=esc(r.name).replace(/\x27/g,"\\\x27");
+      const ev=(r.edge!=null&&r.edge>0.01)?'<span class="fs-edge">+'+Math.round(r.edge*100)+'%</span>':'';
+      return '<div class="fs-row" onclick="openPlayer(\''+q+'\')">'
+        +'<span class="fs-nm">'+esc(r.name)+'</span>'
+        +'<span class="fs-tm">'+esc(abbr(r.p.team))+' \u00b7 '+posShort(r.p.position)+'</span>'
+        +'<span class="fs-hist">'+esc(r.histLab||'')+'</span>'
+        +'<span class="fs-imp">'+Math.round(r.imp*100)+'%</span>'
+        +ev
+        +'<span class="fs-od">'+r.price.toFixed(2)+'</span></div>';
+    }).join('');
+    return '<details class="tp-collapse"><summary class="tp-collapse-sum"><i class="ti ti-flag-3"></i>'
+      +'<span class="tp-collapse-title">'+lab+'</span><span class="tp-collapse-meta">'+rows.length+'</span></summary>'
+      +'<div class="fs-hd"><span>Player</span><span class="fs-imp">Implied</span><span class="fs-od">Best</span></div>'
+      +'<div class="fs-list">'+body+'</div></details>';
   }
   function valueBetsSection(home,away){
     if(!(window.JTTScoring&&JTTScoring.prob)||!hasAnyOdds())return '';
