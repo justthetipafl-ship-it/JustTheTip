@@ -794,6 +794,9 @@
   .fs-hist{font-size:9px;color:var(--text-3);min-width:56px;text-align:right;white-space:nowrap;}
   .fs-imp{font-size:11px;font-weight:700;color:var(--text-2);min-width:34px;text-align:right;font-variant-numeric:tabular-nums;}
   .fs-edge{font-size:9px;font-weight:800;color:#22c55e;}
+  .fs-imp2{font-size:11px;font-weight:700;color:var(--text-3);min-width:34px;text-align:right;font-variant-numeric:tabular-nums;}
+  .fs-why{display:block;font-size:8px;color:var(--accent);letter-spacing:.02em;}
+  .fs-hist{min-width:74px;}
   .fs-od{font-size:12px;font-weight:800;min-width:52px;text-align:right;font-variant-numeric:tabular-nums;display:flex;flex-direction:column;align-items:flex-end;line-height:1.15;}
   .fs-bk{font-size:8px;font-weight:700;color:var(--text-3);text-transform:uppercase;letter-spacing:.03em;}
   .lu-grid{display:flex;flex-wrap:wrap;gap:4px;margin-bottom:8px;}
@@ -5519,47 +5522,82 @@
   // NFL: player_1st_touchdown_scorer | EPL: player_1st_goalscorer.
   // Model side differs by sport: NFL has a real historical first-TD log (firsttd.json,
   // gameFirst flag); EPL has no equivalent, so we fall back to the player's scoring rate.
+  // Composite first-scorer model. A raw historical rate ignores everything we know about
+  // WHY someone scores, so this blends four signals, then normalises within the game so the
+  // field sums to a real probability (one player scores first; ~8% of NFL games see no TD):
+  //   1. base      - how often the player scores at all
+  //   2. red zone  - share of the team's goal-line work (the strongest single predictor)
+  //   3. matchup   - TDs the opponent concedes to that position vs league average (DVP)
+  //   4. script    - the team's implied total from the posted line (favourites score more)
+  function _fsTeamImplied(g,team){
+    const mo=(state.idx.matchOddsIdx||{})[_moKey(g.home,g.away)];
+    if(!mo||!mo.total) return null;
+    const tot=+mo.total.points; if(!isFinite(tot)) return null;
+    let sp=0;
+    if(mo.line&&isFinite(+mo.line.home)) sp=(team===g.home)?+mo.line.home:+mo.line.away;
+    return (tot/2)-(sp/2);                       // implied points for this team
+  }
+  function _fsRzShare(name){
+    const rz=(state.data.redzone||[]).find(r=>r.player===name); if(!rz) return 0;
+    const carry=(+rz.i5RushPct||0)*0.6+(+rz.rzRushPct||0)*0.4;   // goal-line carries dominate
+    const tgt=(+rz.i10TgtPct||0)*0.5+(+rz.rzTgtPct||0)*0.5;
+    return Math.max(carry,tgt)/100;
+  }
+  function _fsDvpMult(opp,pos,statKey){
+    const rows=(state.data.dvp||[]).filter(r=>r.pos===pos&&r[statKey]!=null);
+    if(rows.length<10) return 1;
+    const o=rows.find(r=>r.team===opp); if(!o) return 1;
+    const avg=rows.reduce((a,r)=>a+(+r[statKey]||0),0)/rows.length;
+    if(!avg) return 1;
+    return Math.max(0.6,Math.min(1.6,(+o[statKey]||0)/avg));      // clamp so one soft matchup can't dominate
+  }
   function _fsRows(home,away){
     const od=state.data.odds||{};
-    // respect the book filter in Settings, same as every other best-price surface -
-    // no point surfacing a top price at a book the user has no account with
     const src=[].concat(od.alt||[], od.lines||[])
       .filter(r=>r&&r.market==='firstScorer'&&r.over&&(typeof _bookOK!=='function'||_bookOK(r.book)));
     if(!src.length) return null;
     const best={};
-    src.forEach(r=>{ const k=r.player; if(!k) return;
-      if(!best[k]||r.over>best[k].over) best[k]=r; });   // best available price per player
-    const teams=[home,away];
-    const out=[];
+    src.forEach(r=>{ const k=r.player; if(!k) return; if(!best[k]||r.over>best[k].over) best[k]=r; });
+    const g=_fxmG&&_fxmG();
+    const gg=(g&&g.home===home)?g:{home:home,away:away};
+    const teams=[home,away], nfl=(SPORT.key==='nfl');
+    const LEAGUE_TEAM_PTS=22.5;
+    const raw=[];
     Object.keys(best).forEach(nm=>{
       const p=(state.idx.byName||{})[nm]; if(!p||teams.indexOf(p.team)<0) return;
-      if(typeof isPlaying==='function' && !isPlaying(nm,p.team)) return;
-      const o=best[nm], imp=1/o.over;
-      const logs=(state.idx.logsByName||{})[nm]||[];
-      let hist=null, histLab='';
-      if(SPORT.key==='nfl'){
-        const ftd=(state.data.firsttd||[]).filter(r=>r.player===nm);
-        const firsts=ftd.filter(r=>r.gameFirst).length;
-        // Shrink toward the base rate: exactly one player scores the game's first TD, spread
-        // over ~24 eligible skill players, so the prior is ~4%. A raw 12-in-34 reads as 35%
-        // and would flag false value on every thin sample; k=20 keeps small samples honest.
-        if(logs.length>=4){
-          const K=20, BASE=0.04;
-          hist=(firsts+K*BASE)/(logs.length+K);
-          histLab=firsts+' in '+logs.length+'g';
-        }
+      if(typeof isPlaying==='function'&&!isPlaying(nm,p.team)) return;
+      const logs=(state.idx.logsByName||{})[nm]||[]; if(logs.length<3) return;
+      const opp=(p.team===home)?away:home;
+      let base, histLab='';
+      if(nfl){
+        const scored=logs.filter(r=>(+r.anytimeTd||0)>0).length;
+        base=scored/logs.length;
+        const ftd=(state.data.firsttd||[]).filter(r=>r.player===nm&&r.gameFirst).length;
+        const K=20,BASE=0.04, histRate=(ftd+K*BASE)/(logs.length+K);
+        base=base*0.65+histRate*3.5*0.35;                      // blend rate-of-scoring with first-TD history
+        histLab=ftd+' 1st \u00b7 '+Math.round(scored/logs.length*100)+'% TD';
       } else {
-        const gs=logs.map(r=>+(r.goals||0)).filter(v=>isFinite(v));
-        if(gs.length>=4){
-          const gpg=gs.reduce((a,b)=>a+b,0)/gs.length;
-          hist=(1-Math.exp(-gpg))/2.6;                    // P(scores) spread over ~2.6 scorers/match
-          histLab=gpg.toFixed(2)+' g/game';
-        }
+        const gs=logs.map(r=>+(r.goals||0));
+        const gpg=gs.reduce((a,b)=>a+b,0)/gs.length;
+        base=1-Math.exp(-gpg);
+        histLab=gpg.toFixed(2)+' g/g';
       }
-      out.push({name:nm, p:p, price:o.over, book:o.book, imp:imp, hist:hist, histLab:histLab,
-                edge:(hist!=null)?(hist-imp):null});
+      if(!(base>0)) return;
+      const rz=_fsRzShare(nm);
+      const rzMult=nfl?(1+Math.min(0.8,rz*1.6)):1;             // goal-line share lifts, capped
+      const dvp=nfl?_fsDvpMult(opp,p.position,'totalTds'):_fsDvpMult(opp,p.position,'goals');
+      const imp=_fsTeamImplied(gg,p.team);
+      const script=(imp!=null)?Math.max(0.7,Math.min(1.4,imp/LEAGUE_TEAM_PTS)):1;
+      const score=base*rzMult*dvp*script;
+      raw.push({name:nm,p:p,price:best[nm].over,book:best[nm].book,imp:1/best[nm].over,
+                score:score,histLab:histLab,rz:rz,dvp:dvp,script:script});
     });
-    return out.length?out.sort((a,b)=>a.price-b.price):null;
+    if(!raw.length) return null;
+    // normalise to a real probability: someone scores first, minus the chance nobody does
+    const tot=raw.reduce((a,r)=>a+r.score,0);
+    const SCORED=nfl?0.92:0.93;
+    raw.forEach(r=>{ r.model=tot?(r.score/tot)*SCORED:null; r.edge=(r.model!=null)?(r.model-r.imp):null; });
+    return raw.sort((a,b)=>a.price-b.price);
   }
   function firstScorerSection(g){
     if(!g||_fxHid('sec','firstscorer')) return '';
@@ -5568,17 +5606,22 @@
     const body=rows.slice(0,18).map(r=>{
       const q=esc(r.name).replace(/\x27/g,"\\\x27");
       const ev=(r.edge!=null&&r.edge>0.01)?'<span class="fs-edge">+'+Math.round(r.edge*100)+'%</span>':'';
+      const why=[]; if(r.rz>0.18) why.push('GL '+Math.round(r.rz*100)+'%');
+      if(r.dvp>1.12) why.push('soft D'); else if(r.dvp<0.9) why.push('tough D');
+      if(r.script>1.12) why.push('high total');
+      const whyTag=why.length?'<span class="fs-why">'+esc(why.join(' \u00b7 '))+'</span>':'';
       return '<div class="fs-row" onclick="openPlayer(\''+q+'\')">'
         +'<span class="fs-nm">'+esc(r.name)+'</span>'
         +'<span class="fs-tm">'+esc(abbr(r.p.team))+' \u00b7 '+posShort(r.p.position)+'</span>'
-        +'<span class="fs-hist">'+esc(r.histLab||'')+'</span>'
-        +'<span class="fs-imp">'+Math.round(r.imp*100)+'%</span>'
+        +'<span class="fs-hist">'+esc(r.histLab||'')+whyTag+'</span>'
+        +'<span class="fs-imp">'+(r.model!=null?Math.round(r.model*100)+'%':'-')+'</span>'
+        +'<span class="fs-imp2">'+Math.round(r.imp*100)+'%</span>'
         +ev
         +'<span class="fs-od">'+r.price.toFixed(2)+(r.book?'<span class="fs-bk">'+esc(bookName(r.book))+'</span>':'')+'</span></div>';
     }).join('');
     return '<details class="tp-collapse"><summary class="tp-collapse-sum"><i class="ti ti-flag-3"></i>'
       +'<span class="tp-collapse-title">'+lab+'</span><span class="tp-collapse-meta">'+rows.length+'</span></summary>'
-      +'<div class="fs-hd"><span>Player</span><span class="fs-imp">Implied</span><span class="fs-od">Best price</span></div>'
+      +'<div class="fs-hd"><span>Player</span><span class="fs-imp">Model</span><span class="fs-imp2">Implied</span><span class="fs-od">Best price</span></div>'
       +'<div class="fs-list">'+body+'</div></details>';
   }
   function valueBetsSection(home,away){
