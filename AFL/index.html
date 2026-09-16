@@ -5434,7 +5434,9 @@
       +'<span><i style="background:#22c55e;opacity:.5"></i>Player ahead</span><span><i style="background:#ef4444;opacity:.5"></i>Defence ahead</span>'
       +'<span class="rdr-key-rk">#N = DVP rank vs this position (1 = softest)</span></div></div>';
   }
+  function _rdrWhy(msg){ return '<details class="tp-collapse" open><summary class="tp-collapse-sum"><i class="ti ti-radar-2"></i><span class="tp-collapse-title">Matchup Radar</span></summary><div style="font-size:11px;color:var(--text-3);padding:8px">'+esc(msg)+'</div></details>'; }
   function _radarPick(g,name){ state.view.rdrPick=name; _renderApp(); }
+  window._radarPick=_radarPick;   // onclick needs it on window
   function matchupRadarSection(g){
     if(!g) return '';
     const teams=[g.home,g.away];
@@ -5461,12 +5463,22 @@
                 || ((_posRank[a.position]||9)-(_posRank[b.position]||9))
                 || (_depthOf(a)-_depthOf(b)))
       .slice(0,16);
-    if(cands.length<2) return '';
+    if(cands.length<2) return _rdrWhy('no candidates ('+cands.length+') - players:'+((state.idx.players||[]).length)
+      +' lineups:'+((state.data.lineups||[]).length)+' dvp:'+((state.data.dvp||[]).length)
+      +' teams:'+teams.join('/'));
     const sel=(state.view.rdrPick && cands.some(c=>c.name===state.view.rdrPick))?state.view.rdrPick:cands[0].name;
     const oppOf=n=>{ const p=(state.idx.byName||{})[n]; if(!p) return null; return p.team===g.home?g.away:g.home; };
     const chips=cands.map(c=>'<button class="rdr-chip'+(c.name===sel?' on':'')+'" onclick="_radarPick(null,\''+esc(c.name).replace(/\x27/g,"\\\x27")+'\')">'+esc(c.name)+'</button>').join('');
     const body=_radarFor(sel,oppOf(sel));
-    if(!body) return '';
+    if(!body){
+      const p=(state.idx.byName||{})[sel];
+      const pos=p?p.position:'?';
+      const dRows=(state.data.dvp||[]).filter(r=>r.pos===pos);
+      const peers=(state.idx.players||[]).filter(x=>p&&x.position===p.position&&(x.matches||0)>=3);
+      return _rdrWhy('no radar for '+sel+' ('+pos+') vs '+oppOf(sel)
+        +' - dvpRows:'+dRows.length+' peers:'+peers.length
+        +' oppRow:'+(dRows.some(r=>r.team===oppOf(sel))?'yes':'NO'));
+    }
     return '<details class="tp-collapse" open><summary class="tp-collapse-sum"><i class="ti ti-radar-2"></i><span class="tp-collapse-title">Matchup Radar</span></summary>'
       +'<div class="rdr-chips">'+chips+'</div>'+body+'</details>';
   }
