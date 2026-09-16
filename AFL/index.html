@@ -1679,12 +1679,12 @@
 
   async function tryAutoLoadData(){
     let version='';
-    try{const v=await fetch(_sportPath('data/version.txt'),{cache:'no-cache'});if(v.ok)version=(await v.text()).trim();}catch(e){}
+    try{const v=await fetch(_sportPath('data/version.txt'),{cache:'reload'});if(v.ok)version=(await v.text()).trim();}catch(e){}
     // Fallback: some sports' builds don't emit version.txt. Without a version the cache-buster
     // is empty and the CDN/browser can serve stale data files forever (a rebuilt dataset then
     // never reaches the tool). meta.json already carries a build stamp, so use that instead.
     if(!version){
-      try{const m=await fetch(_sportPath('data/meta.json'),{cache:'no-cache'});
+      try{const m=await fetch(_sportPath('data/meta.json'),{cache:'reload'});
         if(m.ok){const j=await m.json(); version=String(j&&(j.version||j.created)||'').trim();}}catch(e){}
     }
     if(version)state.dataVersion=version;
@@ -1695,9 +1695,9 @@
       try{
         let r;
         if(k==='odds' && ODDS_LIVE_URL){
-          try{ r=await fetch(ODDS_LIVE_URL+(cb&&ODDS_LIVE_URL.indexOf('?')>=0?cb.replace('?','&'):cb),{cache:'no-cache'}); if(!r||!r.ok) throw 0; }
-          catch(_){ r=await fetch(_sportPath(u)+cb,{cache:'no-cache'}); }   // fall back to committed odds.json
-        } else { r=await fetch(_sportPath(u)+cb,{cache:'no-cache'}); }
+          try{ r=await fetch(ODDS_LIVE_URL+(cb&&ODDS_LIVE_URL.indexOf('?')>=0?cb.replace('?','&'):cb),{cache:'reload'}); if(!r||!r.ok) throw 0; }
+          catch(_){ r=await fetch(_sportPath(u)+cb,{cache:'reload'}); }   // fall back to committed odds.json
+        } else { r=await fetch(_sportPath(u)+cb,{cache:'reload'}); }
         if(!r.ok)return; state.data[k]=await r.json(); any=true;
       }
       catch(e){console.warn('load fail',k,e);}
@@ -1707,7 +1707,7 @@
       var _glf = (state.data.meta && state.data.meta.gamelogFiles) || null;
       if (_glf && _glf.length) {
         var _parts = await Promise.all(_glf.map(function(fn){
-          return fetch(_sportPath('data/'+fn)+cb,{cache:'no-cache'}).then(function(r){return r.ok?r.json():[];}).catch(function(){return [];});
+          return fetch(_sportPath('data/'+fn)+cb,{cache:'reload'}).then(function(r){return r.ok?r.json():[];}).catch(function(){return [];});
         }));
         state.data.gamelogs = [].concat.apply([], _parts); if(state.data.gamelogs.length) any=true;
       }
@@ -8968,7 +8968,7 @@
     // (single weekly password unlocks all tools, auto-rotated by the AFL pipeline). Falls back to
     // /auth.json (if you want a dedicated shared file), then the active sport's meta.json, then default.
     var _gate=function(){ try{const s=JSON.parse(localStorage.getItem(AUTH_STORAGE_KEY)||'null');if(s&&s.hash===AUTH_HASH&&(Date.now()-s.unlockedAt)<7*864e5){_authUnlock();return;}}catch(e){} };
-    var _pull=function(url){ return fetch(url,{cache:'no-cache'}).then(function(r){return r.ok?r.json():null;}).then(function(m){ return (m&&m.password_hash)?m.password_hash:null; }).catch(function(){ return null; }); };
+    var _pull=function(url){ return fetch(url,{cache:'reload'}).then(function(r){return r.ok?r.json():null;}).then(function(m){ return (m&&m.password_hash)?m.password_hash:null; }).catch(function(){ return null; }); };
     _pull('/auth.json').then(function(h){ if(h) return h; return _pull('/AFL/data/meta.json'); }).then(function(h){ if(h) return h; return _pull(_sportPath('data/meta.json')); }).then(function(h){ if(h) AUTH_HASH=h; }).finally(_gate);
   })();
   </script>
