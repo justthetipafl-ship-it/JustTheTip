@@ -153,7 +153,9 @@ H2H_1H_KEYS  = ('head_to_head_1st_half', 'head_to_head_3_way_1st_half')
 LINE_1H_KEY  = 'alternate_lines_1st_half'
 TEAM_TOTAL_KEYS = {'alternate_team_total_points': 'teamTotal', 'alternate_team_total_points_1st_half': 'teamTotal1H',
                    'alternate_team_total_goals': 'teamTotal'}
-FIELD_MARKETS = {'player_1st_touchdown_scorer': 'firstTd'}   # "player X to do Y" bets: no line, one price per player
+FIELD_MARKETS = {'player_1st_touchdown_scorer': 'firstScorer',   # "player X to do Y": no line, one price per player
+                 'player_1st_goalscorer': 'firstScorer'}
+FIELD_BY_SPORT = {'NFL': ['player_1st_touchdown_scorer'], 'EPL': ['player_1st_goalscorer']}
 TOTAL_KEYS = {
     'alternate_total_goals': 'total', 'alternate_total_corners': 'totalCorners', 'alternate_total_cards': 'totalCards',
     'alternate_total_points': 'total', 'alternate_total_touchdowns': 'totalTds',
@@ -405,6 +407,7 @@ def main():
                 markets.append(k)
                 markets.append(k + '_milestones')
     markets += GAME_MARKETS.get(sport, [])   # game markets requested for every sport that defines them, not just milestones-only ones
+    markets += FIELD_BY_SPORT.get(sport, [])  # first-scorer style field bets
     client = RapidOddsAPI(api_key=key)
     resp = client.get_odds(sport, markets, BOOKMAKERS)
     data = transform(resp, mkmap, sport)
