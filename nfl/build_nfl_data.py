@@ -50,7 +50,10 @@ SNAP_PCT_SCALE_CUTOFF = 1.01    # nflverse offense_pct is 0..1 in some releases
 STAT_KEYS = ["passYds","passAtt","passComp","passTds","passInt","sacks",
              "rushYds","rushAtt","rushTds","receptions","targets","recYds",
              "recTds","rushRecYds","totalTds","fanPts",
-             "tackles","soloTk","astTk","tfl","defSacks"]
+             "tackles","soloTk","astTk","tfl","defSacks",
+             # kicking: without these, players.json has kickers but no kicking numbers
+             "fgMade","fgAtt","fgLong","patMade","patAtt","kickingPts",
+             "fg0_39","fg40_49","fg50p","fgAtt0_39","fgAtt40_49","fgAtt50p"]
 
 # Team-level keys aggregated per game (offense; "_a" = allowed by defense).
 TEAM_KEYS = ["points","plays","passYds","passAtt","passComp","passTds","passInt",
@@ -633,6 +636,12 @@ def build_players_gamelogs(ps, snap_idx, game_idx, current, ros=None):
         "recTds":   col(ps, "receiving_tds"),
         "fanPts":   col(ps, "fantasy_points_ppr", "fantasy_points"),
         "fgMade":   col(ps, "fg_made"),
+        "_fg0_19":  col(ps, "fg_made_0_19"),   "_fg20_29": col(ps, "fg_made_20_29"),
+        "_fg30_39": col(ps, "fg_made_30_39"),  "_fg40_49": col(ps, "fg_made_40_49"),
+        "_fg50_59": col(ps, "fg_made_50_59"),  "_fg60":    col(ps, "fg_made_60_"),
+        "_fgm0_19": col(ps, "fg_missed_0_19"), "_fgm20_29": col(ps, "fg_missed_20_29"),
+        "_fgm30_39": col(ps, "fg_missed_30_39"), "_fgm40_49": col(ps, "fg_missed_40_49"),
+        "_fgm50_59": col(ps, "fg_missed_50_59"), "_fgm60":   col(ps, "fg_missed_60_"),
         "fgAtt":    col(ps, "fg_att"),
         "fgLong":   col(ps, "fg_long"),
         "patMade":  col(ps, "pat_made"),
@@ -676,6 +685,14 @@ def build_players_gamelogs(ps, snap_idx, game_idx, current, ros=None):
             row["soloTk"] = row["astTk"] = row["tfl"] = row["defSacks"] = row["tackles"] = 0.0
         # kicking points as the books price them: FG = 3, PAT = 1
         row["kickingPts"] = r1(row.get("fgMade", 0) * 3 + row.get("patMade", 0))
+        # distance buckets: short (<40), mid (40-49), long (50+) - made and attempted
+        _m = lambda *ks: sum(float(g(r, C[k], 0) or 0) for k in ks if C.get(k) is not None)
+        row["fg0_39"]  = r1(_m("_fg0_19", "_fg20_29", "_fg30_39"))
+        row["fg40_49"] = r1(_m("_fg40_49"))
+        row["fg50p"]   = r1(_m("_fg50_59", "_fg60"))
+        row["fgAtt0_39"]  = r1(row["fg0_39"]  + _m("_fgm0_19", "_fgm20_29", "_fgm30_39"))
+        row["fgAtt40_49"] = r1(row["fg40_49"] + _m("_fgm40_49"))
+        row["fgAtt50p"]   = r1(row["fg50p"]   + _m("_fgm50_59", "_fgm60"))
         # TD convention matches the books' "anytime TD": rushing + receiving only
         row["totalTds"] = r1(row["rushTds"] + row["recTds"])
         row["anytimeTd"] = 1 if (row["rushTds"] + row["recTds"]) > 0 else 0
