@@ -778,14 +778,15 @@
   .dvpp-p{font-size:10px;font-weight:800;min-width:34px;text-align:right;font-variant-numeric:tabular-nums;}
   .mu-tag{font-size:11px;font-weight:800;white-space:nowrap;font-variant-numeric:tabular-nums;}
   .mu-na{color:var(--text-3);}
-  .rdr-chips{display:flex;flex-wrap:wrap;gap:4px;margin:8px 0 10px;}
+  .rdr-chips{display:flex;flex-wrap:wrap;gap:4px;margin:8px 0 10px;max-height:66px;overflow-y:auto;}
+  .rdr-card{max-width:520px;margin:0 auto;}
   .rdr-chip{font-size:10px;font-weight:700;padding:4px 8px;border-radius:6px;border:1px solid var(--border);background:var(--surface-2);color:var(--text-2);cursor:pointer;white-space:nowrap;}
   .rdr-chip.on{border-color:var(--accent);color:var(--accent);background:color-mix(in srgb,var(--accent) 12%,transparent);}
   .rdr-card{border:1px solid var(--border);border-radius:10px;background:var(--surface-2);padding:8px;}
   .rdr-hd{display:flex;align-items:baseline;gap:8px;margin-bottom:2px;}
   .rdr-nm{font-weight:800;font-size:13px;}
   .rdr-vs{font-size:10px;color:var(--text-3);letter-spacing:.04em;text-transform:uppercase;}
-  .rdr-svg{width:100%;height:auto;display:block;}
+  .rdr-svg{width:100%;max-width:420px;height:auto;display:block;margin:0 auto;}
   .rdr-lab{font-size:7.5px;font-weight:800;fill:var(--text-3);letter-spacing:.04em;text-transform:uppercase;}
   .rdr-val{font-size:9px;font-weight:800;fill:var(--text);}
   .rdr-rk{font-size:8px;font-weight:800;}
@@ -809,17 +810,27 @@
   .tt-more>summary:before{content:'\25b8 ';color:var(--accent);}
   .tt-more[open]>summary:before{content:'\25be ';}
   .tt-body{padding-top:6px;}
-  .tt-sec{font-size:9px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:var(--text-3);margin:8px 0 4px;}
-  .tt-row{display:flex;align-items:center;gap:7px;margin-bottom:4px;}
-  .tt-lab{font-size:10px;color:var(--text-2);min-width:112px;}
+  .tt-sec{font-size:9px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:var(--text-3);margin:10px 0 6px;overflow:hidden;}
+  .tt-row{display:flex;align-items:center;gap:8px;margin-bottom:5px;min-height:16px;}
+  .tt-lab{font-size:10px;color:var(--text-2);min-width:128px;flex-shrink:0;}
   .tt-bar{flex:1;height:5px;border-radius:3px;background:var(--surface-3,var(--border));overflow:hidden;}
   .tt-bar i{display:block;height:100%;border-radius:3px;}
-  .tt-val{font-size:10px;font-weight:800;min-width:56px;text-align:right;font-variant-numeric:tabular-nums;}
+  .tt-val{font-size:10px;font-weight:800;min-width:62px;text-align:right;font-variant-numeric:tabular-nums;flex-shrink:0;}
   .tt-tbl{width:100%;border-collapse:collapse;font-size:10px;}
   .tt-tbl th{text-align:right;font-size:8px;text-transform:uppercase;letter-spacing:.04em;color:var(--text-3);font-weight:700;padding:2px 3px;}
   .tt-tbl th:first-child,.tt-tbl td:first-child{text-align:left;}
   .tt-tbl td{text-align:right;padding:3px;border-top:1px solid var(--border);font-variant-numeric:tabular-nums;}
   .tt-td{font-weight:800;color:#22c55e;}
+  .tt-win{float:right;display:inline-flex;gap:3px;margin-top:-2px;}
+  .tt-wb{font-size:8px;font-weight:800;letter-spacing:.04em;text-transform:uppercase;padding:2px 6px;border-radius:5px;border:1px solid var(--border);background:var(--surface-2);color:var(--text-3);cursor:pointer;}
+  .tt-wb.on{border-color:var(--accent);color:var(--accent);background:color-mix(in srgb,var(--accent) 12%,transparent);}
+  .tt-note{font-weight:700;opacity:.65;text-transform:none;letter-spacing:0;}
+  .tt-w{display:none;flex:1;align-items:center;gap:7px;}
+  .tt-body .tt-w.tt-all{display:flex;}
+  .tt-body[data-w="l10"] .tt-w.tt-all{display:none;}
+  .tt-body[data-w="l10"] .tt-w.tt-l10{display:flex;}
+  .tt-body[data-w="l5"] .tt-w.tt-all{display:none;}
+  .tt-body[data-w="l5"] .tt-w.tt-l5{display:flex;}
   .fs-hist{min-width:74px;}
   .fs-od{font-size:12px;font-weight:800;min-width:52px;text-align:right;font-variant-numeric:tabular-nums;display:flex;flex-direction:column;align-items:flex-end;line-height:1.15;}
   .fs-bk{font-size:8px;font-weight:700;color:var(--text-3);text-transform:uppercase;letter-spacing:.03em;}
@@ -5528,6 +5539,11 @@
       +'<span><i style="background:#22c55e;opacity:.5"></i>Player ahead</span><span><i style="background:#ef4444;opacity:.5"></i>Defence ahead</span>'
       +'<span class="rdr-key-rk">#N = DVP rank vs this position (1 = softest)</span></div></div>';
   }
+  window._ttWin=function(btn,w){
+    const body=btn.closest('.tt-body'); if(!body) return;
+    body.dataset.w=w;
+    const bar=btn.parentNode; if(bar) bar.querySelectorAll('.tt-wb').forEach(b=>b.classList.toggle('on',b===btn));
+  };
   function _radarPick(g,name){ state.view.rdrPick=name; _renderApp(); }
   window._radarPick=_radarPick;   // onclick needs it on window
   function matchupRadarSection(g){
@@ -5542,20 +5558,23 @@
       return r?(+r.depth||99):99;
     };
     const _radarOK=(p)=>{
-      const lim=NFL_LU_DEPTH[p.position]; if(lim==null) return false;
+      const lim=(RADAR_DEPTH[p.position]!=null)?RADAR_DEPTH[p.position]:NFL_LU_DEPTH[p.position];
+      if(lim==null) return false;
       if((state.data.lineups||[]).some(x=>x.team===p.team) && _depthOf(p)>lim) return false;
       const inj=(typeof _injuryFor==='function')?_injuryFor(p.name):null;
       const st=inj?String(inj.Status||inj.status||'').toLowerCase():'';
       if(st==='out'||st==='doubtful') return false;
       return (typeof isPlaying!=='function')||isPlaying(p.name,p.team);
     };
+    const RADAR_DEPTH={QB:2,RB:3,WR:5,TE:3};   // wider than the Lineup card - the radar is for
+                                              // exploring matchups, so rotational players belong
     const _posRank={QB:1,RB:2,WR:3,TE:4};   // 1-based: 0 is falsy in JS and would sort QBs last
     const cands=(state.idx.players||[]).filter(p=>teams.indexOf(p.team)>=0 && RADAR_POS[p.position]
                   && (p.matches||0)>=3 && _radarOK(p))
       .sort((a,b)=>(teams.indexOf(a.team)-teams.indexOf(b.team))
                 || ((_posRank[a.position]||9)-(_posRank[b.position]||9))
                 || (_depthOf(a)-_depthOf(b)))
-      .slice(0,16);
+      .slice(0,26);
     if(cands.length<2) return '';
     const sel=(state.view.rdrPick && cands.some(c=>c.name===state.view.rdrPick))?state.view.rdrPick:cands[0].name;
     const oppOf=n=>{ const p=(state.idx.byName||{})[n]; if(!p) return null; return p.team===g.home?g.away:g.home; };
