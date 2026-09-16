@@ -1601,7 +1601,18 @@
   function _ensureScripts(cb){
     if((window.JTTScoring&&window.JTTSignals&&window.SPORT_CONFIG)||_scriptsReady){ _scriptsReady=true; cb(); return; }
     const load=function(src,next){ const el=document.createElement('script'); el.src=src; el.onload=next; el.onerror=next; document.head.appendChild(el); };
-    load(_sportPath('config.js'), function(){ load(_sportPath('scoring.js'), function(){ load(_sportPath('signals.js'), function(){ _scriptsReady=true; cb(); }); }); });
+    // Cache-bust config/scoring/signals the same way the data files are. Without this the
+    // browser can hold a stale (or half-written) copy of signals.js indefinitely - and a
+    // broken one takes out every Degen signal at once, since JTTSignals never gets defined.
+    const go=function(v){
+      const q=v?('?v='+encodeURIComponent(v)):'';
+      load(_sportPath('config.js')+q, function(){ load(_sportPath('scoring.js')+q, function(){ load(_sportPath('signals.js')+q, function(){ _scriptsReady=true; cb(); }); }); });
+    };
+    if(state.dataVersion){ go(state.dataVersion); return; }
+    fetch(_sportPath('data/version.txt'),{cache:'reload'})
+      .then(r=>r.ok?r.text():'')
+      .then(t=>go((t||'').trim()))
+      .catch(()=>go(''));
   }
   // Sport-specific config (markets, labels, etc.) comes from /{dir}/config.js as window.SPORT_CONFIG,
   // with AFL values as the built-in fallback so the flagship is safe even if config.js fails to load.
@@ -7546,7 +7557,11 @@
     // Other sports get their OU signals (Green Lights/Death Riders) + Matchup from their signals.js,
     // and the config-driven Multi Builder — but the AFL-specific research tiles stay AFL-only until
     // each sport's versions are ported into its signals.js.
-    if(SPORT.key!=='afl'&&SPORT.key!=='aflw'){ const _S=_signals(); if(_S&&_S.tiles&&typeof _S.tiles[k]==='function'){ try{ return _S.tiles[k](); }catch(_e){ return ''; } } if(k!=='multi') return ''; }
+    if(SPORT.key!=='afl'&&SPORT.key!=='aflw'){ const _S=_signals();
+      // signals.js failed to load/parse -> say so rather than rendering an empty crew,
+      // which looks identical to 'no signals fired' and hides the real fault.
+      if(!_S && k!=='multi') return emptyState('ti-alert-triangle','Signals unavailable','The '+SPORT.name+' signals module didn\'t load. Hard-refresh; if it persists the file may be cached or broken.');
+      if(_S&&_S.tiles&&typeof _S.tiles[k]==='function'){ try{ return _S.tiles[k](); }catch(_e){ return emptyState('ti-alert-triangle','Signal error',String(_e&&_e.message||_e)); } } if(k!=='multi') return ''; }
     const M=v=>fmt(v,1), abv=t=>abbr(t);
     if(k==='snags'){
       const rows=_byGame(_fc(snags(),6), s=>s.p.team, s=>degRow(s.p.name,'#f59e0b',{v1:fmt(s.val,2),l1:'gpg',v2:'#'+s.dvpRank,l2:posShort(s.p.position)},
