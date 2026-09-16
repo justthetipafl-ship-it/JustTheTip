@@ -2716,7 +2716,7 @@
   const bookLabel=k=>BOOK_LABEL[k]||(k?k.replace(/_au$/,'').replace(/^\w/,c=>c.toUpperCase()):'');
   function gameMatchOdds(home,away){
     const g=(state.idx.matchOddsIdx||{})[_moKey(home,away)];
-    if(!g||(!g.h2h&&!g.line&&!g.total&&!g.totalCorners&&!g.totalCards&&!g.totalTds&&!g.total1H&&!g.h2h1H&&!g.line1H&&!g.teamTotal&&!g.teamTotal1H)) return '';
+    if(!g||(!g.h2h&&!g.line&&!g.total&&!g.totalCorners&&!g.totalCards&&!g.totalTds&&!g.totalShots&&!g.totalSOT&&!g.total1H&&!g.h2h1H&&!g.line1H&&!g.teamTotal&&!g.teamTotal1H)) return '';
     const odd=v=>v==null?'—':(+v).toFixed(2);
     const books=new Set();
     let blocks='';
@@ -2740,7 +2740,7 @@
         '<div class="mo-row"><span class="mo-t">Over <b>'+g.total.points+'</b></span><span class="mo-o">'+odd(g.total.over)+'</span></div>'+
         '<div class="mo-row"><span class="mo-t">Under <b>'+g.total.points+'</b></span><span class="mo-o">'+odd(g.total.under)+'</span></div></div>';
     }
-    [['totalCorners','Corners'],['totalCards','Cards'],['totalTds','Total TDs'],['total1H','1st Half Total']].forEach(function(tc){
+    [['totalCorners','Corners'],['totalCards','Cards'],['totalTds','Total TDs'],['totalShots','Total Shots'],['totalSOT','Shots on Target'],['total1H','1st Half Total']].forEach(function(tc){
       var t=g[tc[0]]; if(!t||t.over==null||t.under==null) return; books.add(t.book);
       blocks+='<div class="mo-block"><div class="mo-lab">'+tc[1]+'</div>'+
         '<div class="mo-row"><span class="mo-t">Over <b>'+t.points+'</b></span><span class="mo-o">'+odd(t.over)+'</span></div>'+
@@ -3981,8 +3981,8 @@
     if(SPORT.key==='nfl' && !_fxHid('sec','insouts')) h+=medicalRoomSection(g.home,g.away);
     else if(SPORT.key!=='epl' && SPORT.key!=='nfl' && !_fxHid('sec','insouts')) h+=insOutsSection(g.home,g.away);
     if(!_fxHid('sec','mradar')) h+=matchupRadarSection(g);   // distinct key: 'radar' is the O/U Radar
-    if(!_fxHid('sec','radar')) h+=radarSection(g.home,g.away,g.venue||(g.park&&g.park.name));
-    if(SPORT.key!=='epl' && fxMode!=='nerd' && !_fxHid('sec','jupiter')) h+=jupiter(g);
+    if(SPORT.key!=='epl' && !_fxHid('sec','radar')) h+=radarSection(g.home,g.away,g.venue||(g.park&&g.park.name));   // EPL props are over-only milestones: no each-way board possible
+    if(fxMode!=='nerd' && !_fxHid('sec','jupiter')) h+=jupiter(g);
     if(fxMode!=='nerd' && !_fxHid('sec','deja') && _dvMeetings(g.home,g.away,999).length) h+=dejaVuSGM(g.home,g.away);
     if(fxMode!=='nerd' && !_fxHid('sec','multiTool')) h+=_fxMultiCards(g);
     return h;
@@ -4598,7 +4598,17 @@
     });
     return _luKeyMap;
   }
-  function isPlaying(name, team){ const keys=_lineupKeyMap()[team]; if(!keys) return true; return _nmKeys(name).some(k=>keys.has(k)); }
+  // FPL-style availability (EPL has no lineups.json, but players.json carries a status code):
+  //   a = available, d = doubtful (kept - usually plays), i = injured, s = suspended,
+  //   u = no longer at the club (transferred/loaned out), n = not in squad.
+  // Checked first so it applies to every sport whose player records carry a status.
+  const _UNAVAIL_STATUS = { i:1, s:1, u:1, n:1 };
+  function _statusOut(name){
+    const p = (state.idx.byName||{})[name];
+    const st = p && typeof p.status==='string' ? p.status.toLowerCase() : '';
+    return st.length===1 && !!_UNAVAIL_STATUS[st];
+  }
+  function isPlaying(name, team){ if(_statusOut(name)) return false; const keys=_lineupKeyMap()[team]; if(!keys) return true; return _nmKeys(name).some(k=>keys.has(k)); }
   function lineupOut(team){ return !!_lineupKeyMap()[team]; }
   // afl.com.au 'Estimated return' tags: Test / TBC / Late = in doubt (could still play the upcoming game).
   function _injDoubt(ret){ const r=(ret||'').toLowerCase().trim(); return r.indexOf('test')>=0||r.indexOf('tbc')>=0||r==='late'||r==='proof'||r==='1st'; }
