@@ -62,7 +62,8 @@
   .odds-refresh{display:flex;align-items:center;gap:6px;margin:0 0 12px 2px;font-size:11px;font-weight:600;color:var(--text-3);}
   .odds-refresh i{font-size:13px;color:var(--accent);}
   .odds-refresh b{color:var(--text-2);font-weight:700;}
-  .deg-row{display:grid;grid-template-columns:auto minmax(0,1fr) minmax(0,42%);align-items:center;gap:10px;}
+  .deg-row{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,44%);align-items:center;gap:10px;}
+.deg-row.has-img{grid-template-columns:auto minmax(0,1fr) minmax(0,42%);}
   .rdr-row{display:flex !important;align-items:center;gap:10px;}
   .rdr-score{flex:0 0 auto;min-width:36px;height:36px;display:flex;align-items:center;justify-content:center;border-radius:9px;border:1px solid;font-family:var(--font-mono);font-weight:800;font-size:15px;}
   .rdr-pos{font-size:9px;color:var(--text-3);font-weight:700;}
@@ -4734,11 +4735,14 @@
     if(!parts.length) return '?';
     return ((parts[0][0]||'')+(parts.length>1?(parts[parts.length-1][0]||''):'')).toUpperCase();
   }
+  const _IMG_SPORTS={nfl:1,epl:1};          // sports we actually have a headshot source for
   function playerImg(name, size){
+    if(!_IMG_SPORTS[SPORT.key]) return '';   // AFL/MLB etc: no source, so no placeholder either
     const p=(state.idx.byName||{})[name];
+    if(!p) return '';                        // not a player (team/market label) - nothing to show
     const sz=size||34, url=_playerImgUrl(p);
     const ini='<span class="pimg-ini" style="width:'+sz+'px;height:'+sz+'px;font-size:'+Math.round(sz*0.38)+'px">'+esc(_initials(name))+'</span>';
-    if(!url) return ini;
+    if(!url) return ini;                     // in-sport player with no id: initials keep rows aligned
     return '<span class="pimg" style="width:'+sz+'px;height:'+sz+'px">'
       +'<img src="'+url+'" alt="" loading="lazy" onerror="this.parentNode.innerHTML=\''+esc(_initials(name))+'\';this.parentNode.classList.add(\'pimg-ini\')">'
       +'</span>';
@@ -7283,8 +7287,9 @@
   window._cardAddFromDeja=function(){ const S=_dvState(); if(!S.home||!S.away||!S.sel) return; const pp=_dvPool(S); const pool=pp&&pp.pool; if(!pool||!pool.length) return; const removed=new Set(S.hail?(S.removed||[]):[]); const active=S.sel.idx.map(i=>pool[i]).filter(l=>l&&!removed.has(l.name)); if(active.length<2){ _cardToast('Need at least 2 legs'); return; } _cardAddMultiEntry({ title:active.length+'-leg d\u00e9j\u00e0 vu \u00b7 '+abbr(S.home)+' v '+abbr(S.away), legs:active.map(l=>({name:l.name,label:l.betLine+'+ '+l.marketLabel,odds:l.over})), odds:_dvProduct(active), book:(S.book||''), src:'D\u00e9j\u00e0 Vu' }); };
   function degRow(name,col,right,sub,onclickName,card){
     const hl=s=>(''+s).replace(/(\$\d+(?:\.\d+)?)/g,'<b class="deg-odds">$1</b>');
-    return '<div class="fixture-row deg-row" style="cursor:pointer" onclick="openPlayer(\''+esc(onclickName||name).replace(/\x27/g,"\\\x27")+'\')">'+
-      playerImg(onclickName||name,36)+
+    const _img=playerImg(onclickName||name,36);
+    return '<div class="fixture-row deg-row'+(_img?' has-img':'')+'" style="cursor:pointer" onclick="openPlayer(\''+esc(onclickName||name).replace(/\x27/g,"\\\x27")+'\')">'+
+      _img+
       '<div class="deg-main"><div class="fxr-name deg-nm"><span>'+name+'</span>'+_degBadges(name)+(card?_cardBtn(card):'')+'</div><div class="deg-sub">'+hl(sub)+'</div></div>'+
       '<div class="deg-val" style="color:'+col+'">'+_degRight(right,hl)+'</div></div>';
   }
