@@ -47,7 +47,6 @@ window.SPORT_CONFIG = {
             rushRecYds:65, anytimeTd:0.5, tackles:5, sacks:0.5, kickingPts:7, fgMade:1.5 }
   },
   crew: [{k:'multi',n:'Multi Builder',i:'ti-stack-2',d:'Stacked legs'},
-    {k:'radar',n:'The Radar',i:'ti-radar',d:'4-axis matchup ratings'},
     {k:'green',n:'Green Lights',i:'ti-traffic-lights',d:'Strong OVER'},
     {k:'paydirt',n:'Tuddy Targets',i:'ti-ball-american-football',d:'Redzone royalty'},
     {k:'elite',n:'Elite Matchups',i:'ti-trophy',d:'Top v soft'},
