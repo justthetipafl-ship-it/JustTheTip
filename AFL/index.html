@@ -4076,6 +4076,7 @@
     if(SPORT.key==='nfl' && !_fxHid('sec','insouts')) h+=medicalRoomSection(g.home,g.away);
     else if(SPORT.key!=='epl' && SPORT.key!=='nfl' && !_fxHid('sec','insouts')) h+=insOutsSection(g.home,g.away);
     if(!_fxHid('sec','mradar')) h+=matchupRadarSection(g);
+    h+=coverageSection(g);
     h+=firstScorerSection(g);   // distinct key: 'radar' is the O/U Radar
     if(SPORT.key!=='epl' && !_fxHid('sec','radar')) h+=radarSection(g.home,g.away,g.venue||(g.park&&g.park.name));   // EPL props are over-only milestones: no each-way board possible
     if(fxMode!=='nerd' && !_fxHid('sec','jupiter')) h+=jupiter(g);
@@ -4580,6 +4581,43 @@
       +'<table class="cv-tbl"><tr><th>Type</th><th>Tgt</th><th>Rec</th><th>Yds</th><th>Y/Tgt</th><th>Catch</th><th>TD</th></tr>'
       +row('Man',m,better==='man')+row('Zone',z,better==='zone')+'</table>';
     return read+tend+tbl+'<div class="cv-note">Season splits \u00b7 no route data, so Y/Tgt stands in for YPRR</div>';
+  }
+  // Coverage Matchup as a focused-fixture section, same control pattern as the radar.
+  // Only players who actually carry man/zone splits are listed - that's receivers and
+  // pass-catching backs, so the dropdown stays honest about who has data.
+  function _cvCands(g){
+    const teams=[g.home,g.away], tf=state.view.cvTeam||'';
+    return (state.idx.players||[]).filter(p=>{
+      if(teams.indexOf(p.team)<0) return false;
+      if(tf&&p.team!==tf) return false;
+      if(!p.cov||!p.cov.man||!p.cov.zone) return false;
+      if(((+p.cov.man.tgt||0)+(+p.cov.zone.tgt||0))<8) return false;   // need a real sample
+      if(typeof isPlaying==='function'&&!isPlaying(p.name,p.team)) return false;
+      return true;
+    }).sort((a,b)=>{
+      const ta=(+a.cov.man.tgt||0)+(+a.cov.zone.tgt||0), tb=(+b.cov.man.tgt||0)+(+b.cov.zone.tgt||0);
+      return (teams.indexOf(a.team)-teams.indexOf(b.team)) || (tb-ta);   // by team, then by volume
+    }).slice(0,24);
+  }
+  function _cvPick(name){ state.view.cvPick=name; _renderApp(); }
+  function _cvTeam(t){ state.view.cvTeam=t; state.view.cvPick=null; _renderApp(); }
+  window._cvPick=_cvPick; window._cvTeam=_cvTeam;
+  function coverageSection(g){
+    if(!g||_fxHid('sec','coverage')) return '';
+    const cands=_cvCands(g); if(cands.length<1) return '';
+    const sel=(state.view.cvPick&&cands.some(c=>c.name===state.view.cvPick))?state.view.cvPick:cands[0].name;
+    const p=(state.idx.byName||{})[sel]; if(!p) return '';
+    const opp=(p.team===g.home)?g.away:g.home;
+    const body=coverageMatchup(sel,opp); if(!body) return '';
+    const tf=state.view.cvTeam||'';
+    const tbtn=(k,lab)=>'<button class="rdr-tb'+(tf===k?' on':'')+'" onclick="_cvTeam(\''+k+'\')">'+esc(lab)+'</button>';
+    const opts=cands.map(c=>'<option value="'+esc(c.name)+'"'+(c.name===sel?' selected':'')+'>'
+      +esc(c.name)+'  ('+posShort(c.position)+' \u00b7 '+esc(abbr(c.team))+')</option>').join('');
+    return '<details class="tp-collapse"><summary class="tp-collapse-sum"><i class="ti ti-shield-half"></i>'
+      +'<span class="tp-collapse-title">Coverage Matchup</span><span class="tp-collapse-meta">'+cands.length+'</span></summary>'
+      +'<div class="rdr-ctl">'+tbtn('','Both')+tbtn(g.home,abbr(g.home))+tbtn(g.away,abbr(g.away))
+      +'<select class="rdr-sel" onchange="_cvPick(this.value)">'+opts+'</select></div>'
+      +'<div class="cv-body">'+body+'</div></details>';
   }
   function _pmSec(title,body,open){ if(!body) return '';
     return '<details class="pm-sec"'+(open?' open':'')+'><summary>'+title+'<i class="ti ti-chevron-down"></i></summary><div class="pm-sec-body">'+body+'</div></details>'; }
