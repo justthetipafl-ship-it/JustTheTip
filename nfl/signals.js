@@ -266,20 +266,63 @@
       return '<div class="tt-sec">Coverage split</div>' +
         '<table class="tt-tbl"><tr><th>Shell</th><th>Y/Tgt</th><th>Tgt</th><th>Catch</th><th>TD</th></tr>' + rows + '</table>';
     }
+    // Window-aware baseline. Only metrics with per-game gamelog fields can vary by window -
+    // NFL gamelogs carry no red-zone/goal-line per-game columns, so those stay season-level
+    // and are labelled as such rather than silently ignoring the filter.
+    function _ttWinAvg(logs, fn, n) {
+      var src = n ? logs.slice(-n) : logs;
+      if (!src.length) return null;
+      var t = 0, c = 0;
+      src.forEach(function (r) { var v = fn(r); if (v != null && isFinite(v)) { t += v; c++; } });
+      return c ? t / c : null;
+    }
+    function _ttRowMulti(lab, logs, fn, fmt, scale, col) {
+      var wins = [['all', null], ['l10', 10], ['l5', 5]];
+      var cells = wins.map(function (w) {
+        var v = _ttWinAvg(logs, fn, w[1]);
+        if (v == null) return '<span class="tt-w tt-' + w[0] + '"><span class="tt-val">-</span></span>';
+        return '<span class="tt-w tt-' + w[0] + '">' + _tdBar(v / scale * 100, col) +
+               '<span class="tt-val">' + fmt(v) + '</span></span>';
+      }).join('');
+      return '<div class="tt-row"><span class="tt-lab">' + lab + '</span>' + cells + '</div>';
+    }
     function _tuddyProfile(c) {
-      var p = c.p, n = Math.max(1, p.matches || 1);
-      var tdRate = (+p.totalTds || 0);                                  // per game already
-      var gl = +p.glCarry || 0, rzc = +p.rzCarry || 0, rzt = +p.rzTgt || 0;
-      var vol = (+p.rushAtt || 0) + (+p.targets || 0);
+      var p = c.p, logs = logsFor(p.name) || [];
+      var f1 = function (v) { return v.toFixed(1); }, f2 = function (v) { return v.toFixed(2); };
+      var pct = function (v) { return Math.round(v) + '%'; };
       var rows = [
-        _tdRow('Goal-line carries', gl.toFixed(2) + '/g', gl / 2.5 * 100, '#22c55e'),
-        _tdRow('Red-zone touches', (rzc + rzt).toFixed(1) + '/g', (rzc + rzt) / 6 * 100, '#22c55e'),
-        _tdRow('Volume', vol.toFixed(1) + ' tch/g', vol / 28 * 100),
-        _tdRow('Snap share', Math.round(+p.snapPct || 0) + '%', +p.snapPct || 0),
-        _tdRow('TD rate', tdRate.toFixed(2) + ' TD/g', tdRate / 1.2 * 100, '#f59e0b')
+        _ttRowMulti('Volume', logs, function (r) { return (+r.rushAtt || 0) + (+r.targets || 0); },
+                    function (v) { return f1(v) + ' tch/g'; }, 28),
+        _ttRowMulti('Snap share', logs, function (r) { return +r.snapPct; }, pct, 100),
+        _ttRowMulti('TD rate', logs, function (r) { return +r.totalTds || 0; },
+                    function (v) { return f2(v) + ' TD/g'; }, 1.2, '#f59e0b')
       ];
-      if (p.tgtShare) rows.splice(3, 0, _tdRow('Target share', (+p.tgtShare).toFixed(0) + '%', +p.tgtShare * 2.5));
-      return '<div class="tt-sec">Baseline profile</div>' + rows.join('');
+      if (p.tgtShare) {
+        rows.splice(2, 0, _ttRowMulti('Target share', logs, function (r) { return +r.tgtShare; }, pct, 40));
+      }
+      // red-zone now has per-game columns (rzAtt_g / i5Att_g / ...) so it windows too
+      var hasRzG = logs.some(function (r) { return r.i5Att_g != null || r.rzAtt_g != null; });
+      var rzRows;
+      if (hasRzG) {
+        rzRows = _ttRowMulti('Goal-line carries (in 5)', logs, function (r) { return +r.i5Att_g || 0; },
+                             function (v) { return v.toFixed(2) + '/g'; }, 2.5, '#22c55e') +
+                 _ttRowMulti('Red-zone touches', logs, function (r) { return (+r.rzAtt_g || 0) + (+r.rzTgt_g || 0); },
+                             function (v) { return v.toFixed(1) + '/g'; }, 6, '#22c55e') +
+                 _ttRowMulti('Inside-10 looks', logs, function (r) { return (+r.i10Att_g || 0) + (+r.i10Tgt_g || 0); },
+                             function (v) { return v.toFixed(1) + '/g'; }, 4, '#22c55e') +
+                 _ttRowMulti('Red-zone TDs', logs, function (r) { return +r.rzTd_g || 0; },
+                             function (v) { return v.toFixed(2) + '/g'; }, 1, '#f59e0b');
+      } else {                                            // pre-rebuild fallback: season aggregates
+        var gl = +p.glCarry || 0, rzc = +p.rzCarry || 0, rzt = +p.rzTgt || 0;
+        rzRows = _tdRow('Goal-line carries', gl.toFixed(2) + '/g', gl / 2.5 * 100, '#22c55e') +
+                 _tdRow('Red-zone touches', (rzc + rzt).toFixed(1) + '/g', (rzc + rzt) / 6 * 100, '#22c55e');
+      }
+      return '<div class="tt-sec">Baseline profile<span class="tt-win">' +
+             '<button class="tt-wb on" onclick="_ttWin(this,\'all\')">Season</button>' +
+             '<button class="tt-wb" onclick="_ttWin(this,\'l10\')">L10</button>' +
+             '<button class="tt-wb" onclick="_ttWin(this,\'l5\')">L5</button></span></div>' +
+             rows.join('') +
+             '<div class="tt-sec">Red zone' + (hasRzG ? '' : ' <span class="tt-note">season</span>') + '</div>' + rzRows;
     }
     function _tuddyOpportunity(c) {
       var rows = [];
@@ -320,7 +363,7 @@
         '<span class="lc-meta">' + posShort(c.p.position) + ' \u00b7 ' + abbr(c.p.team) + ' v ' + abbr(c.opp) + (od ? ' \u00b7' + od : '') + '</span></div>' +
         (rates ? '<div class="tp-body-meta" style="border:0;padding:2px 0 6px">TD games: ' + rates + '</div>' : '') +
         '<div class="lu-grid" style="gap:5px">' + chips + '</div>' +
-        (detail ? '<details class="tt-more"><summary>Scoring profile</summary><div class="tt-body">' + detail + '</div></details>' : '') +
+        (detail ? '<details class="tt-more"><summary>Scoring profile</summary><div class="tt-body" data-w="all">' + detail + '</div></details>' : '') +
         '</div>';
     }
 
