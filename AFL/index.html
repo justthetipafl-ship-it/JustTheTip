@@ -1680,6 +1680,13 @@
   async function tryAutoLoadData(){
     let version='';
     try{const v=await fetch(_sportPath('data/version.txt'),{cache:'no-cache'});if(v.ok)version=(await v.text()).trim();}catch(e){}
+    // Fallback: some sports' builds don't emit version.txt. Without a version the cache-buster
+    // is empty and the CDN/browser can serve stale data files forever (a rebuilt dataset then
+    // never reaches the tool). meta.json already carries a build stamp, so use that instead.
+    if(!version){
+      try{const m=await fetch(_sportPath('data/meta.json'),{cache:'no-cache'});
+        if(m.ok){const j=await m.json(); version=String(j&&(j.version||j.created)||'').trim();}}catch(e){}
+    }
     if(version)state.dataVersion=version;
     const cb=version?'?v='+version:'';
     _bootStatus('Loading data…');
@@ -5434,7 +5441,6 @@
       +'<span><i style="background:#22c55e;opacity:.5"></i>Player ahead</span><span><i style="background:#ef4444;opacity:.5"></i>Defence ahead</span>'
       +'<span class="rdr-key-rk">#N = DVP rank vs this position (1 = softest)</span></div></div>';
   }
-  function _rdrWhy(msg){ return '<details class="tp-collapse" open><summary class="tp-collapse-sum"><i class="ti ti-radar-2"></i><span class="tp-collapse-title">Matchup Radar</span></summary><div style="font-size:11px;color:var(--text-3);padding:8px">'+esc(msg)+'</div></details>'; }
   function _radarPick(g,name){ state.view.rdrPick=name; _renderApp(); }
   window._radarPick=_radarPick;   // onclick needs it on window
   function matchupRadarSection(g){
@@ -5463,33 +5469,12 @@
                 || ((_posRank[a.position]||9)-(_posRank[b.position]||9))
                 || (_depthOf(a)-_depthOf(b)))
       .slice(0,16);
-    if(cands.length<2){
-      const P=(state.idx.players||[]);
-      const s1=P.filter(p=>teams.indexOf(p.team)>=0);
-      const s2=s1.filter(p=>RADAR_POS[p.position]);
-      const s3=s2.filter(p=>(p.matches||0)>=3);
-      const s4=s3.filter(p=>NFL_LU_DEPTH[p.position]!=null);
-      const s5=s4.filter(p=>!((state.data.lineups||[]).some(x=>x.team===p.team) && _depthOf(p)>NFL_LU_DEPTH[p.position]));
-      const s6=s5.filter(p=>{const i=(typeof _injuryFor==='function')?_injuryFor(p.name):null;const st=i?String(i.Status||i.status||'').toLowerCase():'';return st!=='out'&&st!=='doubtful';});
-      const s7=s6.filter(p=>(typeof isPlaying!=='function')||isPlaying(p.name,p.team));
-      const ex=s3.slice(0,3).map(p=>p.name+'/'+p.position+'/'+p.team+'/d'+_depthOf(p)).join(', ');
-      return _rdrWhy('team:'+s1.length+' pos:'+s2.length+' matches:'+s3.length+' lim:'+s4.length
-        +' depth:'+s5.length+' inj:'+s6.length+' playing:'+s7.length
-        +' | LU_DEPTH='+JSON.stringify(NFL_LU_DEPTH)+' | ex: '+ex);
-    }
+    if(cands.length<2) return '';
     const sel=(state.view.rdrPick && cands.some(c=>c.name===state.view.rdrPick))?state.view.rdrPick:cands[0].name;
     const oppOf=n=>{ const p=(state.idx.byName||{})[n]; if(!p) return null; return p.team===g.home?g.away:g.home; };
     const chips=cands.map(c=>'<button class="rdr-chip'+(c.name===sel?' on':'')+'" onclick="_radarPick(null,\''+esc(c.name).replace(/\x27/g,"\\\x27")+'\')">'+esc(c.name)+'</button>').join('');
     const body=_radarFor(sel,oppOf(sel));
-    if(!body){
-      const p=(state.idx.byName||{})[sel];
-      const pos=p?p.position:'?';
-      const dRows=(state.data.dvp||[]).filter(r=>r.pos===pos);
-      const peers=(state.idx.players||[]).filter(x=>p&&x.position===p.position&&(x.matches||0)>=3);
-      return _rdrWhy('no radar for '+sel+' ('+pos+') vs '+oppOf(sel)
-        +' - dvpRows:'+dRows.length+' peers:'+peers.length
-        +' oppRow:'+(dRows.some(r=>r.team===oppOf(sel))?'yes':'NO'));
-    }
+    if(!body) return '';
     return '<details class="tp-collapse" open><summary class="tp-collapse-sum"><i class="ti ti-radar-2"></i><span class="tp-collapse-title">Matchup Radar</span></summary>'
       +'<div class="rdr-chips">'+chips+'</div>'+body+'</details>';
   }
