@@ -101,6 +101,13 @@ window.SPORT_CONFIG = {
                apifootball: 'data/apifootball_stats.json', referees: 'data/referees.json', events: 'data/events.json' },
 
   // ---- Degen Crew tiles (ported from the WC tool's CREW_TABS) ----
+  jupiter: {
+    markets: [['goals','Goals'],['shots','Shots'],['shotsOn','SOT'],['assists','Assists'],
+              ['tackles','Tackles'],['foulsCommitted','Fouls'],['cards','Cards'],['saves','Saves']],
+    mlab: { goals:'goals', shots:'shots', shotsOn:'shots on target', assists:'assists',
+            tackles:'tackles', foulsCommitted:'fouls', cards:'cards', saves:'saves' },
+    base: { goals:0.5, shots:1.5, shotsOn:0.5, assists:0.5, tackles:1.5, foulsCommitted:1.5, cards:0.5, saves:3.5 }
+  },
   crew: [
     { k:'board',          n:"Today's Board", i:'ti-clipboard-list',        d:'Best plays ranked' },
     { k:'multi',          n:'Multi Builder', i:'ti-stack-2',               d:'Stacked legs' },
