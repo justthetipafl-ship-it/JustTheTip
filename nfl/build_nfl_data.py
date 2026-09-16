@@ -1041,18 +1041,40 @@ def build_weather(fixture):
                         "code": None, "desc": ""})
             continue
         try:
+            # Hourly at KICKOFF, not the day's maximum. A 1pm and an 8pm game share a date but
+            # can have very different wind, and daily-max overstated conditions for every game
+            # that didn't kick off at the windiest hour.
             rsp = requests.get("https://api.open-meteo.com/v1/forecast", params={
                 "latitude": ll[0], "longitude": ll[1],
+                "hourly": "temperature_2m,precipitation_probability,wind_speed_10m,weather_code",
                 "daily": "temperature_2m_max,precipitation_probability_max,wind_speed_10m_max,weather_code",
-                "start_date": f["date"], "end_date": f["date"], "timezone": "auto"},
+                "start_date": f["date"], "end_date": f["date"], "timezone": "UTC"},
                 timeout=15).json()
-            d = rsp.get("daily", {})
-            code = (d.get("weather_code") or [None])[0]
-            out.append({**base,
-                        "temp": (d.get("temperature_2m_max") or [None])[0],
-                        "rainProb": (d.get("precipitation_probability_max") or [None])[0],
-                        "wind": (d.get("wind_speed_10m_max") or [None])[0],
-                        "code": code, "desc": WMO.get(code, "")})
+            hr = rsp.get("hourly", {}) or {}
+            times = hr.get("time") or []
+            idx = None
+            utc = str(f.get("utc") or "")
+            if times and len(utc) >= 13:
+                want = utc[:13]                      # 'YYYY-MM-DDTHH'
+                for i, t in enumerate(times):
+                    if str(t)[:13] == want:
+                        idx = i
+                        break
+            if idx is not None:
+                code = (hr.get("weather_code") or [None])[idx]
+                out.append({**base,
+                            "temp": (hr.get("temperature_2m") or [None])[idx],
+                            "rainProb": (hr.get("precipitation_probability") or [None])[idx],
+                            "wind": (hr.get("wind_speed_10m") or [None])[idx],
+                            "code": code, "desc": WMO.get(code, ""), "at": "kickoff"})
+            else:                                    # no kickoff time -> fall back to the daily max
+                d = rsp.get("daily", {})
+                code = (d.get("weather_code") or [None])[0]
+                out.append({**base,
+                            "temp": (d.get("temperature_2m_max") or [None])[0],
+                            "rainProb": (d.get("precipitation_probability_max") or [None])[0],
+                            "wind": (d.get("wind_speed_10m_max") or [None])[0],
+                            "code": code, "desc": WMO.get(code, ""), "at": "daily max"})
         except Exception as e:
             print(f"  (weather fetch failed for {f['home']}: {e})")
             out.append({**base, "temp": None, "rainProb": None, "wind": None,
