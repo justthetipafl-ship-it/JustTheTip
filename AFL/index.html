@@ -833,6 +833,25 @@
   .ul-last{font-size:10px;font-weight:700;min-width:46px;text-align:right;font-variant-numeric:tabular-nums;color:var(--text-3);}
   .ul-hd{display:flex;align-items:center;gap:8px;padding:2px 8px 5px;font-size:8px;text-transform:uppercase;letter-spacing:.05em;color:var(--text-3);font-weight:700;}
   .ul-hnm{flex:1;}
+  .kk-cond{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:9px;}
+  .kk-ctag{font-size:10px;font-weight:800;letter-spacing:.04em;text-transform:uppercase;padding:3px 8px;border-radius:6px;border:1px solid;}
+  .kk-cmeta{font-size:10px;color:var(--text-3);}
+  .kk-wrap{display:flex;gap:10px;flex-wrap:wrap;}
+  .kk-card{flex:1 1 240px;min-width:230px;border:1px solid var(--border);border-radius:10px;background:var(--surface-2);padding:10px;}
+  .kk-hd{display:flex;align-items:center;gap:8px;margin-bottom:7px;}
+  .kk-nm{font-weight:800;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .kk-tm{font-size:9px;color:var(--text-3);text-transform:uppercase;letter-spacing:.04em;margin-left:auto;white-space:nowrap;}
+  .kk-stats{display:flex;gap:10px;flex-wrap:wrap;font-size:10px;color:var(--text-3);padding-bottom:7px;border-bottom:1px solid var(--border);}
+  .kk-stats b{font-size:13px;font-weight:800;color:var(--text);margin-right:2px;font-variant-numeric:tabular-nums;}
+  .kk-sec{font-size:8px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:var(--text-3);margin:8px 0 4px;}
+  .kk-mrow{display:flex;align-items:center;gap:7px;font-size:11px;padding:3px 0;}
+  .kk-ml{flex:1;color:var(--text-2);}
+  .kk-mln{font-weight:800;font-variant-numeric:tabular-nums;}
+  .kk-mhit{font-weight:800;min-width:34px;text-align:right;font-variant-numeric:tabular-nums;}
+  .kk-mbk{font-size:8px;color:var(--text-3);text-transform:uppercase;min-width:52px;text-align:right;}
+  .kk-tbl{width:100%;border-collapse:collapse;font-size:10px;}
+  .kk-tbl td{padding:3px 2px;border-top:1px solid var(--border);text-align:right;font-variant-numeric:tabular-nums;}
+  .kk-tbl td:first-child{text-align:left;color:var(--text-2);}
   .rdr-card{max-width:520px;margin:0 auto;}
   .rdr-card{border:1px solid var(--border);border-radius:10px;background:var(--surface-2);padding:8px;}
   .rdr-hd{display:flex;align-items:baseline;gap:8px;margin-bottom:2px;}
@@ -4106,6 +4125,7 @@
     if(!_fxHid('sec','mradar')) h+=matchupRadarSection(g);
     h+=coverageSection(g);
     h+=usageLeaders(g);
+    h+=kickerSection(g);
     h+=firstScorerSection(g);   // distinct key: 'radar' is the O/U Radar
     if(SPORT.key!=='epl' && !_fxHid('sec','radar')) h+=radarSection(g.home,g.away,g.venue||(g.park&&g.park.name));   // EPL props are over-only milestones: no each-way board possible
     if(fxMode!=='nerd' && !_fxHid('sec','jupiter')) h+=jupiter(g);
@@ -4718,6 +4738,84 @@
       +'<div class="ul-hd"><span class="ul-hnm">Player</span><span class="ul-v">'
       +esc(win==='l5'?'L5':win==='l10'?'L10':'Season')+'</span><span class="ul-last">Last</span></div>'
       +'<div class="ul-list">'+body+'</div></details>';
+  }
+  // ===== KICKER MATCHUP — both kickers, their range profile, posted lines and conditions =====
+  function _kAvg(logs,k,n){ const src=n?logs.slice(-n):logs; let t=0,c=0;
+    src.forEach(r=>{const v=+r[k]; if(isFinite(v)){t+=v;c++;}}); return c?t/c:null; }
+  function _kSumF(logs,k){ let t=0; logs.forEach(r=>{ t+=(+r[k]||0); }); return t; }
+  function _kickerCard(p,g){
+    const logs=(state.idx.logsByName||{})[p.name]||[];
+    if(!logs.length) return '';
+    const opp=(p.team===g.home)?g.away:g.home;
+    const kp=_kAvg(logs,'kickingPts')||0, fga=_kAvg(logs,'fgAtt')||0, pat=_kAvg(logs,'patAtt')||0;
+    // posted lines
+    const oKP=(typeof oddsFor==='function')?oddsFor(p.name,'kickingPts'):null;
+    const oFG=(typeof oddsFor==='function')?oddsFor(p.name,'fgMade'):null;
+    const mkt=(lab,o,avg)=>{
+      if(!o||o.line==null) return '<div class="kk-mrow"><span class="kk-ml">'+lab+'</span><span class="kk-mv">-</span></div>';
+      const hit=logs.filter(r=>(+r[o===oKP?'kickingPts':'fgMade']||0)>o.line).length/logs.length;
+      const col=hit>=0.6?'#22c55e':hit>=0.45?'#eab308':'#f97316';
+      return '<div class="kk-mrow"><span class="kk-ml">'+lab+'</span>'
+        +'<span class="kk-mln">'+o.line+(o.over?' @'+(+o.over).toFixed(2):'')+'</span>'
+        +'<span class="kk-mhit" style="color:'+col+'">'+Math.round(hit*100)+'%</span>'
+        +(o.book?'<span class="kk-mbk">'+esc(bookName(o.book))+'</span>':'')+'</div>';
+    };
+    // distance profile (needs the per-game bucket fields; falls back cleanly)
+    const b=[['Under 40','fg0_39','fgAtt0_39'],['40-49','fg40_49','fgAtt40_49'],['50+','fg50p','fgAtt50p']]
+      .map(x=>({lab:x[0], m:_kSumF(logs,x[1]), a:_kSumF(logs,x[2])}));
+    const hasB=b.some(x=>x.a>0);
+    const dist=hasB?('<div class="kk-sec">Range</div><table class="kk-tbl">'
+      +b.map(x=>{ const pc=x.a?Math.round(x.m/x.a*100):null;
+        const col=pc==null?'var(--text-3)':pc>=85?'#22c55e':pc>=70?'#eab308':'#f97316';
+        return '<tr><td>'+x.lab+'</td><td>'+(x.a?x.m+'/'+x.a:'-')+'</td>'
+          +'<td style="color:'+col+';font-weight:800">'+(pc==null?'-':pc+'%')+'</td></tr>';}).join('')
+      +'</table>'):'';
+    const lng=_kAvg(logs,'fgLong');
+    return '<div class="kk-card">'
+      +'<div class="kk-hd">'+(typeof playerImg==='function'?playerImg(p.name,30):'')
+        +'<span class="kk-nm">'+esc(p.name)+'</span><span class="kk-tm">'+esc(abbr(p.team))+' v '+esc(abbr(opp))+'</span></div>'
+      +'<div class="kk-stats"><span><b>'+kp.toFixed(1)+'</b>pts/g</span><span><b>'+fga.toFixed(1)+'</b>FGA/g</span>'
+      +'<span><b>'+pat.toFixed(1)+'</b>XP/g</span>'+(lng?'<span><b>'+Math.round(lng)+'</b>long</span>':'')+'</div>'
+      +'<div class="kk-sec">Markets</div>'+mkt('Kicking pts',oKP,kp)+mkt('FG made',oFG,fga)
+      +dist+'</div>';
+  }
+  function kickerSection(g){
+    if(!g||SPORT.key!=='nfl'||_fxHid('sec','kickers')) return '';
+    const teams=[g.home,g.away];
+    // NOTE: lineups.json only covers QB/RB/WR/TE, so isPlaying() rejects every kicker -
+    // gate on the injury report instead, then take each team's primary by recent workload.
+    const injOut=n=>{ const i=(typeof _injuryFor==='function')?_injuryFor(n):null;
+      const st=i?String(i.Status||i.status||'').toLowerCase():''; return st==='out'||st==='doubtful'; };
+    const pool=(state.idx.players||[]).filter(p=>p.position==='K'&&teams.indexOf(p.team)>=0
+        &&((state.idx.logsByName||{})[p.name]||[]).length>=2 && !injOut(p.name));
+    const best={};
+    pool.forEach(p=>{
+      const L=(state.idx.logsByName||{})[p.name]||[];
+      const last=L[L.length-1]||{};
+      const recency=(+last.Year||0)*100+(+last.Week||0);           // most recent appearance wins
+      const cur=best[p.team];
+      if(!cur||recency>cur.rec||(recency===cur.rec&&L.length>cur.n)) best[p.team]={p:p,rec:recency,n:L.length};
+    });
+    const ks=teams.map(t=>best[t]&&best[t].p).filter(Boolean);
+    if(!ks.length) return '';
+    // conditions apply to both kickers equally
+    const wx=(state.data.weather||[]).find(w=>w&&w.home===g.home&&w.away===g.away);
+    let cond='';
+    if(wx){
+      const roof=String(wx.roof||'').toLowerCase();
+      const indoor=roof.indexOf('dome')>=0||roof.indexOf('closed')>=0;
+      const wind=+wx.wind||0;
+      const wcol=indoor?'#22c55e':wind>25?'#ef4444':wind>15?'#eab308':'#22c55e';
+      cond='<div class="kk-cond"><span class="kk-ctag" style="color:'+wcol+';border-color:'+wcol+'55">'
+        +(indoor?'Indoors':Math.round(wind)+' km/h wind')+'</span>'
+        +(wx.temp!=null&&!indoor?'<span class="kk-cmeta">'+Math.round(+wx.temp)+'\u00b0C</span>':'')
+        +(wx.rainProb!=null&&!indoor?'<span class="kk-cmeta">'+wx.rainProb+'% rain</span>':'')
+        +(wx.at?'<span class="kk-cmeta">at '+esc(wx.at)+'</span>':'')+'</div>';
+    }
+    const cards=ks.map(p=>_kickerCard(p,g)).filter(Boolean).join('');
+    if(!cards) return '';
+    return '<details class="tp-collapse"><summary class="tp-collapse-sum"><i class="ti ti-target-arrow"></i>'
+      +'<span class="tp-collapse-title">Kicker Matchup</span></summary>'+cond+'<div class="kk-wrap">'+cards+'</div></details>';
   }
   function _pmSec(title,body,open){ if(!body) return '';
     return '<details class="pm-sec"'+(open?' open':'')+'><summary>'+title+'<i class="ti ti-chevron-down"></i></summary><div class="pm-sec-body">'+body+'</div></details>'; }
