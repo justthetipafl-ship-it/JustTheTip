@@ -5439,9 +5439,28 @@
     if(!g) return '';
     const teams=[g.home,g.away];
     // the skill players worth showing: highest snap share, one row of chips
-    const cands=(state.idx.players||[]).filter(p=>teams.indexOf(p.team)>=0 && RADAR_POS[p.position] && (p.matches||0)>=3
-                  && (typeof isPlaying!=='function'||isPlaying(p.name,p.team)))
-      .sort((a,b)=>(b.snapPct||0)-(a.snapPct||0)).slice(0,14);
+    // Being NAMED on the depth chart isn't the same as starting - that let QB2/QB4 and WR5/WR6
+    // onto the board. Gate on the depth-chart RANK (the same per-position limits the Lineup
+    // section uses) and drop anyone ruled Out/Doubtful on the injury report.
+    const _depthOf=(p)=>{
+      const r=(state.data.lineups||[]).find(x=>x.team===p.team&&x.player===p.name);
+      return r?(+r.depth||99):99;
+    };
+    const _radarOK=(p)=>{
+      const lim=NFL_LU_DEPTH[p.position]; if(lim==null) return false;
+      if((state.data.lineups||[]).some(x=>x.team===p.team) && _depthOf(p)>lim) return false;
+      const inj=(typeof _injuryFor==='function')?_injuryFor(p.name):null;
+      const st=inj?String(inj.Status||inj.status||'').toLowerCase():'';
+      if(st==='out'||st==='doubtful') return false;
+      return (typeof isPlaying!=='function')||isPlaying(p.name,p.team);
+    };
+    const _posRank={QB:1,RB:2,WR:3,TE:4};   // 1-based: 0 is falsy in JS and would sort QBs last
+    const cands=(state.idx.players||[]).filter(p=>teams.indexOf(p.team)>=0 && RADAR_POS[p.position]
+                  && (p.matches||0)>=3 && _radarOK(p))
+      .sort((a,b)=>(teams.indexOf(a.team)-teams.indexOf(b.team))
+                || ((_posRank[a.position]||9)-(_posRank[b.position]||9))
+                || (_depthOf(a)-_depthOf(b)))
+      .slice(0,16);
     if(cands.length<2) return '';
     const sel=(state.view.rdrPick && cands.some(c=>c.name===state.view.rdrPick))?state.view.rdrPick:cands[0].name;
     const oppOf=n=>{ const p=(state.idx.byName||{})[n]; if(!p) return null; return p.team===g.home?g.away:g.home; };
