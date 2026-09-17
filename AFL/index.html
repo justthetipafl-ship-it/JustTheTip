@@ -837,6 +837,13 @@
   .fxb-b{font-size:9px;font-weight:800;letter-spacing:.04em;text-transform:uppercase;padding:4px 9px;border-radius:6px;border:0;background:none;color:var(--text-3);cursor:pointer;}
   .fxb-b.on{background:color-mix(in srgb,var(--accent) 16%,transparent);color:var(--accent);}
   .fxb-sel{flex:1;min-width:180px;background:var(--surface-2);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:6px 9px;font-size:12px;font-family:inherit;font-weight:600;}
+  .res-wrap{margin-top:18px;}
+  .res-sub{font-size:10px;color:var(--text-3);margin:6px 0 9px;}
+  .res-chips{display:flex;flex-wrap:wrap;gap:5px;margin-bottom:10px;}
+  .res-chip{display:inline-flex;align-items:center;gap:5px;font-size:10px;font-weight:700;padding:5px 10px;border-radius:7px;border:1px solid var(--border);background:var(--surface-2);color:var(--text-3);cursor:pointer;white-space:nowrap;}
+  .res-chip.on{border-color:var(--accent);color:var(--accent);background:color-mix(in srgb,var(--accent) 12%,transparent);}
+  .res-chip i{font-size:12px;}
+  .res-body{min-height:40px;}
   .kk-cond{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:9px;}
   .kk-ctag{font-size:10px;font-weight:800;letter-spacing:.04em;text-transform:uppercase;padding:3px 8px;border-radius:6px;border:1px solid;}
   .kk-cmeta{font-size:10px;color:var(--text-3);}
@@ -4980,9 +4987,36 @@
   /* ---------- DEGEN CREW ---------- */
   function renderDegen(){
     if(state.view.crewTile){ const t=_crewTileHTML(state.view.crewTile); if(t) return t; }
-    let h='<div class="page-header"><div class="page-title">Degen Crew</div><div class="page-sub">All signals live on the scoring engine · tap a tile</div></div>';
-    h+='<div class="crew-grid">'+CREW.filter(c=>((window.SPORT_CONFIG||{}).hideCrew||[]).indexOf(c.k)<0).map(c=>'<div class="crew-tile" onclick="degenTile(\''+c.k+'\')"><div class="crew-tile-icon"><i class="ti '+c.i+'"></i></div><div class="crew-tile-name">'+c.n+'</div><div class="crew-tile-sub">'+c.d+'</div></div>').join('')+'</div>';
+    const _res=(window.SPORT_CONFIG||{}).research||[];
+    let h='<div class="page-header"><div class="page-title">Degen Crew</div><div class="page-sub">Signals that name a bet \u00b7 tap a tile</div></div>';
+    h+='<div class="crew-grid">'+CREW.filter(c=>((window.SPORT_CONFIG||{}).hideCrew||[]).indexOf(c.k)<0 && _res.indexOf(c.k)<0).map(c=>'<div class="crew-tile" onclick="degenTile(\''+c.k+'\')"><div class="crew-tile-icon"><i class="ti '+c.i+'"></i></div><div class="crew-tile-name">'+c.n+'</div><div class="crew-tile-sub">'+c.d+'</div></div>').join('')+'</div>';
+    h+=_researchBlock();
     return h;
+  }
+  // Research tools: signals that inform a read but don't name a bet (usage, form, injuries,
+  // weather, coverage). Kept out of the crew grid so that stays purely actionable, and shown
+  // as one collapsed section with a chip toggle rather than a second wall of tiles.
+  function _resPick(k){ state.view.resTile=k; _renderApp(); }
+  window._resPick=_resPick;
+  function _researchBlock(){
+    const keys=(window.SPORT_CONFIG||{}).research||[];
+    if(!keys.length) return '';
+    const S=_signals(); if(!(S&&S.tiles)) return '';
+    const avail=keys.filter(k=>typeof S.tiles[k]==='function');
+    if(!avail.length) return '';
+    const meta=k=>(CREW||[]).find(c=>c.k===k)||{k:k,n:k,i:'ti-chart-dots'};
+    const sel=(state.view.resTile&&avail.indexOf(state.view.resTile)>=0)?state.view.resTile:avail[0];
+    const chips=avail.map(k=>{ const m=meta(k);
+      return '<button class="res-chip'+(k===sel?' on':'')+'" onclick="_resPick(\''+k+'\')">'
+        +'<i class="ti '+m.i+'"></i>'+esc(m.n)+'</button>'; }).join('');
+    let body='';
+    try{ body=S.tiles[sel](); }catch(e){ body=emptyState('ti-alert-triangle','Research error',String(e&&e.message||e)); }
+    const m=meta(sel);
+    return '<details class="tp-collapse fxsec res-wrap"><summary class="tp-collapse-sum"><i class="ti ti-microscope"></i>'
+      +'<span class="tp-collapse-title">Research</span><span class="tp-collapse-meta">'+avail.length+'</span></summary>'
+      +'<div class="res-sub">Context, not bets \u2014 usage, form, availability and conditions.</div>'
+      +'<div class="res-chips">'+chips+'</div>'
+      +'<div class="res-body">'+(body||emptyState(m.i,m.n,'Nothing to show right now.'))+'</div></details>';
   }
   // --- scoring-backed signal compute (Green Lights / Death Riders) ---
   // Fires ONLY when a real posted line + price exists for the player/market.
