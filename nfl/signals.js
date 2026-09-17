@@ -605,7 +605,7 @@
     function usageCard(c) {
       var q = esc(c.p.name).replace(/'/g, "\\'"), col = c.dir === 'asc' ? '#22c55e' : '#f97316';
       var chips = c.deltas.map(function (x) { return '<span class="lu-p" style="color:' + (x.d >= 0 ? '#22c55e' : '#f97316') + '">' + (x.d >= 0 ? '+' : '') + x.d.toFixed(1) + (x.u ? ' ' + x.u : '') + ' ' + x.l + ' (L3 v season)</span>'; }).join(' ');
-      return '<div class="lc-card" onclick="openPlayer(\'' + q + '\')"><div class="lc-hd"><span class="lc-nm">' + esc(c.p.name) + '</span>' + _degBadges(c.p.name) +
+      return '<div class="lc-card" onclick="openPlayer(\'' + q + '\')"><div class="lc-hd">' + ((typeof window !== 'undefined' && window.playerImg) ? window.playerImg(c.p.name, 34) : '') + '<span class="lc-nm">' + esc(c.p.name) + '</span>' + _degBadges(c.p.name) +
         '<span class="lc-meta" style="color:' + col + '">' + (c.dir === 'asc' ? 'ASCENDING' : 'FADING') + ' \u00b7 ' + posShort(c.p.position) + ' \u00b7 ' + abbr(c.p.team) + (c.opp ? ' v ' + abbr(c.opp) : '') + '</span></div>' +
         '<div class="lu-grid" style="gap:5px">' + chips + '</div></div>';
     }
@@ -617,21 +617,6 @@
       { k: 'longComp', l: 'Longest Comp', thr: 35, pos: ['QB'], exp: 'expRec', expL: 'explosive passes', style: null }
     ];
     var CHUNK_HIT = 0.70, CHUNK_MIN_G = 6, CHUNK_CLAMP = -12;
-    // Longest-play value for one game. The data pipeline leaves long* null when the
-    // player had no positive gain (0 attempts, kneel-downs, all-negative runs). Those
-    // are MISSES, not missing data — dropping them inflated hit rates (e.g. QB
-    // Longest Rush 0.5 showing 100%). Null + zero/negative yards => 0. A single
-    // positive attempt => that gain. Anything else null stays unknown and is skipped.
-    var CHUNK_SRC = { longRush: ['rushAtt', 'rushYds'], longRec: ['receptions', 'recYds'], longComp: ['passComp', 'passYds'] };
-    function _longVal(r, k) {
-      var v = r[k]; if (v != null) return v;
-      var s = CHUNK_SRC[k]; if (!s) return null;
-      var att = r[s[0]], yds = r[s[1]];
-      if (att == null && yds == null) return null;
-      if (!att || (yds || 0) <= 0) return 0;
-      if (att === 1) return yds;
-      return null;
-    }
     function _chunkSimilar(p, def, opp, line) {
       if (!opp) return null;
       var metric = def.k === 'longRush' ? 'ypc' : (def.k === 'longComp' ? 'passYds' : 'aDot');
@@ -640,9 +625,9 @@
         .map(function (q) { return { q: q, d: Math.abs((q[metric] || 0) - mine) }; }).sort(function (a, b) { return a.d - b.d; }).slice(0, 8);
       var h = 0, n = 0, used = 0;
       pool.forEach(function (pair) {
-        var vs = (logsByName(pair.q.name) || []).filter(function (r) { return r.opponent === opp && _longVal(r, def.k) != null; });
+        var vs = (logsByName(pair.q.name) || []).filter(function (r) { return r.opponent === opp && r[def.k] != null; });
         if (!vs.length) return; used++;
-        vs.forEach(function (r) { n++; if (_longVal(r, def.k) >= line) h++; });
+        vs.forEach(function (r) { n++; if ((r[def.k] || 0) >= line) h++; });
       });
       return n >= 3 ? { h: h, n: n, used: used } : null;
     }
@@ -663,7 +648,7 @@
         var opp = nextOpp(p.team);
         CHUNK_DEFS.forEach(function (def) {
           if (def.pos.indexOf(p.position) < 0) return;
-          var vals = (logsFor(p.name) || []).map(function (r) { return _longVal(r, def.k); }).filter(function (v) { return v != null; });
+          var vals = (logsFor(p.name) || []).map(function (r) { return r[def.k]; }).filter(function (v) { return v != null; });
           if (vals.length < CHUNK_MIN_G) return;
           var posted = oddsFor(p.name, def.k);
           var line = (posted && posted.line != null) ? Math.ceil(posted.line) : def.thr;
@@ -690,7 +675,7 @@
       if (c.style) chips.push('<span class="lu-p" style="color:' + c.style.c + ';border-color:' + c.style.c + '55">' + esc(c.style.txt) + '</span>');
       if (c.sim) { var sr = c.sim.h / c.sim.n, c3 = sr >= 0.6 ? '#22c55e' : sr >= 0.4 ? '#eab308' : '#ef4444';
         chips.push('<span class="lu-p" style="color:' + c3 + ';border-color:' + c3 + '55">similar ' + posShort(c.p.position) + 's ' + c.sim.h + '/' + c.sim.n + ' cleared v ' + abbr(c.opp) + ' (' + c.sim.used + ' players)</span>'); }
-      return '<div class="lc-card" onclick="openPlayer(\'' + q + '\')"><div class="lc-hd"><span class="lc-nm">' + esc(c.p.name) + '</span>' + _degBadges(c.p.name) +
+      return '<div class="lc-card" onclick="openPlayer(\'' + q + '\')"><div class="lc-hd">' + ((typeof window !== 'undefined' && window.playerImg) ? window.playerImg(c.p.name, 34) : '') + '<span class="lc-nm">' + esc(c.p.name) + '</span>' + _degBadges(c.p.name) +
         '<span class="lc-meta">' + posShort(c.p.position) + ' \u00b7 ' + abbr(c.p.team) + (c.opp ? ' v ' + abbr(c.opp) : '') + (od ? ' \u00b7' + od : '') + '</span></div>' +
         '<div class="tp-body-meta" style="border:0;padding:2px 0 6px"><b>' + c.def.l + ' ' + c.line + '+</b>' + (c.posted ? '' : ' (est line)') + ' \u00b7 hit ' + c.hits + '/' + c.n + ' (' + Math.round(c.rate * 100) + '%) \u00b7 avg ' + c.avg.toFixed(0) + ' \u00b7 L5 ' + c.l5 + '</div>' +
         (chips.length ? '<div class="lu-grid" style="gap:5px">' + chips.join(' ') + '</div>' : '') + '</div>';
@@ -957,7 +942,7 @@
       var detail = prof + dist + oppBlk;
       return '<div class="lc-card">' +
         '<div class="lc-hd" onclick="openPlayer(\'' + esc(c.p.name).replace(/'/g, "\\'") + '\')">' + img +
-        '<span class="lc-nm">' + esc(c.p.name) + '</span>' +
+        '<span class="lc-nm">' + esc(c.p.name) + '</span>' + _degBadges(c.p.name) +
         '<span class="lc-meta">K \u00b7 ' + sub + '</span></div>' +
         '<div class="lu-grid" style="gap:5px">' +
         '<span class="lu-p" style="color:#22c55e;border-color:#22c55e55">' + c.kpAvg.toFixed(1) + ' pts/g</span>' +
@@ -965,6 +950,17 @@
         (a50 ? '<span class="lu-p">' + s50 + '/' + a50 + ' from 50+</span>' : '') + '</div>' +
         (detail ? '<details class="tt-more"><summary>Kicking profile</summary><div class="tt-body" data-w="all">' + detail + '</div></details>' : '') +
         '</div>';
+    }
+
+    // One card header for every signal: headshot, name, badges, then position/matchup meta.
+    // Cards were each building their own and had drifted (missing images, missing badges).
+    function _sigHead(p, opp, meta) {
+      var q = esc(p.name).replace(/'/g, "\\'");
+      var img = (typeof window !== 'undefined' && window.playerImg) ? window.playerImg(p.name, 34) : '';
+      return '<div class="lc-hd" onclick="openPlayer(\'' + q + '\')">' + img +
+        '<span class="lc-nm">' + esc(p.name) + '</span>' + _degBadges(p.name) +
+        '<span class="lc-meta">' + posShort(p.position) + ' \u00b7 ' + abbr(p.team) +
+        (opp ? ' v ' + abbr(opp) : '') + (meta ? ' \u00b7 ' + meta : '') + '</span></div>';
     }
 
     // ===== SACK ARTISTS — pass rushers into an offence that surrenders pressure =====
@@ -1169,7 +1165,7 @@
       if (c.vol) { chips.push('<span class="lu-p">' + c.vol.plays.toFixed(0) + ' plays/g (#' + c.vol.playsRank + '/' + c.vol.n + ')</span>');
         if (c.p.position !== 'DB') chips.push('<span class="lu-p">' + c.vol.rushAtt.toFixed(0) + ' rush att/g (#' + c.vol.rushRank + ')</span>'); }
       if ((c.p.snapPct || 0) >= 90) chips.push('<span class="lu-p" style="color:#22c55e;border-color:#22c55e55">every-down \u00b7 ' + c.p.snapPct.toFixed(0) + '% snaps</span>');
-      return '<div class="lc-card" onclick="openPlayer(\'' + q + '\')"><div class="lc-hd"><span class="lc-nm">' + esc(c.p.name) + '</span>' + _degBadges(c.p.name) + '<span class="lc-meta">' + posShort(c.p.position) + ' \u00b7 ' + abbr(c.p.team) + (c.opp ? ' v ' + abbr(c.opp) : '') + (od ? ' \u00b7' + od : '') + '</span></div><div class="tp-body-meta" style="border:0;padding:2px 0 6px"><b>Tackles+Ast ' + c.line + '+</b>' + (c.posted ? '' : ' (est line)') + ' \u00b7 hit ' + c.hits + '/' + c.n + ' (' + Math.round(c.rate * 100) + '%) \u00b7 avg ' + c.avg.toFixed(1) + ' \u00b7 L5 ' + c.l5 + '</div>' + (chips.length ? '<div class="lu-grid" style="gap:5px">' + chips.join(' ') + '</div>' : '') + '</div>';
+      return '<div class="lc-card" onclick="openPlayer(\'' + q + '\')"><div class="lc-hd">' + ((typeof window !== 'undefined' && window.playerImg) ? window.playerImg(c.p.name, 34) : '') + '<span class="lc-nm">' + esc(c.p.name) + '</span>' + _degBadges(c.p.name) + '<span class="lc-meta">' + posShort(c.p.position) + ' \u00b7 ' + abbr(c.p.team) + (c.opp ? ' v ' + abbr(c.opp) : '') + (od ? ' \u00b7' + od : '') + '</span></div><div class="tp-body-meta" style="border:0;padding:2px 0 6px"><b>Tackles+Ast ' + c.line + '+</b>' + (c.posted ? '' : ' (est line)') + ' \u00b7 hit ' + c.hits + '/' + c.n + ' (' + Math.round(c.rate * 100) + '%) \u00b7 avg ' + c.avg.toFixed(1) + ' \u00b7 L5 ' + c.l5 + '</div>' + (chips.length ? '<div class="lu-grid" style="gap:5px">' + chips.join(' ') + '</div>' : '') + '</div>';
     }
 
     // tiles: key -> () => HTML. The shell's renderTile(k) calls tiles[k]() for NFL.
@@ -1213,11 +1209,10 @@
           }
           CHUNK_DEFS.forEach(function (def) {
             if (def.pos.indexOf(pos) < 0) return;
-            var vals = h.map(function (x) { return _longVal(x, def.k); }).filter(function (v) { return v != null; });
-            var cur = _longVal(r, def.k);
-            if (vals.length < 6 || cur == null) return;
+            var vals = h.map(function (x) { return x[def.k]; }).filter(function (v) { return v != null; });
+            if (vals.length < 6 || r[def.k] == null) return;
             var rate = vals.filter(function (v) { return v >= def.thr; }).length / vals.length;
-            if (rate >= CHUNK_HIT) grade('chunk', cur >= def.thr);
+            if (rate >= CHUNK_HIT) grade('chunk', r[def.k] >= def.thr);
           });
           if (DEF_POS.has(pos)) {
             var tv = h.map(function (x) { return x.tackles; }).filter(function (v) { return v != null; });
