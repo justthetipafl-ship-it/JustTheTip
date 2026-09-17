@@ -34,6 +34,9 @@ window.SPORT_CONFIG = {
   teamCols: [['points','Pts'],['plays','Plays'],['passYds','PaYd'],['passAtt','PaAtt'],['passComp','Cmp'],['passTds','PaTD'],['passInt','INT'],['sacks','Sck'],['rushYds','RuYd'],['rushAtt','RuAtt'],['rushTds','RuTD'],['receptions','Rec'],['targets','Tgt']],
   viewDefaults: { sortKey:'fanPts', statsStat:'receptions', teamsSort:'points' },
   oddsMkts: [['passYds','Pass Yds'],['passTds','Pass TDs'],['passAtt','Pass Att'],['rushYds','Rush Yds'],['rushAtt','Rush Att'],['receptions','Receptions'],['recYds','Rec Yds'],['rushRecYds','Rush+Rec'],['anytimeTd','Anytime TD'],['tackles','Tackles+Ast'],['sacks','Sacks'],['passInt','Pass INTs'],['kickingPts','Kicking Pts'],['fgMade','FG Made']],
+  // Tiles that inform a read but don't name a bet - the shell files these under Research
+  // instead of the Degen Crew grid, so the crew stays "here is a bet" end to end.
+  research: ['usage','form','next','wx','clamp','push','coverageBusters'],
   tileOrder: ['paydirt','elite','bunnies','bogey','streak','chunk','sacks','picks','shootout','ground','kicking','wrap','usage','next','stack','wx','push','clamp','form'],
   posColors: {'QB':'#ef4444','RB':'#22c55e','WR':'#3b82f6','TE':'#f59e0b','LB':'#a855f7','DL':'#f97316','DB':'#06b6d4'},
   jupiter: {
