@@ -70,6 +70,7 @@ window.SPORT_CONFIG = {
     {k:'stack',n:'Stack Lab',i:'ti-link',d:'Correlated SGMs'},
     {k:'push',n:'Playoff Push',i:'ti-ladder',d:'Standings pressure'},
     {k:'form',n:'Player Form',i:'ti-temperature-celsius',d:'Spiking & cooling, both ways'},
+    {k:'coverageBusters',n:'Coverage Busters',i:'ti-shield-off',d:'WRs beating their shadow'},
     {k:'clamp',n:'Clamp Watch',i:'ti-lock',d:'Shadow CB risk'},
   ],
   dvMarkets: [['passYds','Pass Yds',150],['rushYds','Rush Yds',30],['recYds','Rec Yds',30],['receptions','Receptions',3],['rushAtt','Rush Att',8],['passAtt','Pass Att',24],['rushRecYds','Rush+Rec Yds',40],['tackles','Tackles+Ast',4]],
