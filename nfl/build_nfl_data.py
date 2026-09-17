@@ -1024,20 +1024,33 @@ def build_divisions(tm):
     return out
 
 # ?? weather (Open-Meteo; outdoor fixtures only) ?????????????????????????????
+def _us_eastern_offset(when):
+    """US Eastern UTC offset in hours, without depending on zoneinfo/tzdata being present
+    on the runner (a missing tzdata was silently falling back to the wrong stamp).
+    EDT (-4) runs from the 2nd Sunday in March to the 1st Sunday in November; else EST (-5)."""
+    def nth_sunday(year, month, n):
+        d = dt.date(year, month, 1)
+        d += dt.timedelta(days=(6 - d.weekday()) % 7)      # first Sunday
+        return d + dt.timedelta(weeks=n - 1)
+    y = when.year
+    start = dt.datetime.combine(nth_sunday(y, 3, 2), dt.time(2, 0))   # 02:00 local
+    end = dt.datetime.combine(nth_sunday(y, 11, 1), dt.time(2, 0))
+    return -4 if start <= when < end else -5
+
+
 def _et_to_utc(date_str, time_str):
     """nflverse schedules carry kickoff in US Eastern. Convert to a real UTC stamp so the
     tool can localise it for any user. DST-aware: the NFL season straddles EDT and EST."""
     if not date_str or not time_str:
         return None
     try:
-        from zoneinfo import ZoneInfo
         hh, _, mm = str(time_str).partition(":")
-        naive = datetime.datetime(int(date_str[0:4]), int(date_str[5:7]), int(date_str[8:10]),
+        naive = dt.datetime(int(date_str[0:4]), int(date_str[5:7]), int(date_str[8:10]),
                                   int(hh), int(mm or 0))
-        et = naive.replace(tzinfo=ZoneInfo("America/New_York"))
-        return et.astimezone(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    except Exception:
+    except (TypeError, ValueError):
         return None
+    off = _us_eastern_offset(naive)
+    return (naive - dt.timedelta(hours=off)).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def build_weather(fixture):
@@ -1195,6 +1208,9 @@ def run_build(frames, out_dir, seasons, current, password, skip_weather=False):
     write_json(f"{out_dir}/dvp.json", dvp)
     write_json(f"{out_dir}/gamelogs.json", gamelogs)
     write_json(f"{out_dir}/fixture.json", fixture)
+    if fixture:
+        _f0 = fixture[0]
+        print(f"  fixture kickoff check: {_f0.get('time')} ET -> {_f0.get('utc')} (should differ by 4-5h)")
     write_json(f"{out_dir}/results.json", results)
     write_json(f"{out_dir}/injury.json", injuries)
     write_json(f"{out_dir}/lineups.json", lineups)
