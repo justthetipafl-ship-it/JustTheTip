@@ -5001,10 +5001,17 @@
   function _researchBlock(){
     const keys=(window.SPORT_CONFIG||{}).research||[];
     if(!keys.length) return '';
-    const S=_signals(); if(!(S&&S.tiles)) return '';
-    const avail=keys.filter(k=>typeof S.tiles[k]==='function');
-    if(!avail.length) return '';
     const meta=k=>(CREW||[]).find(c=>c.k===k)||{k:k,n:k,i:'ti-chart-dots'};
+    const S=_signals();
+    // Render the section even when the signals module is missing. Returning '' here made a
+    // load failure look exactly like "the feature isn't there", which is what happened.
+    if(!(S&&S.tiles)) return '<details class="tp-collapse fxsec res-wrap"><summary class="tp-collapse-sum">'
+      +'<i class="ti ti-microscope"></i><span class="tp-collapse-title">Research</span></summary>'
+      +emptyState('ti-alert-triangle','Signals unavailable','The '+esc(SPORT.name)+' signals module didn\'t load, so the research tools can\'t run. Hard-refresh; if it persists, check nfl/signals.js loads with a 200.')+'</details>';
+    const avail=keys.filter(k=>typeof S.tiles[k]==='function');
+    if(!avail.length) return '<details class="tp-collapse fxsec res-wrap"><summary class="tp-collapse-sum">'
+      +'<i class="ti ti-microscope"></i><span class="tp-collapse-title">Research</span></summary>'
+      +emptyState('ti-microscope','No research tools','None of '+esc(keys.join(', '))+' are available in this sport\'s signals module.')+'</details>';
     const sel=(state.view.resTile&&avail.indexOf(state.view.resTile)>=0)?state.view.resTile:avail[0];
     const chips=avail.map(k=>{ const m=meta(k);
       return '<button class="res-chip'+(k===sel?' on':'')+'" onclick="_resPick(\''+k+'\')">'
