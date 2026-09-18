@@ -197,7 +197,11 @@ function asArray(v){ return Array.isArray(v) ? v : (v && v.fixture) || (v && v.t
 // as a confident but fictional kickoff time, so it's flagged and shown as TBC instead.
 function gameStart(g){
   if (!g) return {ms:null, hasTime:false};
-  var raw = String(g.utc || g.date || '');
+  // Every sport names this differently, so check them all in order of reliability:
+  //   NFL/AFL  utc          '2026-09-18T00:15:00Z' | '2026-09-18T09:40:00' (bare = UTC)
+  //   MLB      gameTimeUTC  '2026-09-18T22:40:00Z'
+  //   EPL      date         '2026-09-18T19:00:00Z' (full stamp lives in `date`)
+  var raw = String(g.utc || g.gameTimeUTC || g.startTime || g.kickoff || g.date || '');
   if (!raw) return {ms:null, hasTime:false};
   var hasTime = raw.indexOf('T') > 0 || /\d\d:\d\d/.test(raw);
   var s = raw;
@@ -220,7 +224,9 @@ function teamLogo(key, t){
   var url = rec.logo || '';                                   // EPL: baked into teams.json
   if (!url && cfg.logoCdn){                                   // AFL / NFL / MLB: CDN + id
     var id = (cfg.teamIds && cfg.teamIds[t] != null) ? cfg.teamIds[t] : String(t||'').toLowerCase();
-    url = cfg.logoCdn + id + (cfg.logoCdnExt || '');
+    // extension default matters: AFL/NFL set logoCdnExt='.png', MLB sets none and the
+    // MLB Stats API serves SVG - production defaults to '.svg', so match that exactly.
+    url = cfg.logoCdn + id + (cfg.logoCdnExt || cfg.logoExt || '.svg');
   }
   var ph = '<div class=&quot;fxr-logo-ph&quot;>'+esc(String(t).slice(0,3).toUpperCase())+'</div>';
   if (url) return '<img class="fxr-logo" src="'+esc(url)+'" alt="" loading="lazy" '
