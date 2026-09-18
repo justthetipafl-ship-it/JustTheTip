@@ -4,6 +4,9 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>Just The Tip — Lab</title>
+<link rel="icon" href="/AFL/assets/jtt-check.png">
+<link rel="apple-touch-icon" href="/AFL/assets/jtt-check.png">
+<meta name="theme-color" content="#0a0c0f">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@2.44.0/tabler-icons.min.css">
 <style>
   :root{
@@ -23,7 +26,10 @@
     border-bottom:1px solid var(--border);padding:10px 0;margin-bottom:12px;}
   .hdr-in{max-width:900px;margin:0 auto;padding:0 12px;display:flex;align-items:center;gap:10px;}
   .logo{display:flex;align-items:center;gap:8px;font-family:var(--font-display);font-weight:800;font-size:15px;letter-spacing:.3px;}
-  .logo i{color:var(--accent);font-size:20px;}
+  .brand-img{width:28px;height:28px;border-radius:50%;display:block;flex-shrink:0;}
+  .brand-fallback{display:none;align-items:center;}
+  .brand-fallback i{color:var(--accent);font-size:22px;}
+  .brand-text{white-space:nowrap;}
   .lab-tag{font-size:8px;font-weight:800;letter-spacing:.1em;text-transform:uppercase;color:var(--accent);
     border:1px solid var(--accent);border-radius:4px;padding:1px 5px;}
   .hdr-status{margin-left:auto;font-size:10px;color:var(--text-3);font-family:var(--font-mono);}
@@ -75,7 +81,12 @@
 </head>
 <body>
 <div class="hdr"><div class="hdr-in">
-  <span class="logo"><i class="ti ti-circle-check-filled"></i>Just The Tip<span class="lab-tag">Lab</span></span>
+  <span class="logo">
+    <img class="brand-img" src="/AFL/assets/jtt-check.png" alt="JTT"
+         onerror="this.style.display='none';this.nextElementSibling.style.display='inline-flex'">
+    <span class="brand-fallback"><i class="ti ti-circle-check-filled"></i></span>
+    <span class="brand-text">Just The Tip</span><span class="lab-tag">Lab</span>
+  </span>
   <span class="hdr-status" id="status">starting…</span>
 </div></div>
 <div class="wrap"><div id="app"><div class="boot">Loading fixtures…</div></div></div>
@@ -104,10 +115,10 @@
  * ========================================================================== */
 
 var SPORTS = {
-  afl: { key:'afl', dir:'AFL', name:'AFL',  logoCdn:'', abbr:{} },
-  nfl: { key:'nfl', dir:'nfl', name:'NFL',  logoCdn:'https://a.espncdn.com/i/teamlogos/nfl/500/', ext:'.png' },
-  epl: { key:'epl', dir:'EPL', name:'EPL',  logoCdn:'', abbr:{} },
-  mlb: { key:'mlb', dir:'mlb', name:'MLB',  logoCdn:'', abbr:{} }
+  afl: { key:'afl', dir:'AFL', name:'AFL' },
+  nfl: { key:'nfl', dir:'nfl', name:'NFL' },
+  epl: { key:'epl', dir:'EPL', name:'EPL' },
+  mlb: { key:'mlb', dir:'mlb', name:'MLB' }
 };
 
 var TIER1 = { fixture:'data/fixture.json', teams:'data/teams.json', meta:'data/meta.json' };
@@ -127,6 +138,29 @@ function $(id){ return document.getElementById(id); }
 function sportPath(key, p){ return '/'+SPORTS[key].dir+'/'+String(p).replace(/^[.\/]+/,''); }
 
 /* ---- loading ------------------------------------------------------------ */
+// Each sport's config.js assigns window.SPORT_CONFIG. That's a single global, so load them
+// one at a time and snapshot the result into state.sports[key].config. This is also what
+// makes logos work: every sport resolves them differently (CDN + id map, or a URL baked
+// into teams.json) and the config already knows which.
+var _cfgQueue = Promise.resolve();
+function loadConfig(key){
+  var S = state.sports[key];
+  if (S.config) return Promise.resolve(S.config);
+  _cfgQueue = _cfgQueue.then(function(){
+    return new Promise(function(done){
+      var prev = window.SPORT_CONFIG;
+      var el = document.createElement('script');
+      el.src = sportPath(key, 'config.js') + '?v=' + (S.version || Date.now());
+      el.onload = el.onerror = function(){
+        S.config = window.SPORT_CONFIG || {};
+        window.SPORT_CONFIG = prev;                 // restore so nothing leaks between sports
+        done(S.config);
+      };
+      document.head.appendChild(el);
+    });
+  });
+  return _cfgQueue;
+}
 function loadTier1(key){
   var S = state.sports[key];
   if (S.status === 'ready' || S.status === 'loading') return Promise.resolve();
@@ -137,6 +171,7 @@ function loadTier1(key){
     .catch(function(){ return ''; })
     .then(function(v){
       var q = (v||'').trim() ? ('?v='+encodeURIComponent(v.trim())) : '';
+      S.version = (v||'').trim();
       return Promise.all(Object.keys(TIER1).map(function(k){
         return fetch(sportPath(key, TIER1[k])+q, {cache:'reload'})
           .then(function(r){ return r.ok ? r.json() : null; })
@@ -144,6 +179,7 @@ function loadTier1(key){
           .catch(function(){});
       }));
     })
+    .then(function(){ return loadConfig(key); })
     .then(function(){
       S.idx.teamMap = {};
       (asArray(S.data.teams)||[]).forEach(function(t){
@@ -178,11 +214,17 @@ function teamName(key, t){
   var rec = state.sports[key].idx.teamMap[t];
   return (rec && (rec.name || rec.school || rec.displayName)) || String(t);
 }
-function teamLogo(key, t, size){
-  var S = SPORTS[key], rec = state.sports[key].idx.teamMap[t];
-  var url = (rec && rec.logo) || (S.logoCdn ? S.logoCdn + t + (S.ext||'.png') : '');
+function teamLogo(key, t){
+  var S = state.sports[key], cfg = S.config || {};
+  var rec = S.idx.teamMap[t] || {};
+  var url = rec.logo || '';                                   // EPL: baked into teams.json
+  if (!url && cfg.logoCdn){                                   // AFL / NFL / MLB: CDN + id
+    var id = (cfg.teamIds && cfg.teamIds[t] != null) ? cfg.teamIds[t] : String(t||'').toLowerCase();
+    url = cfg.logoCdn + id + (cfg.logoCdnExt || '');
+  }
+  var ph = '<div class=&quot;fxr-logo-ph&quot;>'+esc(String(t).slice(0,3).toUpperCase())+'</div>';
   if (url) return '<img class="fxr-logo" src="'+esc(url)+'" alt="" loading="lazy" '
-    +'onerror="this.outerHTML=\'<div class=&quot;fxr-logo-ph&quot;>'+esc(String(t).slice(0,3).toUpperCase())+'</div>\'">';
+    +'onerror="this.outerHTML=\''+ph+'\'">';
   return '<div class="fxr-logo-ph">'+esc(String(t).slice(0,3).toUpperCase())+'</div>';
 }
 
@@ -228,14 +270,14 @@ function fixtureCard(item){
         ? '<span class="fxr-ko-date">'+esc(localDate(ms))+'</span><span class="fxr-ko-time">'+esc(localTime(ms))+'</span>'
         : '<span class="fxr-ko-date">'+esc(localDate(ms))+'</span><span class="fxr-ko-time" style="color:var(--text-3);font-size:11px">time TBC</span>');
   return '<div class="fxr">'
-    + '<div class="fxr-team">'+teamLogo(k, g.away, 40)+'<div class="fxr-name">'+esc(teamName(k, g.away))+'</div></div>'
+    + '<div class="fxr-team">'+teamLogo(k, g.away)+'<div class="fxr-name">'+esc(teamName(k, g.away))+'</div></div>'
     + '<div class="fxr-center">'
       + '<span class="fxr-badge" style="color:'+col+';background:color-mix(in srgb,'+col+' 16%,transparent)">'+esc(SPORTS[k].name)+'</span>'
       + when
       + '<div class="fxr-vs">@</div>'
       + '<div class="fxr-venue">'+esc(g.venue||'TBC')+'</div>'
     + '</div>'
-    + '<div class="fxr-team">'+teamLogo(k, g.home, 40)+'<div class="fxr-name">'+esc(teamName(k, g.home))+'</div></div>'
+    + '<div class="fxr-team">'+teamLogo(k, g.home)+'<div class="fxr-name">'+esc(teamName(k, g.home))+'</div></div>'
     + '</div>';
 }
 
