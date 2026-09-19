@@ -372,6 +372,27 @@
   .fl-row{display:flex;align-items:center;gap:8px;padding:3px 0;font-size:11px;cursor:pointer;}
   .fl-nm{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
   .fl-c{font-family:var(--font-mono);font-size:9px;color:var(--text-3);flex:none;}
+  .sec-miss{display:flex;align-items:center;gap:7px;background:var(--surface-2);border:1px solid var(--border);
+    border-radius:10px;padding:9px 12px;margin-bottom:6px;font-size:11px;color:var(--text-3);}
+  .sec-miss i{color:#f59e0b;font-size:14px;flex:none;}
+  .crew-wrap{background:var(--surface-2);border:1px solid var(--border);border-radius:10px;margin-bottom:6px;overflow:hidden;}
+  .crew-sum{display:flex;align-items:center;gap:8px;padding:9px 12px;cursor:pointer;list-style:none;}
+  .crew-sum::-webkit-details-marker{display:none;}
+  .crew-sum i{color:var(--accent);font-size:15px;}
+  .crew-ttl{font-family:var(--font-display);font-size:12px;font-weight:800;letter-spacing:.02em;}
+  .crew-n{margin-left:auto;font-family:var(--font-mono);font-size:8px;color:var(--text-3);letter-spacing:.06em;}
+  .crew-body{padding:0 12px 9px;}
+  .deg-row{display:flex;align-items:center;gap:8px;padding:6px 0;border-top:1px solid var(--border);cursor:pointer;}
+  .deg-main{flex:1;min-width:0;}
+  .deg-nm{font-size:11px;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .deg-sub{font-size:8px;letter-spacing:.03em;color:var(--text-3);margin-top:1px;
+    overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .deg-val{flex:none;text-align:right;font-size:12px;font-weight:800;font-variant-numeric:tabular-nums;}
+  .deg-val .l{display:block;font-size:7px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;
+    color:var(--text-3);margin-top:1px;}
+  .deg-pair{display:flex;gap:10px;align-items:flex-start;}
+  .deg-odds{color:var(--accent);}
+  .crew-empty{font-size:10px;color:var(--text-3);padding:7px 0;}
   .lm-wrap{background:var(--surface-2);border:1px solid var(--border);border-radius:10px;padding:10px 12px;margin-bottom:6px;}
   .lm-stats{display:flex;flex-wrap:wrap;gap:7px;padding-bottom:9px;margin-bottom:6px;border-bottom:1px solid var(--border);}
   .lm-stat{flex:1 1 84px;background:var(--surface);border:1px solid var(--border);border-radius:7px;padding:6px 9px;}
@@ -1322,7 +1343,8 @@ function formCard(key, team, beforeMs){
   return '<div class="l5-card">'+head+strip+body+foot+'</div>';
 }
 function formSection(key, g){
-  if (!resultRows(key).length) return '';
+  if (!resultRows(key).length)
+    return secNote('Last 5', 'results.json returned nothing for '+SPORTS[key].name+' \u2014 the file is missing, empty, or failed to load.');
   var ms = gameStart(g).ms;
   return '<div class="dayband"><span>Last 5</span></div>'
     + '<div class="l5-grid">'+formCard(key, g.away, ms)+formCard(key, g.home, ms)+'</div>';
@@ -1422,7 +1444,10 @@ function slCard(key, team, mkt, win, max){
 }
 function leadersSection(key, g){
   var mkts = slMarkets(key);
-  if (!mkts.length || !(asArray(state.sports[key].data.gamelogs)||[]).length) return '';
+  if (!mkts.length)
+    return secNote('Stat Leaders', SPORTS[key].name+' config.js defines no markets (oddsMkts / multiMkts), so there is nothing to rank on.');
+  if (!(asArray(state.sports[key].data.gamelogs)||[]).length)
+    return secNote('Stat Leaders', 'gamelogs.json returned nothing for '+SPORTS[key].name+' \u2014 leaders are computed from game logs, so nothing can be ranked.');
   var mkt = state.view.slMkt[key] || mkts[0][0];
   if (!mkts.some(function(m){ return m[0] === mkt; })) mkt = mkts[0][0];
   var win = state.view.slWin || 'season';
@@ -1578,7 +1603,6 @@ function luCard(key, team, g){
 }
 function lineupSection(key, g){
   var a = luCard(key, g.away, g), h = luCard(key, g.home, g);
-  if (/No lineup on file/.test(a) && /No lineup on file/.test(h)) return '';
   return '<div class="dayband"><span>Lineup</span></div><div class="lu-grid">'+a+h+'</div>';
 }
 
@@ -1634,11 +1658,15 @@ function dvpCard(key, team, mkt, board){
 }
 function dvpSection(key, g){
   var mkts = dvpMarkets(key);
-  if (!mkts.length || !(asArray(state.sports[key].data.dvp)||[]).length) return '';
+  if (!mkts.length)
+    return secNote('DVP by Position', SPORTS[key].name+' config.js defines no dvpStats, so there are no markets to split by.');
+  if (!(asArray(state.sports[key].data.dvp)||[]).length)
+    return secNote('DVP by Position', 'dvp.json returned nothing for '+SPORTS[key].name+' \u2014 the file is missing, empty, or failed to load.');
   var mkt = state.view.dvpMkt[key] || mkts[0][0];
   if (!mkts.some(function(m){ return m[0] === mkt; })) mkt = mkts[0][0];
   var board = dvpBoard(key, mkt);
-  if (!Object.keys(board).length) return '';
+  if (!Object.keys(board).length)
+    return secNote('DVP by Position', 'No team in '+SPORTS[key].name+' records '+mktLabel(key, mkt)+' allowed by position.');
   var chips = mkts.map(function(m){
     return '<button class="sl-chip'+(m[0]===mkt?' on':'')+'" onclick="LAB.dvpMkt(\''+key+'\',\''+m[0]+'\')">'
       + esc(m[1])+'</button>'; }).join('');
@@ -1748,9 +1776,8 @@ function pdCard(key, team){
     + '<div class="ds-sub" style="margin:7px 0 0">For % / Against % \u00b7 gap in points</div></div>';
 }
 function distSection(key, g){
-  var cfg = POS_DIST_CFG[key]; if (!cfg) return '';
+  var cfg = POS_DIST_CFG[key]; if (!cfg) return '';       // sport has no positional volume stat - not a failure
   var a = pdCard(key, g.away), h = pdCard(key, g.home);
-  if (/No positional split/.test(a) && /No positional split/.test(h)) return '';
   return '<div class="dayband"><span>'+esc(cfg.label)+' Distribution</span></div>'
     + '<div class="ds-grid">'+a+h+'</div>';
 }
@@ -1888,9 +1915,8 @@ function btCard(key, team){
   return '<div class="bt-card">'+head+body+'</div>';
 }
 function halvesSection(key, g){
-  if (key !== 'epl') return '';
+  if (key !== 'epl') return '';                            // half-time scores are an EPL-only feed
   var a = btCard(key, g.away), h = btCard(key, g.home);
-  if (/No half-time scores/.test(a) && /No half-time scores/.test(h)) return '';
   return '<div class="dayband"><span>By The Halves</span></div><div class="bt-grid">'+a+h+'</div>';
 }
 function sbCard(key, team){
@@ -1910,9 +1936,8 @@ function sbCard(key, team){
     + '<div class="bt-sub" style="margin:0 0 2px">Hooked early \u00b7 prop carry-over risk</div>'+rows+'</div>';
 }
 function subsSection(key, g){
-  if (key !== 'epl') return '';
+  if (key !== 'epl') return '';                            // substitution events are an EPL-only feed
   var a = sbCard(key, g.away), h = sbCard(key, g.home);
-  if (/No substitution history/.test(a) && /No substitution history/.test(h)) return '';
   return '<div class="dayband"><span>Substitution Trends</span></div><div class="bt-grid">'+a+h+'</div>';
 }
 
@@ -1987,13 +2012,173 @@ function flCard(key, team){
     + '</div>';
 }
 function firstLastSection(key, g){
-  if (key !== 'epl' && key !== 'nfl') return '';
+  if (key !== 'epl' && key !== 'nfl') return '';           // no scoring-timing feed for AFL or MLB
   var a = flCard(key, g.away), h = flCard(key, g.home);
-  if (/No (goal-timing|first-TD) history/.test(a) && /No (goal-timing|first-TD) history/.test(h)) return '';
   return '<div class="dayband"><span>'+(key === 'nfl' ? 'First TD' : 'First &amp; Last')+'</span></div>'
     + '<div class="bt-grid">'+a+h+'</div>';
 }
 
+/* ---- Degen Crew -----------------------------------------------------------
+   Each sport's signals.js is a DI factory: JTTSignals.create(deps) -> {tiles}.
+   Every dep it asks for has an internal default, so the lab supplies real
+   implementations where it can and lets the module fall back where it can't -
+   rather than porting the whole production render layer to get one tile up.
+   Tiles are scoped to the focused fixture's two teams.                          */
+function crewFmt(v, d){ return v == null ? '\u2014' : (+v).toFixed(d == null ? 1 : d); }
+function crewEmpty(icon, title, sub){
+  return '<div class="crew-empty"><b>'+esc(title)+'</b>'+(sub ? ' \u2014 '+esc(sub) : '')+'</div>';
+}
+function crewWrap(icon, title, items, cls){
+  if (!items || !items.length) return '';
+  return '<details class="crew-wrap" open><summary class="crew-sum"><i class="ti '+esc(icon||'ti-bolt')+'"></i>'
+    + '<span class="crew-ttl">'+esc(title)+'</span><span class="crew-n">'+items.length+'</span></summary>'
+    + '<div class="crew-body">'+items.join('')+'</div></details>';
+}
+function crewRight(right){
+  var hl = function(t){ return String(t).replace(/(\$\d+(?:\.\d+)?)/g, '<b class="deg-odds">$1</b>'); };
+  if (right && typeof right === 'object'){
+    var cell = function(v,l){ return v == null ? '' : '<span>'+hl(String(v))+(l?'<span class="l">'+esc(l)+'</span>':'')+'</span>'; };
+    return '<span class="deg-pair">'+cell(right.v1,right.l1)+cell(right.v2,right.l2)+'</span>';
+  }
+  return hl(String(right == null ? '' : right));
+}
+function crewRow(key){
+  return function(name, col, right, sub, onclickName, card){
+    var who = onclickName || name;
+    return '<div class="deg-row" onclick="LAB.player(\''+key+'\',\''+esc(who).replace(/'/g,"\\'")+'\')">'
+      + '<div class="deg-main"><div class="deg-nm">'+esc(name)+'</div>'
+      + '<div class="deg-sub">'+(sub == null ? '' : sub)+'</div></div>'
+      + '<div class="deg-val" style="color:'+(col||'var(--text)')+'">'+crewRight(right)+'</div></div>';
+  };
+}
+function crewPriceForLine(key){
+  return function(name, statKey, line){
+    var d = state.sports[key].data.odds || {};
+    var best = null;
+    (d.alt || []).forEach(function(r){
+      if (!r || r.player !== name || r.market !== statKey || r.over == null) return;
+      if (Math.round(r.line + 0.5) < line) return;                    // ladder rung must reach the ask
+      if (!best || r.line < best.line) best = r;
+    });
+    if (best) return { price:best.over, label:Math.round(best.line+0.5)+'+', book:best.book };
+    var od = oddsForP(key, name, statKey);
+    if (od && od.over != null && od.line != null) return { price:od.over, label:od.line+' O', book:od.book };
+    return null;
+  };
+}
+function crewDeps(key, scope){
+  var S = state.sports[key];
+  var logs = function(n){ return (S.idx.logsByName || {})[n] || []; };
+  var season = String(curSeason(key));
+  return {
+    JTTScoring: S.scoring,
+    getData: function(){ return S.data; },
+    getScope: function(){ return scope; },
+    esc: esc, fmt: crewFmt,
+    abbr: function(t){ return abbrOf(key, t); },
+    teamLogo: function(t){ return teamLogo(key, t); },
+    posShort: function(p){ return String(p || ''); },
+    emptyState: crewEmpty, degWrap: crewWrap, degRow: crewRow(key),
+    _byGame: function(items, teamFn, rowFn){ return (items || []).map(rowFn); },   // one fixture: no headers
+    _fc: function(arr, fcap){
+      var seen = {};
+      return (arr || []).filter(function(x){
+        var o = (x && x.p) || (x && x.threat) || x || {};
+        var t = o.team || x.team;
+        if (t && scope && !scope.has(t)) return false;
+        if (o.name && t && !isPlayingP(key, o.name, t)) return false;
+        if (o.name){ if (seen[o.name]) return false; seen[o.name] = 1; }
+        return true;
+      }).slice(0, fcap || 8);
+    },
+    _degBadges: function(){ return ''; },
+    _fixtureSet: function(){ return scope; },
+    _roundNum: roundNum,
+    logsFor: logs, logsByName: logs,
+    curLogs: function(n){ return logs(n).filter(function(r){ return String(r.Year||r.year) === season; }); },
+    curSeason: function(){ return season; },
+    byName: function(n){ return (S.idx.byName || {})[n]; },
+    teamMap: function(){ return S.idx.teamMap || {}; },
+    players: S.idx.players || [],
+    dvp: asArray(S.data.dvp) || [],
+    dvpRank: function(opp, position, stat){
+      var rows = (asArray(S.data.dvp) || []).filter(function(r){ return r.pos === position; });
+      if (!rows.length || rows[0][stat] == null) return null;
+      var oppRow = null;
+      rows.forEach(function(r){ if (normTeam(r.team) === normTeam(opp)) oppRow = r; });
+      if (!oppRow) return null;
+      var vals = rows.map(function(r){ return +r[stat] || 0; });
+      var avg = vals.reduce(function(a,b){ return a+b; }, 0) / vals.length;
+      var sorted = vals.slice().sort(function(a,b){ return b-a; });
+      return { rank:sorted.indexOf(+oppRow[stat]||0)+1, total:rows.length,
+               pct:avg ? ((oppRow[stat]-avg)/avg*100) : 0, allowed:oppRow[stat] };
+    },
+    oddsFor: function(n, m){ return oddsForP(key, n, m); },
+    priceForLine: crewPriceForLine(key),
+    hasAnyOdds: function(){ return oddsRows(S.data.odds).length > 0; },
+    nextOpp: function(t){
+      var f = state.view.focus;
+      if (f && f.sport === key){ if (f.g.home === t) return f.g.away; if (f.g.away === t) return f.g.home; }
+      return (S.idx.nextOpp || {})[t];
+    },
+    playersOnTeam: function(t){ return playersOnTeam(key, t); },
+    isPlaying: function(n, t){ return isPlayingP(key, n, t); },
+    bookName: function(b){
+      var m = { sportsbet:'Sportsbet', ladbrokes_au:'Ladbrokes', tab:'TAB', pointsbetau:'Pointsbet',
+                betr_au:'Betr', unibet:'Unibet', betfair_ex_au:'Betfair', draftkings:'DraftKings',
+                fanduel:'FanDuel', betmgm:'BetMGM' };
+      return m[b] || (b ? String(b).replace(/_au$/,'').replace(/^\w/, function(c){ return c.toUpperCase(); }) : '');
+    },
+    isFocused: function(){ return true; },
+    SIGNAL_MIN_ODDS: { over:null, under:null }
+  };
+}
+var SHELL_OWNED_TILES = { board:1, multi:1, green:1, death:1, compare:1, greenlights:0 };
+function crewInstance(key, scope){
+  var S = state.sports[key];
+  if (!S.signals || !S.signals.create) return null;
+  var sig = [key].concat(scope ? Array.from(scope).sort() : []).join('|');
+  if (S._crew && S._crewSig === sig) return S._crew;
+  try { S._crew = S.signals.create(crewDeps(key, scope)); S._crewSig = sig; }
+  catch(e){ S._crew = null; S._crewErr = e && e.message; }
+  return S._crew;
+}
+function crewSection(key, g){
+  var S = state.sports[key], cfg = S.config || {};
+  var crew = cfg.crew || [];
+  if (!crew.length)
+    return secNote('Degen Crew', SPORTS[key].name+' config.js defines no crew list, so there are no tiles to render.');
+  if (!S.signals)
+    return secNote('Degen Crew', SPORTS[key].name+' signals.js didn\u2019t load \u2014 hard-refresh; if it persists the file is cached or broken.');
+  var inst = crewInstance(key, new Set([g.home, g.away]));
+  if (!inst)
+    return secNote('Degen Crew', SPORTS[key].name+' signals.js loaded but create() threw'
+      + (S._crewErr ? ': '+S._crewErr : '.'));
+  var tiles = inst.tiles || {};
+  var html = '', fired = 0, shell = [], missing = [];
+  crew.forEach(function(c){
+    var k = c.k;
+    if (SHELL_OWNED_TILES[k]){ shell.push(c.n); return; }             // owned by the shell, not the module
+    if (typeof tiles[k] !== 'function'){ missing.push(c.n); return; }
+    var out = '';
+    try { out = tiles[k]() || ''; }
+    catch(e){ out = '<div class="crew-empty"><b>'+esc(c.n)+'</b> \u2014 tile threw: '+esc(e && e.message || e)+'</div>'; }
+    if (out){ html += out; fired++; }
+  });
+  var note = '';
+  if (shell.length) note += '<div class="sec-miss"><i class="ti ti-alert-triangle"></i>'
+    + shell.length+' shell-owned tile'+(shell.length===1?'':'s')+' not ported to the lab yet: '+esc(shell.join(', '))+'</div>';
+  if (missing.length) note += '<div class="sec-miss"><i class="ti ti-alert-triangle"></i>'
+    + esc(missing.join(', '))+' \u2014 listed in config.js but '+SPORTS[key].name+'\u2019s signals.js exposes no tile for '
+    + (missing.length===1?'it':'them')+'.</div>';
+  if (!html && !note) return secNote('Degen Crew', 'No tile cleared the gate for this fixture.');
+  return '<div class="dayband"><span>Degen Crew \u00b7 '+fired+' live</span></div>' + html + note;
+}
+
+function secNote(title, why){
+  return '<div class="dayband"><span>'+title+'</span></div>'
+    + '<div class="sec-miss"><i class="ti ti-alert-triangle"></i>'+esc(why)+'</div>';
+}
 function focusPage(){
   var f = state.view.focus;
   if (!f) return '';
@@ -2034,6 +2219,7 @@ function focusPage(){
     + (S.t3==='ready' ? halvesSection(key, g) : '')
     + (S.t3==='ready' ? subsSection(key, g) : '')
     + (S.t3==='ready' ? firstLastSection(key, g) : '')
+    + (S.t3==='ready' ? crewSection(key, g) : '')
     + h2hSection(key, g)
     + h2hHistory(key, g)
     + '<div class="dayband"><span>Players \u00b7 '+ps.length+'</span></div><div class="gp-list">'+list+'</div>';
