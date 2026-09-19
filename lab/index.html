@@ -187,6 +187,20 @@
   .h2h-v.r{align-items:flex-end;}
   .h2h-pc{font-size:8px;font-weight:700;letter-spacing:.02em;}
   .h2h-pc.up{color:#22c55e;} .h2h-pc.down{color:#f97316;} .h2h-pc.flat{color:var(--text-3);}
+  .lm-wrap{background:var(--surface-2);border:1px solid var(--border);border-radius:10px;padding:10px 12px;margin-bottom:6px;}
+  .lm-stats{display:flex;flex-wrap:wrap;gap:7px;padding-bottom:9px;margin-bottom:6px;border-bottom:1px solid var(--border);}
+  .lm-stat{flex:1 1 84px;background:var(--surface);border:1px solid var(--border);border-radius:7px;padding:6px 9px;}
+  .lm-stat span{display:block;font-size:8px;font-weight:800;letter-spacing:.05em;text-transform:uppercase;color:var(--text-3);}
+  .lm-stat b{display:block;font-family:var(--font-display);font-size:15px;font-weight:800;margin-top:1px;}
+  .lm-list{display:flex;flex-direction:column;}
+  .lm-row{display:flex;align-items:center;gap:8px;padding:5px 0;font-size:11px;border-bottom:1px solid var(--border);}
+  .lm-row:last-child{border-bottom:0;}
+  .lm-date{font-family:var(--font-mono);font-size:9px;color:var(--text-3);min-width:70px;}
+  .lm-t{font-weight:700;color:var(--text-3);min-width:38px;}
+  .lm-t.win{color:var(--accent);}
+  .lm-sc{font-weight:800;font-variant-numeric:tabular-nums;min-width:54px;text-align:center;}
+  .lm-meta{margin-left:auto;font-size:8px;color:var(--text-3);text-transform:uppercase;letter-spacing:.04em;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:40%;}
   .gp-list{display:flex;flex-direction:column;gap:3px;}
   .gp-row{display:flex;align-items:center;gap:9px;padding:8px 11px;font-size:12px;cursor:pointer;
     background:var(--surface);border:1px solid var(--border);border-radius:8px;}
@@ -908,6 +922,76 @@ function h2hSection(key, g){
     + '<span class="h2h-gp">per game</span><span>'+esc(abbrOf(key,g.away))+'</span></div>'+rows+'</div>';
 }
 
+/* ---- ported: Last Time They Met ------------------------------------------ */
+// Score fields differ per sport (NFL/MLB use hs/as, AFL/EPL use homeScore/awayScore) and
+// EPL additionally carries corners, cards and half-time scores - so normalise on read and
+// surface the extras only where they exist.
+function resScore(r, side){
+  if (!r) return null;
+  var v = side === 'home' ? (r.homeScore != null ? r.homeScore : r.hs)
+                          : (r.awayScore != null ? r.awayScore : r.as);
+  return (v == null || !isFinite(+v)) ? null : +v;
+}
+function meetings(key, g, limit){
+  var rows = asArray(state.sports[key].data.results) || [];
+  var want = moKey(g.home, g.away);
+  var out = [];
+  rows.forEach(function(r){
+    if (!r || !r.home || !r.away) return;
+    if (moKey(r.home, r.away) !== want) return;
+    if (resScore(r,'home') == null) return;
+    out.push(r);
+  });
+  out.sort(function(a,b){ return String(b.date||'').localeCompare(String(a.date||'')); });
+  return limit ? out.slice(0, limit) : out;
+}
+function h2hHistory(key, g){
+  var all = meetings(key, g);
+  if (!all.length) return '';
+  var recent = all.slice(0, 6);
+  // record from the perspective of the fixture's home team, regardless of who hosted
+  var w = 0, l = 0, d = 0, totSum = 0, marSum = 0;
+  var extra = { corners:[], cards:[] };
+  all.forEach(function(r){
+    var hs = resScore(r,'home'), as = resScore(r,'away');
+    var homeIsG = normTeam(r.home) === normTeam(g.home);
+    var us = homeIsG ? hs : as, them = homeIsG ? as : hs;
+    if (us > them) w++; else if (us < them) l++; else d++;
+    totSum += (hs + as); marSum += Math.abs(hs - as);
+    if (r.cornersHome != null) extra.corners.push((+r.cornersHome||0) + (+r.cornersAway||0));
+    if (r.cardsHome != null)   extra.cards.push((+r.cardsHome||0) + (+r.cardsAway||0));
+  });
+  var n = all.length;
+  var avg = function(a){ return a.length ? (a.reduce(function(x,y){return x+y;},0)/a.length) : null; };
+  var stat = function(lab, val){ return val==null?'':'<div class="lm-stat"><span>'+esc(lab)+'</span><b>'+val+'</b></div>'; };
+  var summary = '<div class="lm-stats">'
+    + stat(abbrOf(key,g.home)+' record', w+'-'+l+(d?'-'+d:''))
+    + stat('Avg total', (totSum/n).toFixed(1))
+    + stat('Avg margin', (marSum/n).toFixed(1))
+    + stat('Avg corners', extra.corners.length ? avg(extra.corners).toFixed(1) : null)
+    + stat('Avg cards', extra.cards.length ? avg(extra.cards).toFixed(1) : null)
+    + '</div>';
+  var list = recent.map(function(r){
+    var hs = resScore(r,'home'), as = resScore(r,'away');
+    var win = hs === as ? null : (hs > as ? r.home : r.away);
+    var when = String(r.date||'').slice(0,10);
+    var meta = [];
+    if (r.year || r.season) meta.push(r.year || r.season);
+    if (r.round) meta.push('R'+r.round);
+    else if (r.week && String(r.week).length <= 2) meta.push('W'+r.week);
+    if (r.venue) meta.push(r.venue);
+    return '<div class="lm-row">'
+      + '<span class="lm-date">'+esc(when)+'</span>'
+      + '<span class="lm-t'+(win && normTeam(win)===normTeam(r.home) ? ' win' : '')+'">'+esc(abbrOf(key,r.home))+'</span>'
+      + '<span class="lm-sc">'+hs+' &ndash; '+as+'</span>'
+      + '<span class="lm-t'+(win && normTeam(win)===normTeam(r.away) ? ' win' : '')+'">'+esc(abbrOf(key,r.away))+'</span>'
+      + (meta.length ? '<span class="lm-meta">'+esc(meta.join(' \u00b7 '))+'</span>' : '')
+      + '</div>';
+  }).join('');
+  return '<div class="dayband"><span>Last time they met \u00b7 '+n+' meeting'+(n===1?'':'s')+'</span></div>'
+    + '<div class="lm-wrap">'+summary+'<div class="lm-list">'+list+'</div></div>';
+}
+
 // Players in this game that have any posted price, grouped by team.
 function gamePlayers(key, g){
   var d = state.sports[key].data.odds || {};
@@ -958,6 +1042,7 @@ function focusPage(){
     + (S.t3==='ready' ? valueBets(key, g) : '')
     + '<div class="dayband"><span>Match markets</span></div>' + moBlock(key, g)
     + h2hSection(key, g)
+    + h2hHistory(key, g)
     + '<div class="dayband"><span>Players \u00b7 '+ps.length+'</span></div><div class="gp-list">'+list+'</div>';
 }
 function playerPanel(){
