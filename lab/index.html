@@ -2363,6 +2363,16 @@ function oppOf(key, r){
   var mine = r.Team || r.team;
   return normTeam(pair[0]) === normTeam(mine) ? pair[1] : pair[0];
 }
+function underCandidates(key, name, mkt){
+  // Unders live only on two-way rows - no alt ladder in any sport carries one - so a Bogey
+  // can only be priced where a posted under exists. EPL has none at all today.
+  var d = state.sports[key].data.odds || {}, rows = (d.books && d.books.length ? d.books : (d.lines || [])), out = [];
+  rows.forEach(function(r){
+    if (!r || r.player !== name || r.market !== mkt || r.under == null || r.line == null) return;
+    out.push({ line:+r.line, price:+r.under, book:r.book });
+  });
+  return out.sort(function(a,b){ return a.line - b.line; });    // tightest under first
+}
 function h2hSplit(key, name){
   var rows = (state.sports[key].idx.logsByName || {})[name] || [], byOpp = {};
   rows.forEach(function(r){
@@ -2402,15 +2412,19 @@ function h2hSignals(key, g, kind){
         var avgFlag = (edge != null) && (kind === 'bunny' ? mine > edge : mine < edge);
         var diffPct = (edge != null && edge > 0)
           ? (kind === 'bunny' ? (mine - edge) / edge : (edge - mine) / edge) * 100 : null;
-        // LINE flavour needs a posted market: cleared it every meeting, or never cleared it
-        var od = null;
-        streakCandidates(key, p.name, k).forEach(function(c){
-          if (od) return;
-          if (c.price < (kind === 'bunny' ? STREAK_ODDS_FLOOR : SIG_ODDS_FLOOR)) return;
-          od = c;
-        });
-        var lineFlag = false;
-        if (od) lineFlag = vals.every(function(v){ return kind === 'bunny' ? v > od.line : v <= od.line; });
+        // LINE flavour: find the line the record actually supports, not whichever one is posted.
+        // Bunny  -> hardest line they cleared in EVERY meeting (candidates run hardest-first).
+        // Bogey  -> tightest under they NEVER cleared (candidates run cheapest-line-first), priced
+        //           off the posted under, since that is the bet being described.
+        var od = null, lineFlag = false;
+        var cands = kind === 'bunny' ? streakCandidates(key, p.name, k) : underCandidates(key, p.name, k);
+        var floor = kind === 'bunny' ? STREAK_ODDS_FLOOR : SIG_ODDS_FLOOR;
+        for (var ci=0; ci<cands.length; ci++){
+          var c = cands[ci];
+          if (c.price < floor) continue;
+          var holds = vals.every(function(v){ return kind === 'bunny' ? v > c.line : v <= c.line; });
+          if (holds){ od = c; lineFlag = true; break; }
+        }
         if (!avgFlag && !lineFlag) return;
         out.push({ name:p.name, team:team, opp:opp, pos:posShortP(p), mkt:k, label:m[1],
                    mine:mine, base:lg.avg, edge:edge, edgeOpp:edgeOpp, diffPct:diffPct,
@@ -2427,7 +2441,7 @@ function h2hSignals(key, g, kind){
 function h2hSigRow(key, r){
   var up = r.kind === 'bunny';
   var meets = r.line != null ? '<div class="h2h-meet">'+r.vals.map(function(v){
-      var hit = v > r.line;
+      var hit = up ? v > r.line : v <= r.line;
       return '<span class="'+(hit ? 'over' : 'under')+'">'+(v % 1 ? v.toFixed(1) : v)+'</span>'; }).join('')+'</div>'
     : '<div class="h2h-meet">'+r.vals.map(function(v){
       return '<span>'+(v % 1 ? v.toFixed(1) : v)+'</span>'; }).join('')+'</div>';
