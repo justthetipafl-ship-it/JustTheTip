@@ -406,6 +406,7 @@
   .stk-odds{margin-top:7px;display:inline-block;font-family:var(--font-mono);font-size:10px;color:var(--text);
     border:1px solid var(--border);border-radius:5px;padding:3px 7px;}
   .stk-book{display:block;font-family:var(--font-mono);font-size:7px;color:var(--text-3);margin-top:3px;}
+  .stk-odds.short{color:var(--text-3);border-style:dashed;}
   .lm-wrap{background:var(--surface-2);border:1px solid var(--border);border-radius:10px;padding:10px 12px;margin-bottom:6px;}
   .lm-stats{display:flex;flex-wrap:wrap;gap:7px;padding-bottom:9px;margin-bottom:6px;border-bottom:1px solid var(--border);}
   .lm-stat{flex:1 1 84px;background:var(--surface);border:1px solid var(--border);border-radius:7px;padding:6px 9px;}
@@ -2045,6 +2046,10 @@ function firstLastSection(key, g){
    synthetic line (realisticLine2) because AFL odds were patchy; the lab has odds
    in tier 2, so a streak is only shown against a line you can actually bet.       */
 var STREAK_MIN = 4, STREAK_PIPS = 8, SIG_MAX_ROWS = 8, STREAK_WINDOW = 20;
+// Production runs one floor for every signal (SIG_ODDS_FLOOR = 1.60, enforced in
+// collectOU). Streakers gets its own, lower one: the play here is a live run, not a
+// price edge, so $1.20 still pays while $1.05 chalk stays out.
+var SIG_ODDS_FLOOR = 1.60, STREAK_ODDS_FLOOR = 1.20, SIG_KEEP_CHALK = false;
 // MLB ships batters and pitchers in one players.json, and both carry an 'H'. Without this
 // gate a pitcher's hits-ALLOWED gets streak-tested against the batter hits market.
 var BAT_ONLY = { H:1, TB:1, HR:1, RBI:1, R:1, SB:1 }, ARM_ONLY = { K:1 };
@@ -2094,12 +2099,17 @@ function streakers(key, g){
         logs.forEach(function(r){ var v = r[k]; if (v != null && isFinite(+v)) vals.push(+v); });
         vals = vals.slice(0, STREAK_WINDOW);                 // a streak is a recent-form claim, not a career one
         if (vals.length < 5) return;
-        var row = null;
+        var row = null, chalk = null;
         streakCandidates(key, p.name, k).forEach(function(od){
           if (row) return;                                   // candidates are hardest-first: first hit wins
           var streak = 0;
           for (var i=0;i<vals.length;i++){ if (vals[i] > od.line) streak++; else break; }
           if (streak < STREAK_MIN) return;
+          if (od.price < STREAK_ODDS_FLOOR && !chalk){          // remember it, but keep looking for one that pays
+            chalk = { od:od, streak:streak };
+            return;
+          }
+          if (od.price < STREAK_ODDS_FLOOR) return;
           var n = Math.min(10, vals.length), hits = 0;
           for (var j=0;j<n;j++){ if (vals[j] > od.line) hits++; }
           var w = vals.slice(0, 10).slice().sort(function(x,y){ return x-y; });
@@ -2108,18 +2118,30 @@ function streakers(key, g){
                   line:od.line, price:od.price, book:od.book, alt:od.alt, streak:streak, hits:hits, n:n,
                   med:med, last:vals.slice(0, STREAK_PIPS).reverse() };
         });
+        if (!row && chalk && SIG_KEEP_CHALK){                                  // nothing on the ladder clears the floor
+          var wc = vals.slice(0, 10).slice().sort(function(x,y){ return x-y; });
+          var medc = wc.length % 2 ? wc[(wc.length-1)/2] : (wc[wc.length/2-1] + wc[wc.length/2])/2;
+          var nc = Math.min(10, vals.length), hc = 0;
+          for (var q=0;q<nc;q++){ if (vals[q] > chalk.od.line) hc++; }
+          row = { name:p.name, team:team, opp:opp, pos:posShortP(p), mkt:k, label:m[1],
+                  line:chalk.od.line, price:chalk.od.price, book:chalk.od.book, alt:chalk.od.alt,
+                  streak:chalk.streak, hits:hc, n:nc, med:medc, short:true,
+                  last:vals.slice(0, STREAK_PIPS).reverse() };
+        }
         if (!row) return;
         if (!best || row.streak > best.streak || (row.streak === best.streak && row.price > best.price)) best = row;
       });
       if (best) out.push(best);                                   // one line per player: their longest live streak
     });
   });
-  // At the 20-game cap streak length stops separating anything, so ties fall to how
-  // comfortably the median clears the line, then to price.
+  // Sorting on raw streak length puts the cheapest rungs on top, because a longer run is
+  // usually just a softer line. Bands instead: a 17-gamer and a 20-gamer are the same
+  // claim, so inside a band the better-paying run leads, then the bigger clearance.
   var margin = function(r){ return (r.med == null) ? 0 : (r.med - r.line) / Math.max(r.line, 0.5); };
-  out.forEach(function(r){ r.margin = margin(r); });
+  var band = function(n){ return n >= 20 ? 0 : (n >= 10 ? 1 : (n >= 7 ? 2 : 3)); };
+  out.forEach(function(r){ r.margin = margin(r); r.band = band(r.streak); });
   out.sort(function(a,b){
-    return (b.streak - a.streak) || (b.margin - a.margin) || (b.price - a.price);
+    return (a.band - b.band) || (b.price - a.price) || (b.margin - a.margin) || (b.streak - a.streak);
   });
   return out.slice(0, SIG_MAX_ROWS);
 }
@@ -2138,12 +2160,12 @@ function streakRow(key, r){
         + esc((r.pos ? r.pos+' \u00b7 ' : '')+abbrOf(key, r.team))+'</span></div>'
       + '<div class="stk-bet">'+ask+'+ '+esc(r.label)+' \u00b7 v '+esc(abbrOf(key, r.opp))
         + (r.med != null ? ' \u00b7 med '+(r.med % 1 ? r.med.toFixed(1) : r.med) : '')
-        + (r.alt ? ' \u00b7 alt' : '')+'</div>'
+        + (r.alt ? ' \u00b7 alt' : '')+(r.short ? ' \u00b7 under $'+STREAK_ODDS_FLOOR.toFixed(2) : '')+'</div>'
       + pips
     + '</div>'
     + '<div class="stk-right"><div class="stk-hit">'+r.streak+(r.streak >= STREAK_WINDOW ? '+' : '')+'</div>'
       + '<div class="stk-hitl">STRAIGHT</div>'
-      + '<div class="stk-odds">$'+r.price.toFixed(2)+'</div>'
+      + '<div class="stk-odds'+(r.short ? ' short' : '')+'">$'+r.price.toFixed(2)+'</div>'
       + '<span class="stk-book">'+esc(r.book||'')+' \u00b7 '+r.hits+'/'+r.n+'</span></div></div>';
 }
 function signalsSection(key, g){
@@ -2153,8 +2175,8 @@ function signalsSection(key, g){
   var priced = oddsRows(S.data.odds).length;
   var rows = priced ? streakers(key, g) : [];
   var why = priced
-    ? 'No player on this fixture has cleared their posted line '+STREAK_MIN+' games straight \u2014 '
-      + 'this fixture may simply have no player markets posted yet.'
+    ? 'No player on this fixture has cleared a line paying $'+STREAK_ODDS_FLOOR.toFixed(2)+'+ for '
+      + STREAK_MIN+' games straight. Longer streaks exist at shorter prices, but those are chalk, not signals.'
     : 'No posted lines loaded for '+SPORTS[key].name+' \u2014 streaks are measured against a real market, so nothing can fire.';
   return '<div class="dayband"><span>Degen Signals</span></div>'
     + sigTile('ti-flame', 'Streakers', 'Cleared the posted line, game after game',
