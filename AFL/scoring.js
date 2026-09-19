@@ -851,6 +851,9 @@ window.JTTScoring = (function () {
   // ---- configure ----
   function configure(ctx){
     PD=(ctx.players||[]).map(aliasPlayer);
+    // TD was declared and read (muPct at ~L109, BA=_avgsOf(TD) below) but never assigned here,
+    // so muPct() returned null for every opponent and the matchup term in scoreCMP never fired.
+    TD=ctx.teams||[];
     TF=ctx.teamsForm||ctx.teams||[];
     DVP=ctx.dvp||[];
     _dvpIdx=ctx.logsByName||{};
