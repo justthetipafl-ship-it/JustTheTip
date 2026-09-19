@@ -297,6 +297,19 @@
   .ds-bar-t i{display:block;height:100%;background:var(--accent);}
   .ds-avg{min-width:38px;text-align:right;font-variant-numeric:tabular-nums;font-weight:800;font-size:13px;flex:none;}
   .ds-pc{min-width:38px;text-align:right;font-family:var(--font-mono);font-size:9px;color:var(--text-3);flex:none;}
+  .pd-wrap{display:flex;align-items:center;gap:12px;}
+  .pd-pies{display:flex;gap:10px;flex:none;}
+  .pd-pw{text-align:center;}
+  .pd-pie{width:62px;height:62px;border-radius:50%;border:1px solid var(--border);}
+  .pd-cap{font-family:var(--font-mono);font-size:8px;letter-spacing:.07em;text-transform:uppercase;
+    color:var(--text-3);margin-top:4px;}
+  .pd-leg{flex:1;min-width:0;}
+  .pd-leg-r{display:flex;align-items:center;gap:6px;padding:1px 0;font-size:10px;}
+  .pd-dot{width:8px;height:8px;border-radius:2px;flex:none;}
+  .pd-leg-nm{width:30px;flex:none;font-weight:700;color:var(--text-2);}
+  .pd-leg-v{flex:1;font-variant-numeric:tabular-nums;font-family:var(--font-mono);font-size:9px;color:var(--text-3);}
+  .pd-leg-g{min-width:24px;text-align:right;font-variant-numeric:tabular-nums;font-size:9px;font-weight:700;color:var(--text-3);}
+  .pd-leg-g.up{color:var(--accent);} .pd-leg-g.down{color:#f97316;}
   .lm-wrap{background:var(--surface-2);border:1px solid var(--border);border-radius:10px;padding:10px 12px;margin-bottom:6px;}
   .lm-stats{display:flex;flex-wrap:wrap;gap:7px;padding-bottom:9px;margin-bottom:6px;border-bottom:1px solid var(--border);}
   .lm-stat{flex:1 1 84px;background:var(--surface);border:1px solid var(--border);border-radius:7px;padding:6px 9px;}
@@ -1572,94 +1585,111 @@ function dvpSection(key, g){
     + '<div class="dv-grid">'+dvpCard(key,g.away,mkt,board)+dvpCard(key,g.home,mkt,board)+'</div>';
 }
 
-/* ---- team section: volume distribution ------------------------------------
-   AFL disposals and NFL targets are the same question - who actually gets the ball
-   - so one renderer drives both off a per-sport spec. Share is measured against the
-   team's own total in the same games, not a league average.                        */
-var DIST_SPEC = {
-  afl: { stat:'disposals', title:'Disposal Distribution', unit:'disp', parts:[['kicks','k'],['handballs','hb']] },
-  nfl: { stat:'targets',   title:'Target Distribution',   unit:'tgt',  parts:[['receptions','rec'],['recYds','yds']] }
+/* ---- team section: positional distribution --------------------------------
+   Ported from the production tool's _posDistribution: two pies per team, the split
+   of the ball this team's OWN positions take (For) against the split its defence
+   gives up (Against). AFL reads Against from dvp.json; NFL has no positional DVP
+   for targets, so it aggregates gamelogs by opponent on a rolling window.          */
+var AFL_POS = [
+  {k:'Key Defender',s:'KD',c:'#1d4ed8'},{k:'Gen. Defender',s:'GD',c:'#38bdf8'},{k:'Midfielder',s:'MID',c:'#22c55e'},
+  {k:'Mid-Forward',s:'MF',c:'#eab308'},{k:'Gen. Forward',s:'GF',c:'#f97316'},{k:'Key Forward',s:'KF',c:'#ef4444'},
+  {k:'Ruck',s:'RUC',c:'#a855f7'}
+];
+var NFL_POS = [ {k:'WR',s:'WR',c:'#dc2626'},{k:'RB',s:'RB',c:'#6b7280'},{k:'TE',s:'TE',c:'#38bdf8'} ];
+var POS_DIST_CFG = {
+  afl: { stat:'disposals', label:'Disposal', groups:AFL_POS, against:'dvp' },
+  nfl: { stat:'targets',   label:'Target',   groups:NFL_POS, against:'gamelog' }
 };
-function teamMatches(key, team, win){
-  var logs = asArray(state.sports[key].data.gamelogs) || [];
-  var want = normTeam(team), season = curSeason(key), byM = {};
-  for (var i=0;i<logs.length;i++){
-    var r = logs[i];
-    if (!r || normTeam(r.Team||r.team) !== want) continue;
-    var id = r.MatchId || r.matchId || ((r.Year||'')+'|'+(r.RoundName!=null?r.RoundName:r.Week));
-    (byM[id] = byM[id] || []).push(r);
-  }
-  var ids = Object.keys(byM);
-  ids.sort(function(a,b){
-    var ra = byM[a][0], rb = byM[b][0];
-    var ma = logMs(ra), mb = logMs(rb);
-    if (ma != null && mb != null && ma !== mb) return mb - ma;
-    return logSeq(rb) - logSeq(ra);
+function glAgainst(key, stat, groups){
+  var S = state.sports[key];
+  S.idx.glAg = S.idx.glAg || {};
+  if (S.idx.glAg[stat]) return S.idx.glAg[stat];
+  var gk = {}; groups.forEach(function(p){ gk[p.k] = 1; });
+  var posMap = {}; (S.idx.players||[]).forEach(function(p){ if (p && p.name) posMap[p.name] = p.position; });
+  var logs = asArray(S.data.gamelogs) || [];
+  // Rolling last-10-games-per-DEFENCE, not a hard season lock: two weeks into a season
+  // nobody has current-year sample, which would leave Against empty for most teams.
+  var byOppGame = {}, curYr = 0;
+  logs.forEach(function(r){
+    var pos = posMap[r.Player]; if (!pos || !gk[pos]) return;
+    var opp = r.Opp; if (!opp) return;
+    var y = +r.Year||0; if (y > curYr) curYr = y;
+    (byOppGame[opp] = byOppGame[opp] || {})[y*100 + (+r.Week||0)] = 1;
   });
-  if (win === 'l5') ids = ids.slice(0,5);
-  else ids = ids.filter(function(id){ return (+(byM[id][0].Year||byM[id][0].year)||0) === season; });
-  return ids.map(function(id){ return byM[id]; });
+  var keep = {};
+  Object.keys(byOppGame).forEach(function(opp){
+    var all = Object.keys(byOppGame[opp]).map(Number).sort(function(a,b){ return b-a; });
+    var cur = all.filter(function(yw){ return Math.floor(yw/100) === curYr; });
+    keep[opp] = {};
+    (cur.length >= 10 ? cur : all.slice(0,10)).forEach(function(yw){ keep[opp][yw] = 1; });
+  });
+  var ag = {};
+  logs.forEach(function(r){
+    var pos = posMap[r.Player]; if (!pos || !gk[pos]) return;
+    var opp = r.Opp; if (!opp) return;
+    var yw = (+r.Year||0)*100 + (+r.Week||0);
+    if (!keep[opp] || !keep[opp][yw]) return;
+    (ag[opp] = ag[opp] || {})[pos] = (ag[opp][pos]||0) + (+r[stat]||0);
+  });
+  return (S.idx.glAg[stat] = ag);
 }
-function distribution(key, team, win){
-  var spec = DIST_SPEC[key]; if (!spec) return null;
-  var games = teamMatches(key, team, win);
-  if (!games.length) return null;
-  var tot = 0, byP = {}, n = 0;
-  games.forEach(function(rows){
-    var gTot = 0, seen = false;
-    rows.forEach(function(r){
-      var v = r[spec.stat];
-      if (v == null || !isFinite(+v)) return;
-      seen = true; gTot += +v;
-      var nm = r.Player || r.player; if (!nm) return;
-      var e = byP[nm] || (byP[nm] = { name:nm, sum:0, games:0, parts:{} });
-      e.sum += +v; e.games++;
-      spec.parts.forEach(function(pt){
-        var pv = r[pt[0]]; if (pv != null && isFinite(+pv)) e.parts[pt[0]] = (e.parts[pt[0]]||0) + +pv;
-      });
+function posDist(key, team){
+  var cfg = POS_DIST_CFG[key]; if (!cfg) return null;
+  var S = state.sports[key], G = cfg.groups, stat = cfg.stat, fd = {}, ad = {};
+  G.forEach(function(p){ fd[p.k] = 0; ad[p.k] = 0; });
+  // For: games-weighted season volume, so a 30-disposal player who missed half the year
+  // doesn't carry the same weight as one who played every week.
+  (S.idx.players||[]).forEach(function(p){
+    if (!p || normTeam(p.team) !== normTeam(team) || fd[p.position] == null) return;
+    fd[p.position] += (+p[stat]||0) * (+p.matches||0);
+  });
+  if (cfg.against === 'dvp'){
+    (asArray(S.data.dvp)||[]).forEach(function(r){
+      if (!r || normTeam(r.team) !== normTeam(team) || ad[r.pos] == null) return;
+      ad[r.pos] += (+r[stat]||0);
     });
-    if (seen){ tot += gTot; n++; }
-  });
-  if (!n || tot <= 0) return null;
-  var list = Object.keys(byP).map(function(k2){ return byP[k2]; })
-    .filter(function(e){ return e.sum > 0 && isPlayingP(key, e.name, team); })
-    .map(function(e){
-      e.avg = e.sum / e.games; e.share = e.sum / tot;
-      return e;
-    })
-    .sort(function(a,b){ return b.sum - a.sum; });
-  return { list:list, teamAvg:tot/n, games:n };
+  } else {
+    var t = glAgainst(key, stat, G)[team] || {};
+    G.forEach(function(p){ ad[p.k] = +t[p.k] || 0; });
+  }
+  var ft = 0, at = 0;
+  G.forEach(function(p){ ft += fd[p.k]; at += ad[p.k]; });
+  var fp = {}, ap = {};
+  G.forEach(function(p){ fp[p.k] = ft ? fd[p.k]/ft*100 : 0; ap[p.k] = at ? ad[p.k]/at*100 : 0; });
+  return { fp:fp, ap:ap, ft:ft, at:at, cfg:cfg };
 }
-function dsCard(key, team, win){
-  var spec = DIST_SPEC[key];
-  var d = distribution(key, team, win);
-  var head = '<div class="ds-head">'+teamLogo(key,team)+'<span class="ds-nm">'+esc(abbrOf(key,team))+'</span>'
-    + (d ? '<span class="ds-tot">'+d.teamAvg.toFixed(0)+' '+esc(spec.unit)+'/gm</span>' : '')+'</div>';
-  if (!d) return '<div class="ds-card">'+head+'<div class="sl-none">No games in this window.</div></div>';
-  var top = d.list.slice(0, 8), mx = top.length ? top[0].share : 0;
-  var body = top.map(function(e){
-    var parts = spec.parts.map(function(pt){
-      var v = e.parts[pt[0]]; return v == null ? '' : (v/e.games).toFixed(v/e.games < 10 ? 1 : 0)+' '+pt[1];
-    }).filter(Boolean).join(' \u00b7 ');
-    var pct = mx > 0 ? Math.max(3, Math.round(e.share / mx * 100)) : 0;
-    return '<div class="ds-row" onclick="LAB.player(\''+key+'\',\''+esc(e.name).replace(/'/g,"\\'")+'\')">'
-      + '<span class="ds-who"><b>'+esc(e.name)+'</b><span>'+esc(parts||(e.games+' gm'))+'</span></span>'
-      + '<span class="ds-bars"><span class="ds-bar-t"><i style="width:'+pct+'%"></i></span></span>'
-      + '<span class="ds-avg">'+e.avg.toFixed(1)+'</span>'
-      + '<span class="ds-pc">'+(e.share*100).toFixed(1)+'%</span></div>';
-  }).join('');
-  return '<div class="ds-card">'+head
-    + '<div class="ds-sub">'+d.games+' game'+(d.games===1?'':'s')+' \u00b7 share of team '+esc(spec.unit)+'</div>'
-    + body+'</div>';
+function pieGrad(dist, G){
+  var seg = [], acc = 0;
+  G.forEach(function(p){
+    var v = dist[p.k] || 0; if (v <= 0) return;
+    seg.push(p.c+' '+acc.toFixed(2)+'% '+(acc+v).toFixed(2)+'%'); acc += v;
+  });
+  return seg.length ? 'conic-gradient('+seg.join(',')+')' : 'var(--surface-3,var(--border))';
+}
+function pdCard(key, team){
+  var d = posDist(key, team);
+  var head = '<div class="ds-head">'+teamLogo(key,team)+'<span class="ds-nm">'+esc(abbrOf(key,team))+'</span></div>';
+  if (!d || (!d.ft && !d.at)) return '<div class="ds-card">'+head+'<div class="sl-none">No positional split on file.</div></div>';
+  var G = d.cfg.groups;
+  var pies = '<div class="pd-pies">'
+    + '<div class="pd-pw"><div class="pd-pie" style="background:'+pieGrad(d.fp,G)+'"></div><div class="pd-cap">For</div></div>'
+    + '<div class="pd-pw"><div class="pd-pie" style="background:'+pieGrad(d.ap,G)+'"></div><div class="pd-cap">Against</div></div>'
+    + '</div>';
+  var leg = '<div class="pd-leg">' + G.map(function(p){
+    var f = Math.round(d.fp[p.k]||0), a = Math.round(d.ap[p.k]||0), gap = f - a;
+    return '<div class="pd-leg-r"><span class="pd-dot" style="background:'+p.c+'"></span>'
+      + '<span class="pd-leg-nm">'+esc(p.s)+'</span>'
+      + '<span class="pd-leg-v">'+f+' / '+a+'</span>'
+      + '<span class="pd-leg-g '+(gap>=3?'up':(gap<=-3?'down':''))+'">'+(gap>0?'+':'')+gap+'</span></div>';
+  }).join('') + '</div>';
+  return '<div class="ds-card">'+head+'<div class="pd-wrap">'+pies+leg+'</div>'
+    + '<div class="ds-sub" style="margin:7px 0 0">For % / Against % \u00b7 gap in points</div></div>';
 }
 function distSection(key, g){
-  var spec = DIST_SPEC[key];
-  if (!spec || !(asArray(state.sports[key].data.gamelogs)||[]).length) return '';
-  var win = state.view.slWin || 'season';
-  var a = dsCard(key, g.away, win), h = dsCard(key, g.home, win);
-  return '<div class="dayband"><span>'+esc(spec.title)+'</span></div>'
-    + '<div class="ds-sub" style="margin:-2px 0 6px">Window follows the Stat Leaders toggle \u00b7 '
-    + (win === 'l5' ? 'last 5 games' : 'this season') + '</div>'
+  var cfg = POS_DIST_CFG[key]; if (!cfg) return '';
+  var a = pdCard(key, g.away), h = pdCard(key, g.home);
+  if (/No positional split/.test(a) && /No positional split/.test(h)) return '';
+  return '<div class="dayband"><span>'+esc(cfg.label)+' Distribution</span></div>'
     + '<div class="ds-grid">'+a+h+'</div>';
 }
 
