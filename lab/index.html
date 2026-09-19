@@ -187,6 +187,38 @@
   .h2h-v.r{align-items:flex-end;}
   .h2h-pc{font-size:8px;font-weight:700;letter-spacing:.02em;}
   .h2h-pc.up{color:#22c55e;} .h2h-pc.down{color:#f97316;} .h2h-pc.flat{color:var(--text-3);}
+  .l5-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:8px;margin-bottom:6px;}
+  .l5-card{background:var(--surface-2);border:1px solid var(--border);border-radius:10px;padding:10px 12px;}
+  .l5-head{display:flex;align-items:center;gap:7px;margin-bottom:8px;}
+  .l5-head .fxr-logo,.l5-head .fxr-logo-ph{width:20px;height:20px;margin:0;font-size:8px;}
+  .l5-nm{font-family:var(--font-display);font-size:12px;font-weight:800;letter-spacing:.02em;min-width:0;
+    overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .l5-rec{margin-left:auto;font-family:var(--font-mono);font-size:9px;font-weight:700;color:var(--text-3);
+    letter-spacing:.06em;text-transform:uppercase;white-space:nowrap;}
+  .l5-strip{display:flex;gap:3px;margin-bottom:8px;}
+  .l5-chip{flex:1;text-align:center;font-size:9px;font-weight:800;padding:3px 0;border-radius:4px;
+    background:var(--surface);border:1px solid var(--border);color:var(--text-3);}
+  .l5-chip.W{color:var(--accent);border-color:color-mix(in srgb,var(--accent) 45%,var(--border));
+    background:color-mix(in srgb,var(--accent) 12%,transparent);}
+  .l5-chip.L{color:#f97316;border-color:color-mix(in srgb,#f97316 40%,var(--border));
+    background:color-mix(in srgb,#f97316 10%,transparent);}
+  .l5-chip.D{color:#60a5fa;border-color:color-mix(in srgb,#60a5fa 40%,var(--border));
+    background:color-mix(in srgb,#60a5fa 10%,transparent);}
+  .l5-row{display:flex;align-items:center;gap:8px;padding:4px 0;font-size:11px;border-top:1px solid var(--border);}
+  .l5-res{width:15px;height:15px;line-height:15px;text-align:center;border-radius:4px;font-size:8px;font-weight:800;flex:none;}
+  .l5-res.W{color:var(--accent);background:color-mix(in srgb,var(--accent) 16%,transparent);}
+  .l5-res.L{color:#f97316;background:color-mix(in srgb,#f97316 14%,transparent);}
+  .l5-res.D{color:#60a5fa;background:color-mix(in srgb,#60a5fa 14%,transparent);}
+  .l5-opp{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text-2);}
+  .l5-ha{font-size:8px;font-weight:800;color:var(--text-3);letter-spacing:.06em;margin-right:4px;}
+  .l5-ht{font-family:var(--font-mono);font-size:8px;color:var(--text-3);margin-left:5px;}
+  .l5-sc{font-variant-numeric:tabular-nums;font-weight:800;white-space:nowrap;}
+  .l5-mg{font-variant-numeric:tabular-nums;font-size:10px;font-weight:700;min-width:32px;text-align:right;color:var(--text-3);}
+  .l5-mg.up{color:var(--accent);} .l5-mg.down{color:#f97316;}
+  .l5-foot{display:flex;gap:10px;margin-top:8px;padding-top:7px;border-top:1px solid var(--border);
+    font-family:var(--font-mono);font-size:8px;letter-spacing:.05em;text-transform:uppercase;color:var(--text-3);}
+  .l5-foot b{font-family:var(--font-display);font-size:11px;color:var(--text-2);margin-left:3px;}
+  .l5-none{font-size:10px;color:var(--text-3);padding:6px 0;}
   .lm-wrap{background:var(--surface-2);border:1px solid var(--border);border-radius:10px;padding:10px 12px;margin-bottom:6px;}
   .lm-stats{display:flex;flex-wrap:wrap;gap:7px;padding-bottom:9px;margin-bottom:6px;border-bottom:1px solid var(--border);}
   .lm-stat{flex:1 1 84px;background:var(--surface);border:1px solid var(--border);border-radius:7px;padding:6px 9px;}
@@ -294,7 +326,7 @@ var state = {
   view:   { active: {}, tab: 'fixture', mkt: {}, match: {}, player: null, books: null, showDone: false, focus: null, h2hMode: 'for' }   // filter + current page + market per sport
 };
 Object.keys(SPORTS).forEach(function(k){
-  state.sports[k] = { data:{}, idx:{}, status:'idle' };
+  state.sports[k] = { data:{}, idx:{teamMap:{}}, status:'idle' };
   state.view.active[k] = true;              // all on by default
 });
 
@@ -345,12 +377,9 @@ function loadTier1(key){
           .catch(function(){});
       }));
     })
-    .then(function(){ return loadConfig(key); })
+    .then(function(){ buildTeamMap(key); return loadConfig(key); })
     .then(function(){
-      S.idx.teamMap = {};
-      (asArray(S.data.teams)||[]).forEach(function(t){
-        if (t && t.team != null) S.idx.teamMap[t.team] = t;
-      });
+      buildTeamMap(key);
       S.status = 'ready';
       render();
       // Tier 1 finishing is itself a trigger: configs load through a sequential queue, so a
@@ -360,6 +389,11 @@ function loadTier1(key){
     });
 }
 function asArray(v){ return Array.isArray(v) ? v : (v && v.fixture) || (v && v.teams) || (v && v.players) || null; }
+function buildTeamMap(key){
+  var S = state.sports[key], m = {};
+  (asArray(S.data.teams)||[]).forEach(function(t){ if (t && t.team != null) m[t.team] = t; });
+  S.idx.teamMap = m;
+}
 
 // Tier 2: odds (~12 MB across four sports) - loaded only when a page needs it, and only
 // for sports the user actually has switched on. This is the whole point of the namespaced
@@ -535,12 +569,12 @@ function localTime(ms){ return new Date(ms).toLocaleTimeString([], {hour:'numeri
 function dayKey(ms){ var d=new Date(ms); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
 
 function teamName(key, t){
-  var rec = state.sports[key].idx.teamMap[t];
+  var rec = (state.sports[key].idx.teamMap || {})[t];
   return (rec && (rec.name || rec.school || rec.displayName)) || String(t);
 }
 function teamLogo(key, t){
   var S = state.sports[key], cfg = S.config || {};
-  var rec = S.idx.teamMap[t] || {};
+  var rec = (S.idx.teamMap || {})[t] || {};
   var url = rec.logo || '';                                   // EPL: baked into teams.json
   if (!url && cfg.logoCdn){                                   // AFL / NFL / MLB: CDN + id
     var id = (cfg.teamIds && cfg.teamIds[t] != null) ? cfg.teamIds[t] : String(t||'').toLowerCase();
@@ -1074,6 +1108,72 @@ function gamePlayers(key, g){
       return d2 || a.name.localeCompare(b.name);
     });
 }
+/* ---- team section: L5 form ------------------------------------------------
+   results.json field names differ by sport (AFL/EPL: homeScore/awayScore, NFL/MLB: hs/as)
+   so everything reads through resScoreH/A. Team keys match fixture keys in every sport,
+   but normTeam() is used anyway so an alias change can't silently empty the card.       */
+function resultRows(key){
+  var d = state.sports[key].data.results;
+  return Array.isArray(d) ? d : ((d && (d.results || d.rows)) || []);
+}
+function resScoreH(r){ return r.homeScore != null ? +r.homeScore : (r.hs != null ? +r.hs : null); }
+function resScoreA(r){ return r.awayScore != null ? +r.awayScore : (r.as != null ? +r.as : null); }
+function resMs(r){ var ms = Date.parse(r.date || r.Date || ''); return isFinite(ms) ? ms : null; }
+function formRows(key, team, beforeMs, n){
+  var res = resultRows(key), want = normTeam(team), out = [];
+  for (var i=0;i<res.length;i++){
+    var r = res[i]; if (!r || !r.home || !r.away) continue;
+    var isH = normTeam(r.home) === want;
+    if (!isH && normTeam(r.away) !== want) continue;
+    var hs = resScoreH(r), as = resScoreA(r);
+    if (hs == null || as == null) continue;                 // unplayed / unscored row
+    var ms = resMs(r);
+    if (beforeMs != null && ms != null && ms >= beforeMs) continue;   // never show this game back at itself
+    var gf = isH ? hs : as, ga = isH ? as : hs;
+    out.push({ ms:ms, opp:(isH ? r.away : r.home), home:isH, gf:gf, ga:ga,
+      res:(gf > ga ? 'W' : (gf < ga ? 'L' : 'D')),
+      ht:(r.htHome != null && r.htAway != null)
+           ? (isH ? r.htHome+'-'+r.htAway : r.htAway+'-'+r.htHome) : null });
+  }
+  out.sort(function(a,b){ return (b.ms||0) - (a.ms||0); });   // results files aren't consistently ordered
+  return out.slice(0, n || 5);
+}
+function formCard(key, team, beforeMs){
+  var rows = formRows(key, team, beforeMs, 5);
+  var head = '<div class="l5-head">'+teamLogo(key,team)
+    + '<span class="l5-nm">'+esc(abbrOf(key,team))+'</span>';
+  if (!rows.length){
+    return '<div class="l5-card">'+head+'</div>'
+      + '<div class="l5-none">No completed games on file.</div></div>';
+  }
+  var w=0,l=0,dr=0,gf=0,ga=0;
+  rows.forEach(function(r){ if(r.res==='W')w++; else if(r.res==='L')l++; else dr++; gf+=r.gf; ga+=r.ga; });
+  var rec = w+'-'+l+(dr?'-'+dr:'');
+  head += '<span class="l5-rec">'+rec+'</span></div>';
+  var strip = '<div class="l5-strip">'+rows.map(function(r){
+    return '<span class="l5-chip '+r.res+'">'+r.res+'</span>'; }).join('')+'</div>';
+  var dec = function(v){ return (Math.round(v*10)/10).toFixed(1); };
+  var body = rows.map(function(r){
+    var m = r.gf - r.ga;
+    return '<div class="l5-row">'
+      + '<span class="l5-res '+r.res+'">'+r.res+'</span>'
+      + '<span class="l5-opp"><span class="l5-ha">'+(r.home?'H':'A')+'</span>'+esc(abbrOf(key,r.opp))
+        + (r.ht ? '<span class="l5-ht">HT '+esc(r.ht)+'</span>' : '')+'</span>'
+      + '<span class="l5-sc">'+r.gf+'\u2013'+r.ga+'</span>'
+      + '<span class="l5-mg '+(m>0?'up':(m<0?'down':''))+'">'+(m>0?'+':'')+m+'</span></div>';
+  }).join('');
+  var foot = '<div class="l5-foot"><span>For<b>'+dec(gf/rows.length)+'</b></span>'
+    + '<span>Against<b>'+dec(ga/rows.length)+'</b></span>'
+    + '<span>Last '+rows.length+' \u00b7 newest first</span></div>';
+  return '<div class="l5-card">'+head+strip+body+foot+'</div>';
+}
+function formSection(key, g){
+  if (!resultRows(key).length) return '';
+  var ms = gameStart(g).ms;
+  return '<div class="dayband"><span>Last 5</span></div>'
+    + '<div class="l5-grid">'+formCard(key, g.away, ms)+formCard(key, g.home, ms)+'</div>';
+}
+
 function focusPage(){
   var f = state.view.focus;
   if (!f) return '';
@@ -1105,6 +1205,7 @@ function focusPage(){
   return head + t3
     + (S.t3==='ready' ? valueBets(key, g) : '')
     + '<div class="dayband"><span>Match markets</span></div>' + moBlock(key, g)
+    + (S.t3==='ready' ? formSection(key, g) : '')
     + h2hSection(key, g)
     + h2hHistory(key, g)
     + '<div class="dayband"><span>Players \u00b7 '+ps.length+'</span></div><div class="gp-list">'+list+'</div>';
