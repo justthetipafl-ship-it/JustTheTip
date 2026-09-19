@@ -1035,7 +1035,9 @@ function meetingLeaders(key, r, team){
   var rows = logsForMeeting(key, r, team);
   if (!rows.length) return '';
   var cfg = state.sports[key].config || {};
-  var keys = (cfg.h2hKeys || []).map(function(x){ return x[0]; })
+  // leaderKeys lets a sport use richer gamelog-only stats here (NFL: rec yds, combined TDs)
+  var src = cfg.leaderKeys || cfg.h2hKeys || [];
+  var keys = src.map(function(x){ return x[0]; })
     .filter(function(k){ return rows.some(function(x){ return x[k] != null; }); }).slice(0,5);
   if (!keys.length) return '';
   var cells = keys.map(function(k){
@@ -1046,7 +1048,7 @@ function meetingLeaders(key, r, team){
       if (!best || v > best.v) best = { v:v, n:(x.Player||x.player) };
     });
     if (!best) return '';
-    var lab = (cfg.h2hKeys.find(function(y){ return y[0]===k; })||[k,k])[1];
+    var lab = (src.find(function(y){ return y[0]===k; })||[k,k])[1];
     return '<div class="ml-cell"><span class="ml-k">'+esc(lab)+'</span>'
       + '<span class="ml-v">'+ (LOW_COUNT_KEYS[k] ? best.v.toFixed(1) : Math.round(best.v)) +'</span>'
       + '<span class="ml-n">'+esc(best.n)+'</span></div>';
