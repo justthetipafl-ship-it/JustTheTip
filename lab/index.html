@@ -726,12 +726,36 @@ function valueBets(key, g){
 var MO_TOTALS = [['total','Total'],['totalTds','Total TDs'],['totalCorners','Corners'],
                  ['totalCards','Cards'],['totalShots','Total Shots'],['totalSOT','Shots on Target'],
                  ['total1H','1st Half Total']];
+// Team names in matchOdds come from the books and rarely match the fixture exactly:
+// AFL 'Sydney Swans' vs 'Sydney', EPL 'Brighton & Hove Albion' vs 'Brighton'. Only NFL lines
+// up, because its fetcher emits abbreviations. Normalise both sides before comparing.
+var TEAM_ALIAS = {
+  // AFL
+  'sydneyswans':'sydney','brisbanelions':'brisbane','adelaidecrows':'adelaide',
+  'gwsgiants':'greaterwesternsydney','gws':'greaterwesternsydney','westernbulldogs':'bulldogs',
+  'goldcoastsuns':'goldcoast','westcoasteagles':'westcoast','northmelbournekangaroos':'northmelbourne',
+  'portadelaidepower':'portadelaide','stkildasaints':'stkilda','geelongcats':'geelong',
+  'melbournedemons':'melbourne','carltonblues':'carlton','collingwoodmagpies':'collingwood',
+  'essendonbombers':'essendon','fremantledockers':'fremantle','hawthornhawks':'hawthorn',
+  'richmondtigers':'richmond',
+  // EPL
+  'brightonandhovealbion':'brighton','tottenhamhotspur':'tottenham','spurs':'tottenham',
+  'manchestercity':'mancity','manchesterunited':'manutd','manutd':'manutd',
+  'newcastleunited':'newcastle','wolverhamptonwanderers':'wolves','nottinghamforest':'nottmforest',
+  'westhamunited':'westham','leedsunited':'leeds','afcbournemouth':'bournemouth',
+  'crystalpalace':'crystalpalace','astonvilla':'astonvilla'
+};
+function normTeam(n){
+  var t = String(n||'').toLowerCase().replace(/&/g,'and').replace(/[^a-z0-9]+/g,'');
+  return TEAM_ALIAS[t] || t;
+}
+function moKey(a,b){ return [normTeam(a), normTeam(b)].sort().join('|'); }
 function matchOddsFor(key, g){
   var mo = (state.sports[key].data.odds || {}).matchOdds || [];
+  var want = moKey(g.home, g.away);
   for (var i=0;i<mo.length;i++){
     var m = mo[i];
-    if (!m) continue;
-    if ((m.home===g.home && m.away===g.away) || (m.home===g.away && m.away===g.home)) return m;
+    if (m && m.home && m.away && moKey(m.home, m.away) === want) return m;
   }
   return null;
 }
