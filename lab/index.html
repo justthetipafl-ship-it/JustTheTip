@@ -2491,6 +2491,13 @@ function h2hSigRow(key, r){
    return (prob - 0.5) * 20. Production's thresholds are kept: >= 5.5 fires a
    Green Light, <= -3.5 a Death Rider.
 
+   Production's wrappers (scoreOverLine / scoreUnderLine) gate before scoring, and those
+   gates are reproduced here rather than skipped: 3+ current-season games, a minimum form
+   average per market (MIN_AVG, x0.7 for unders), and a DVP DIRECTION gate - an over needs
+   an opponent that concedes above average for that stat and position, an under needs one
+   that concedes below. Reproducing them in the shell rather than calling the wrappers
+   means every market gets them: AFL's own scoreOverLine hardcodes disposals.
+
    Three departures from production, all enabled by data it had but didn't use:
      1. the whole ladder is scored, not just the main line. Production scores the
         posted line and then lineTag() quietly re-quotes a different rung when the
@@ -2543,6 +2550,15 @@ function ouSignals(key, g, kind){
         }
         var lg = leagueAvg(key, k)[p.name];
         if (!lg || lg.games < GL_MIN_GAMES) return;    // production's 3-game floor
+        var minAvg = (sc.MIN_AVG || {})[k];
+        if (minAvg != null && lg.avg < (over ? minAvg : minAvg * 0.7)) return;
+        // DVP direction: back an over into a soft defence, an under into a hard one
+        var dvpPct = null;
+        try {
+          var pos = (sc.POS_TO_DVP || {})[p.position || p.pos] || p.position || p.pos;
+          dvpPct = sc.getDVPPct ? sc.getDVPPct(opp, pos, k) : null;
+        } catch(e){}
+        if (dvpPct != null && (over ? dvpPct <= 0 : dvpPct >= 0)) return;
         var cands = (over ? streakCandidates(key, p.name, k) : underCandidates(key, p.name, k))
           .filter(function(c){ return c.price >= SIG_ODDS_FLOOR; });
         if (!cands.length) return;
@@ -2561,7 +2577,9 @@ function ouSignals(key, g, kind){
           var fair = novigFair(key, p.name, k, c.line, over ? 'over' : 'under');
           var row = { name:p.name, team:team, opp:opp, pos:posShortP(p), mkt:k, label:m[1],
                       line:c.line, price:c.price, book:c.book, score:score, prob:prob, ev:ev,
-                      edge:(fair != null ? prob - fair : null), avg:lg.avg, games:lg.games, over:over };
+                      edge:(fair != null ? prob - fair : null), avg:lg.avg, games:lg.games,
+                      dvpPct:dvpPct, over:over };
+          if (row.ev <= 0) return;                    // the model likes it but the price doesn't pay
           if (!best || row.ev > best.ev) best = row;
         });
         if (best) out.push(best);
@@ -2578,6 +2596,8 @@ function ouRow(key, r){
     + (r.edge != null ? '<span class="gl-chip '+(r.edge > 0 ? 'good' : 'bad')+'">'
         + (r.edge > 0 ? '+' : '')+Math.round(r.edge*100)+' pts vs fair</span>' : '')
     + '<span class="gl-chip">score '+r.score.toFixed(1)+'</span>'
+    + (r.dvpPct != null ? '<span class="gl-chip '+(r.over ? 'good' : 'bad')+'">'
+        + (r.dvpPct > 0 ? '+' : '')+r.dvpPct.toFixed(0)+'% DVP</span>' : '')
     + '<span class="gl-chip">'+r.avg.toFixed(r.avg < 3 ? 2 : 1)+' avg \u00b7 '+r.games+' gm</span></div>';
   return '<div class="gl-row" onclick="LAB.player(\''+key+'\',\''+esc(r.name).replace(/'/g,"\\'")+'\')">'
     + '<div class="gl-left">'
@@ -2601,8 +2621,9 @@ function ouTile(key, g, kind){
     why = SPORTS[key].name+' scoring.js exposes no scoreCMP, so nothing can be scored.';
   } else {
     why = over
-      ? 'No player scored '+GL_SCORE+'+ on a line paying $'+SIG_ODDS_FLOOR.toFixed(2)+' or better.'
-      : 'No player scored '+DR_SCORE+' or worse on a posted under'
+      ? 'No player scored '+GL_SCORE+'+ into a soft matchup at a price that pays. Rows need a positive '
+        + 'edge, so a strong read at a short price is filtered out rather than listed.'
+      : 'No player scored '+DR_SCORE+' or worse into a tough matchup at a positive-edge under'
         + (underCandidates(key, (playersOnTeam(key, g.home)[0]||{}).name || '', 'x').length ? '.' : ' \u2014 this sport posts no under markets.');
   }
   return sigTile(over ? 'ti-traffic-lights' : 'ti-skull',
