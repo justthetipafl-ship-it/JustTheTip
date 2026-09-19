@@ -19,7 +19,10 @@ window.SPORT_CONFIG = {
   dvpsOpts: [['receptions','Receptions'],['recYds','Rec Yds'],['recTds','Rec TDs'],['rushYds','Rush Yds'],['rushAtt','Rush Att'],['rushTds','Rush TDs'],['passYds','Pass Yds'],['passTds','Pass TDs'],['anytimeTd','Anytime TD'],['fanPts','Fan Pts'],['tackles','Tackles+Ast']],
   eliteDefs: [['passYds','Pass Yds'],['passAtt','Pass Att'],['passTds','Pass TDs'],['passInt','INTs'],['recYds','Rec Yds'],['rushYds','Rush Yds'],['receptions','Receptions']],
   dvpStylePos: {'Dual Threat':'QB','Gunslinger':'QB','Game Manager':'QB','Pocket Passer':'QB','Workhorse':'RB','Committee Back':'RB','Receiving Back':'RB','Goal-Line Back':'RB','Alpha WR':'WR','Deep Threat':'WR','Possession / Slot':'WR','Rotational WR':'WR','Route TE':'TE','Hybrid TE':'TE','Blocking TE':'TE','TD Machine':'All Positions','Volume King':'All Positions','Fantasy Stars':'All Positions'},
-  h2hKeys: [['points','Points'],['passYds','Pass Yds'],['rushYds','Rush Yds'],['passTds','Pass TDs'],['rushTds','Rush TDs'],['receptions','Receptions'],['passInt','INTs Thrown'],['sacks','Sacks Taken']],
+  h2hKeys: [['points','Points'],['passYds','Pass Yds'],['rushYds','Rush Yds'],['receptions','Receptions'],['passTds','Pass TDs'],['rushTds','Rush TDs']],
+  // gamelog-level keys for past-meeting stat leaders - teams.json has no recYds/totalTds,
+  // but the gamelogs do, so leaders can show receiving yards and combined TDs
+  leaderKeys: [['passYds','Pass Yds'],['rushYds','Rush Yds'],['recYds','Rec Yds'],['receptions','Receptions'],['totalTds','TDs']],
   lowCount: ['passTds','rushTds','recTds','anytimeTd','passInt','totalTds'],
   dvpByPos: true,
   display: [['fanPts','FP'],['passYds','PaYd'],['rushYds','RuYd'],['recYds','ReYd'],['rushRecYds','R+R'],['receptions','Rec'],['totalTds','TDs'],['snapPct','Snap%']],
