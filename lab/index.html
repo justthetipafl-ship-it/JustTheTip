@@ -363,6 +363,15 @@
   .sb-bar{width:60px;flex:none;height:4px;border-radius:2px;background:var(--surface-3,var(--border));overflow:hidden;}
   .sb-bar i{display:block;height:100%;background:#f97316;}
   .sb-meta{min-width:62px;text-align:right;font-family:var(--font-mono);font-size:9px;color:var(--text-3);flex:none;}
+  .fl-stats{display:flex;gap:6px;margin-bottom:6px;}
+  .fl-stat{flex:1;background:var(--surface);border:1px solid var(--border);border-radius:7px;padding:5px 6px;text-align:center;}
+  .fl-stat b{display:block;font-family:var(--font-display);font-size:13px;font-weight:800;font-variant-numeric:tabular-nums;}
+  .fl-stat span{display:block;font-size:7px;font-weight:800;letter-spacing:.05em;text-transform:uppercase;color:var(--text-3);}
+  .fl-sec{font-size:8px;font-weight:800;letter-spacing:.07em;text-transform:uppercase;color:var(--text-3);
+    margin:8px 0 2px;padding-top:6px;border-top:1px solid var(--border);}
+  .fl-row{display:flex;align-items:center;gap:8px;padding:3px 0;font-size:11px;cursor:pointer;}
+  .fl-nm{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .fl-c{font-family:var(--font-mono);font-size:9px;color:var(--text-3);flex:none;}
   .lm-wrap{background:var(--surface-2);border:1px solid var(--border);border-radius:10px;padding:10px 12px;margin-bottom:6px;}
   .lm-stats{display:flex;flex-wrap:wrap;gap:7px;padding-bottom:9px;margin-bottom:6px;border-bottom:1px solid var(--border);}
   .lm-stat{flex:1 1 84px;background:var(--surface);border:1px solid var(--border);border-radius:7px;padding:6px 9px;}
@@ -1907,6 +1916,84 @@ function subsSection(key, g){
   return '<div class="dayband"><span>Substitution Trends</span></div><div class="bt-grid">'+a+h+'</div>';
 }
 
+/* ---- team section: first & last -------------------------------------------
+   EPL is a port of _eplFirstLast straight off events.json. NFL has no equivalent
+   feed, so it's derived from firsttd.json: one row per team per game holding that
+   team's first touchdown, with gameFirst marking who opened the scoring outright.
+   AFL and MLB carry no goal/score timing at all, so they get nothing rather than
+   a guess.                                                                        */
+var FL_WINDOW = 17;                                   // NFL: a season's worth of games, rolling
+function nflFirstTd(key, team){
+  var rows = (asArray(state.sports[key].data.firsttd) || []).filter(function(r){ return r && r.matchId; });
+  if (!rows.length) return null;
+  var games = {};                                     // every game on file involving this team
+  rows.forEach(function(r){
+    var pr = String(r.matchId).split('_');
+    if (pr[2] !== team && pr[3] !== team) return;
+    games[r.matchId] = games[r.matchId] || { seq:(+r.season||0)*100 + (+r.week||0), mine:null };
+    if (r.team === team) games[r.matchId].mine = r;
+  });
+  var ids = Object.keys(games).sort(function(a,b){ return games[b].seq - games[a].seq; }).slice(0, FL_WINDOW);
+  if (!ids.length) return null;
+  var n = ids.length, opens = 0, q1 = 0, firstHalf = 0, qSum = 0, qN = 0, scorers = {};
+  ids.forEach(function(id){
+    var r = games[id].mine;
+    if (!r) return;                                   // team scored no TD in that game
+    if (r.gameFirst) opens++;
+    if (+r.qtr === 1) q1++;
+    if (+r.qtr <= 2) firstHalf++;
+    if (+r.qtr){ qSum += +r.qtr; qN++; }
+    scorers[r.player] = (scorers[r.player] || 0) + 1;
+  });
+  var list = Object.keys(scorers).map(function(k2){ return [k2, scorers[k2]]; })
+    .sort(function(a,b){ return b[1] - a[1]; }).slice(0, 5);
+  return { n:n, opens:opens/n, q1:q1/n, no1h:1 - firstHalf/n, avgQ:qN ? qSum/qN : null, scorers:list };
+}
+function flCard(key, team){
+  var head = '<div class="bt-head">'+teamLogo(key,team)+'<span class="bt-nm">'+esc(abbrOf(key,team))+'</span>';
+  var pc = function(x){ return Math.round((x||0)*100)+'%'; };
+  var stat = function(l,v){ return '<div class="fl-stat"><b>'+v+'</b><span>'+l+'</span></div>'; };
+  var list = function(title, arr, sfx){
+    if (!arr || !arr.length) return '';
+    return '<div class="fl-sec">'+esc(title)+'</div>' + arr.map(function(p){
+      return '<div class="fl-row" onclick="LAB.player(\''+key+'\',\''+esc(p[0]).replace(/'/g,"\\'")+'\')">'
+        + '<span class="fl-nm">'+esc(p[0])+'</span><span class="fl-c">'+p[1]+' '+esc(sfx)+'</span></div>';
+    }).join('');
+  };
+
+  if (key === 'nfl'){
+    var d = nflFirstTd(key, team);
+    head += (d ? '<span class="bt-n">last '+d.n+' games</span>' : '')+'</div>';
+    if (!d) return '<div class="bt-card">'+head+'<div class="sl-none">No first-TD history on file.</div></div>';
+    return '<div class="bt-card">'+head
+      + '<div class="fl-stats">'+stat('Opens the game',pc(d.opens))+stat('1st TD in Q1',pc(d.q1))
+        + stat('No 1H TD',pc(d.no1h))+stat('Avg qtr',d.avgQ != null ? 'Q'+d.avgQ.toFixed(1) : '\u2014')+'</div>'
+      + list('Opens the scoring for '+abbrOf(key,team), d.scorers, 'times')
+      + '<div class="ds-sub" style="margin:7px 0 0">Team\u2019s first TD each game \u00b7 no last-scorer feed for NFL</div></div>';
+  }
+
+  var ev = eventsFor(key, team);
+  head += (ev && ev.matches ? '<span class="bt-n">'+ev.matches+' matches</span>' : '')+'</div>';
+  if (!ev) return '<div class="bt-card">'+head+'<div class="sl-none">No goal-timing history on file.</div></div>';
+  return '<div class="bt-card">'+head
+    + '<div class="fl-stats">'+stat('Opens scoring',pc(ev.opensScoring))+stat('Concedes 1st',pc(ev.concedesFirst))
+      + stat('No 1H goal',pc(ev.no1hGoal))+stat('Carded 1st',pc(ev.cardedFirst))+'</div>'
+    + '<div class="fl-stats">'+stat('Avg 1st scored', ev.avgFirstScored ? ev.avgFirstScored+'\u2032' : '\u2014')
+      + stat('Avg 1st conceded', ev.avgFirstConceded ? ev.avgFirstConceded+'\u2032' : '\u2014')+'</div>'
+    + list('First goal scorers', ev.firstScorers, 'opens')
+    + list('Last goal scorers', ev.lastScorers, 'last')
+    + list('Late merchants (76\u2032+)', ev.lateScorers, 'late')
+    + list('First to be carded', ev.firstCarded, 'bookings')
+    + '</div>';
+}
+function firstLastSection(key, g){
+  if (key !== 'epl' && key !== 'nfl') return '';
+  var a = flCard(key, g.away), h = flCard(key, g.home);
+  if (/No (goal-timing|first-TD) history/.test(a) && /No (goal-timing|first-TD) history/.test(h)) return '';
+  return '<div class="dayband"><span>'+(key === 'nfl' ? 'First TD' : 'First &amp; Last')+'</span></div>'
+    + '<div class="bt-grid">'+a+h+'</div>';
+}
+
 function focusPage(){
   var f = state.view.focus;
   if (!f) return '';
@@ -1946,6 +2033,7 @@ function focusPage(){
     + (S.t3==='ready' ? starterSection(key, g) : '')
     + (S.t3==='ready' ? halvesSection(key, g) : '')
     + (S.t3==='ready' ? subsSection(key, g) : '')
+    + (S.t3==='ready' ? firstLastSection(key, g) : '')
     + h2hSection(key, g)
     + h2hHistory(key, g)
     + '<div class="dayband"><span>Players \u00b7 '+ps.length+'</span></div><div class="gp-list">'+list+'</div>';
