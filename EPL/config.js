@@ -75,7 +75,7 @@ window.SPORT_CONFIG = {
   cmbPick: [['shots','Shots',1.5],['shotsOn','Shots on Target',0.5],['goals','Goals',0.5],['assists','Assists',0.5],
             ['tackles','Tackles',1.5],['saves','Saves',2.5]],
   fxpMarkets: [['shots','Shots'],['shotsOn','SoT'],['goals','Goals'],['assists','Assists'],['tackles','Tackles'],['saves','Saves']],
-  h2hKeys: [['shots','Shots'],['shotsOn','SoT'],['goals','Goals'],['assists','Assists'],['tackles','Tackles'],['keyPasses','Key Passes']],
+  h2hKeys: [['shots','Shots'],['shotsOn','SoT'],['goals','Goals'],['assists','Assists'],['corners','Corners'],['cards','Cards'],['tackles','Tackles']],
 
   // ---- DVP (opponent difficulty by stat conceded to position) ----
   dvpStats: [['shots','Shots'],['shotsOn','Shots on Target'],['goals','Goals'],['assists','Assists'],['tackles','Tackles']],
