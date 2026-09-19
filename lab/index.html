@@ -279,6 +279,24 @@
   .dv-val{min-width:40px;text-align:right;font-variant-numeric:tabular-nums;font-weight:800;font-size:13px;flex:none;}
   .dv-rk{min-width:42px;text-align:right;font-family:var(--font-mono);font-size:9px;color:var(--text-3);flex:none;}
   .dv-rk.soft{color:var(--accent);} .dv-rk.tough{color:#f97316;}
+  .ds-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:8px;margin-bottom:6px;}
+  .ds-card{background:var(--surface-2);border:1px solid var(--border);border-radius:10px;padding:10px 12px;}
+  .ds-head{display:flex;align-items:center;gap:7px;margin-bottom:3px;}
+  .ds-head .fxr-logo,.ds-head .fxr-logo-ph{width:20px;height:20px;margin:0;font-size:8px;}
+  .ds-nm{font-family:var(--font-display);font-size:12px;font-weight:800;}
+  .ds-tot{margin-left:auto;font-family:var(--font-mono);font-size:8px;letter-spacing:.06em;
+    text-transform:uppercase;color:var(--text-3);}
+  .ds-sub{font-family:var(--font-mono);font-size:8px;letter-spacing:.05em;text-transform:uppercase;
+    color:var(--text-3);margin-bottom:7px;}
+  .ds-row{display:flex;align-items:center;gap:8px;padding:5px 0;border-top:1px solid var(--border);cursor:pointer;}
+  .ds-who{flex:1;min-width:0;}
+  .ds-who b{display:block;font-size:11px;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .ds-who span{font-size:8px;letter-spacing:.05em;text-transform:uppercase;color:var(--text-3);}
+  .ds-bars{width:52px;flex:none;}
+  .ds-bar-t{height:4px;border-radius:2px;background:var(--surface-3,var(--border));overflow:hidden;}
+  .ds-bar-t i{display:block;height:100%;background:var(--accent);}
+  .ds-avg{min-width:38px;text-align:right;font-variant-numeric:tabular-nums;font-weight:800;font-size:13px;flex:none;}
+  .ds-pc{min-width:38px;text-align:right;font-family:var(--font-mono);font-size:9px;color:var(--text-3);flex:none;}
   .lm-wrap{background:var(--surface-2);border:1px solid var(--border);border-radius:10px;padding:10px 12px;margin-bottom:6px;}
   .lm-stats{display:flex;flex-wrap:wrap;gap:7px;padding-bottom:9px;margin-bottom:6px;border-bottom:1px solid var(--border);}
   .lm-stat{flex:1 1 84px;background:var(--surface);border:1px solid var(--border);border-radius:7px;padding:6px 9px;}
@@ -1554,6 +1572,97 @@ function dvpSection(key, g){
     + '<div class="dv-grid">'+dvpCard(key,g.away,mkt,board)+dvpCard(key,g.home,mkt,board)+'</div>';
 }
 
+/* ---- team section: volume distribution ------------------------------------
+   AFL disposals and NFL targets are the same question - who actually gets the ball
+   - so one renderer drives both off a per-sport spec. Share is measured against the
+   team's own total in the same games, not a league average.                        */
+var DIST_SPEC = {
+  afl: { stat:'disposals', title:'Disposal Distribution', unit:'disp', parts:[['kicks','k'],['handballs','hb']] },
+  nfl: { stat:'targets',   title:'Target Distribution',   unit:'tgt',  parts:[['receptions','rec'],['recYds','yds']] }
+};
+function teamMatches(key, team, win){
+  var logs = asArray(state.sports[key].data.gamelogs) || [];
+  var want = normTeam(team), season = curSeason(key), byM = {};
+  for (var i=0;i<logs.length;i++){
+    var r = logs[i];
+    if (!r || normTeam(r.Team||r.team) !== want) continue;
+    var id = r.MatchId || r.matchId || ((r.Year||'')+'|'+(r.RoundName!=null?r.RoundName:r.Week));
+    (byM[id] = byM[id] || []).push(r);
+  }
+  var ids = Object.keys(byM);
+  ids.sort(function(a,b){
+    var ra = byM[a][0], rb = byM[b][0];
+    var ma = logMs(ra), mb = logMs(rb);
+    if (ma != null && mb != null && ma !== mb) return mb - ma;
+    return logSeq(rb) - logSeq(ra);
+  });
+  if (win === 'l5') ids = ids.slice(0,5);
+  else ids = ids.filter(function(id){ return (+(byM[id][0].Year||byM[id][0].year)||0) === season; });
+  return ids.map(function(id){ return byM[id]; });
+}
+function distribution(key, team, win){
+  var spec = DIST_SPEC[key]; if (!spec) return null;
+  var games = teamMatches(key, team, win);
+  if (!games.length) return null;
+  var tot = 0, byP = {}, n = 0;
+  games.forEach(function(rows){
+    var gTot = 0, seen = false;
+    rows.forEach(function(r){
+      var v = r[spec.stat];
+      if (v == null || !isFinite(+v)) return;
+      seen = true; gTot += +v;
+      var nm = r.Player || r.player; if (!nm) return;
+      var e = byP[nm] || (byP[nm] = { name:nm, sum:0, games:0, parts:{} });
+      e.sum += +v; e.games++;
+      spec.parts.forEach(function(pt){
+        var pv = r[pt[0]]; if (pv != null && isFinite(+pv)) e.parts[pt[0]] = (e.parts[pt[0]]||0) + +pv;
+      });
+    });
+    if (seen){ tot += gTot; n++; }
+  });
+  if (!n || tot <= 0) return null;
+  var list = Object.keys(byP).map(function(k2){ return byP[k2]; })
+    .filter(function(e){ return e.sum > 0 && isPlayingP(key, e.name, team); })
+    .map(function(e){
+      e.avg = e.sum / e.games; e.share = e.sum / tot;
+      return e;
+    })
+    .sort(function(a,b){ return b.sum - a.sum; });
+  return { list:list, teamAvg:tot/n, games:n };
+}
+function dsCard(key, team, win){
+  var spec = DIST_SPEC[key];
+  var d = distribution(key, team, win);
+  var head = '<div class="ds-head">'+teamLogo(key,team)+'<span class="ds-nm">'+esc(abbrOf(key,team))+'</span>'
+    + (d ? '<span class="ds-tot">'+d.teamAvg.toFixed(0)+' '+esc(spec.unit)+'/gm</span>' : '')+'</div>';
+  if (!d) return '<div class="ds-card">'+head+'<div class="sl-none">No games in this window.</div></div>';
+  var top = d.list.slice(0, 8), mx = top.length ? top[0].share : 0;
+  var body = top.map(function(e){
+    var parts = spec.parts.map(function(pt){
+      var v = e.parts[pt[0]]; return v == null ? '' : (v/e.games).toFixed(v/e.games < 10 ? 1 : 0)+' '+pt[1];
+    }).filter(Boolean).join(' \u00b7 ');
+    var pct = mx > 0 ? Math.max(3, Math.round(e.share / mx * 100)) : 0;
+    return '<div class="ds-row" onclick="LAB.player(\''+key+'\',\''+esc(e.name).replace(/'/g,"\\'")+'\')">'
+      + '<span class="ds-who"><b>'+esc(e.name)+'</b><span>'+esc(parts||(e.games+' gm'))+'</span></span>'
+      + '<span class="ds-bars"><span class="ds-bar-t"><i style="width:'+pct+'%"></i></span></span>'
+      + '<span class="ds-avg">'+e.avg.toFixed(1)+'</span>'
+      + '<span class="ds-pc">'+(e.share*100).toFixed(1)+'%</span></div>';
+  }).join('');
+  return '<div class="ds-card">'+head
+    + '<div class="ds-sub">'+d.games+' game'+(d.games===1?'':'s')+' \u00b7 share of team '+esc(spec.unit)+'</div>'
+    + body+'</div>';
+}
+function distSection(key, g){
+  var spec = DIST_SPEC[key];
+  if (!spec || !(asArray(state.sports[key].data.gamelogs)||[]).length) return '';
+  var win = state.view.slWin || 'season';
+  var a = dsCard(key, g.away, win), h = dsCard(key, g.home, win);
+  return '<div class="dayband"><span>'+esc(spec.title)+'</span></div>'
+    + '<div class="ds-sub" style="margin:-2px 0 6px">Window follows the Stat Leaders toggle \u00b7 '
+    + (win === 'l5' ? 'last 5 games' : 'this season') + '</div>'
+    + '<div class="ds-grid">'+a+h+'</div>';
+}
+
 function focusPage(){
   var f = state.view.focus;
   if (!f) return '';
@@ -1589,6 +1698,7 @@ function focusPage(){
     + (S.t3==='ready' ? leadersSection(key, g) : '')
     + (S.t3==='ready' ? lineupSection(key, g) : '')
     + (S.t3==='ready' ? dvpSection(key, g) : '')
+    + (S.t3==='ready' ? distSection(key, g) : '')
     + h2hSection(key, g)
     + h2hHistory(key, g)
     + '<div class="dayband"><span>Players \u00b7 '+ps.length+'</span></div><div class="gp-list">'+list+'</div>';
