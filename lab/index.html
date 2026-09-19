@@ -310,6 +310,28 @@
   .pd-leg-v{flex:1;font-variant-numeric:tabular-nums;font-family:var(--font-mono);font-size:9px;color:var(--text-3);}
   .pd-leg-g{min-width:24px;text-align:right;font-variant-numeric:tabular-nums;font-size:9px;font-weight:700;color:var(--text-3);}
   .pd-leg-g.up{color:var(--accent);} .pd-leg-g.down{color:#f97316;}
+  .ms-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:8px;margin-bottom:6px;}
+  .ms-card{background:var(--surface-2);border:1px solid var(--border);border-radius:10px;padding:10px 12px;}
+  .ms-head{display:flex;align-items:center;gap:7px;margin-bottom:3px;}
+  .ms-head .fxr-logo,.ms-head .fxr-logo-ph{width:20px;height:20px;margin:0;font-size:8px;}
+  .ms-nm{font-family:var(--font-display);font-size:12px;font-weight:800;}
+  .ms-hand{margin-left:auto;font-size:8px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;
+    padding:2px 7px;border-radius:999px;border:1px solid var(--border);color:var(--text-3);}
+  .ms-sub{font-family:var(--font-mono);font-size:9px;letter-spacing:.04em;color:var(--text-3);margin-bottom:8px;}
+  .ms-stats{display:flex;gap:7px;margin-bottom:8px;}
+  .ms-stat{flex:1;background:var(--surface);border:1px solid var(--border);border-radius:7px;padding:6px 8px;text-align:center;}
+  .ms-stat b{display:block;font-family:var(--font-display);font-size:14px;font-weight:800;font-variant-numeric:tabular-nums;}
+  .ms-stat span{display:block;font-size:8px;font-weight:800;letter-spacing:.05em;text-transform:uppercase;color:var(--text-3);}
+  .ms-grp{font-size:8px;font-weight:800;letter-spacing:.07em;text-transform:uppercase;color:var(--text-3);
+    margin:6px 0 2px;padding-top:6px;border-top:1px solid var(--border);}
+  .ms-row{display:flex;align-items:center;gap:8px;padding:4px 0;cursor:pointer;}
+  .ms-who{flex:1;min-width:0;}
+  .ms-who b{display:block;font-size:11px;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .ms-who span{font-size:8px;letter-spacing:.05em;text-transform:uppercase;color:var(--text-3);}
+  .ms-tag{font-size:8px;font-weight:800;letter-spacing:.05em;padding:2px 7px;border-radius:999px;flex:none;
+    color:var(--text-2);background:var(--surface-3,var(--border));}
+  .ms-tag.soft{color:var(--accent);background:color-mix(in srgb,var(--accent) 14%,transparent);}
+  .ms-tag.tough{color:#ef4444;background:color-mix(in srgb,#ef4444 14%,transparent);}
   .lm-wrap{background:var(--surface-2);border:1px solid var(--border);border-radius:10px;padding:10px 12px;margin-bottom:6px;}
   .lm-stats{display:flex;flex-wrap:wrap;gap:7px;padding-bottom:9px;margin-bottom:6px;border-bottom:1px solid var(--border);}
   .lm-stat{flex:1 1 84px;background:var(--surface);border:1px solid var(--border);border-radius:7px;padding:6px 9px;}
@@ -1693,6 +1715,78 @@ function distSection(key, g){
     + '<div class="ds-grid">'+a+h+'</div>';
 }
 
+/* ---- team section: MLB starter matchup ------------------------------------
+   Port of the production _mlbStarterPanel. Each card is one team's BATS against the
+   pitcher they actually face, so the away card carries the home starter and vice
+   versa. Exploiter score = how much the starter leaks to that batter's hand, plus
+   how good the batter is against the hand the starter throws.                     */
+var MLB_LG_OPPAVG = 0.245, MLB_LG_OPS = 0.72;
+function mlbPitcher(key, name){
+  if (!name) return null;
+  var ix = state.sports[key].idx;
+  var bn = (ix.byName||{})[name];
+  if (bn && bn.role === 'pitch') return bn;
+  var ps = ix.players || [];
+  for (var i=0;i<ps.length;i++){ if (ps[i] && ps[i].name === name && ps[i].role === 'pitch') return ps[i]; }
+  return null;
+}
+function msExploiters(key, battingTeam, st){
+  var bats = (state.sports[key].idx.players || []).filter(function(p){
+    return p && normTeam(p.team) === normTeam(battingTeam) && p.role !== 'pitch';
+  });
+  return bats.map(function(b){
+    var sw = (((b.bats === 'L') ? st.splitVsL : st.splitVsR) || {}).oppAVG;   // what the starter allows that hand
+    var bs = ((st.throws === 'L') ? b.splitVsL : b.splitVsR) || {};           // batter's own split vs this hand
+    var swD = (sw != null ? sw : MLB_LG_OPPAVG) - MLB_LG_OPPAVG;
+    var bq  = ((bs.OPS != null ? bs.OPS : MLB_LG_OPS) - MLB_LG_OPS);
+    var bv  = (b.bvp && (b.bvp[String(st.id)] || b.bvp[st.id])) || null;
+    return { b:b, score:Math.round(swD*500 + bq*40), hand:b.bats||'', ops:bs.OPS, bvp:bv };
+  }).filter(function(x){ return isFinite(x.score); })
+    .sort(function(a,b){ return b.score - a.score; }).slice(0, 4);
+}
+function msCard(key, battingTeam, pitcherName){
+  var st = mlbPitcher(key, pitcherName);
+  var head = '<div class="ms-head">'+teamLogo(key,battingTeam)+'<span class="ms-nm">'+esc(abbrOf(key,battingTeam))+'</span>'
+    + (st && st.throws ? '<span class="ms-hand">'+esc(st.throws)+'HP</span>' : '')+'</div>';
+  if (!st) return '<div class="ms-card">'+head
+    + '<div class="sl-none">'+(pitcherName ? 'No card on file for '+esc(pitcherName) : 'Starter not named yet')+'.</div></div>';
+  var av3 = function(v){ return v == null ? '\u2014' : (+v).toFixed(3).replace(/^0/,''); };
+  var meta = [ st.K9 != null ? st.K9.toFixed(1)+' K/9' : '',
+               st.ERA != null ? st.ERA.toFixed(2)+' ERA' : '',
+               st.WHIP != null ? st.WHIP.toFixed(2)+' WHIP' : '',
+               st.oppAVG != null ? av3(st.oppAVG)+' oppAVG' : '' ].filter(Boolean).join(' \u00b7 ');
+  var sp = st.splitVsL || {}, sr = st.splitVsR || {};
+  var stats = '<div class="ms-stats">'
+    + '<div class="ms-stat"><b>'+av3(sp.oppAVG)+'</b><span>vs LHB</span></div>'
+    + '<div class="ms-stat"><b>'+av3(sr.oppAVG)+'</b><span>vs RHB</span></div>'
+    + '<div class="ms-stat"><b>'+(st.GS != null ? st.GS : '\u2014')+'</b><span>starts</span></div></div>';
+  var ex = msExploiters(key, battingTeam, st);
+  var rows = ex.map(function(x){
+    var cls = x.score >= 12 ? 'soft' : (x.score <= -8 ? 'tough' : '');
+    var lab = x.score >= 12 ? 'SOFT' : (x.score <= -8 ? 'TOUGH' : 'NEU');
+    var sub = [ x.hand ? x.hand+'HB' : '',
+                x.ops != null ? x.ops.toFixed(3).replace(/^0/,'')+' OPS vs '+(st.throws||'')+'HP' : '',
+                (x.bvp && x.bvp.PA) ? x.bvp.PA+' PA h2h \u00b7 '+(x.bvp.AVG != null ? (+x.bvp.AVG).toFixed(3).replace(/^0/,'') : '')
+                  + (x.bvp.HR ? ' \u00b7 '+x.bvp.HR+' HR' : '') : '' ].filter(Boolean).join(' \u00b7 ');
+    return '<div class="ms-row" onclick="LAB.player(\''+key+'\',\''+esc(x.b.name).replace(/'/g,"\\'")+'\')">'
+      + '<span class="ms-who"><b>'+esc(x.b.name)+'</b><span>'+esc(sub)+'</span></span>'
+      + '<span class="ms-tag '+cls+'">'+lab+' '+(x.score>0?'+':'')+x.score+'</span></div>';
+  }).join('');
+  return '<div class="ms-card">'+head
+    + '<div class="ms-sub">vs '+esc(st.name)+(meta ? ' \u00b7 '+esc(meta) : '')+'</div>'
+    + stats + (rows ? '<div class="ms-grp">Top exploiters</div>'+rows : '')+'</div>';
+}
+function starterSection(key, g){
+  if (key !== 'mlb' || !g.homePitcher && !g.awayPitcher) return '';
+  var pk = g.park || {}, wx = g.weather || {};
+  var cond = [ pk.name || g.venue || '' ];
+  if (pk.hrFactor != null) cond.push('Park HR '+(pk.hrFactor>=1?'+':'')+Math.round((pk.hrFactor-1)*100)+'%');
+  if (wx.hrMult != null && wx.hrMult !== 1) cond.push('Wind '+(wx.hrMult>=1?'+':'')+Math.round((wx.hrMult-1)*100)+'%');
+  return '<div class="dayband"><span>Starter Matchup</span></div>'
+    + '<div class="ms-sub" style="margin:-2px 0 6px">'+esc(cond.filter(Boolean).join(' \u00b7 '))+'</div>'
+    + '<div class="ms-grid">'+msCard(key, g.away, g.homePitcher)+msCard(key, g.home, g.awayPitcher)+'</div>';
+}
+
 function focusPage(){
   var f = state.view.focus;
   if (!f) return '';
@@ -1729,6 +1823,7 @@ function focusPage(){
     + (S.t3==='ready' ? lineupSection(key, g) : '')
     + (S.t3==='ready' ? dvpSection(key, g) : '')
     + (S.t3==='ready' ? distSection(key, g) : '')
+    + (S.t3==='ready' ? starterSection(key, g) : '')
     + h2hSection(key, g)
     + h2hHistory(key, g)
     + '<div class="dayband"><span>Players \u00b7 '+ps.length+'</span></div><div class="gp-list">'+list+'</div>';
