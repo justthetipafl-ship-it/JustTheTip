@@ -2045,7 +2045,7 @@ function firstLastSection(key, g){
    STREAKERS: consecutive games clearing the POSTED line. Production derives a
    synthetic line (realisticLine2) because AFL odds were patchy; the lab has odds
    in tier 2, so a streak is only shown against a line you can actually bet.       */
-var STREAK_MIN = 4, STREAK_PIPS = 8, SIG_MAX_ROWS = 8, STREAK_WINDOW = 20;
+var STREAK_MIN = 4, STREAK_PIPS = 8, SIG_MAX_ROWS = 8;
 // Production runs one floor for every signal (SIG_ODDS_FLOOR = 1.60, enforced in
 // collectOU). Streakers gets its own, lower one: the play here is a live run, not a
 // price edge, so $1.20 still pays while $1.05 chalk stays out.
@@ -2095,9 +2095,18 @@ function streakers(key, g){
           if (p.role === 'pitch' && BAT_ONLY[k]) return;
           if (p.role !== 'pitch' && ARM_ONLY[k]) return;
         }
-        var vals = [];
-        logs.forEach(function(r){ var v = r[k]; if (v != null && isFinite(+v)) vals.push(+v); });
-        vals = vals.slice(0, STREAK_WINDOW);                 // a streak is a recent-form claim, not a career one
+        // Walk actual games, newest first. A game the player sat out is skipped; a game
+        // where the stat wasn't recorded ENDS the run, because a streak you can't verify
+        // isn't a streak. Without this, EPL's null-heavy feed produced "20 straight" out
+        // of 20 scattered games spread across two seasons.
+        var vals = [], gap = false;
+        for (var gi=0; gi<logs.length; gi++){
+          var rr = logs[gi];
+          if (rr.min != null && +rr.min === 0) continue;     // unused sub: not a game, doesn't break the run
+          var vv = rr[k];
+          if (vv == null || !isFinite(+vv)){ gap = true; break; }
+          vals.push(+vv);
+        }
         if (vals.length < 5) return;
         var row = null, chalk = null;
         streakCandidates(key, p.name, k).forEach(function(od){
@@ -2138,7 +2147,7 @@ function streakers(key, g){
   // usually just a softer line. Bands instead: a 17-gamer and a 20-gamer are the same
   // claim, so inside a band the better-paying run leads, then the bigger clearance.
   var margin = function(r){ return (r.med == null) ? 0 : (r.med - r.line) / Math.max(r.line, 0.5); };
-  var band = function(n){ return n >= 20 ? 0 : (n >= 10 ? 1 : (n >= 7 ? 2 : 3)); };
+  var band = function(n){ return n >= 15 ? 0 : (n >= 10 ? 1 : (n >= 7 ? 2 : 3)); };
   out.forEach(function(r){ r.margin = margin(r); r.band = band(r.streak); });
   out.sort(function(a,b){
     return (a.band - b.band) || (b.price - a.price) || (b.margin - a.margin) || (b.streak - a.streak);
@@ -2163,7 +2172,7 @@ function streakRow(key, r){
         + (r.alt ? ' \u00b7 alt' : '')+(r.short ? ' \u00b7 under $'+STREAK_ODDS_FLOOR.toFixed(2) : '')+'</div>'
       + pips
     + '</div>'
-    + '<div class="stk-right"><div class="stk-hit">'+r.streak+(r.streak >= STREAK_WINDOW ? '+' : '')+'</div>'
+    + '<div class="stk-right"><div class="stk-hit">'+r.streak+'</div>'
       + '<div class="stk-hitl">STRAIGHT</div>'
       + '<div class="stk-odds'+(r.short ? ' short' : '')+'">$'+r.price.toFixed(2)+'</div>'
       + '<span class="stk-book">'+esc(r.book||'')+' \u00b7 '+r.hits+'/'+r.n+'</span></div></div>';
@@ -2175,8 +2184,9 @@ function signalsSection(key, g){
   var priced = oddsRows(S.data.odds).length;
   var rows = priced ? streakers(key, g) : [];
   var why = priced
-    ? 'No player on this fixture has cleared a line paying $'+STREAK_ODDS_FLOOR.toFixed(2)+'+ for '
-      + STREAK_MIN+' games straight. Longer streaks exist at shorter prices, but those are chalk, not signals.'
+    ? 'No player on this fixture has cleared a line paying $'+STREAK_ODDS_FLOOR.toFixed(2)+'+ in their last '
+      + STREAK_MIN+' games. A run also ends at any game where the stat wasn\u2019t recorded, so a sport whose '
+      + 'feed has gone stale will show nothing here rather than counting across them.'
     : 'No posted lines loaded for '+SPORTS[key].name+' \u2014 streaks are measured against a real market, so nothing can fire.';
   return '<div class="dayband"><span>Degen Signals</span></div>'
     + sigTile('ti-flame', 'Streakers', 'Cleared the posted line, game after game',
