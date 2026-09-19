@@ -261,6 +261,24 @@
   .lu-flag{font-size:8px;font-weight:800;letter-spacing:.04em;text-transform:uppercase;padding:1px 6px;
     border-radius:999px;color:#f97316;background:color-mix(in srgb,#f97316 12%,transparent);flex:none;}
   .lu-flag.out{color:#ef4444;background:color-mix(in srgb,#ef4444 14%,transparent);}
+  .dv-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:8px;margin-bottom:6px;}
+  .dv-card{background:var(--surface-2);border:1px solid var(--border);border-radius:10px;padding:10px 12px;}
+  .dv-head{display:flex;align-items:center;gap:7px;margin-bottom:3px;}
+  .dv-head .fxr-logo,.dv-head .fxr-logo-ph{width:20px;height:20px;margin:0;font-size:8px;}
+  .dv-nm{font-family:var(--font-display);font-size:12px;font-weight:800;}
+  .dv-mk{margin-left:auto;font-family:var(--font-mono);font-size:8px;letter-spacing:.06em;
+    text-transform:uppercase;color:var(--text-3);}
+  .dv-sub{font-family:var(--font-mono);font-size:8px;letter-spacing:.05em;text-transform:uppercase;
+    color:var(--text-3);margin-bottom:7px;}
+  .dv-row{display:flex;align-items:center;gap:8px;padding:5px 0;border-top:1px solid var(--border);}
+  .dv-pos{width:62px;flex:none;font-size:10px;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .dv-bars{flex:1;min-width:0;}
+  .dv-bar-t{height:4px;border-radius:2px;background:var(--surface-3,var(--border));overflow:hidden;}
+  .dv-bar-t i{display:block;height:100%;background:var(--text-3);}
+  .dv-bar-t i.soft{background:var(--accent);} .dv-bar-t i.tough{background:#f97316;}
+  .dv-val{min-width:40px;text-align:right;font-variant-numeric:tabular-nums;font-weight:800;font-size:13px;flex:none;}
+  .dv-rk{min-width:42px;text-align:right;font-family:var(--font-mono);font-size:9px;color:var(--text-3);flex:none;}
+  .dv-rk.soft{color:var(--accent);} .dv-rk.tough{color:#f97316;}
   .lm-wrap{background:var(--surface-2);border:1px solid var(--border);border-radius:10px;padding:10px 12px;margin-bottom:6px;}
   .lm-stats{display:flex;flex-wrap:wrap;gap:7px;padding-bottom:9px;margin-bottom:6px;border-bottom:1px solid var(--border);}
   .lm-stat{flex:1 1 84px;background:var(--surface);border:1px solid var(--border);border-radius:7px;padding:6px 9px;}
@@ -366,7 +384,7 @@ var TIER1 = { fixture:'data/fixture.json', teams:'data/teams.json', meta:'data/m
 var state = {
   sports: {},                               // sports[key] = {data:{}, idx:{}, status:''}
   view:   { active: {}, tab: 'fixture', mkt: {}, match: {}, player: null, books: null, showDone: false, focus: null, h2hMode: 'for',
-             slMkt: {}, slWin: 'season' }   // filter + current page + market per sport
+             slMkt: {}, slWin: 'season', dvpMkt: {} }   // filter + current page + market per sport
 };
 Object.keys(SPORTS).forEach(function(k){
   state.sports[k] = { data:{}, idx:{teamMap:{}}, status:'idle' };
@@ -1471,6 +1489,71 @@ function lineupSection(key, g){
   return '<div class="dayband"><span>Lineup</span></div><div class="lu-grid">'+a+h+'</div>';
 }
 
+/* ---- team section: DVP by position ----------------------------------------
+   dvp.json is "allowed per game to that position", so the read is about the team
+   in the OTHER column: rank 1 = concedes the most = softest spot to attack.
+   MLB's file only carries pos "ALL", so it renders one honest team-level row.     */
+function dvpMarkets(key){
+  var cfg = state.sports[key].config || {};
+  return (cfg.dvpStats || cfg.oddsMkts || cfg.multiMkts || []).slice(0, 8);
+}
+function dvpBoard(key, mkt){
+  var rows = asArray(state.sports[key].data.dvp) || [];
+  var byPos = {};
+  rows.forEach(function(r){
+    if (!r || !r.pos || r.team == null) return;
+    var v = r[mkt]; if (v == null || !isFinite(+v)) return;
+    (byPos[r.pos] = byPos[r.pos] || []).push({ team:r.team, val:+v });
+  });
+  Object.keys(byPos).forEach(function(pos){
+    var list = byPos[pos].sort(function(a,b){ return b.val - a.val; });   // most allowed first
+    var mx = list.length ? list[0].val : 0;
+    list.forEach(function(e, i){ e.rank = i+1; e.of = list.length; e.max = mx; });
+    if (mx <= 0) delete byPos[pos];                                      // stat doesn't apply to this position
+  });
+  return byPos;
+}
+function dvpCard(key, team, mkt, board){
+  var cfg = state.sports[key].config || {};
+  var order = (cfg.posOrder || []).slice();
+  Object.keys(board).forEach(function(p){ if (order.indexOf(p) < 0) order.push(p); });
+  var head = '<div class="dv-head">'+teamLogo(key,team)+'<span class="dv-nm">'+esc(abbrOf(key,team))+'</span>'
+    + '<span class="dv-mk">'+esc(mktLabel(key, mkt))+' allowed</span></div>';
+  var body = '', any = false;
+  order.forEach(function(pos){
+    var list = board[pos]; if (!list) return;
+    var e = null;
+    for (var i=0;i<list.length;i++){ if (normTeam(list[i].team) === normTeam(team)){ e = list[i]; break; } }
+    if (!e) return;
+    any = true;
+    var third = Math.max(1, Math.round(e.of/3));
+    var cls = e.rank <= third ? 'soft' : (e.rank > e.of - third ? 'tough' : '');
+    var pct = e.max > 0 ? Math.max(3, Math.round(e.val / e.max * 100)) : 0;
+    var dec = e.max < 3 ? 2 : 1;
+    body += '<div class="dv-row"><span class="dv-pos">'+esc(pos === 'ALL' ? 'All bats' : pos)+'</span>'
+      + '<span class="dv-bars"><span class="dv-bar-t"><i class="'+cls+'" style="width:'+pct+'%"></i></span></span>'
+      + '<span class="dv-val">'+e.val.toFixed(dec)+'</span>'
+      + '<span class="dv-rk '+cls+'">'+e.rank+'/'+e.of+'</span></div>';
+  });
+  if (!any) return '<div class="dv-card">'+head+'<div class="sl-none">No '+esc(mktLabel(key,mkt))+' splits on file.</div></div>';
+  return '<div class="dv-card">'+head
+    + '<div class="dv-sub">Per game \u00b7 rank 1 = concedes most</div>'+body+'</div>';
+}
+function dvpSection(key, g){
+  var mkts = dvpMarkets(key);
+  if (!mkts.length || !(asArray(state.sports[key].data.dvp)||[]).length) return '';
+  var mkt = state.view.dvpMkt[key] || mkts[0][0];
+  if (!mkts.some(function(m){ return m[0] === mkt; })) mkt = mkts[0][0];
+  var board = dvpBoard(key, mkt);
+  if (!Object.keys(board).length) return '';
+  var chips = mkts.map(function(m){
+    return '<button class="sl-chip'+(m[0]===mkt?' on':'')+'" onclick="LAB.dvpMkt(\''+key+'\',\''+m[0]+'\')">'
+      + esc(m[1])+'</button>'; }).join('');
+  return '<div class="dayband"><span>DVP by Position</span></div>'
+    + '<div class="sl-bar">'+chips+'</div>'
+    + '<div class="dv-grid">'+dvpCard(key,g.away,mkt,board)+dvpCard(key,g.home,mkt,board)+'</div>';
+}
+
 function focusPage(){
   var f = state.view.focus;
   if (!f) return '';
@@ -1505,6 +1588,7 @@ function focusPage(){
     + (S.t3==='ready' ? formSection(key, g) : '')
     + (S.t3==='ready' ? leadersSection(key, g) : '')
     + (S.t3==='ready' ? lineupSection(key, g) : '')
+    + (S.t3==='ready' ? dvpSection(key, g) : '')
     + h2hSection(key, g)
     + h2hHistory(key, g)
     + '<div class="dayband"><span>Players \u00b7 '+ps.length+'</span></div><div class="gp-list">'+list+'</div>';
@@ -1747,6 +1831,7 @@ window.LAB = {
   h2hMode: function(m){ state.view.h2hMode = m; render(); },
   slMkt: function(k, m){ state.view.slMkt[k] = m; render(); },
   slWin: function(w){ state.view.slWin = w; render(); },
+  dvpMkt: function(k, m){ state.view.dvpMkt[k] = m; render(); },
   showDone: function(){ state.view.showDone = !state.view.showDone; render(); },
   books: function(k, player, market, line){ state.view.books = k ? {sport:k, player:player, market:market, line:line} : null; render(); },
   state: state
