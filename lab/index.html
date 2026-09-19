@@ -446,6 +446,27 @@
   .h2h-sig-l{font-family:var(--font-mono);font-size:7px;color:var(--text-3);letter-spacing:.06em;margin-top:3px;}
   .h2h-sig-odds{margin-top:7px;display:inline-block;font-family:var(--font-mono);font-size:10px;color:var(--text);
     border:1px solid var(--border);border-radius:5px;padding:3px 7px;}
+  .gl-row{display:flex;gap:10px;padding:10px 12px;border-top:1px solid var(--border);align-items:center;cursor:pointer;}
+  .gl-left{flex:1;min-width:0;}
+  .gl-nm{font-size:12px;font-weight:700;display:flex;align-items:center;gap:6px;min-width:0;}
+  .gl-nm b{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:700;}
+  .gl-tag{font-family:var(--font-mono);font-size:7px;letter-spacing:.07em;padding:2px 5px;border-radius:3px;flex:none;
+    background:var(--surface-3,var(--border));color:var(--text-3);}
+  .gl-bet{font-family:var(--font-mono);font-size:11px;color:var(--text);margin-top:4px;
+    overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .gl-bet b{color:var(--accent);}
+  .gl-why{display:flex;flex-wrap:wrap;gap:4px;margin-top:7px;}
+  .gl-chip{font-size:8px;font-weight:700;letter-spacing:.04em;padding:2px 6px;border-radius:4px;
+    background:var(--surface-3,var(--border));color:var(--text-3);}
+  .gl-chip.good{color:var(--accent);background:color-mix(in srgb,var(--accent) 13%,transparent);}
+  .gl-chip.bad{color:#f97316;background:color-mix(in srgb,#f97316 13%,transparent);}
+  .gl-right{flex:none;width:80px;text-align:right;}
+  .gl-ev{font-family:var(--font-display);font-size:17px;line-height:1;}
+  .gl-ev.pos{color:var(--accent);} .gl-ev.neg{color:#f97316;}
+  .gl-evl{font-family:var(--font-mono);font-size:7px;color:var(--text-3);letter-spacing:.06em;margin-top:3px;}
+  .gl-odds{margin-top:7px;display:inline-block;font-family:var(--font-mono);font-size:10px;color:var(--text);
+    border:1px solid var(--border);border-radius:5px;padding:3px 7px;}
+  .gl-book{display:block;font-family:var(--font-mono);font-size:7px;color:var(--text-3);margin-top:3px;}
   .lm-wrap{background:var(--surface-2);border:1px solid var(--border);border-radius:10px;padding:10px 12px;margin-bottom:6px;}
   .lm-stats{display:flex;flex-wrap:wrap;gap:7px;padding-bottom:9px;margin-bottom:6px;border-bottom:1px solid var(--border);}
   .lm-stat{flex:1 1 84px;background:var(--surface);border:1px solid var(--border);border-radius:7px;padding:6px 9px;}
@@ -2463,6 +2484,132 @@ function h2hSigRow(key, r){
       + (r.price != null ? '<div class="h2h-sig-odds">'+(up ? ask+'+ ' : 'U'+r.line+' ')+'$'+r.price.toFixed(2)+'</div>' : '')
     + '</div></div>';
 }
+
+/* GREEN LIGHTS / DEATH RIDERS ------------------------------------------------
+   Each sport scores through its OWN module (all four expose scoreCMP), so the
+   tuning stays where it was built. AFL and NFL score heuristically; EPL and MLB
+   return (prob - 0.5) * 20. Production's thresholds are kept: >= 5.5 fires a
+   Green Light, <= -3.5 a Death Rider.
+
+   Three departures from production, all enabled by data it had but didn't use:
+     1. the whole ladder is scored, not just the main line. Production scores the
+        posted line and then lineTag() quietly re-quotes a different rung when the
+        main one pays under the floor - so the score and the price described two
+        different bets.
+     2. rows rank by EXPECTED VALUE, not raw score. A 5.6 at $2.40 is a better bet
+        than a 6.2 at $1.62, and score alone can't see that.
+     3. where a two-way market exists the vig is stripped from the pair, giving the
+        book's own fair probability to price the model against.                     */
+var GL_SCORE = 5.5, DR_SCORE = -3.5, GL_MIN_GAMES = 3, GL_RUNGS = 6;
+function glProb(key, p, mkt, line, score){
+  var sc = state.sports[key].scoring;
+  // EPL and MLB define score as (prob - 0.5) * 20, so it inverts exactly.
+  if (key === 'epl' || key === 'mlb') return Math.max(0.01, Math.min(0.99, score / 20 + 0.5));
+  // AFL and NFL score heuristically - take the empirical rate their module already blends.
+  try {
+    var hr = sc && sc.getHitRate ? sc.getHitRate(p.name, mkt, line, false) : null;
+    var rate = hr == null ? null : (hr.rate != null ? hr.rate : (isFinite(+hr) ? +hr : null));
+    if (rate != null) return Math.max(0.01, Math.min(0.99, rate));
+  } catch(e){}
+  return null;
+}
+function novigFair(key, name, mkt, line, side){
+  var d = state.sports[key].data.odds || {};
+  var rows = (d.books && d.books.length ? d.books : (d.lines || []));
+  for (var i=0;i<rows.length;i++){
+    var r = rows[i];
+    if (!r || r.player !== name || r.market !== mkt || +r.line !== +line) continue;
+    if (r.over == null || r.under == null) continue;
+    var io = 1/+r.over, iu = 1/+r.under, sum = io + iu;
+    if (!(sum > 0)) return null;
+    return (side === 'over' ? io : iu) / sum;          // vig stripped proportionally
+  }
+  return null;
+}
+function ouSignals(key, g, kind){
+  var S = state.sports[key], sc = S.scoring;
+  if (!sc || !sc.scoreCMP) return null;                // caller reports the missing module
+  var mkts = (S.config || {}).oddsMkts || (S.config || {}).multiMkts || [];
+  var over = kind === 'over', out = [];
+  [g.away, g.home].forEach(function(team){
+    var opp = (team === g.home) ? g.away : g.home;
+    playersOnTeam(key, team).forEach(function(p){
+      if (!p || !p.name || !isPlayingP(key, p.name, team)) return;
+      mkts.forEach(function(m){
+        var k = m[0];
+        if (key === 'mlb'){
+          if (p.role === 'pitch' && BAT_ONLY[k]) return;
+          if (p.role !== 'pitch' && ARM_ONLY[k]) return;
+        }
+        var lg = leagueAvg(key, k)[p.name];
+        if (!lg || lg.games < GL_MIN_GAMES) return;    // production's 3-game floor
+        var cands = (over ? streakCandidates(key, p.name, k) : underCandidates(key, p.name, k))
+          .filter(function(c){ return c.price >= SIG_ODDS_FLOOR; });
+        if (!cands.length) return;
+        // score the rungs nearest their own level rather than the whole ladder
+        cands.sort(function(a,b){ return Math.abs(a.line - lg.avg) - Math.abs(b.line - lg.avg); });
+        var best = null;
+        cands.slice(0, GL_RUNGS).forEach(function(c){
+          var score = null;
+          try { score = sc.scoreCMP(p, k, c.line, opp); } catch(e){ return; }
+          if (score == null || !isFinite(score)) return;
+          if (over ? score < GL_SCORE : score > DR_SCORE) return;
+          var pOver = glProb(key, p, k, c.line, score);
+          if (pOver == null) return;
+          var prob = over ? pOver : 1 - pOver;
+          var ev = prob * (c.price - 1) - (1 - prob);
+          var fair = novigFair(key, p.name, k, c.line, over ? 'over' : 'under');
+          var row = { name:p.name, team:team, opp:opp, pos:posShortP(p), mkt:k, label:m[1],
+                      line:c.line, price:c.price, book:c.book, score:score, prob:prob, ev:ev,
+                      edge:(fair != null ? prob - fair : null), avg:lg.avg, games:lg.games, over:over };
+          if (!best || row.ev > best.ev) best = row;
+        });
+        if (best) out.push(best);
+      });
+    });
+  });
+  out.sort(function(a,b){ return (b.ev - a.ev) || (over ? b.score - a.score : a.score - b.score); });
+  return out.slice(0, SIG_MAX_ROWS);
+}
+function ouRow(key, r){
+  var ask = (Math.round(r.line) === r.line) ? r.line + 1 : Math.ceil(r.line);
+  var chips = '<div class="gl-why">'
+    + '<span class="gl-chip '+(r.prob >= 0.6 ? 'good' : '')+'">'+Math.round(r.prob*100)+'% model</span>'
+    + (r.edge != null ? '<span class="gl-chip '+(r.edge > 0 ? 'good' : 'bad')+'">'
+        + (r.edge > 0 ? '+' : '')+Math.round(r.edge*100)+' pts vs fair</span>' : '')
+    + '<span class="gl-chip">score '+r.score.toFixed(1)+'</span>'
+    + '<span class="gl-chip">'+r.avg.toFixed(r.avg < 3 ? 2 : 1)+' avg \u00b7 '+r.games+' gm</span></div>';
+  return '<div class="gl-row" onclick="LAB.player(\''+key+'\',\''+esc(r.name).replace(/'/g,"\\'")+'\')">'
+    + '<div class="gl-left">'
+      + '<div class="gl-nm"><b>'+esc(r.name)+'</b><span class="gl-tag">'
+        + esc((r.pos ? r.pos+' \u00b7 ' : '')+abbrOf(key, r.team)+' v '+abbrOf(key, r.opp))+'</span></div>'
+      + '<div class="gl-bet"><b>'+(r.over ? ask+'+ ' : 'Under '+r.line+' ')+'</b>'+esc(r.label)+'</div>'
+      + chips
+    + '</div>'
+    + '<div class="gl-right"><div class="gl-ev '+(r.ev >= 0 ? 'pos' : 'neg')+'">'
+      + (r.ev > 0 ? '+' : '')+Math.round(r.ev*100)+'%</div>'
+      + '<div class="gl-evl">EDGE</div>'
+      + '<div class="gl-odds">$'+r.price.toFixed(2)+'</div>'
+      + '<span class="gl-book">'+esc(r.book||'')+'</span></div></div>';
+}
+function ouTile(key, g, kind){
+  var over = kind === 'over';
+  var rows = ouSignals(key, g, kind);
+  var why;
+  if (rows === null){
+    rows = [];
+    why = SPORTS[key].name+' scoring.js exposes no scoreCMP, so nothing can be scored.';
+  } else {
+    why = over
+      ? 'No player scored '+GL_SCORE+'+ on a line paying $'+SIG_ODDS_FLOOR.toFixed(2)+' or better.'
+      : 'No player scored '+DR_SCORE+' or worse on a posted under'
+        + (underCandidates(key, (playersOnTeam(key, g.home)[0]||{}).name || '', 'x').length ? '.' : ' \u2014 this sport posts no under markets.');
+  }
+  return sigTile(over ? 'ti-traffic-lights' : 'ti-skull',
+    over ? 'Green Lights' : 'Death Riders',
+    over ? 'Model and price both say over' : 'Model and price both say under',
+    rows.map(function(r){ return ouRow(key, r); }), why);
+}
 function signalsSection(key, g){
   var S = state.sports[key], cfg = S.config || {};
   if (!(cfg.oddsMkts || cfg.multiMkts || []).length)
@@ -2490,7 +2637,9 @@ function signalsSection(key, g){
               'No player has '+H2H_MIN_BUNNY+'+ meetings with this opponent that beat their other matchups.')
     + sigTile('ti-ghost-2', 'Bogey', 'Players this opponent shuts down',
               h2hSignals(key, g, 'bogey').map(function(r){ return h2hSigRow(key, r); }),
-              'No player has '+H2H_MIN_BOGEY+'+ meetings with this opponent below their other matchups.');
+              'No player has '+H2H_MIN_BOGEY+'+ meetings with this opponent below their other matchups.')
+    + ouTile(key, g, 'over')
+    + ouTile(key, g, 'under');
 }
 
 function secNote(title, why){
