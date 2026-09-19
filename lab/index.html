@@ -332,6 +332,37 @@
     color:var(--text-2);background:var(--surface-3,var(--border));}
   .ms-tag.soft{color:var(--accent);background:color-mix(in srgb,var(--accent) 14%,transparent);}
   .ms-tag.tough{color:#ef4444;background:color-mix(in srgb,#ef4444 14%,transparent);}
+  .bt-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:8px;margin-bottom:6px;}
+  .bt-card{background:var(--surface-2);border:1px solid var(--border);border-radius:10px;padding:10px 12px;}
+  .bt-head{display:flex;align-items:center;gap:7px;margin-bottom:5px;}
+  .bt-head .fxr-logo,.bt-head .fxr-logo-ph{width:20px;height:20px;margin:0;font-size:8px;}
+  .bt-nm{font-family:var(--font-display);font-size:12px;font-weight:800;}
+  .bt-n{margin-left:auto;font-family:var(--font-mono);font-size:8px;letter-spacing:.06em;
+    text-transform:uppercase;color:var(--text-3);}
+  .bt-call{font-size:9px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:var(--accent);
+    background:color-mix(in srgb,var(--accent) 12%,transparent);border-radius:6px;padding:4px 8px;margin-bottom:7px;}
+  .bt-cells{display:flex;gap:6px;margin-bottom:6px;}
+  .bt-cell{flex:1;background:var(--surface);border:1px solid var(--border);border-radius:7px;padding:5px 6px;text-align:center;}
+  .bt-cell b{display:block;font-family:var(--font-display);font-size:13px;font-weight:800;font-variant-numeric:tabular-nums;}
+  .bt-cell span{display:block;font-size:7px;font-weight:800;letter-spacing:.05em;text-transform:uppercase;color:var(--text-3);}
+  .bt-sub{font-family:var(--font-mono);font-size:8px;letter-spacing:.05em;text-transform:uppercase;
+    color:var(--text-3);margin:8px 0 4px;}
+  .gt-row{display:flex;gap:4px;align-items:flex-end;}
+  .gt-col{flex:1;text-align:center;}
+  .gt-bars{display:flex;gap:2px;align-items:flex-end;justify-content:center;height:40px;}
+  .gt-bar{width:7px;border-radius:2px 2px 0 0;min-height:2px;}
+  .gt-bar.sc{background:var(--accent);} .gt-bar.cc{background:#f97316;}
+  .gt-lbl{font-size:7px;color:var(--text-3);margin-top:3px;letter-spacing:.02em;}
+  .gt-n{font-family:var(--font-mono);font-size:8px;color:var(--text-2);}
+  .gt-leg{display:flex;align-items:center;gap:5px;margin-top:5px;font-size:8px;color:var(--text-3);
+    letter-spacing:.05em;text-transform:uppercase;}
+  .gt-key{width:8px;height:8px;border-radius:2px;display:inline-block;}
+  .gt-key.sc{background:var(--accent);} .gt-key.cc{background:#f97316;}
+  .sb-row{display:flex;align-items:center;gap:8px;padding:4px 0;border-top:1px solid var(--border);cursor:pointer;}
+  .sb-nm{flex:1;min-width:0;font-size:11px;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .sb-bar{width:60px;flex:none;height:4px;border-radius:2px;background:var(--surface-3,var(--border));overflow:hidden;}
+  .sb-bar i{display:block;height:100%;background:#f97316;}
+  .sb-meta{min-width:62px;text-align:right;font-family:var(--font-mono);font-size:9px;color:var(--text-3);flex:none;}
   .lm-wrap{background:var(--surface-2);border:1px solid var(--border);border-radius:10px;padding:10px 12px;margin-bottom:6px;}
   .lm-stats{display:flex;flex-wrap:wrap;gap:7px;padding-bottom:9px;margin-bottom:6px;border-bottom:1px solid var(--border);}
   .lm-stat{flex:1 1 84px;background:var(--surface);border:1px solid var(--border);border-radius:7px;padding:6px 9px;}
@@ -1787,6 +1818,95 @@ function starterSection(key, g){
     + '<div class="ms-grid">'+msCard(key, g.away, g.homePitcher)+msCard(key, g.home, g.awayPitcher)+'</div>';
 }
 
+/* ---- team section: EPL By The Halves + Substitution Trends -----------------
+   Ported from the production _eplByTheHalves / _eplSubTrends. Halves come from
+   results.json (htHome/htAway vs full time); the 15-minute timing buckets and the
+   hooked list come from events.json, which is a separate feed to API-Football.     */
+function eventsFor(key, team){
+  var ev = (state.sports[key].data.events || {}).byTeam;
+  if (!ev) return null;
+  if (ev[team]) return ev[team];
+  var want = normTeam(team), ks = Object.keys(ev);
+  for (var i=0;i<ks.length;i++){ if (normTeam(ks[i]) === want) return ev[ks[i]]; }
+  return null;
+}
+function halvesFor(key, team){
+  var rs = resultRows(key).filter(function(r){
+    return r && r.htHome != null && (normTeam(r.home) === normTeam(team) || normTeam(r.away) === normTeam(team));
+  });
+  if (!rs.length) return null;
+  var n = rs.length, h1f=0, h1a=0, h2f=0, h2a=0, s1=0, s2=0, c1=0, c2=0;
+  rs.forEach(function(r){
+    var isH = normTeam(r.home) === normTeam(team);
+    var ftF = isH ? r.homeScore : r.awayScore, ftA = isH ? r.awayScore : r.homeScore;
+    var htF = (isH ? r.htHome : r.htAway) || 0, htA = (isH ? r.htAway : r.htHome) || 0;
+    var g1f = htF, g1a = htA, g2f = Math.max(0, ftF-htF), g2a = Math.max(0, ftA-htA);
+    h1f+=g1f; h1a+=g1a; h2f+=g2f; h2a+=g2a;
+    if (g1f>0) s1++; if (g2f>0) s2++; if (g1a>0) c1++; if (g2a>0) c2++;
+  });
+  return { n:n, h1f:h1f/n, h1a:h1a/n, h2f:h2f/n, h2a:h2a/n,
+           s1:Math.round(s1/n*100), s2:Math.round(s2/n*100),
+           c1:Math.round(c1/n*100), c2:Math.round(c2/n*100) };
+}
+function btCard(key, team){
+  var d = halvesFor(key, team);
+  var head = '<div class="bt-head">'+teamLogo(key,team)+'<span class="bt-nm">'+esc(abbrOf(key,team))+'</span>'
+    + (d ? '<span class="bt-n">'+d.n+' matches</span>' : '')+'</div>';
+  if (!d) return '<div class="bt-card">'+head+'<div class="sl-none">No half-time scores on file.</div></div>';
+  var call = d.h2f > d.h1f*1.15 ? 'Strong 2H attack' : (d.h1f > d.h2f*1.15 ? 'Strong 1H attack' : 'Balanced halves');
+  if (d.h2a > d.h1a*1.2) call += ' \u00b7 leaky 2H';
+  else if (d.h1a > d.h2a*1.2) call += ' \u00b7 leaky 1H';
+  var cell = function(l,v){ return '<div class="bt-cell"><b>'+v+'</b><span>'+l+'</span></div>'; };
+  var body = '<div class="bt-call">'+esc(call)+'</div>'
+    + '<div class="bt-cells">'+cell('1H GF',d.h1f.toFixed(2))+cell('2H GF',d.h2f.toFixed(2))
+      + cell('1H GA',d.h1a.toFixed(2))+cell('2H GA',d.h2a.toFixed(2))+'</div>'
+    + '<div class="bt-cells">'+cell('Scored 1H',d.s1+'%')+cell('Scored 2H',d.s2+'%')
+      + cell('Conc 1H',d.c1+'%')+cell('Conc 2H',d.c2+'%')+'</div>';
+  var ev = eventsFor(key, team);
+  if (ev && ev.timing && ev.timing.scored){
+    var sc = ev.timing.scored, cc = ev.timing.conceded || [];
+    var mx = Math.max.apply(null, [1].concat(sc, cc));
+    var L = ['0-15','16-30','31-45','46-60','61-75','76-90'];
+    body += '<div class="bt-sub">Goal timing \u00b7 15-min buckets</div><div class="gt-row">'
+      + L.map(function(l,i){
+          return '<div class="gt-col"><div class="gt-bars">'
+            + '<div class="gt-bar sc" style="height:'+Math.round((sc[i]||0)/mx*100)+'%"></div>'
+            + '<div class="gt-bar cc" style="height:'+Math.round((cc[i]||0)/mx*100)+'%"></div></div>'
+            + '<div class="gt-lbl">'+l+'</div><div class="gt-n">'+(sc[i]||0)+'-'+(cc[i]||0)+'</div></div>';
+        }).join('')
+      + '</div><div class="gt-leg"><span class="gt-key sc"></span>Scored<span class="gt-key cc"></span>Conceded</div>';
+  }
+  return '<div class="bt-card">'+head+body+'</div>';
+}
+function halvesSection(key, g){
+  if (key !== 'epl') return '';
+  var a = btCard(key, g.away), h = btCard(key, g.home);
+  if (/No half-time scores/.test(a) && /No half-time scores/.test(h)) return '';
+  return '<div class="dayband"><span>By The Halves</span></div><div class="bt-grid">'+a+h+'</div>';
+}
+function sbCard(key, team){
+  var ev = eventsFor(key, team);
+  var head = '<div class="bt-head">'+teamLogo(key,team)+'<span class="bt-nm">'+esc(abbrOf(key,team))+'</span>'
+    + (ev && ev.hooked ? '<span class="bt-n">'+ev.hooked.length+' regulars</span>' : '')+'</div>';
+  if (!ev || !ev.hooked || !ev.hooked.length)
+    return '<div class="bt-card">'+head+'<div class="sl-none">No substitution history on file.</div></div>';
+  var rows = ev.hooked.slice(0, 8).map(function(x){
+    var pct = Math.max(3, Math.round(Math.min(90, x.offAvg||0) / 90 * 100));
+    return '<div class="sb-row" onclick="LAB.player(\''+key+'\',\''+esc(x.player).replace(/'/g,"\\'")+'\')">'
+      + '<span class="sb-nm">'+esc(x.player)+'</span>'
+      + '<span class="sb-bar"><i style="width:'+pct+'%"></i></span>'
+      + '<span class="sb-meta">'+(x.offAvg||0)+'\u2032 \u00b7 '+(x.n||0)+'\u00d7</span></div>';
+  }).join('');
+  return '<div class="bt-card">'+head
+    + '<div class="bt-sub" style="margin:0 0 2px">Hooked early \u00b7 prop carry-over risk</div>'+rows+'</div>';
+}
+function subsSection(key, g){
+  if (key !== 'epl') return '';
+  var a = sbCard(key, g.away), h = sbCard(key, g.home);
+  if (/No substitution history/.test(a) && /No substitution history/.test(h)) return '';
+  return '<div class="dayband"><span>Substitution Trends</span></div><div class="bt-grid">'+a+h+'</div>';
+}
+
 function focusPage(){
   var f = state.view.focus;
   if (!f) return '';
@@ -1824,6 +1944,8 @@ function focusPage(){
     + (S.t3==='ready' ? dvpSection(key, g) : '')
     + (S.t3==='ready' ? distSection(key, g) : '')
     + (S.t3==='ready' ? starterSection(key, g) : '')
+    + (S.t3==='ready' ? halvesSection(key, g) : '')
+    + (S.t3==='ready' ? subsSection(key, g) : '')
     + h2hSection(key, g)
     + h2hHistory(key, g)
     + '<div class="dayband"><span>Players \u00b7 '+ps.length+'</span></div><div class="gp-list">'+list+'</div>';
