@@ -711,6 +711,7 @@ function buildIndexes(key){
   ix.byName = {};
   players.forEach(function(p){ if (p && p.name) ix.byName[p.name] = p; });
 
+  ix.lgAvg = {};                       // derived caches are invalid the moment the index is rebuilt
   var logs = asArray(d.gamelogs) || [];
   ix.logsByName = {};
   logs.forEach(function(r){
@@ -1035,6 +1036,7 @@ var TEAM_ALIAS = {
   'manchestercity':'mancity','manchesterunited':'manutd','manutd':'manutd',
   'newcastleunited':'newcastle','wolverhamptonwanderers':'wolves','nottinghamforest':'nottmforest',
   'westhamunited':'westham','leedsunited':'leeds','afcbournemouth':'bournemouth',
+  'ipswichtown':'ipswich','hullcity':'hull','coventrycity':'coventry','leicestercity':'leicester',
   'crystalpalace':'crystalpalace','astonvilla':'astonvilla'
 };
 function normTeam(n){
@@ -2201,6 +2203,36 @@ function streakRow(key, r){
    that it only considers the two teams in front of you, and it quotes the first rung
    that pays the signal floor rather than whatever the main line happens to be.       */
 var ELITE_TOP_N = 10, ELITE_DVP_GATE = 5, ELITE_MIN_GAMES = 4;
+// players.json is per-game in AFL, NFL and EPL but SEASON TOTALS in MLB (45 HR, not 45/gm),
+// so ranking or labelling straight off it mixes two different units. Everything here is
+// computed from gamelogs instead - one source, one unit, every sport.
+function leagueAvg(key, mkt){
+  var S = state.sports[key];
+  S.idx.lgAvg = S.idx.lgAvg || {};
+  if (S.idx.lgAvg[mkt]) return S.idx.lgAvg[mkt];
+  var season = curSeason(key), byName = S.idx.logsByName || {}, out = {}, maxThis = 0;
+  if (!Object.keys(byName).length) return out;   // gamelogs not indexed yet: compute later, don't cache empty
+  Object.keys(byName).forEach(function(n){
+    var c = 0;
+    byName[n].forEach(function(r){
+      if ((+(r.Year||r.year)||0) !== season) return;
+      var v = r[mkt]; if (v != null && isFinite(+v)) c++;
+    });
+    if (c > maxThis) maxThis = c;
+  });
+  var useAll = maxThis < ELITE_MIN_GAMES;      // two weeks into a season, nobody qualifies yet
+  Object.keys(byName).forEach(function(n){
+    var sum = 0, cnt = 0;
+    byName[n].forEach(function(r){
+      if (!useAll && (+(r.Year||r.year)||0) !== season) return;
+      var v = r[mkt]; if (v == null || !isFinite(+v)) return;
+      sum += +v; cnt++;
+    });
+    if (cnt) out[n] = { avg:sum/cnt, games:cnt };
+  });
+  out._window = useAll ? 'all games on file' : 'this season';
+  return (S.idx.lgAvg[mkt] = out);
+}
 function eliteStats(key){
   var cfg = state.sports[key].config || {};
   return (cfg.eliteDefs || cfg.dvpStats || cfg.oddsMkts || [])
@@ -2223,16 +2255,17 @@ function eliteEntry(key, name, mkt){                       // first rung paying 
   return c[c.length - 1];                                  // candidates are hardest-first
 }
 function eliteMatchups(key, g){
-  var S = state.sports[key], pool = (S.idx.players || []).filter(function(p){
-    return p && (+p.matches || 0) >= ELITE_MIN_GAMES;
-  });
+  var S = state.sports[key], pool = S.idx.players || [];
   if (!pool.length) return [];
   var out = [], seen = {};
   eliteStats(key).forEach(function(m){
-    var k = m[0];
-    pool.slice().sort(function(a,b){ return (+b[k]||0) - (+a[k]||0); })
+    var k = m[0], lg = leagueAvg(key, k);
+    pool.filter(function(p){
+        var e = p && lg[p.name];
+        return e && e.games >= ELITE_MIN_GAMES && e.avg > 0;
+      })
+      .sort(function(a,b){ return lg[b.name].avg - lg[a.name].avg; })
       .slice(0, ELITE_TOP_N).forEach(function(p, i){
-        if (!(+p[k] > 0)) return;
         var home = normTeam(p.team) === normTeam(g.home), away = normTeam(p.team) === normTeam(g.away);
         if (!home && !away) return;                        // league-wide ranking, this fixture's players only
         var team = home ? g.home : g.away, opp = home ? g.away : g.home;
@@ -2243,7 +2276,8 @@ function eliteMatchups(key, g){
         if (seen[key2]) return;
         seen[key2] = 1;
         out.push({ name:p.name, team:team, opp:opp, pos:posShortP(p), mkt:k, label:m[1],
-                   val:+p[k], lgRank:i+1, dvp:dr, entry:eliteEntry(key, p.name, k) });
+                   val:lg[p.name].avg, games:lg[p.name].games, window:lg._window,
+                   lgRank:i+1, dvp:dr, entry:eliteEntry(key, p.name, k) });
       });
   });
   out.sort(function(a,b){
@@ -2258,7 +2292,7 @@ function eliteRow(key, r){
   return '<div class="elm-row" onclick="LAB.player(\''+key+'\',\''+esc(r.name).replace(/'/g,"\\'")+'\')">'
     + '<div class="elm-left">'
       + '<div class="elm-nm"><b>'+esc(r.name)+'</b><span class="elm-rk">'+ord(r.lgRank)+' IN LEAGUE</span></div>'
-      + '<div class="elm-stat">'+(r.val % 1 ? r.val.toFixed(1) : r.val)+' '+esc(r.label)+'/gm \u00b7 v '
+      + '<div class="elm-stat">'+r.val.toFixed(r.val < 3 ? 2 : 1)+' '+esc(r.label)+'/gm \u00b7 v '
         + esc(abbrOf(key, r.opp))+' concede '+(r.dvp.allowed % 1 ? r.dvp.allowed.toFixed(1) : r.dvp.allowed)+'</div>'
       + '<div class="elm-mu"><span class="elm-track"><i style="width:'+Math.max(4, soft)+'%"></i></span>'
         + '<span class="elm-pct">'+(r.dvp.pct > 0 ? '+' : '')+r.dvp.pct.toFixed(0)+'% vs league</span></div>'
