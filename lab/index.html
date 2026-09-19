@@ -1452,13 +1452,13 @@ function statLeaders(key, team, mkt, win, limit){
   Object.keys(byP).forEach(function(n){
     // A null isn't a zero: sports null out stats their feed never collected for that season
     // (and EPL's API-Football rows stop mid-2026), so rank only on games that carry the stat.
-    var rows = sortLogsDesc(byP[n]).filter(function(r){ var v = r[mkt]; return v != null && isFinite(+v); });
+    var rows = sortLogsDesc(byP[n]).filter(function(r){ return statOf(key, r, mkt) != null; });
     rows = (win === 'l5') ? rows.slice(0,5)
                           : rows.filter(function(r){ return (+(r.Year||r.year)||0) === season; });
     if (!rows.length) return;
     if (!isPlayingP(key, n, team)) return;                      // named lineup out and he isn't in it
     var sum = 0;
-    rows.forEach(function(r){ sum += +r[mkt]; });
+    rows.forEach(function(r){ sum += statOf(key, r, mkt); });
     if (rows.length > maxN) maxN = rows.length;
     var pr = state.sports[key].idx.byName[n] || {};
     pool.push({ name:n, pos:posShortP(pr), avg:sum/rows.length, n:rows.length, lastMs:logMs(rows[0]) });
@@ -2087,6 +2087,18 @@ function firstLastSection(key, g){
    synthetic line (realisticLine2) because AFL odds were patchy; the lab has odds
    in tier 2, so a streak is only shown against a line you can actually bet.       */
 var STREAK_MIN = 4, STREAK_PIPS = 8, SIG_MAX_ROWS = 8;
+// A null is not always a gap. API-Football omits a counting stat rather than writing 0, so an
+// EPL row that HAS coverage (passes is recorded for anyone who played) but no shots means the
+// player took none - a real zero. A row with no coverage at all is genuinely unverifiable.
+// Sports with no entry here keep the strict reading: null = can't verify.
+var COVER_FIELD = { epl: 'passes' };
+function statOf(key, row, mkt){
+  var v = row ? row[mkt] : null;
+  if (v != null && isFinite(+v)) return +v;
+  var cf = COVER_FIELD[key];
+  if (cf && row && row[cf] != null && isFinite(+row[cf])) return 0;   // covered, stat absent = zero
+  return null;                                                        // not covered = unverifiable
+}
 // Production runs one floor for every signal (SIG_ODDS_FLOOR = 1.60, enforced in
 // collectOU). Streakers gets its own, lower one: the play here is a live run, not a
 // price edge, so $1.20 still pays while $1.05 chalk stays out.
@@ -2144,9 +2156,9 @@ function streakers(key, g){
         for (var gi=0; gi<logs.length; gi++){
           var rr = logs[gi];
           if (rr.min != null && +rr.min === 0) continue;     // unused sub: not a game, doesn't break the run
-          var vv = rr[k];
-          if (vv == null || !isFinite(+vv)){ gap = true; break; }
-          vals.push(+vv);
+          var vv = statOf(key, rr, k);
+          if (vv == null){ gap = true; break; }
+          vals.push(vv);
         }
         if (vals.length < 5) return;
         var row = null, chalk = null;
@@ -2237,7 +2249,7 @@ function leagueAvg(key, mkt){
     var c = 0;
     byName[n].forEach(function(r){
       if ((+(r.Year||r.year)||0) !== season) return;
-      var v = r[mkt]; if (v != null && isFinite(+v)) c++;
+      if (statOf(key, r, mkt) != null) c++;
     });
     if (c > maxThis) maxThis = c;
   });
@@ -2246,8 +2258,8 @@ function leagueAvg(key, mkt){
     var sum = 0, cnt = 0;
     byName[n].forEach(function(r){
       if (!useAll && (+(r.Year||r.year)||0) !== season) return;
-      var v = r[mkt]; if (v == null || !isFinite(+v)) return;
-      sum += +v; cnt++;
+      var v = statOf(key, r, mkt); if (v == null) return;
+      sum += v; cnt++;
     });
     if (cnt) out[n] = { avg:sum/cnt, games:cnt };
   });
@@ -2373,7 +2385,7 @@ function h2hSignals(key, g, kind){
         var k = m[0], lg = leagueAvg(key, k)[p.name];
         if (!lg || lg.games < 4 || !(lg.avg > 0)) return;            // needs a real baseline to compare against
         var vals = [];
-        vt.forEach(function(r){ var v = r[k]; if (v != null && isFinite(+v)) vals.push(+v); });
+        vt.forEach(function(r){ var v = statOf(key, r, k); if (v != null) vals.push(v); });
         if (vals.length < minMeet) return;
         var mine = vals.reduce(function(a,b){ return a+b; }, 0) / vals.length;
         // best / worst matchup across every other team with enough meetings
@@ -2382,7 +2394,7 @@ function h2hSignals(key, g, kind){
           if (o === normTeam(opp)) return;
           var rs = byOpp[o]; if (rs.length < H2H_MIN_OTHER) return;
           var vs = [];
-          rs.forEach(function(r){ var v = r[k]; if (v != null && isFinite(+v)) vs.push(+v); });
+          rs.forEach(function(r){ var v = statOf(key, r, k); if (v != null) vs.push(v); });
           if (vs.length < H2H_MIN_OTHER) return;
           var a = vs.reduce(function(x,y){ return x+y; }, 0) / vs.length;
           if (edge == null || (kind === 'bunny' ? a > edge : a < edge)){ edge = a; edgeOpp = o; }
