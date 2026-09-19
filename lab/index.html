@@ -165,6 +165,21 @@
   .gp-nm{flex:1;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
   .gp-tm{font-size:9px;color:var(--text-3);text-transform:uppercase;}
   .gp-n{font-size:9px;color:var(--accent);font-weight:700;min-width:64px;text-align:right;}
+  .t3-ok,.t3-load{display:flex;align-items:center;gap:7px;font-size:10px;padding:7px 11px;border-radius:8px;
+    margin-bottom:6px;border:1px solid var(--border);}
+  .t3-ok{color:var(--accent);background:color-mix(in srgb,var(--accent) 8%,transparent);border-color:color-mix(in srgb,var(--accent) 35%,transparent);}
+  .t3-load{color:var(--text-3);background:var(--surface-2);}
+  .vb-list{display:flex;flex-direction:column;gap:4px;margin-bottom:6px;}
+  .vb-card{display:flex;align-items:center;gap:11px;padding:10px 12px;cursor:pointer;
+    background:var(--surface);border:1px solid var(--border);border-radius:10px;}
+  .vb-card:hover{border-color:var(--accent);}
+  .vb-edge{font-family:var(--font-display);font-weight:800;font-size:16px;color:var(--accent);
+    min-width:52px;text-align:center;font-variant-numeric:tabular-nums;}
+  .vb-main{flex:1;min-width:0;}
+  .vb-nm{font-weight:800;font-size:13px;}
+  .vb-ln{font-size:11px;color:var(--text-2);margin-top:1px;}
+  .vb-sub{font-size:9px;color:var(--text-3);margin-top:2px;}
+  .vb-chev{color:var(--text-3);font-size:16px;}
   .done-bar{display:flex;justify-content:flex-end;margin-bottom:8px;}
   .done-b{display:inline-flex;align-items:center;gap:5px;font-size:9px;font-weight:800;letter-spacing:.05em;
     text-transform:uppercase;padding:5px 10px;border-radius:7px;border:1px solid var(--border);
@@ -319,6 +334,113 @@ function loadTier2(key){
 function ensureTier2(){
   Object.keys(SPORTS).forEach(function(k){
     if (state.view.active[k] && state.sports[k].status === 'ready' && !state.sports[k].t2) loadTier2(k);
+  });
+}
+
+/* ---- tier 3: the heavy layer the real sections need ---------------------- */
+// gamelogs + the supporting tables. This is where the weight is (AFL 26 MB, NFL 31 MB), so
+// it loads per sport, on demand, and only once. Everything the ported sections rely on -
+// the player/log/odds indexes and the sport's scoring + signals modules - is built here.
+var TIER3 = { gamelogs:'data/gamelogs.json', dvp:'data/dvp.json', teams_form:'data/teams_form.json',
+              injury:'data/injury.json', lineups:'data/lineups.json', results:'data/results.json',
+              weather:'data/weather.json' };
+function loadTier3(key){
+  var S = state.sports[key];
+  if (S.t3 === 'ready' || S.t3 === 'loading') return Promise.resolve();
+  S.t3 = 'loading'; render();
+  var q = S.version ? ('?v='+encodeURIComponent(S.version)) : '';
+  var extra = (S.config && S.config.dataFiles) || {};      // sport-specific extras (NFL: redzone, firsttd, dbs)
+  var want = {};
+  Object.keys(TIER3).forEach(function(k){ want[k] = TIER3[k]; });
+  Object.keys(extra).forEach(function(k){ want[k] = extra[k]; });
+  return Promise.all(Object.keys(want).map(function(k){
+    return fetch(sportPath(key, want[k])+q, {cache:'reload'})
+      .then(function(r){ return r.ok ? r.json() : null; })
+      .then(function(j){ if (j) S.data[k] = j; })
+      .catch(function(){});
+  }))
+  .then(function(){ return loadModules(key); })
+  .then(function(){
+    buildIndexes(key);
+    // each sport's scoring module is a separate instance and must be configured with
+    // that sport's data before prob()/hitRate() will return anything
+    try{
+      // NOTE: configure() wants logsByName (the INDEX), not a flat gamelogs array - passing
+      // the array leaves getHitRate() returning null for every player, silently.
+      if (S.scoring && S.scoring.configure) S.scoring.configure({
+        players: S.idx.players,
+        teams: asArray(S.data.teams) || [],
+        teamsForm: asArray(S.data.teams_form) || asArray(S.data.teams) || [],
+        dvp: asArray(S.data.dvp) || [],
+        logsByName: S.idx.logsByName || {},
+        currentSeason: (S.data.meta && S.data.meta.currentSeason) || String(new Date().getFullYear())
+      });
+    }catch(e){}
+    S.t3 = 'ready'; render();
+  });
+}
+
+// scoring.js and signals.js assign single globals (JTTScoring / JTTSignals), same as
+// config.js does - so they load through the same serial queue and get snapshotted.
+function loadModules(key){
+  var S = state.sports[key];
+  if (S.scoring && S.signals) return Promise.resolve();
+  _cfgQueue = _cfgQueue.then(function(){
+    return new Promise(function(done){
+      var pS = window.JTTScoring, pG = window.JTTSignals;
+      var left = 2, q = S.version ? ('?v='+encodeURIComponent(S.version)) : '';
+      var fin = function(){
+        if (--left) return;
+        S.scoring = window.JTTScoring; S.signals = window.JTTSignals;
+        window.JTTScoring = pS; window.JTTSignals = pG;
+        done();
+      };
+      ['scoring.js','signals.js'].forEach(function(fn){
+        var el = document.createElement('script');
+        el.src = sportPath(key, fn) + q;
+        el.onload = el.onerror = fin;
+        document.head.appendChild(el);
+      });
+    });
+  });
+  return _cfgQueue;
+}
+
+// The index layer the production sections read through. Built per sport so several can be
+// live at once - this is the piece that makes ported sections work unchanged.
+function buildIndexes(key){
+  var S = state.sports[key], d = S.data, ix = S.idx;
+  var players = asArray(d.players) || [];
+  ix.players = players;
+  ix.byName = {};
+  players.forEach(function(p){ if (p && p.name) ix.byName[p.name] = p; });
+
+  var logs = asArray(d.gamelogs) || [];
+  ix.logsByName = {};
+  logs.forEach(function(r){
+    var n = r && (r.Player || r.player); if (!n) return;
+    (ix.logsByName[n] = ix.logsByName[n] || []).push(r);
+  });
+
+  var od = d.odds || {};
+  ix.oddsIdx = {}; ix.bookIdx = {};
+  (od.lines || []).forEach(function(r){
+    if (!r || !r.player) return;
+    (ix.oddsIdx[r.player] = ix.oddsIdx[r.player] || {})[r.market] = r;
+  });
+  ((od.books && od.books.length ? od.books : od.lines) || []).forEach(function(r){
+    if (!r || !r.player) return;
+    var m = ix.bookIdx[r.player] = ix.bookIdx[r.player] || {};
+    (m[r.market] = m[r.market] || []).push(r);
+  });
+  ix.matchOddsIdx = {};
+  (od.matchOdds || []).forEach(function(m){
+    if (m && m.home && m.away) ix.matchOddsIdx[m.home+'|'+m.away] = m;
+  });
+  ix.nextOpp = {};
+  (asArray(d.fixture) || []).forEach(function(g){
+    if (!g || !g.home || !g.away) return;
+    ix.nextOpp[g.home] = g.away; ix.nextOpp[g.away] = g.home;
   });
 }
 
@@ -507,6 +629,92 @@ function booksPanel(){
           + (top?'<span class="bk-best">best</span>':'')+'</div>';
       }).join('')+'</div></div>';
 }
+/* ---- helpers the ported sections rely on --------------------------------- */
+// Same signatures as production, but sport-scoped: the production shell has one global
+// `state.idx`, the lab has one per sport, so each helper takes a sport key first.
+function betStats(key){
+  var cfg = state.sports[key].config || {};
+  return (cfg.oddsMkts || cfg.multiMkts || []).map(function(m){ return m[0]; });
+}
+function mktLbl(key, mk){ return mktLabel(key, mk); }
+function playersOnTeam(key, team){
+  return (state.sports[key].idx.players || []).filter(function(p){ return p && p.team === team; });
+}
+function oddsForP(key, name, market){
+  var ix = state.sports[key].idx;
+  var main = (ix.oddsIdx || {})[name] && ix.oddsIdx[name][market];
+  if (main) return main;
+  var rows = ((ix.bookIdx || {})[name] || {})[market] || [];
+  var best = null;
+  rows.forEach(function(r){ if (r.over != null && (!best || r.over > best.over)) best = r; });
+  return best;
+}
+function isPlayingP(key, name, team){
+  var lu = asArray(state.sports[key].data.lineups) || [];
+  if (!lu.length) return true;                       // no lineup data for this sport
+  var any = lu.some(function(r){ return r && r.team === team; });
+  if (!any) return true;                             // team's lineup not out yet
+  return lu.some(function(r){ return r && r.team === team && r.player === name; });
+}
+function posShortP(p){ return (p && p.position) ? String(p.position) : ''; }
+
+/* ---- ported: Top Value Bets ---------------------------------------------- */
+// Model probability (from the sport's own scoring.js) vs the de-vigged implied price.
+// IMPORTANT: the four scoring.js modules do NOT share an interface. Only getHitRate() is
+// common to all of them (EPL alone has prob(); AFL/NFL have scoreOverLine()). Production's
+// Value Bets calls prob(), so it silently renders for EPL only. Here we prefer prob() when
+// present and fall back to the historical hit rate, which every sport supports - so the
+// section actually works cross-sport instead of quietly doing nothing on three of four.
+function modelProb(key, p, stat, line){
+  var S = state.sports[key];
+  if (S.scoring && S.scoring.prob){
+    try{ var v = S.scoring.prob(p, stat, line); if (v != null && isFinite(v)) return {p:v, src:'model'}; }catch(e){}
+  }
+  if (S.scoring && S.scoring.getHitRate){
+    try{
+      var h = S.scoring.getHitRate(p.name, stat, line, false);
+      var r = (h && typeof h === 'object') ? (h.rate != null ? h.rate : (h.n ? h.hits/h.n : null)) : h;
+      var n = (h && typeof h === 'object' && h.n != null) ? h.n : null;
+      if (r != null && isFinite(r) && (n == null || n >= 5)) return {p:r, src:'hit rate', n:n};
+    }catch(e){}
+  }
+  return null;
+}
+function valueBets(key, g){
+  var S = state.sports[key];
+  if (!S.scoring) return '';
+  var mkts = betStats(key), bets = [];
+  var pool = playersOnTeam(key, g.home).concat(playersOnTeam(key, g.away));
+  pool.forEach(function(p){
+    if (!isPlayingP(key, p.name, p.team)) return;
+    mkts.forEach(function(stat){
+      var od = oddsForP(key, p.name, stat);
+      if (!od || od.over == null || od.line == null) return;
+      if (od.over < 1.2 || od.over > 6) return;
+      var m = modelProb(key, p, stat, od.line);
+      if (!m) return;
+      var mp = m.p;
+      var imp = (od.under != null && od.under > 0)
+        ? (1/od.over) / ((1/od.over) + (1/od.under))    // de-vig when a two-way price exists
+        : (1/od.over);
+      var edge = mp - imp;
+      if (edge >= 0.06) bets.push({p:p, stat:stat, line:od.line, over:od.over, book:od.book, mp:mp, imp:imp, edge:edge, src:m.src, n:m.n});
+    });
+  });
+  if (!bets.length) return '';
+  bets.sort(function(a,b){ return b.edge - a.edge; });
+  var cards = bets.slice(0,8).map(function(b){
+    return '<div class="vb-card" onclick="LAB.player(\''+key+'\',\''+esc(b.p.name).replace(/'/g,"\\'")+'\')">'
+      + '<div class="vb-edge">+'+Math.round(b.edge*100)+'%</div>'
+      + '<div class="vb-main"><div class="vb-nm">'+esc(b.p.name)+'</div>'
+      + '<div class="vb-ln">'+esc(mktLbl(key,b.stat))+' O'+b.line+' \u00b7 $'+b.over.toFixed(2)+(b.book?' '+esc(b.book):'')+'</div>'
+      + '<div class="vb-sub">'+esc(posShortP(b.p))+' \u00b7 '+esc(abbrOf(key,b.p.team))
+      + ' \u00b7 '+esc(b.src)+' '+Math.round(b.mp*100)+'%'+(b.n?' ('+b.n+'g)':'')+' vs priced '+Math.round(b.imp*100)+'%</div></div>'
+      + '<i class="ti ti-chevron-right vb-chev"></i></div>';
+  }).join('');
+  return '<div class="dayband"><span>Top Value Bets</span></div><div class="vb-list">'+cards+'</div>';
+}
+
 /* ---- focused fixture ----------------------------------------------------- */
 // Match-level markets vary by sport (NFL has 1st-half lines and total TDs, EPL has corners
 // and cards, MLB posts none at all), so render whatever keys are present rather than a
@@ -581,6 +789,10 @@ function focusPage(){
     + '<div class="fxr-team">'+teamLogo(key,g.home)+'<div class="fxr-name">'+esc(teamName(key,g.home))+'</div></div>'
     + '</div>';
   if (S.t2 !== 'ready') return head + '<div class="empty"><i class="ti ti-loader"></i>Loading '+esc(SPORTS[key].name)+' odds…</div>';
+  var t3 = S.t3 === 'ready'
+    ? '<div class="t3-ok"><i class="ti ti-database-check"></i>'+esc(SPORTS[key].name)+' research data ready \u00b7 '
+      + ((S.idx.logsByName ? Object.keys(S.idx.logsByName).length : 0))+' players indexed</div>'
+    : '<div class="t3-load"><i class="ti ti-loader"></i>Loading research data (gamelogs, DVP, injuries)…</div>';
   var ps = gamePlayers(key, g);
   var list = ps.length ? ps.map(function(p){
     var n = Object.keys(p.mkts).length;
@@ -589,7 +801,8 @@ function focusPage(){
       + '<span class="gp-tm">'+esc(abbrOf(key,p.team))+'</span>'
       + '<span class="gp-n">'+n+' market'+(n===1?'':'s')+'</span></div>';
   }).join('') : '<div class="empty" style="padding:16px">No player markets posted for this game.</div>';
-  return head
+  return head + t3
+    + (S.t3==='ready' ? valueBets(key, g) : '')
     + '<div class="dayband"><span>Match markets</span></div>' + moBlock(key, g)
     + '<div class="dayband"><span>Players \u00b7 '+ps.length+'</span></div><div class="gp-list">'+list+'</div>';
 }
@@ -825,6 +1038,7 @@ window.LAB = {
     if (!g) return;
     state.view.focus = { sport:k, g:g };
     if (!state.sports[k].t2) loadTier2(k);      // focused view needs odds
+    if (!state.sports[k].t3) loadTier3(k);      // and the heavy layer for the real sections
     render(); window.scrollTo({top:0});
   },
   showDone: function(){ state.view.showDone = !state.view.showDone; render(); },
