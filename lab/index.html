@@ -151,13 +151,17 @@
     background:var(--surface);border:1px solid var(--border);border-radius:13px;padding:16px 14px;margin-bottom:6px;}
   .fx-hero .fxr-logo,.fx-hero .fxr-logo-ph{width:54px;height:54px;}
   .fx-hero .fxr-name{font-size:16px;}
-  .mo-grid{display:flex;flex-wrap:wrap;gap:7px;margin-bottom:6px;}
-  .mo-blk{flex:1 1 150px;min-width:140px;border:1px solid var(--border);border-radius:9px;
-    background:var(--surface-2);padding:8px 10px;}
-  .mo-lab{font-size:8px;font-weight:800;letter-spacing:.07em;text-transform:uppercase;color:var(--text-3);margin-bottom:5px;}
-  .mo-row{display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:11px;padding:2px 0;}
-  .mo-row b{font-weight:800;color:var(--accent);font-variant-numeric:tabular-nums;}
-  .mo-bk{font-size:8px;color:var(--text-3);text-transform:uppercase;margin-top:4px;text-align:right;}
+  .mo-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(152px,1fr));gap:8px;margin-bottom:4px;}
+  .mo-block{background:var(--surface-2);border:1px solid var(--border);border-radius:9px;padding:9px 11px;}
+  .mo-lab{font-size:9px;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:var(--text-3);margin-bottom:6px;}
+  .mo-row{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:3px 0;}
+  .mo-t{display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:700;min-width:0;}
+  .mo-t .fxr-logo,.mo-t .fxr-logo-ph{width:18px;height:18px;margin:0;font-size:8px;}
+  .mo-sp{font-weight:800;color:var(--text-2);font-variant-numeric:tabular-nums;}
+  .mo-draw{color:var(--text-3);}
+  .mo-o{font-variant-numeric:tabular-nums;font-weight:800;font-size:13px;min-width:44px;text-align:right;color:var(--text);}
+  .mo-o.fav{color:var(--accent);}
+  .mo-book{font-size:9px;color:var(--text-3);text-align:right;margin-bottom:8px;}
   .gp-list{display:flex;flex-direction:column;gap:3px;}
   .gp-row{display:flex;align-items:center;gap:9px;padding:8px 11px;font-size:12px;cursor:pointer;
     background:var(--surface);border:1px solid var(--border);border-radius:8px;}
@@ -734,26 +738,52 @@ function matchOddsFor(key, g){
 function moBlock(key, g){
   var m = matchOddsFor(key, g);
   if (!m) return '<div class="empty" style="padding:16px"><i class="ti ti-coin-off"></i>No match markets posted.</div>';
-  var out = '';
-  var px = function(v){ return v!=null ? (+v).toFixed(2) : '—'; };
-  if (m.h2h) out += '<div class="mo-blk"><div class="mo-lab">Head to Head</div>'
-    + '<div class="mo-row"><span>'+esc(abbrOf(key,g.home))+'</span><b>'+px(m.h2h.home)+'</b></div>'
-    + (m.h2h.draw!=null?'<div class="mo-row"><span>Draw</span><b>'+px(m.h2h.draw)+'</b></div>':'')
-    + '<div class="mo-row"><span>'+esc(abbrOf(key,g.away))+'</span><b>'+px(m.h2h.away)+'</b></div>'
-    + '<div class="mo-bk">'+esc(m.h2h.book||'')+'</div></div>';
-  if (m.line) out += '<div class="mo-blk"><div class="mo-lab">Line</div>'
-    + '<div class="mo-row"><span>'+esc(abbrOf(key,g.home))+' '+(m.line.home>0?'+':'')+m.line.home+'</span><b>'+px(m.line.homeOdds)+'</b></div>'
-    + '<div class="mo-row"><span>'+esc(abbrOf(key,g.away))+' '+(m.line.away>0?'+':'')+m.line.away+'</span><b>'+px(m.line.awayOdds)+'</b></div>'
-    + '<div class="mo-bk">'+esc(m.line.book||'')+'</div></div>';
+  var odd = function(v){ return v == null ? '\u2014' : (+v).toFixed(2); };
+  var sp  = function(v){ return v == null ? '' : ((v > 0 ? '+' : '') + (+v)); };
+  var books = {}, blocks = '';
+
+  // Head to Head - shortest price flagged as the favourite
+  if (m.h2h){
+    if (m.h2h.book) books[m.h2h.book] = 1;
+    var hh = m.h2h.home == null ? 99 : +m.h2h.home;
+    var ha = m.h2h.away == null ? 99 : +m.h2h.away;
+    var hd = m.h2h.draw == null ? 99 : +m.h2h.draw;
+    var lo = Math.min(hh, ha, hd);
+    blocks += '<div class="mo-block"><div class="mo-lab">Head to Head</div>'
+      + '<div class="mo-row"><span class="mo-t">'+teamLogo(key,g.home)+esc(abbrOf(key,g.home))+'</span>'
+        + '<span class="mo-o'+(hh===lo?' fav':'')+'">'+odd(m.h2h.home)+'</span></div>'
+      + (m.h2h.draw != null ? '<div class="mo-row"><span class="mo-t"><span class="mo-draw">Draw</span></span>'
+        + '<span class="mo-o'+(hd===lo?' fav':'')+'">'+odd(m.h2h.draw)+'</span></div>' : '')
+      + '<div class="mo-row"><span class="mo-t">'+teamLogo(key,g.away)+esc(abbrOf(key,g.away))+'</span>'
+        + '<span class="mo-o'+(ha===lo?' fav':'')+'">'+odd(m.h2h.away)+'</span></div></div>';
+  }
+
+  // Line / handicap
+  if (m.line){
+    if (m.line.book) books[m.line.book] = 1;
+    blocks += '<div class="mo-block"><div class="mo-lab">Line</div>'
+      + '<div class="mo-row"><span class="mo-t">'+teamLogo(key,g.home)+esc(abbrOf(key,g.home))
+        + '<b class="mo-sp">'+sp(m.line.home)+'</b></span><span class="mo-o">'+odd(m.line.homeOdds)+'</span></div>'
+      + '<div class="mo-row"><span class="mo-t">'+teamLogo(key,g.away)+esc(abbrOf(key,g.away))
+        + '<b class="mo-sp">'+sp(m.line.away)+'</b></span><span class="mo-o">'+odd(m.line.awayOdds)+'</span></div></div>';
+  }
+
+  // Totals - every variant the sport posts, same {points,over,under,book} shape
   MO_TOTALS.forEach(function(t){
     var v = m[t[0]];
-    if (!v || v.over==null) return;
-    out += '<div class="mo-blk"><div class="mo-lab">'+t[1]+'</div>'
-      + '<div class="mo-row"><span>Over '+v.points+'</span><b>'+px(v.over)+'</b></div>'
-      + '<div class="mo-row"><span>Under '+v.points+'</span><b>'+px(v.under)+'</b></div>'
-      + '<div class="mo-bk">'+esc(v.book||'')+'</div></div>';
+    if (!v || v.over == null) return;
+    if (v.book) books[v.book] = 1;
+    blocks += '<div class="mo-block"><div class="mo-lab">'+t[1]+'</div>'
+      + '<div class="mo-row"><span class="mo-t">Over <b class="mo-sp">'+v.points+'</b></span>'
+        + '<span class="mo-o">'+odd(v.over)+'</span></div>'
+      + '<div class="mo-row"><span class="mo-t">Under <b class="mo-sp">'+v.points+'</b></span>'
+        + '<span class="mo-o">'+odd(v.under)+'</span></div></div>';
   });
-  return out ? ('<div class="mo-grid">'+out+'</div>') : '<div class="empty" style="padding:16px">No match markets posted.</div>';
+
+  if (!blocks) return '<div class="empty" style="padding:16px"><i class="ti ti-coin-off"></i>No match markets posted.</div>';
+  var bk = Object.keys(books);
+  return '<div class="mo-grid">'+blocks+'</div>'
+    + (bk.length ? '<div class="mo-book">best price from '+esc(bk.join(' \u00b7 '))+'</div>' : '');
 }
 // Players in this game that have any posted price, grouped by team.
 function gamePlayers(key, g){
