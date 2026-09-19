@@ -162,6 +162,22 @@
   .mo-o{font-variant-numeric:tabular-nums;font-weight:800;font-size:13px;min-width:44px;text-align:right;color:var(--text);}
   .mo-o.fav{color:var(--accent);}
   .mo-book{font-size:9px;color:var(--text-3);text-align:right;margin-bottom:8px;}
+  .h2h-wrap{background:var(--surface-2);border:1px solid var(--border);border-radius:10px;padding:10px 12px;margin-bottom:6px;}
+  .h2h-head{display:flex;align-items:center;justify-content:space-between;font-family:var(--font-display);
+    font-weight:800;font-size:12px;letter-spacing:.04em;padding-bottom:7px;margin-bottom:4px;border-bottom:1px solid var(--border);}
+  .h2h-gp{font-family:var(--font-mono);font-size:8px;color:var(--text-3);font-weight:400;text-transform:uppercase;letter-spacing:.08em;}
+  .h2h-row{display:flex;align-items:center;gap:9px;padding:5px 0;}
+  .h2h-v{min-width:44px;font-weight:800;font-size:13px;font-variant-numeric:tabular-nums;color:var(--text-3);}
+  .h2h-v.l{text-align:left;} .h2h-v.r{text-align:right;}
+  .h2h-v.win{color:var(--accent);}
+  .h2h-mid{flex:1;min-width:0;}
+  .h2h-k{font-size:9px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:var(--text-3);
+    text-align:center;margin-bottom:3px;}
+  .h2h-bar{display:flex;height:5px;border-radius:3px;overflow:hidden;background:var(--surface-3,var(--border));}
+  .h2h-bar i{display:block;height:100%;}
+  .h2h-bar .home{background:var(--accent);}
+  .h2h-bar .away{background:#60a5fa;}
+  .h2h-inv{font-style:normal;font-size:8px;color:var(--text-3);margin-left:3px;}
   .gp-list{display:flex;flex-direction:column;gap:3px;}
   .gp-row{display:flex;align-items:center;gap:9px;padding:8px 11px;font-size:12px;cursor:pointer;
     background:var(--surface);border:1px solid var(--border);border-radius:8px;}
@@ -809,6 +825,43 @@ function moBlock(key, g){
   return '<div class="mo-grid">'+blocks+'</div>'
     + (bk.length ? '<div class="mo-book">best price from '+esc(bk.join(' \u00b7 '))+'</div>' : '');
 }
+/* ---- ported: Head to Head, season averages ------------------------------- */
+// Each sport declares its own h2hKeys in config.js, and every sport's teams.json carries
+// those fields - including EPL, which has the data but never had the section wired up.
+var LOW_COUNT_KEYS = {goals:1,passTds:1,rushTds:1,passInt:1,sacks:1,assists:1,recTds:1,HR:1,
+                      shotsOn:1,corners:1,cards:1,foulsCommitted:1};
+// Stats where MORE is worse - the leader highlight has to invert or it reads backwards
+// (a team leading on cards or sacks taken is not winning that row).
+var INVERSE_KEYS = {cards:1,foulsCommitted:1,passInt:1,sacks:1,SO:1,ga:1};
+function h2hSection(key, g){
+  var ix = state.sports[key].idx, cfg = state.sports[key].config || {};
+  var th = (ix.teamMap||{})[g.home], ta = (ix.teamMap||{})[g.away];
+  if (!th || !ta) return '';
+  var keys = cfg.h2hKeys || [];
+  if (!keys.length) return '';
+  var rows = '';
+  keys.forEach(function(kv){
+    var k = kv[0], lab = kv[1];
+    var hv = th[k], av = ta[k];
+    if (hv == null && av == null) return;
+    var hn = +hv || 0, an = +av || 0, tot = (hn + an) || 1;
+    var hp = Math.round(hn / tot * 100), ap = 100 - hp;
+    var dec = LOW_COUNT_KEYS[k] ? 1 : 0;
+    var inv = !!INVERSE_KEYS[k];
+    var homeBetter = inv ? (hn <= an) : (hn >= an);
+    var awayBetter = inv ? (an < hn)  : (an > hn);
+    rows += '<div class="h2h-row">'
+      + '<div class="h2h-v l'+(homeBetter ? ' win' : '')+'">'+(+hn).toFixed(dec)+'</div>'
+      + '<div class="h2h-mid"><div class="h2h-k">'+esc(lab)+(inv?'<i class="h2h-inv" title="lower is better">\u25be</i>':'')+'</div>'
+        + '<div class="h2h-bar"><i class="home" style="width:'+hp+'%"></i><i class="away" style="width:'+ap+'%"></i></div></div>'
+      + '<div class="h2h-v r'+(awayBetter ? ' win' : '')+'">'+(+an).toFixed(dec)+'</div></div>';
+  });
+  if (!rows) return '';
+  return '<div class="dayband"><span>Head to Head \u00b7 season averages</span></div>'
+    + '<div class="h2h-wrap"><div class="h2h-head"><span>'+esc(abbrOf(key,g.home))+'</span>'
+    + '<span class="h2h-gp">per game</span><span>'+esc(abbrOf(key,g.away))+'</span></div>'+rows+'</div>';
+}
+
 // Players in this game that have any posted price, grouped by team.
 function gamePlayers(key, g){
   var d = state.sports[key].data.odds || {};
@@ -858,6 +911,7 @@ function focusPage(){
   return head + t3
     + (S.t3==='ready' ? valueBets(key, g) : '')
     + '<div class="dayband"><span>Match markets</span></div>' + moBlock(key, g)
+    + h2hSection(key, g)
     + '<div class="dayband"><span>Players \u00b7 '+ps.length+'</span></div><div class="gp-list">'+list+'</div>';
 }
 function playerPanel(){
