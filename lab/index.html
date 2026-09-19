@@ -407,6 +407,24 @@
     border:1px solid var(--border);border-radius:5px;padding:3px 7px;}
   .stk-book{display:block;font-family:var(--font-mono);font-size:7px;color:var(--text-3);margin-top:3px;}
   .stk-odds.short{color:var(--text-3);border-style:dashed;}
+  .elm-row{display:flex;gap:10px;padding:10px 12px;border-top:1px solid var(--border);align-items:center;cursor:pointer;}
+  .elm-left{flex:1;min-width:0;}
+  .elm-nm{font-size:12px;font-weight:700;display:flex;align-items:center;gap:6px;min-width:0;}
+  .elm-nm b{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:700;}
+  .elm-rk{font-family:var(--font-mono);font-size:7px;letter-spacing:.06em;padding:2px 5px;border-radius:3px;flex:none;
+    background:color-mix(in srgb,var(--accent) 15%,transparent);color:var(--accent);}
+  .elm-stat{font-family:var(--font-mono);font-size:10px;color:var(--text-2);margin-top:4px;
+    overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .elm-mu{display:flex;align-items:center;gap:6px;margin-top:7px;}
+  .elm-track{flex:1;height:4px;border-radius:2px;background:var(--surface-3,var(--border));overflow:hidden;}
+  .elm-track i{display:block;height:100%;background:var(--accent);}
+  .elm-pct{font-family:var(--font-mono);font-size:8px;color:var(--accent);flex:none;}
+  .elm-right{flex:none;width:76px;text-align:right;}
+  .elm-dvp{font-family:var(--font-display);font-size:18px;line-height:1;color:var(--accent);}
+  .elm-dvpl{font-family:var(--font-mono);font-size:7px;color:var(--text-3);letter-spacing:.06em;margin-top:3px;}
+  .elm-odds{margin-top:7px;display:inline-block;font-family:var(--font-mono);font-size:10px;color:var(--text);
+    border:1px solid var(--border);border-radius:5px;padding:3px 7px;}
+  .elm-book{display:block;font-family:var(--font-mono);font-size:7px;color:var(--text-3);margin-top:3px;}
   .lm-wrap{background:var(--surface-2);border:1px solid var(--border);border-radius:10px;padding:10px 12px;margin-bottom:6px;}
   .lm-stats{display:flex;flex-wrap:wrap;gap:7px;padding-bottom:9px;margin-bottom:6px;border-bottom:1px solid var(--border);}
   .lm-stat{flex:1 1 84px;background:var(--surface);border:1px solid var(--border);border-radius:7px;padding:6px 9px;}
@@ -2177,6 +2195,80 @@ function streakRow(key, r){
       + '<div class="stk-odds'+(r.short ? ' short' : '')+'">$'+r.price.toFixed(2)+'</div>'
       + '<span class="stk-book">'+esc(r.book||'')+' \u00b7 '+r.hits+'/'+r.n+'</span></div></div>';
 }
+
+/* ELITE MATCHUPS: league top-10 in a stat drawing a bottom-5 defence for that stat
+   and position. Same rule in both production implementations; the lab difference is
+   that it only considers the two teams in front of you, and it quotes the first rung
+   that pays the signal floor rather than whatever the main line happens to be.       */
+var ELITE_TOP_N = 10, ELITE_DVP_GATE = 5, ELITE_MIN_GAMES = 4;
+function eliteStats(key){
+  var cfg = state.sports[key].config || {};
+  return (cfg.eliteDefs || cfg.dvpStats || cfg.oddsMkts || [])
+    .filter(function(m){ return m[0] !== 'dreamteam'; }).slice(0, 6);
+}
+function dvpRankFor(key, opp, pos, mkt){
+  var board = dvpBoard(key, mkt);
+  var list = board[pos] || board.ALL;                       // MLB's dvp only splits to "ALL"
+  if (!list || !list.length) return null;
+  var e = null;
+  for (var i=0;i<list.length;i++){ if (normTeam(list[i].team) === normTeam(opp)){ e = list[i]; break; } }
+  if (!e) return null;
+  var sum = 0; list.forEach(function(x){ sum += x.val; });
+  var avg = sum / list.length;
+  return { rank:e.rank, total:e.of, allowed:e.val, pct: avg ? (e.val - avg) / avg * 100 : 0 };
+}
+function eliteEntry(key, name, mkt){                       // first rung paying the floor, cheapest up
+  var c = streakCandidates(key, name, mkt).filter(function(o){ return o.price >= SIG_ODDS_FLOOR; });
+  if (!c.length) return null;
+  return c[c.length - 1];                                  // candidates are hardest-first
+}
+function eliteMatchups(key, g){
+  var S = state.sports[key], pool = (S.idx.players || []).filter(function(p){
+    return p && (+p.matches || 0) >= ELITE_MIN_GAMES;
+  });
+  if (!pool.length) return [];
+  var out = [], seen = {};
+  eliteStats(key).forEach(function(m){
+    var k = m[0];
+    pool.slice().sort(function(a,b){ return (+b[k]||0) - (+a[k]||0); })
+      .slice(0, ELITE_TOP_N).forEach(function(p, i){
+        if (!(+p[k] > 0)) return;
+        var home = normTeam(p.team) === normTeam(g.home), away = normTeam(p.team) === normTeam(g.away);
+        if (!home && !away) return;                        // league-wide ranking, this fixture's players only
+        var team = home ? g.home : g.away, opp = home ? g.away : g.home;
+        if (!isPlayingP(key, p.name, team)) return;
+        var dr = dvpRankFor(key, opp, p.position || p.pos, k);
+        if (!dr || dr.rank > ELITE_DVP_GATE) return;       // must be a bottom-5 defence for this stat
+        var key2 = p.name + '|' + k;
+        if (seen[key2]) return;
+        seen[key2] = 1;
+        out.push({ name:p.name, team:team, opp:opp, pos:posShortP(p), mkt:k, label:m[1],
+                   val:+p[k], lgRank:i+1, dvp:dr, entry:eliteEntry(key, p.name, k) });
+      });
+  });
+  out.sort(function(a,b){
+    return (a.dvp.rank - b.dvp.rank) || (a.lgRank - b.lgRank) || (b.val - a.val);
+  });
+  return out.slice(0, SIG_MAX_ROWS);
+}
+function eliteRow(key, r){
+  var ord = function(n){ return n + (['th','st','nd','rd'][(n%100-n%10!=10)*(n%10<4)*n%10] || 'th'); };
+  var soft = Math.round((1 - (r.dvp.rank - 1) / Math.max(1, r.dvp.total - 1)) * 100);
+  var ask = r.entry ? ((Math.round(r.entry.line) === r.entry.line) ? r.entry.line + 1 : Math.ceil(r.entry.line)) : null;
+  return '<div class="elm-row" onclick="LAB.player(\''+key+'\',\''+esc(r.name).replace(/'/g,"\\'")+'\')">'
+    + '<div class="elm-left">'
+      + '<div class="elm-nm"><b>'+esc(r.name)+'</b><span class="elm-rk">'+ord(r.lgRank)+' IN LEAGUE</span></div>'
+      + '<div class="elm-stat">'+(r.val % 1 ? r.val.toFixed(1) : r.val)+' '+esc(r.label)+'/gm \u00b7 v '
+        + esc(abbrOf(key, r.opp))+' concede '+(r.dvp.allowed % 1 ? r.dvp.allowed.toFixed(1) : r.dvp.allowed)+'</div>'
+      + '<div class="elm-mu"><span class="elm-track"><i style="width:'+Math.max(4, soft)+'%"></i></span>'
+        + '<span class="elm-pct">'+(r.dvp.pct > 0 ? '+' : '')+r.dvp.pct.toFixed(0)+'% vs league</span></div>'
+    + '</div>'
+    + '<div class="elm-right"><div class="elm-dvp">'+r.dvp.rank+'</div>'
+      + '<div class="elm-dvpl">OF '+r.dvp.total+' SOFTEST</div>'
+      + (r.entry ? '<div class="elm-odds">'+ask+'+ $'+r.entry.price.toFixed(2)+'</div>'
+          + '<span class="elm-book">'+esc(r.entry.book||'')+'</span>' : '')
+    + '</div></div>';
+}
 function signalsSection(key, g){
   var S = state.sports[key], cfg = S.config || {};
   if (!(cfg.oddsMkts || cfg.multiMkts || []).length)
@@ -2188,9 +2280,17 @@ function signalsSection(key, g){
       + STREAK_MIN+' games. A run also ends at any game where the stat wasn\u2019t recorded, so a sport whose '
       + 'feed has gone stale will show nothing here rather than counting across them.'
     : 'No posted lines loaded for '+SPORTS[key].name+' \u2014 streaks are measured against a real market, so nothing can fire.';
+  var elite = priced ? eliteMatchups(key, g) : [];
+  var eliteWhy = !eliteStats(key).length
+    ? SPORTS[key].name+' config.js lists no elite or DVP stats, so there is nothing to rank on.'
+    : (!(asArray(S.data.dvp)||[]).length
+        ? 'dvp.json returned nothing for '+SPORTS[key].name+', so no defence can be graded.'
+        : 'No league top-'+ELITE_TOP_N+' player in this fixture draws a bottom-'+ELITE_DVP_GATE+' defence for their stat.');
   return '<div class="dayband"><span>Degen Signals</span></div>'
     + sigTile('ti-flame', 'Streakers', 'Cleared the posted line, game after game',
-              rows.map(function(r){ return streakRow(key, r); }), why);
+              rows.map(function(r){ return streakRow(key, r); }), why)
+    + sigTile('ti-trophy', 'Elite Matchups', 'League\u2019s best against the softest defences',
+              elite.map(function(r){ return eliteRow(key, r); }), eliteWhy);
 }
 
 function secNote(title, why){
