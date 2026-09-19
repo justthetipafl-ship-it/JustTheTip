@@ -74,6 +74,28 @@
     padding:1px 5px;border-radius:4px;margin-bottom:4px;}
   .fxr-done{opacity:.5;}
 
+  .tabs{display:flex;gap:4px;margin-bottom:12px;border-bottom:1px solid var(--border);}
+  .tab{display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:800;letter-spacing:.04em;
+    text-transform:uppercase;padding:9px 14px;border:0;background:none;color:var(--text-3);cursor:pointer;
+    border-bottom:2px solid transparent;margin-bottom:-1px;}
+  .tab.on{color:var(--accent);border-bottom-color:var(--accent);}
+  .tab i{font-size:15px;}
+  .mkt-chips{display:flex;flex-wrap:wrap;gap:4px;margin:0 0 9px;}
+  .mkt-chip{font-size:10px;font-weight:700;padding:5px 10px;border-radius:7px;border:1px solid var(--border);
+    background:var(--surface-2);color:var(--text-3);cursor:pointer;white-space:nowrap;}
+  .mkt-chip.on{border-color:var(--accent);color:var(--accent);background:color-mix(in srgb,var(--accent) 12%,transparent);}
+  .od-hd,.od-row{display:flex;align-items:center;gap:8px;padding:6px 10px;font-size:11px;}
+  .od-hd{font-size:8px;text-transform:uppercase;letter-spacing:.06em;color:var(--text-3);font-weight:800;
+    border-bottom:1px solid var(--border);}
+  .od-row{background:var(--surface);border:1px solid var(--border);border-radius:8px;margin-bottom:3px;}
+  .od-nm{flex:1;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;}
+  .od-ln{min-width:44px;text-align:right;font-variant-numeric:tabular-nums;color:var(--text-2);}
+  .od-o,.od-u{min-width:46px;text-align:right;font-weight:800;font-variant-numeric:tabular-nums;}
+  .od-o{color:var(--accent);}
+  .od-u{color:var(--text-3);}
+  .od-bk{min-width:68px;text-align:right;font-size:9px;color:var(--text-3);text-transform:uppercase;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .od-list{margin-bottom:6px;}
   .empty{text-align:center;padding:40px 16px;color:var(--text-3);}
   .empty i{font-size:30px;display:block;margin-bottom:8px;opacity:.5;}
   .boot{text-align:center;padding:50px 16px;color:var(--text-3);font-family:var(--font-mono);font-size:12px;}
@@ -125,7 +147,7 @@ var TIER1 = { fixture:'data/fixture.json', teams:'data/teams.json', meta:'data/m
 
 var state = {
   sports: {},                               // sports[key] = {data:{}, idx:{}, status:''}
-  view:   { active: {} }                    // which sports are filtered on
+  view:   { active: {}, tab: 'fixture', mkt: {} }   // filter + current page + market per sport
 };
 Object.keys(SPORTS).forEach(function(k){
   state.sports[k] = { data:{}, idx:{}, status:'idle' };
@@ -191,6 +213,28 @@ function loadTier1(key){
 }
 function asArray(v){ return Array.isArray(v) ? v : (v && v.fixture) || (v && v.teams) || (v && v.players) || null; }
 
+// Tier 2: odds (~12 MB across four sports) - loaded only when a page needs it, and only
+// for sports the user actually has switched on. This is the whole point of the namespaced
+// model: NFL's 4.6 MB doesn't get fetched because you glanced at the AFL odds.
+var TIER2 = { odds:'data/odds.json' };
+function loadTier2(key){
+  var S = state.sports[key];
+  if (S.t2 === 'ready' || S.t2 === 'loading') return Promise.resolve();
+  S.t2 = 'loading'; render();
+  var q = S.version ? ('?v='+encodeURIComponent(S.version)) : '';
+  return Promise.all(Object.keys(TIER2).map(function(k){
+    return fetch(sportPath(key, TIER2[k])+q, {cache:'reload'})
+      .then(function(r){ return r.ok ? r.json() : null; })
+      .then(function(j){ if (j) S.data[k] = j; })
+      .catch(function(){});
+  })).then(function(){ S.t2 = 'ready'; render(); });
+}
+function ensureTier2(){
+  Object.keys(SPORTS).forEach(function(k){
+    if (state.view.active[k] && state.sports[k].status === 'ready' && !state.sports[k].t2) loadTier2(k);
+  });
+}
+
 /* ---- fixture helpers ---------------------------------------------------- */
 // Returns {ms, hasTime}. Sports differ: AFL ships bare-ISO UTC, EPL a Z stamp, NFL a real
 // UTC stamp, MLB a DATE ONLY. A date-only value parses as UTC midnight, which would render
@@ -232,6 +276,85 @@ function teamLogo(key, t){
   if (url) return '<img class="fxr-logo" src="'+esc(url)+'" alt="" loading="lazy" '
     +'onerror="this.outerHTML=\''+ph+'\'">';
   return '<div class="fxr-logo-ph">'+esc(String(t).slice(0,3).toUpperCase())+'</div>';
+}
+
+/* ---- odds --------------------------------------------------------------- */
+// Which array actually holds priced rows varies: NFL/AFL/MLB fill `books` (per-book two-way),
+// EPL's props are over-only milestone ladders so only `alt` is populated. Take the richest
+// source available rather than assuming a two-way market exists.
+function oddsRows(d){
+  if (!d) return [];
+  if (d.books && d.books.length) return d.books;
+  if (d.lines && d.lines.length) return d.lines;
+  return d.alt || [];
+}
+function mktLabel(key, mk){
+  var cfg = state.sports[key].config || {};
+  if (cfg.mktNames && cfg.mktNames[mk]) return cfg.mktNames[mk];
+  var list = cfg.oddsMkts || cfg.multiMkts || [];
+  for (var i=0;i<list.length;i++) if (list[i] && list[i][0] === mk) return list[i][1];
+  return mk;
+}
+// Best two-way price per player/market. `lines` holds the consensus main line; `books` holds
+// the per-book rows, so the best available over is taken from there when present.
+function bestPrices(key, mk){
+  var d = state.sports[key].data.odds || {};
+  var rows = oddsRows(d);
+  var best = {};
+  rows.forEach(function(r){
+    if (!r || r.market !== mk || r.over == null) return;
+    var k = r.player + '|' + r.line;
+    if (!best[k] || r.over > best[k].over) best[k] = r;
+  });
+  return Object.keys(best).map(function(k){ return best[k]; })
+    .sort(function(a,b){ return (a.line - b.line) || (b.over - a.over); });
+}
+function marketsFor(key){
+  var d = state.sports[key].data.odds || {};
+  var rows = oddsRows(d);
+  var seen = {};
+  rows.forEach(function(r){ if (r && r.market && r.over != null) seen[r.market] = (seen[r.market]||0)+1; });
+  return Object.keys(seen).sort(function(a,b){ return seen[b]-seen[a]; });
+}
+function oddsPage(){
+  var on = Object.keys(SPORTS).filter(function(k){ return state.view.active[k]; });
+  if (!on.length) return '<div class="empty"><i class="ti ti-filter-off"></i>No sports selected.</div>';
+  var h = '';
+  on.forEach(function(k){
+    var S = state.sports[k];
+    if (S.t2 === 'loading' || !S.t2){
+      h += '<div class="dayband"><span>'+esc(SPORTS[k].name)+'</span></div>'
+        +  '<div class="empty" style="padding:18px"><i class="ti ti-loader"></i>Loading '+esc(SPORTS[k].name)+' odds…</div>';
+      return;
+    }
+    var mkts = marketsFor(k);
+    if (!mkts.length){
+      h += '<div class="dayband"><span>'+esc(SPORTS[k].name)+'</span></div>'
+        +  '<div class="empty" style="padding:18px"><i class="ti ti-coin-off"></i>No posted odds for '+esc(SPORTS[k].name)+' yet.</div>';
+      return;
+    }
+    var sel = state.view.mkt[k];
+    if (!sel || mkts.indexOf(sel) < 0) sel = mkts[0];
+    var chips = mkts.slice(0,14).map(function(m){
+      return '<button class="mkt-chip'+(m===sel?' on':'')+'" onclick="LAB.mkt(\''+k+'\',\''+m+'\')">'
+        + esc(mktLabel(k,m)) + '</button>';
+    }).join('');
+    var rows = bestPrices(k, sel).slice(0, 40);
+    var body = rows.length ? rows.map(function(r){
+      return '<div class="od-row">'
+        + '<span class="od-nm">'+esc(r.player)+'</span>'
+        + '<span class="od-ln">'+esc(r.line)+'</span>'
+        + '<span class="od-o">'+(+r.over).toFixed(2)+'</span>'
+        + '<span class="od-u">'+(r.under!=null?(+r.under).toFixed(2):'—')+'</span>'
+        + '<span class="od-bk">'+esc(r.book||'')+'</span></div>';
+    }).join('') : '<div class="empty" style="padding:16px">Nothing posted for this market.</div>';
+    h += '<div class="dayband"><span>'+esc(SPORTS[k].name)+'</span></div>'
+      +  '<div class="mkt-chips">'+chips+'</div>'
+      +  '<div class="od-hd"><span class="od-nm">Player</span><span class="od-ln">Line</span>'
+      +  '<span class="od-o">Over</span><span class="od-u">Under</span><span class="od-bk">Book</span></div>'
+      +  '<div class="od-list">'+body+'</div>';
+  });
+  return h;
 }
 
 /* ---- render ------------------------------------------------------------- */
@@ -291,23 +414,30 @@ function render(){
   var loading = Object.keys(SPORTS).filter(function(k){ return state.sports[k].status==='loading'; });
   $('status').textContent = loading.length ? ('loading '+loading.join(', ')+'…') : 'ready';
 
-  var h = sportBar();
-  var games = allGames();
-  if (!games.length){
-    var anyLoading = loading.length > 0;
-    h += '<div class="empty"><i class="ti ti-calendar-off"></i>'
-      + (anyLoading ? 'Loading fixtures…' : 'No fixtures for the selected sports.') + '</div>';
+  var tabs = [['fixture','ti-calendar','Fixture'],['odds','ti-coin','Odds']];
+  var h = '<div class="tabs">'+tabs.map(function(t){
+    return '<button class="tab'+(state.view.tab===t[0]?' on':'')+'" onclick="LAB.tab(\''+t[0]+'\')">'
+      +'<i class="ti '+t[1]+'"></i>'+t[2]+'</button>'; }).join('')+'</div>';
+  h += sportBar();
+
+  if (state.view.tab === 'odds'){
+    h += oddsPage();
   } else {
-    var lastDay = null;
-    games.forEach(function(item){
-      var dk = item.ms != null ? dayKey(item.ms) : 'tbc';
-      if (dk !== lastDay){
-        lastDay = dk;
-        var lab = item.ms != null ? localDate(item.ms) : 'Date TBC';
-        h += '<div class="dayband"><span>'+esc(lab)+'</span></div>';
-      }
-      h += fixtureCard(item);
-    });
+    var games = allGames();
+    if (!games.length){
+      h += '<div class="empty"><i class="ti ti-calendar-off"></i>'
+        + (loading.length ? 'Loading fixtures…' : 'No fixtures for the selected sports.') + '</div>';
+    } else {
+      var lastDay = null;
+      games.forEach(function(item){
+        var dk = item.ms != null ? dayKey(item.ms) : 'tbc';
+        if (dk !== lastDay){
+          lastDay = dk;
+          h += '<div class="dayband"><span>'+esc(item.ms != null ? localDate(item.ms) : 'Date TBC')+'</span></div>';
+        }
+        h += fixtureCard(item);
+      });
+    }
   }
   $('app').innerHTML = h;
 }
@@ -318,7 +448,14 @@ window.LAB = {
     state.view.active[k] = !state.view.active[k];
     if (state.view.active[k] && state.sports[k].status === 'idle') loadTier1(k);
     else render();
+    if (state.view.tab === 'odds') ensureTier2();
   },
+  tab: function(t){
+    state.view.tab = t;
+    render();
+    if (t === 'odds') ensureTier2();        // pull odds only when the page is actually opened
+  },
+  mkt: function(k, m){ state.view.mkt[k] = m; render(); },
   state: state
 };
 
