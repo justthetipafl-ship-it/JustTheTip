@@ -143,6 +143,28 @@
   .bk-o{min-width:46px;text-align:right;font-weight:800;color:var(--accent);font-variant-numeric:tabular-nums;}
   .bk-u{min-width:46px;text-align:right;color:var(--text-3);font-variant-numeric:tabular-nums;}
   .bk-best{font-size:8px;font-weight:800;text-transform:uppercase;letter-spacing:.05em;color:var(--accent);}
+  .fx-back{display:inline-flex;align-items:center;gap:6px;font-size:10px;font-weight:800;letter-spacing:.05em;
+    text-transform:uppercase;padding:6px 11px;border-radius:7px;border:1px solid var(--border);
+    background:var(--surface-2);color:var(--text-3);cursor:pointer;margin-bottom:12px;}
+  .fx-back:hover{border-color:var(--accent);color:var(--accent);}
+  .fx-hero{display:grid;grid-template-columns:1fr auto 1fr;align-items:center;gap:12px;
+    background:var(--surface);border:1px solid var(--border);border-radius:13px;padding:16px 14px;margin-bottom:6px;}
+  .fx-hero .fxr-logo,.fx-hero .fxr-logo-ph{width:54px;height:54px;}
+  .fx-hero .fxr-name{font-size:16px;}
+  .mo-grid{display:flex;flex-wrap:wrap;gap:7px;margin-bottom:6px;}
+  .mo-blk{flex:1 1 150px;min-width:140px;border:1px solid var(--border);border-radius:9px;
+    background:var(--surface-2);padding:8px 10px;}
+  .mo-lab{font-size:8px;font-weight:800;letter-spacing:.07em;text-transform:uppercase;color:var(--text-3);margin-bottom:5px;}
+  .mo-row{display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:11px;padding:2px 0;}
+  .mo-row b{font-weight:800;color:var(--accent);font-variant-numeric:tabular-nums;}
+  .mo-bk{font-size:8px;color:var(--text-3);text-transform:uppercase;margin-top:4px;text-align:right;}
+  .gp-list{display:flex;flex-direction:column;gap:3px;}
+  .gp-row{display:flex;align-items:center;gap:9px;padding:8px 11px;font-size:12px;cursor:pointer;
+    background:var(--surface);border:1px solid var(--border);border-radius:8px;}
+  .gp-row:hover{border-color:var(--accent);}
+  .gp-nm{flex:1;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .gp-tm{font-size:9px;color:var(--text-3);text-transform:uppercase;}
+  .gp-n{font-size:9px;color:var(--accent);font-weight:700;min-width:64px;text-align:right;}
   .done-bar{display:flex;justify-content:flex-end;margin-bottom:8px;}
   .done-b{display:inline-flex;align-items:center;gap:5px;font-size:9px;font-weight:800;letter-spacing:.05em;
     text-transform:uppercase;padding:5px 10px;border-radius:7px;border:1px solid var(--border);
@@ -199,7 +221,7 @@ var TIER1 = { fixture:'data/fixture.json', teams:'data/teams.json', meta:'data/m
 
 var state = {
   sports: {},                               // sports[key] = {data:{}, idx:{}, status:''}
-  view:   { active: {}, tab: 'fixture', mkt: {}, match: {}, player: null, books: null, showDone: false }   // filter + current page + market per sport
+  view:   { active: {}, tab: 'fixture', mkt: {}, match: {}, player: null, books: null, showDone: false, focus: null }   // filter + current page + market per sport
 };
 Object.keys(SPORTS).forEach(function(k){
   state.sports[k] = { data:{}, idx:{}, status:'idle' };
@@ -485,6 +507,92 @@ function booksPanel(){
           + (top?'<span class="bk-best">best</span>':'')+'</div>';
       }).join('')+'</div></div>';
 }
+/* ---- focused fixture ----------------------------------------------------- */
+// Match-level markets vary by sport (NFL has 1st-half lines and total TDs, EPL has corners
+// and cards, MLB posts none at all), so render whatever keys are present rather than a
+// fixed list. Totals all share the {points,over,under,book} shape.
+var MO_TOTALS = [['total','Total'],['totalTds','Total TDs'],['totalCorners','Corners'],
+                 ['totalCards','Cards'],['totalShots','Total Shots'],['totalSOT','Shots on Target'],
+                 ['total1H','1st Half Total']];
+function matchOddsFor(key, g){
+  var mo = (state.sports[key].data.odds || {}).matchOdds || [];
+  for (var i=0;i<mo.length;i++){
+    var m = mo[i];
+    if (!m) continue;
+    if ((m.home===g.home && m.away===g.away) || (m.home===g.away && m.away===g.home)) return m;
+  }
+  return null;
+}
+function moBlock(key, g){
+  var m = matchOddsFor(key, g);
+  if (!m) return '<div class="empty" style="padding:16px"><i class="ti ti-coin-off"></i>No match markets posted.</div>';
+  var out = '';
+  var px = function(v){ return v!=null ? (+v).toFixed(2) : '—'; };
+  if (m.h2h) out += '<div class="mo-blk"><div class="mo-lab">Head to Head</div>'
+    + '<div class="mo-row"><span>'+esc(abbrOf(key,g.home))+'</span><b>'+px(m.h2h.home)+'</b></div>'
+    + (m.h2h.draw!=null?'<div class="mo-row"><span>Draw</span><b>'+px(m.h2h.draw)+'</b></div>':'')
+    + '<div class="mo-row"><span>'+esc(abbrOf(key,g.away))+'</span><b>'+px(m.h2h.away)+'</b></div>'
+    + '<div class="mo-bk">'+esc(m.h2h.book||'')+'</div></div>';
+  if (m.line) out += '<div class="mo-blk"><div class="mo-lab">Line</div>'
+    + '<div class="mo-row"><span>'+esc(abbrOf(key,g.home))+' '+(m.line.home>0?'+':'')+m.line.home+'</span><b>'+px(m.line.homeOdds)+'</b></div>'
+    + '<div class="mo-row"><span>'+esc(abbrOf(key,g.away))+' '+(m.line.away>0?'+':'')+m.line.away+'</span><b>'+px(m.line.awayOdds)+'</b></div>'
+    + '<div class="mo-bk">'+esc(m.line.book||'')+'</div></div>';
+  MO_TOTALS.forEach(function(t){
+    var v = m[t[0]];
+    if (!v || v.over==null) return;
+    out += '<div class="mo-blk"><div class="mo-lab">'+t[1]+'</div>'
+      + '<div class="mo-row"><span>Over '+v.points+'</span><b>'+px(v.over)+'</b></div>'
+      + '<div class="mo-row"><span>Under '+v.points+'</span><b>'+px(v.under)+'</b></div>'
+      + '<div class="mo-bk">'+esc(v.book||'')+'</div></div>';
+  });
+  return out ? ('<div class="mo-grid">'+out+'</div>') : '<div class="empty" style="padding:16px">No match markets posted.</div>';
+}
+// Players in this game that have any posted price, grouped by team.
+function gamePlayers(key, g){
+  var d = state.sports[key].data.odds || {};
+  var pt = state.sports[key].idx.playerTeam || {};
+  var byP = {};
+  oddsRows(d).forEach(function(r){
+    if (!r || r.over == null || !r.player) return;
+    var t = pt[r.player];
+    if (t !== g.home && t !== g.away) return;
+    var e = byP[r.player] || (byP[r.player] = { name:r.player, team:t, mkts:{} });
+    e.mkts[r.market] = 1;
+  });
+  return Object.keys(byP).map(function(n){ return byP[n]; })
+    .sort(function(a,b){
+      var d2 = Object.keys(b.mkts).length - Object.keys(a.mkts).length;
+      return d2 || a.name.localeCompare(b.name);
+    });
+}
+function focusPage(){
+  var f = state.view.focus;
+  if (!f) return '';
+  var key = f.sport, g = f.g, S = state.sports[key];
+  var st = gameStart(g);
+  var head = '<button class="fx-back" onclick="LAB.focus(null)"><i class="ti ti-arrow-left"></i>All fixtures</button>'
+    + '<div class="fx-hero">'
+    + '<div class="fxr-team">'+teamLogo(key,g.away)+'<div class="fxr-name">'+esc(teamName(key,g.away))+'</div></div>'
+    + '<div class="fxr-center"><span class="fxr-badge" style="color:var(--accent);background:color-mix(in srgb,var(--accent) 16%,transparent)">'
+      + esc(SPORTS[key].name)+'</span>'
+      + (st.ms!=null?'<span class="fxr-ko-date">'+esc(localDate(st.ms))+'</span>'
+          +'<span class="fxr-ko-time">'+esc(st.hasTime?localTime(st.ms):'time TBC')+'</span>':'<span class="fxr-ko-date">TBC</span>')
+      + '<div class="fxr-vs">@</div><div class="fxr-venue">'+esc(g.venue||'TBC')+'</div></div>'
+    + '<div class="fxr-team">'+teamLogo(key,g.home)+'<div class="fxr-name">'+esc(teamName(key,g.home))+'</div></div>'
+    + '</div>';
+  if (S.t2 !== 'ready') return head + '<div class="empty"><i class="ti ti-loader"></i>Loading '+esc(SPORTS[key].name)+' odds…</div>';
+  var ps = gamePlayers(key, g);
+  var list = ps.length ? ps.map(function(p){
+    var n = Object.keys(p.mkts).length;
+    return '<div class="gp-row" onclick="LAB.player(\''+key+'\',\''+esc(p.name).replace(/'/g,"\\'")+'\')">'
+      + '<span class="gp-nm">'+esc(p.name)+'</span>'
+      + '<span class="gp-tm">'+esc(abbrOf(key,p.team))+'</span>'
+      + '<span class="gp-n">'+n+' market'+(n===1?'':'s')+'</span></div>';
+  }).join('') : '<div class="empty" style="padding:16px">No player markets posted for this game.</div>';
+  return head
+    + '<div class="dayband"><span>Match markets</span></div>' + moBlock(key, g)
+    + '<div class="dayband"><span>Players \u00b7 '+ps.length+'</span></div><div class="gp-list">'+list+'</div>';
+}
 function playerPanel(){
   var sel = state.view.player;
   if (!sel) return '';
@@ -619,12 +727,12 @@ function allGames(){
   Object.keys(SPORTS).forEach(function(k){
     if (!state.view.active[k]) return;
     var fx = asArray(state.sports[k].data.fixture) || [];
-    fx.forEach(function(g){
+    fx.forEach(function(g, idx){
       if (!g || !g.home || !g.away) return;
       var st = gameStart(g);
       var done = gameDone(k, g, st.ms);
       if (done && !state.view.showDone) return;        // yesterday's games drop off by default
-      out.push({ sport:k, g:g, ms:st.ms, hasTime:st.hasTime, done:done });
+      out.push({ sport:k, g:g, ms:st.ms, hasTime:st.hasTime, done:done, i:idx });
     });
   });
   return out.sort(function(a,b){
@@ -642,7 +750,7 @@ function fixtureCard(item){
     : (item.hasTime
         ? '<span class="fxr-ko-date">'+esc(localDate(ms))+'</span><span class="fxr-ko-time">'+esc(localTime(ms))+'</span>'
         : '<span class="fxr-ko-date">'+esc(localDate(ms))+'</span><span class="fxr-ko-time" style="color:var(--text-3);font-size:11px">time TBC</span>');
-  return '<div class="fxr'+(item.done?' fxr-done':'')+'">'
+  return '<div class="fxr'+(item.done?' fxr-done':'')+'" onclick="LAB.focus(\''+k+'\','+item.i+')">'
     + '<div class="fxr-team">'+teamLogo(k, g.away)+'<div class="fxr-name">'+esc(teamName(k, g.away))+'</div></div>'
     + '<div class="fxr-center">'
       + '<span class="fxr-badge" style="color:'+col+';background:color-mix(in srgb,'+col+' 16%,transparent)">'+esc(SPORTS[k].name)+'</span>'
@@ -664,6 +772,11 @@ function render(){
       +'<i class="ti '+t[1]+'"></i>'+t[2]+'</button>'; }).join('')+'</div>';
   h += sportBar();
 
+  if (state.view.focus){
+    h = '' + focusPage();                       // focused fixture replaces the page
+    $('app').innerHTML = h + playerPanel() + booksPanel();
+    return;
+  }
   if (state.view.tab === 'odds'){
     h += oddsPage();
   } else {
@@ -705,6 +818,15 @@ window.LAB = {
   mkt: function(k, m){ state.view.mkt[k] = m; render(); },
   match: function(k, id){ state.view.match[k] = id; render(); },
   player: function(k, name){ state.view.player = k ? {sport:k, name:name} : null; render(); },
+  focus: function(k, i){
+    if (!k){ state.view.focus = null; render(); return; }
+    var fx = asArray(state.sports[k].data.fixture) || [];
+    var g = fx[i];
+    if (!g) return;
+    state.view.focus = { sport:k, g:g };
+    if (!state.sports[k].t2) loadTier2(k);      // focused view needs odds
+    render(); window.scrollTo({top:0});
+  },
   showDone: function(){ state.view.showDone = !state.view.showDone; render(); },
   books: function(k, player, market, line){ state.view.books = k ? {sport:k, player:player, market:market, line:line} : null; render(); },
   state: state
