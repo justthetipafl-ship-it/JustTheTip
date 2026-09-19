@@ -96,6 +96,22 @@
   .od-bk{min-width:68px;text-align:right;font-size:9px;color:var(--text-3);text-transform:uppercase;
     white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
   .od-list{margin-bottom:6px;}
+  .mt-chips{display:flex;flex-wrap:wrap;gap:4px;margin:0 0 8px;}
+  .mt-chip{font-size:9px;font-weight:700;letter-spacing:.03em;padding:5px 9px;border-radius:6px;
+    border:1px solid var(--border);background:var(--surface-2);color:var(--text-3);cursor:pointer;white-space:nowrap;}
+  .mt-chip.on{border-color:var(--accent);color:var(--accent);background:color-mix(in srgb,var(--accent) 12%,transparent);}
+  .od-tm{font-style:normal;font-size:9px;color:var(--text-3);margin-left:6px;text-transform:uppercase;}
+  .od-det{margin-bottom:3px;}
+  .od-det>summary{list-style:none;cursor:pointer;}
+  .od-det>summary::-webkit-details-marker{display:none;}
+  .od-det>summary .od-row{margin-bottom:0;}
+  .od-det[open]>summary .od-row{border-color:var(--accent);border-bottom-left-radius:0;border-bottom-right-radius:0;}
+  .alt-wrap{display:flex;flex-wrap:wrap;gap:4px;padding:7px 10px;background:var(--surface-2);
+    border:1px solid var(--accent);border-top:0;border-radius:0 0 8px 8px;margin-bottom:3px;}
+  .alt-rung{display:inline-flex;align-items:baseline;gap:4px;font-size:10px;font-variant-numeric:tabular-nums;
+    background:var(--surface);border:1px solid var(--border);border-radius:5px;padding:3px 7px;}
+  .alt-rung b{font-weight:800;color:var(--text);}
+  .alt-rung i{font-style:normal;font-size:8px;color:var(--text-3);text-transform:uppercase;}
   .empty{text-align:center;padding:40px 16px;color:var(--text-3);}
   .empty i{font-size:30px;display:block;margin-bottom:8px;opacity:.5;}
   .boot{text-align:center;padding:50px 16px;color:var(--text-3);font-family:var(--font-mono);font-size:12px;}
@@ -147,7 +163,7 @@ var TIER1 = { fixture:'data/fixture.json', teams:'data/teams.json', meta:'data/m
 
 var state = {
   sports: {},                               // sports[key] = {data:{}, idx:{}, status:''}
-  view:   { active: {}, tab: 'fixture', mkt: {} }   // filter + current page + market per sport
+  view:   { active: {}, tab: 'fixture', mkt: {}, match: {} }   // filter + current page + market per sport
 };
 Object.keys(SPORTS).forEach(function(k){
   state.sports[k] = { data:{}, idx:{}, status:'idle' };
@@ -216,7 +232,7 @@ function asArray(v){ return Array.isArray(v) ? v : (v && v.fixture) || (v && v.t
 // Tier 2: odds (~12 MB across four sports) - loaded only when a page needs it, and only
 // for sports the user actually has switched on. This is the whole point of the namespaced
 // model: NFL's 4.6 MB doesn't get fetched because you glanced at the AFL odds.
-var TIER2 = { odds:'data/odds.json' };
+var TIER2 = { odds:'data/odds.json', players:'data/players.json' };
 function loadTier2(key){
   var S = state.sports[key];
   if (S.t2 === 'ready' || S.t2 === 'loading') return Promise.resolve();
@@ -227,7 +243,15 @@ function loadTier2(key){
       .then(function(r){ return r.ok ? r.json() : null; })
       .then(function(j){ if (j) S.data[k] = j; })
       .catch(function(){});
-  })).then(function(){ S.t2 = 'ready'; render(); });
+  })).then(function(){
+    // player -> team, so odds rows can be filtered by match
+    S.idx.playerTeam = {};
+    var pl = S.data.players;
+    (Array.isArray(pl) ? pl : (pl && pl.players) || []).forEach(function(p){
+      if (p && p.name) S.idx.playerTeam[p.name] = p.team;
+    });
+    S.t2 = 'ready'; render();
+  });
 }
 function ensureTier2(){
   Object.keys(SPORTS).forEach(function(k){
@@ -288,6 +312,10 @@ function oddsRows(d){
   if (d.lines && d.lines.length) return d.lines;
   return d.alt || [];
 }
+function abbrOf(key, t){
+  var rec = (state.sports[key].idx.teamMap || {})[t] || {};
+  return rec.abbr || rec.short || String(t);
+}
 function mktLabel(key, mk){
   var cfg = state.sports[key].config || {};
   if (cfg.mktNames && cfg.mktNames[mk]) return cfg.mktNames[mk];
@@ -316,6 +344,31 @@ function marketsFor(key){
   rows.forEach(function(r){ if (r && r.market && r.over != null) seen[r.market] = (seen[r.market]||0)+1; });
   return Object.keys(seen).sort(function(a,b){ return seen[b]-seen[a]; });
 }
+// Alt/milestone ladder for one player+market: every posted rung, best price per line.
+function altLadder(key, player, mk){
+  var d = state.sports[key].data.odds || {};
+  var best = {};
+  (d.alt || []).forEach(function(r){
+    if (!r || r.player !== player || r.market !== mk || r.over == null) return;
+    var k = String(r.line);
+    if (!best[k] || r.over > best[k].over) best[k] = r;
+  });
+  var rungs = Object.keys(best).map(function(k){ return best[k]; })
+    .sort(function(a,b){ return a.line - b.line; });
+  if (rungs.length < 2) return '';
+  return '<div class="alt-wrap">'+rungs.map(function(r){
+    return '<span class="alt-rung"><b>'+esc(r.line)+'+</b>'+(+r.over).toFixed(2)
+      +'<i>'+esc(r.book||'')+'</i></span>';
+  }).join('')+'</div>';
+}
+// Games for a sport, used as the match filter. Only games with at least one priced player
+// are worth offering, so the chips never point at an empty board.
+function matchesFor(key){
+  var fx = asArray(state.sports[key].data.fixture) || [];
+  return fx.filter(function(g){ return g && g.home && g.away; }).map(function(g){
+    return { id: g.home+'|'+g.away, home:g.home, away:g.away };
+  });
+}
 function oddsPage(){
   var on = Object.keys(SPORTS).filter(function(k){ return state.view.active[k]; });
   if (!on.length) return '<div class="empty"><i class="ti ti-filter-off"></i>No sports selected.</div>';
@@ -339,16 +392,35 @@ function oddsPage(){
       return '<button class="mkt-chip'+(m===sel?' on':'')+'" onclick="LAB.mkt(\''+k+'\',\''+m+'\')">'
         + esc(mktLabel(k,m)) + '</button>';
     }).join('');
-    var rows = bestPrices(k, sel).slice(0, 40);
+    var mSel = state.view.match[k] || '';
+    var pt = S.idx.playerTeam || {};
+    var rows = bestPrices(k, sel).filter(function(r){
+      if (!mSel) return true;
+      var t = pt[r.player]; if (!t) return false;
+      var parts = mSel.split('|');
+      return t === parts[0] || t === parts[1];
+    }).slice(0, 60);
     var body = rows.length ? rows.map(function(r){
-      return '<div class="od-row">'
-        + '<span class="od-nm">'+esc(r.player)+'</span>'
+      var lad = altLadder(k, r.player, sel);
+      var t = pt[r.player] || '';
+      var head = '<div class="od-row">'
+        + '<span class="od-nm">'+esc(r.player)+(t?'<i class="od-tm">'+esc(abbrOf(k,t))+'</i>':'')+'</span>'
         + '<span class="od-ln">'+esc(r.line)+'</span>'
         + '<span class="od-o">'+(+r.over).toFixed(2)+'</span>'
         + '<span class="od-u">'+(r.under!=null?(+r.under).toFixed(2):'—')+'</span>'
         + '<span class="od-bk">'+esc(r.book||'')+'</span></div>';
-    }).join('') : '<div class="empty" style="padding:16px">Nothing posted for this market.</div>';
+      return lad ? ('<details class="od-det"><summary>'+head+'</summary>'+lad+'</details>') : head;
+    }).join('') : '<div class="empty" style="padding:16px">Nothing posted'+(mSel?' for this match':'')+'.</div>';
+
+    var ms = matchesFor(k);
+    var mchips = ms.length ? ('<div class="mt-chips"><button class="mt-chip'+(!mSel?' on':'')
+      + '" onclick="LAB.match(\''+k+'\',\'\')">All matches</button>'
+      + ms.map(function(m){
+          return '<button class="mt-chip'+(mSel===m.id?' on':'')+'" onclick="LAB.match(\''+k+'\',\''+esc(m.id)+'\')">'
+            + esc(abbrOf(k,m.away))+' @ '+esc(abbrOf(k,m.home))+'</button>'; }).join('')
+      + '</div>') : '';
     h += '<div class="dayband"><span>'+esc(SPORTS[k].name)+'</span></div>'
+      +  mchips
       +  '<div class="mkt-chips">'+chips+'</div>'
       +  '<div class="od-hd"><span class="od-nm">Player</span><span class="od-ln">Line</span>'
       +  '<span class="od-o">Over</span><span class="od-u">Under</span><span class="od-bk">Book</span></div>'
@@ -456,6 +528,7 @@ window.LAB = {
     if (t === 'odds') ensureTier2();        // pull odds only when the page is actually opened
   },
   mkt: function(k, m){ state.view.mkt[k] = m; render(); },
+  match: function(k, id){ state.view.match[k] = id; render(); },
   state: state
 };
 
