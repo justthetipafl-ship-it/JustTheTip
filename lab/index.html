@@ -167,7 +167,7 @@
     font-weight:800;font-size:12px;letter-spacing:.04em;padding-bottom:7px;margin-bottom:4px;border-bottom:1px solid var(--border);}
   .h2h-gp{font-family:var(--font-mono);font-size:8px;color:var(--text-3);font-weight:400;text-transform:uppercase;letter-spacing:.08em;}
   .h2h-row{display:flex;align-items:center;gap:9px;padding:5px 0;}
-  .h2h-v{min-width:44px;font-weight:800;font-size:13px;font-variant-numeric:tabular-nums;color:var(--text-3);}
+  .h2h-v{min-width:56px;font-weight:800;font-size:13px;font-variant-numeric:tabular-nums;color:var(--text-3);}
   .h2h-v.l{text-align:left;} .h2h-v.r{text-align:right;}
   .h2h-v.win{color:var(--accent);}
   .h2h-mid{flex:1;min-width:0;}
@@ -178,6 +178,15 @@
   .h2h-bar .home{background:var(--accent);}
   .h2h-bar .away{background:#60a5fa;}
   .h2h-inv{font-style:normal;font-size:8px;color:var(--text-3);margin-left:3px;}
+  .h2h-tabs{display:flex;align-items:center;gap:4px;margin-bottom:8px;}
+  .h2h-tb{font-size:9px;font-weight:800;letter-spacing:.05em;text-transform:uppercase;padding:4px 10px;
+    border-radius:6px;border:1px solid var(--border);background:var(--surface);color:var(--text-3);cursor:pointer;}
+  .h2h-tb.on{border-color:var(--accent);color:var(--accent);background:color-mix(in srgb,var(--accent) 12%,transparent);}
+  .h2h-note{margin-left:auto;font-size:8px;color:var(--text-3);text-transform:uppercase;letter-spacing:.05em;}
+  .h2h-v{display:flex;flex-direction:column;gap:1px;}
+  .h2h-v.r{align-items:flex-end;}
+  .h2h-pc{font-size:8px;font-weight:700;letter-spacing:.02em;}
+  .h2h-pc.up{color:#22c55e;} .h2h-pc.down{color:#f97316;} .h2h-pc.flat{color:var(--text-3);}
   .gp-list{display:flex;flex-direction:column;gap:3px;}
   .gp-row{display:flex;align-items:center;gap:9px;padding:8px 11px;font-size:12px;cursor:pointer;
     background:var(--surface);border:1px solid var(--border);border-radius:8px;}
@@ -256,7 +265,7 @@ var TIER1 = { fixture:'data/fixture.json', teams:'data/teams.json', meta:'data/m
 
 var state = {
   sports: {},                               // sports[key] = {data:{}, idx:{}, status:''}
-  view:   { active: {}, tab: 'fixture', mkt: {}, match: {}, player: null, books: null, showDone: false, focus: null }   // filter + current page + market per sport
+  view:   { active: {}, tab: 'fixture', mkt: {}, match: {}, player: null, books: null, showDone: false, focus: null, h2hMode: 'for' }   // filter + current page + market per sport
 };
 Object.keys(SPORTS).forEach(function(k){
   state.sports[k] = { data:{}, idx:{}, status:'idle' };
@@ -833,32 +842,69 @@ var LOW_COUNT_KEYS = {goals:1,passTds:1,rushTds:1,passInt:1,sacks:1,assists:1,re
 // Stats where MORE is worse - the leader highlight has to invert or it reads backwards
 // (a team leading on cards or sacks taken is not winning that row).
 var INVERSE_KEYS = {cards:1,foulsCommitted:1,passInt:1,sacks:1,SO:1,ga:1};
+// League average per stat, so each team's figure can be shown as a % above/below par.
+function leagueAvg(key, k){
+  var teams = asArray(state.sports[key].data.teams) || [];
+  var v = [];
+  teams.forEach(function(t){ var x = t && t[k]; if (x != null && isFinite(+x)) v.push(+x); });
+  if (!v.length) return null;
+  return v.reduce(function(a,b){ return a+b; },0) / v.length;
+}
 function h2hSection(key, g){
   var ix = state.sports[key].idx, cfg = state.sports[key].config || {};
   var th = (ix.teamMap||{})[g.home], ta = (ix.teamMap||{})[g.away];
   if (!th || !ta) return '';
   var keys = cfg.h2hKeys || [];
   if (!keys.length) return '';
-  var rows = '';
+
+  var mode = state.view.h2hMode || 'for';          // 'for' = own output, 'allowed' = conceded
+  var suf  = mode === 'allowed' ? '_a' : '';
+  var rows = '', any = false;
+
   keys.forEach(function(kv){
     var k = kv[0], lab = kv[1];
-    var hv = th[k], av = ta[k];
+    var hv = th[k+suf], av = ta[k+suf];
     if (hv == null && av == null) return;
+    any = true;
     var hn = +hv || 0, an = +av || 0, tot = (hn + an) || 1;
     var hp = Math.round(hn / tot * 100), ap = 100 - hp;
     var dec = LOW_COUNT_KEYS[k] ? 1 : 0;
+    // On "allowed", conceding MORE is worse, so the better side flips relative to "for".
+    // Genuinely inverse stats (cards, INTs thrown) flip again - i.e. back to normal.
     var inv = !!INVERSE_KEYS[k];
-    var homeBetter = inv ? (hn <= an) : (hn >= an);
-    var awayBetter = inv ? (an < hn)  : (an > hn);
+    var lowerWins = (mode === 'allowed') ? !inv : inv;
+    var homeBetter = lowerWins ? (hn <= an) : (hn >= an);
+    var awayBetter = lowerWins ? (an < hn)  : (an > hn);
+
+    var lg = leagueAvg(key, k+suf);
+    var pct = function(v){
+      if (!lg) return '';
+      var d = Math.round((v - lg) / lg * 100);
+      if (!isFinite(d) || Math.abs(d) < 3) return '<span class="h2h-pc flat">par</span>';
+      var good = lowerWins ? (d < 0) : (d > 0);
+      return '<span class="h2h-pc '+(good?'up':'down')+'">'+(d>0?'+':'')+d+'%</span>';
+    };
+
     rows += '<div class="h2h-row">'
-      + '<div class="h2h-v l'+(homeBetter ? ' win' : '')+'">'+(+hn).toFixed(dec)+'</div>'
-      + '<div class="h2h-mid"><div class="h2h-k">'+esc(lab)+(inv?'<i class="h2h-inv" title="lower is better">\u25be</i>':'')+'</div>'
+      + '<div class="h2h-v l'+(homeBetter ? ' win' : '')+'">'+(+hn).toFixed(dec)+pct(hn)+'</div>'
+      + '<div class="h2h-mid"><div class="h2h-k">'+esc(lab)
+        + (lowerWins?'<i class="h2h-inv" title="lower is better">\u25be</i>':'')+'</div>'
         + '<div class="h2h-bar"><i class="home" style="width:'+hp+'%"></i><i class="away" style="width:'+ap+'%"></i></div></div>'
-      + '<div class="h2h-v r'+(awayBetter ? ' win' : '')+'">'+(+an).toFixed(dec)+'</div></div>';
+      + '<div class="h2h-v r'+(awayBetter ? ' win' : '')+'">'+(+an).toFixed(dec)+pct(an)+'</div></div>';
   });
-  if (!rows) return '';
+
+  if (!any) return mode === 'allowed'
+    ? '<div class="dayband"><span>Head to Head</span></div><div class="empty" style="padding:16px">No conceded stats for this sport.</div>'
+    : '';
+
+  var tab = function(m, lab){
+    return '<button class="h2h-tb'+(mode===m?' on':'')+'" onclick="LAB.h2hMode(\''+m+'\')">'+lab+'</button>';
+  };
   return '<div class="dayband"><span>Head to Head \u00b7 season averages</span></div>'
-    + '<div class="h2h-wrap"><div class="h2h-head"><span>'+esc(abbrOf(key,g.home))+'</span>'
+    + '<div class="h2h-wrap">'
+    + '<div class="h2h-tabs">'+tab('for','For')+tab('allowed','Allowed')
+      + '<span class="h2h-note">'+(mode==='allowed'?'conceded per game':'own output per game')+' \u00b7 % vs league</span></div>'
+    + '<div class="h2h-head"><span>'+esc(abbrOf(key,g.home))+'</span>'
     + '<span class="h2h-gp">per game</span><span>'+esc(abbrOf(key,g.away))+'</span></div>'+rows+'</div>';
 }
 
@@ -1149,6 +1195,7 @@ window.LAB = {
     if (!state.sports[k].t3) loadTier3(k);      // and the heavy layer for the real sections
     render(); window.scrollTo({top:0});
   },
+  h2hMode: function(m){ state.view.h2hMode = m; render(); },
   showDone: function(){ state.view.showDone = !state.view.showDone; render(); },
   books: function(k, player, market, line){ state.view.books = k ? {sport:k, player:player, market:market, line:line} : null; render(); },
   state: state
