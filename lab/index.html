@@ -1633,7 +1633,14 @@ function dvpBoard(key, mkt){
   rows.forEach(function(r){
     if (!r || !r.pos || r.team == null) return;
     var v = r[mkt]; if (v == null || !isFinite(+v)) return;
-    (byPos[r.pos] = byPos[r.pos] || []).push({ team:r.team, val:+v });
+    var list = (byPos[r.pos] = byPos[r.pos] || []);
+    // EPL's dvp.json carries each club twice under two naming styles ("Spurs" and
+    // "Tottenham"), which would rank a 20-team league out of 30. Collapse on the
+    // normalised name and keep one entry per club.
+    var k2 = normTeam(r.team), dup = null;
+    for (var i=0;i<list.length;i++){ if (normTeam(list[i].team) === k2){ dup = list[i]; break; } }
+    if (dup){ if (+v > dup.val) dup.val = +v; return; }
+    list.push({ team:r.team, val:+v });
   });
   Object.keys(byPos).forEach(function(pos){
     var list = byPos[pos].sort(function(a,b){ return b.val - a.val; });   // most allowed first
@@ -2107,7 +2114,13 @@ function streakers(key, g){
       if (best) out.push(best);                                   // one line per player: their longest live streak
     });
   });
-  out.sort(function(a,b){ return (b.streak - a.streak) || (b.price - a.price); });
+  // At the 20-game cap streak length stops separating anything, so ties fall to how
+  // comfortably the median clears the line, then to price.
+  var margin = function(r){ return (r.med == null) ? 0 : (r.med - r.line) / Math.max(r.line, 0.5); };
+  out.forEach(function(r){ r.margin = margin(r); });
+  out.sort(function(a,b){
+    return (b.streak - a.streak) || (b.margin - a.margin) || (b.price - a.price);
+  });
   return out.slice(0, SIG_MAX_ROWS);
 }
 function streakRow(key, r){
