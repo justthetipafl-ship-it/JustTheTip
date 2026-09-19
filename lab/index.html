@@ -705,12 +705,25 @@ function loadTier3(key){
     try{
       // NOTE: configure() wants logsByName (the INDEX), not a flat gamelogs array - passing
       // the array leaves getHitRate() returning null for every player, silently.
+      // fixture/meta/env are NOT optional extras: MLB resolves the opposing starter and park
+      // through fixture (no fixture -> starterFacing() returns null and the batter probability
+      // loses the matchup entirely), EPL resolves home/away the same way, and NFL reads weather
+      // out of env. Leaving them out silently degrades the score rather than erroring.
+      var envByTeam = {};
+      (asArray(S.data.weather) || []).forEach(function(w){
+        if (!w) return;
+        if (w.team) envByTeam[w.team] = w;
+        if (w.home) envByTeam[w.home] = w;
+      });
       if (S.scoring && S.scoring.configure) S.scoring.configure({
         players: S.idx.players,
         teams: asArray(S.data.teams) || [],
         teamsForm: asArray(S.data.teams_form) || asArray(S.data.teams) || [],
         dvp: asArray(S.data.dvp) || [],
         logsByName: S.idx.logsByName || {},
+        fixture: asArray(S.data.fixture) || [],
+        meta: S.data.meta || {},
+        env: envByTeam,
         currentSeason: (S.data.meta && S.data.meta.currentSeason) || String(new Date().getFullYear())
       });
     }catch(e){}
@@ -2589,6 +2602,26 @@ function ouSignals(key, g, kind){
   out.sort(function(a,b){ return (b.ev - a.ev) || (over ? b.score - a.score : a.score - b.score); });
   return out.slice(0, SIG_MAX_ROWS);
 }
+function ctxChips(key, p, mkt, line, opp){
+  var sc = state.sports[key].scoring;
+  if (!sc || !sc.getContextSignals) return '';
+  var out = [];
+  try {
+    // AFL/NFL return weighted numbers that already moved the score; EPL/MLB return tags
+    // that nothing consumed until now. Both are worth showing as the row's reasoning.
+    var sig = sc.getContextSignals(p, mkt, line, opp) || [];
+    if (!sig.length) sig = sc.getContextSignals(p, mkt, opp) || [];
+    sig.slice().sort(function(a,b){
+      return Math.abs((b.pct||0)*(b.weight||1)) - Math.abs((a.pct||0)*(a.weight||1));
+    }).slice(0, 3).forEach(function(x){
+      if (x.t){ out.push('<span class="gl-chip '+(x.good ? 'good' : 'bad')+'">'+esc(x.t)+'</span>'); return; }
+      if (x.label == null || x.pct == null || Math.abs(x.pct) < 5) return;
+      out.push('<span class="gl-chip '+(x.pct > 0 ? 'good' : 'bad')+'">'+esc(x.label)
+        + ' '+(x.pct > 0 ? '+' : '')+x.pct.toFixed(0)+'%</span>');
+    });
+  } catch(e){ return ''; }
+  return out.join('');
+}
 function ouRow(key, r){
   var ask = (Math.round(r.line) === r.line) ? r.line + 1 : Math.ceil(r.line);
   var chips = '<div class="gl-why">'
@@ -2598,6 +2631,7 @@ function ouRow(key, r){
     + '<span class="gl-chip">score '+r.score.toFixed(1)+'</span>'
     + (r.dvpPct != null ? '<span class="gl-chip '+(r.over ? 'good' : 'bad')+'">'
         + (r.dvpPct > 0 ? '+' : '')+r.dvpPct.toFixed(0)+'% DVP</span>' : '')
+    + ctxChips(key, (state.sports[key].idx.byName||{})[r.name], r.mkt, r.line, r.opp)
     + '<span class="gl-chip">'+r.avg.toFixed(r.avg < 3 ? 2 : 1)+' avg \u00b7 '+r.games+' gm</span></div>';
   return '<div class="gl-row" onclick="LAB.player(\''+key+'\',\''+esc(r.name).replace(/'/g,"\\'")+'\')">'
     + '<div class="gl-left">'
