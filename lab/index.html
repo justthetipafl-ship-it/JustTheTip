@@ -201,6 +201,18 @@
   .lm-sc{font-weight:800;font-variant-numeric:tabular-nums;min-width:54px;text-align:center;}
   .lm-meta{margin-left:auto;font-size:8px;color:var(--text-3);text-transform:uppercase;letter-spacing:.04em;
     white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:40%;}
+  .lm-det>summary{list-style:none;cursor:pointer;}
+  .lm-det>summary::-webkit-details-marker{display:none;}
+  .lm-det>summary:hover .lm-sc{color:var(--accent);}
+  .lm-det[open]>summary .lm-row{border-bottom-color:transparent;}
+  .ml-wrap{padding:2px 0 9px;display:flex;flex-direction:column;gap:7px;}
+  .ml-team{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:7px 9px;}
+  .ml-tm{font-size:8px;font-weight:800;letter-spacing:.07em;text-transform:uppercase;color:var(--text-3);margin-bottom:5px;}
+  .ml-grid{display:flex;flex-wrap:wrap;gap:6px;}
+  .ml-cell{flex:1 1 92px;min-width:88px;background:var(--surface-2);border:1px solid var(--border);border-radius:6px;padding:5px 7px;}
+  .ml-k{display:block;font-size:7.5px;font-weight:800;letter-spacing:.05em;text-transform:uppercase;color:var(--text-3);}
+  .ml-v{display:block;font-family:var(--font-display);font-size:14px;font-weight:800;line-height:1.15;}
+  .ml-n{display:block;font-size:9px;color:var(--text-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
   .gp-list{display:flex;flex-direction:column;gap:3px;}
   .gp-row{display:flex;align-items:center;gap:9px;padding:8px 11px;font-size:12px;cursor:pointer;
     background:var(--surface);border:1px solid var(--border);border-radius:8px;}
@@ -980,16 +992,66 @@ function h2hHistory(key, g){
     if (r.round) meta.push('R'+r.round);
     else if (r.week && String(r.week).length <= 2) meta.push('W'+r.week);
     if (r.venue) meta.push(r.venue);
-    return '<div class="lm-row">'
+    var head = '<div class="lm-row">'
       + '<span class="lm-date">'+esc(when)+'</span>'
       + '<span class="lm-t'+(win && normTeam(win)===normTeam(r.home) ? ' win' : '')+'">'+esc(abbrOf(key,r.home))+'</span>'
       + '<span class="lm-sc">'+hs+' &ndash; '+as+'</span>'
       + '<span class="lm-t'+(win && normTeam(win)===normTeam(r.away) ? ' win' : '')+'">'+esc(abbrOf(key,r.away))+'</span>'
       + (meta.length ? '<span class="lm-meta">'+esc(meta.join(' \u00b7 '))+'</span>' : '')
       + '</div>';
+    var lead = meetingLeaders(key, r, r.home) + meetingLeaders(key, r, r.away);
+    return lead
+      ? '<details class="lm-det"><summary>'+head+'</summary><div class="ml-wrap">'+lead+'</div></details>'
+      : head;
   }).join('');
   return '<div class="dayband"><span>Last time they met \u00b7 '+n+' meeting'+(n===1?'':'s')+'</span></div>'
     + '<div class="lm-wrap">'+summary+'<div class="lm-list">'+list+'</div></div>';
+}
+
+// Join a past result to its gamelog rows. Sports key this differently:
+//   EPL/MLB  gamelogs carry a date   -> match on date + team
+//   NFL      Year + Week + team
+//   AFL      Year + round number parsed out of RoundName ('Round 7' / 'Opening Round')
+function roundNum(v){
+  var m = String(v==null?'':v).match(/(\d+)/);
+  return m ? +m[1] : (/opening/i.test(String(v)) ? 0 : null);
+}
+function logsForMeeting(key, r, team){
+  var logs = asArray(state.sports[key].data.gamelogs) || [];
+  var rDate = String(r.date||'').slice(0,10);
+  var rYear = +(r.year || r.season || 0);
+  var rRound = roundNum(r.round != null ? r.round : r.week);
+  return logs.filter(function(x){
+    if (!x || normTeam(x.Team || x.team) !== normTeam(team)) return false;
+    var xd = String(x.date || x.Date || '').slice(0,10);
+    if (xd && rDate) return xd === rDate;
+    if (rYear && +(x.Year||x.year) !== rYear) return false;
+    var xr = roundNum(x.RoundName != null ? x.RoundName : x.Week);
+    return (rRound != null && xr != null) ? xr === rRound : false;
+  });
+}
+// Top performer per stat for one team in one past game.
+function meetingLeaders(key, r, team){
+  var rows = logsForMeeting(key, r, team);
+  if (!rows.length) return '';
+  var cfg = state.sports[key].config || {};
+  var keys = (cfg.h2hKeys || []).map(function(x){ return x[0]; })
+    .filter(function(k){ return rows.some(function(x){ return x[k] != null; }); }).slice(0,5);
+  if (!keys.length) return '';
+  var cells = keys.map(function(k){
+    var best = null;
+    rows.forEach(function(x){
+      var v = +x[k];
+      if (!isFinite(v) || v <= 0) return;
+      if (!best || v > best.v) best = { v:v, n:(x.Player||x.player) };
+    });
+    if (!best) return '';
+    var lab = (cfg.h2hKeys.find(function(y){ return y[0]===k; })||[k,k])[1];
+    return '<div class="ml-cell"><span class="ml-k">'+esc(lab)+'</span>'
+      + '<span class="ml-v">'+ (LOW_COUNT_KEYS[k] ? best.v.toFixed(1) : Math.round(best.v)) +'</span>'
+      + '<span class="ml-n">'+esc(best.n)+'</span></div>';
+  }).filter(Boolean).join('');
+  return cells ? ('<div class="ml-team"><div class="ml-tm">'+esc(abbrOf(key,team))+'</div><div class="ml-grid">'+cells+'</div></div>') : '';
 }
 
 // Players in this game that have any posted price, grouped by team.
