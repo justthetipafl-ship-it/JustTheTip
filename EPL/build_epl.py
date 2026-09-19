@@ -170,8 +170,11 @@ def team_stats_and_venues(meta, stats, players):
 
 def merge_row(p, f, a, dy):
     """One merged gamelog row. f = FPL row (or None), a = API-Football row (or None)."""
-    team = p.get("team")
-    opp = (f or {}).get("opp") or (a or {}).get("opp")
+    # FPL and API-Football spell the same club differently ("Spurs" / "Tottenham"), and the two
+    # feeds take turns supplying `opp`. Canonicalise BOTH sides here, before MatchId is built
+    # from them - otherwise one fixture lands under two ids and every H2H split fragments.
+    team = _canon_team(p.get("team"))
+    opp = _canon_team((f or {}).get("opp") or (a or {}).get("opp"))
     home = (f or {}).get("home")
     if home is None:
         home = (a or {}).get("home")
@@ -380,7 +383,7 @@ def build_dvp(gamelogs, players):
             name2pos[nm] = p.get("pos") or p.get("position")
     agg = {}
     for r in gamelogs:
-        opp = r.get("Opp")
+        opp = _canon_team(r.get("Opp"))    # never aggregate a club under two spellings
         pos = name2pos.get(r.get("Player"))
         if not opp or not pos:
             continue
