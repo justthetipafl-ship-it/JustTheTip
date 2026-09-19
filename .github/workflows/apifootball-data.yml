@@ -31,9 +31,11 @@ jobs:
       - name: Pull API-Football data
         env:
           APIFOOTBALL_KEY: ${{ secrets.APIFOOTBALL_KEY }}
-          # Backfilling 2025/26 first. The daily cron finishes it over ~5 runs (100/day cap).
-          # AFTER Round 1, change '2025' below to '' so the cron switches to the current season.
-          APIFOOTBALL_SEASON: ${{ github.event.inputs.season || '2024,2025' }}
+          # Every season listed here must include the ones already stored: fetch_apifootball.py
+          # wipes the store if a previously-stored season is no longer requested, so dropping a
+          # year (or blanking this to fall back to the current season alone) forces a full
+          # ~380-call re-backfill. Add the new season each July, keep the old ones.
+          APIFOOTBALL_SEASON: ${{ github.event.inputs.season || '2024,2025,2026' }}
           APIFOOTBALL_MAX_PER_RUN: '800'
           APIFOOTBALL_PACE: '0.5'
         run: python EPL/fetch_apifootball.py
