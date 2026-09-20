@@ -8,9 +8,11 @@
 window.JTTScoring = (function () {
   'use strict';
 
-  var RECENT_WIN = 10;    // base projection window (last N matches, any season)
+  var RECENT_WIN = 14;    // base projection window (last N matches, any season) - swept 6/10/14
   var DVP_WEIGHT = 0.5;   // how hard the opponent leaky-defence signal moves the projection
-  var MODEL_BLEND = 0.6;  // Poisson model weight vs empirical hit rate
+  var MODEL_BLEND = 0.8;  // model weight vs empirical hit rate. Swept 0.4-1.0 against walk-forward
+                        // Brier: the empirical component adds nothing (1.0 tied best), so it is
+                        // kept at a low weight only as a guard against projection blow-ups.
 
   var players = [], teams = [], dvp = [], logs = {}, fixture = [], meta = {}, curSeason = '2026';
   var byName = {}, byTeamGame = {}, teamByName = {}, dvpByTeam = {}, dvpAvg = {};
@@ -66,9 +68,15 @@ window.JTTScoring = (function () {
   // ---- minutes-aware rate: per-90 scaled by expected minutes, shrunk to a season prior ----
   function _expMin(name) {
     var s = slice(name); if (!s.length) return 90;
-    var m = s.slice(-6).map(function (r) { return +r.min || 0; }).filter(function (x) { return x > 0; });
+    // Expected minutes must include the chance of NOT playing. Filtering zeros out measured
+    // "minutes when he plays", so a man who has been an unused sub in six of ten matches was
+    // projected as a nailed starter - the single biggest source of over-projection in this model.
+    var rows = s.slice(-6), m = rows.map(function (r) { return +r.min || 0; });
     if (!m.length) return 90;
-    return _clamp(m.reduce(function (a, b) { return a + b; }, 0) / m.length, 0, 90);
+    var played = m.filter(function (x) { return x > 0; });
+    var pStart = played.length / m.length;                       // appearance rate
+    var whenPlayed = played.length ? played.reduce(function (a, b) { return a + b; }, 0) / played.length : 0;
+    return _clamp(pStart * whenPlayed, 0, 90);                   // E[minutes], unconditional
   }
   function _minAwareRate(name, stat) {
     var s = slice(name), n = s.length;
@@ -91,8 +99,26 @@ window.JTTScoring = (function () {
       f *= (g.home === p.team) ? 1.04 : 0.97;                                       // modest home/away tilt on attacking output
     return { proj: base * f, opp: opp, dvpPct: pct };
   }
+  // Match counts are overdispersed: a player who averages 0.8 tackles does not produce them at
+  // a Poisson rate, he has quiet games and busy ones. Poisson therefore understates P(zero) and
+  // overstates every over. Where the player's own variance exceeds his mean, use a negative
+  // binomial with the dispersion measured from his last matches; fall back to Poisson otherwise.
+  function _negBinAtLeast(mu, k, rows, stat) {
+    if (!(mu > 0)) return 0;
+    var vals = rows.map(function (r) { return +r[stat] || 0; });
+    if (vals.length < 4) return poissonAtLeast(mu, k);
+    var m = vals.reduce(function (a, b) { return a + b; }, 0) / vals.length;
+    var v = vals.reduce(function (a, b) { return a + (b - m) * (b - m); }, 0) / vals.length;
+    if (!(v > m * 1.05)) return poissonAtLeast(mu, k);          // not overdispersed: Poisson is fine
+    var size = (m * m) / (v - m);                               // method of moments
+    size = Math.max(0.35, Math.min(50, size));
+    var pp = size / (size + mu), cum = 0, term = Math.pow(pp, size);
+    for (var i = 0; i < k; i++) { cum += term; term = term * (size + i) / (i + 1) * (1 - pp); }
+    return Math.max(0, Math.min(1, 1 - cum));
+  }
   function prob(p, stat, line) {
-    var r = projPlayer(p, stat), model = poissonAtLeast(r.proj, Math.ceil(line));
+    var r = projPlayer(p, stat);
+    var model = _negBinAtLeast(r.proj, Math.ceil(line), slice(p.name), stat);
     var emp = hitRateLogs(p.name, stat, line);
     return _clamp(MODEL_BLEND * model + (1 - MODEL_BLEND) * emp, 0.01, 0.99);
   }
