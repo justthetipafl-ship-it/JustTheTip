@@ -567,6 +567,12 @@
   .cmb-leg-m b{display:block;font-size:12px;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
   .cmb-leg-m span{display:block;font-family:var(--font-mono);font-size:9px;color:var(--text-3);margin-top:2px;}
   .cmb-leg-p{font-family:var(--font-display);font-size:14px;color:var(--accent);flex:none;}
+  .cmb-leg-q{display:block;font-family:var(--font-mono);font-size:8px;color:var(--text-3);margin-top:3px;}
+  .cmb-hist-strip{display:flex;gap:3px;margin:4px 0 7px;}
+  .cmb-hist-pip{flex:1;text-align:center;font-family:var(--font-mono);font-size:8px;padding:4px 2px;
+    border-radius:4px;background:var(--surface-3,var(--border));color:var(--text-3);overflow:hidden;
+    text-overflow:ellipsis;white-space:nowrap;}
+  .cmb-hist-pip.on{background:color-mix(in srgb,var(--accent) 18%,transparent);color:var(--accent);font-weight:700;}
   .cmb-leg-x{background:none;border:0;color:var(--text-3);font-size:17px;cursor:pointer;flex:none;line-height:1;}
   .cmb-sum{background:var(--surface-2);border:1px solid var(--border);border-radius:10px;padding:11px 13px;margin-top:8px;}
   .cmb-sum-row{display:flex;justify-content:space-between;align-items:baseline;padding:4px 0;font-size:11px;}
@@ -3732,6 +3738,62 @@ function cmbSugList(q, mode){
       + '<span>'+esc((r.pos ? r.pos+' \u00b7 ' : '')+abbrOf(r.key, r.team))+' \u00b7 '
       + esc(SPORTS[r.key].name)+'</span></div>'; }).join('')+'</div>';
 }
+
+/* MULTI HISTORY: how this exact combination has actually gone, rather than only what the model
+   says. Two backtests:
+     vs this opponent - restrict every leg to games against the team it faces now, align them by
+       match, and count the matches where EVERY leg cleared;
+     all games - align by round/date across all opponents and do the same.
+   Alignment is by MatchId where the legs share a fixture, otherwise by date or season+round, so
+   legs from different games in the same round still line up.                                   */
+function cmbLegSeries2(l, oppOnly){
+  var S = state.sports[l.key], out = {};
+  ((S.idx.logsByName || {})[l.p.name] || []).forEach(function(r){
+    var v = statOf(l.key, r, l.mkt);
+    if (v == null) return;
+    if (oppOnly){
+      var o = oppOf(l.key, r);
+      if (!o || !l.opp || normTeam(o) !== normTeam(l.opp)) return;
+    }
+    var d = String(r.date || r.Date || '').slice(0, 10);
+    var key = d || ((r.Year || r.year) + '|' + String(r.RoundName != null ? r.RoundName : r.Week));
+    out[key] = { v:v, ms:(logMs(r) || logSeq(r)) };
+  });
+  return out;
+}
+function cmbTogether(legs, oppOnly){
+  if (!legs.length) return null;
+  var series = legs.map(function(l){ return cmbLegSeries2(l, oppOnly); });
+  var shared = Object.keys(series[0]).filter(function(k){
+    return series.every(function(sx){ return sx[k] != null; });
+  });
+  if (!shared.length) return { n:0, hit:0, rows:[] };
+  shared.sort(function(a,b){ return (series[0][b].ms||0) - (series[0][a].ms||0); });
+  var hit = 0, rows = [];
+  shared.forEach(function(k){
+    var all = legs.every(function(l, i){
+      var v = series[i][k].v;
+      return l.side === 'under' ? v <= l.line : v > l.line;
+    });
+    if (all) hit++;
+    if (rows.length < 6) rows.push({ k:k, all:all, vals:legs.map(function(l,i){ return series[i][k].v; }) });
+  });
+  return { n:shared.length, hit:hit, rows:rows };
+}
+function cmbLegQuality(l){
+  var S = state.sports[l.key];
+  var all = [], vs = [];
+  ((S.idx.logsByName || {})[l.p.name] || []).forEach(function(r){
+    var v = statOf(l.key, r, l.mkt);
+    if (v == null) return;
+    var cleared = l.side === 'under' ? v <= l.line : v > l.line;
+    all.push(cleared);
+    var o = oppOf(l.key, r);
+    if (o && l.opp && normTeam(o) === normTeam(l.opp)) vs.push(cleared);
+  });
+  return { n:all.length, hit:all.filter(Boolean).length,
+           vsN:vs.length, vsHit:vs.filter(Boolean).length };
+}
 function cmbPanel(){
   var v = state.view;
   if (!v.cmbOpen) return '';
@@ -3769,13 +3831,39 @@ function cmbPanel(){
       + 'onkeydown="if(event.key===\'Enter\')LAB.cmbAddLeg(this.value)"></div>'
       + cmbSugList(v.cmbQ, 'multi')
       + (legs.length ? legs.map(function(l, i){
+          var q = cmbLegQuality(l);
           return '<div class="cmb-leg"><div class="cmb-leg-m"><b>'+esc(l.p.name)+'</b>'
             + '<span>'+esc(cmbLegLabel(l))+(l.opp ? ' \u00b7 v '+esc(abbrOf(l.key, l.opp)) : '')
-            + (l.price != null ? ' \u00b7 $'+l.price.toFixed(2) : ' \u00b7 no price')+'</span></div>'
+            + (l.price != null ? ' \u00b7 $'+l.price.toFixed(2) : ' \u00b7 no price')+'</span>'
+            + '<span class="cmb-leg-q">'+q.hit+'/'+q.n+' all time'
+            + (q.vsN ? ' \u00b7 '+q.vsHit+'/'+q.vsN+' v '+esc(abbrOf(l.key, l.opp)) : '')
+            + '</span></div>'
             + '<span class="cmb-leg-p">'+Math.round((l.prob||0)*100)+'%</span>'
             + '<button class="cmb-leg-x" onclick="LAB.cmbDrop('+i+')">&times;</button></div>';
         }).join('') : '<div class="empty" style="padding:18px">No legs yet. Add one above.</div>')
-      + (legs.length ? '<div class="cmb-sum">'
+      + (legs.length ? (function(){
+          var vsOpp = cmbTogether(legs, true), allG = cmbTogether(legs, false);
+          var pctOf = function(t){ return t && t.n ? Math.round(t.hit/t.n*100)+'%' : '\u2014'; };
+          var strip = function(t){
+            if (!t || !t.rows.length) return '';
+            return '<div class="cmb-hist-strip">'+t.rows.map(function(r){
+              return '<span class="cmb-hist-pip '+(r.all ? 'on' : '')+'" title="'+esc(r.k)+'">'
+                + r.vals.map(function(v){ return (v % 1 ? v.toFixed(1) : v); }).join('/')+'</span>';
+            }).join('')+'</div>';
+          };
+          return '<div class="cmb-sum">'
+            + '<div class="cmb-sum-row"><span>All legs hit together \u2014 vs these opponents</span><b>'
+              + (vsOpp && vsOpp.n ? vsOpp.hit+'/'+vsOpp.n+' \u00b7 '+pctOf(vsOpp) : 'no shared meetings')
+              + '</b></div>'
+            + strip(vsOpp)
+            + '<div class="cmb-sum-row"><span>All legs hit together \u2014 all games</span><b>'
+              + (allG && allG.n ? allG.hit+'/'+allG.n+' \u00b7 '+pctOf(allG) : 'never lined up')
+              + '</b></div>'
+            + strip(allG)
+            + '<div class="cmb-corr" style="margin:6px 0 2px">Matches where every leg cleared on the '
+            + 'same day. Newest first; a green block means the whole multi landed.</div></div>'
+            + '<div class="cmb-sum">';
+        })()
           + '<div class="cmb-sum-row"><span>Independent (wrong, for reference)</span><b>'
             + cmbOdds(isFinite(indep) ? indep : null)+'</b></div>'
           + '<div class="cmb-sum-row"><span>Correlated model</span><b>'
