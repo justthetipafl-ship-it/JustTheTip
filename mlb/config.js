@@ -49,7 +49,8 @@ window.SPORT_CONFIG = {
   teamCols: [['R','R'],['H','H'],['HR','HR'],['TB','TB'],['BB','BB'],['SO','SO'],['SB','SB']],
 
   // ---- markets across features ----
-  oddsMkts: [['H','Hits'],['TB','Total Bases'],['HR','Home Runs'],['RBI','RBIs'],['R','Runs'],['K','Strikeouts']],   // SB has no odds market in RapidOddsAPI
+  oddsMkts: [['H','Hits'],['TB','Total Bases'],['HR','Home Runs'],['RBI','RBIs'],['R','Runs'],['K','Strikeouts'],['BB','Walks']],   // SB has no odds market in RapidOddsAPI;
+                 // BB does (206 rows) and gamelogs carry it on 41,044 rows.
   multiMkts: [['H','Hits'],['TB','Total Bases'],['HR','Home Runs'],['RBI','RBIs'],['R','Runs'],['K','Strikeouts']],
   nerdMkts: [['H','Hits'],['TB','Total Bases'],['HR','Home Runs'],['RBI','RBIs'],['K','Strikeouts']],
   settingsMkts: [['H','Hits'],['TB','Total Bases'],['HR','Home Runs'],['RBI','RBIs'],['R','Runs'],['SB','Stolen Bases'],['K','Strikeouts']],
