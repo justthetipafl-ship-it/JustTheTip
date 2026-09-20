@@ -620,6 +620,16 @@
   .pimg-ini{display:inline-flex;align-items:center;justify-content:center;border-radius:50%;flex:none;
     background:var(--surface-3,var(--border));color:var(--text-3);font-family:var(--font-display);
     font-weight:800;letter-spacing:.02em;vertical-align:middle;}
+  .st-team{display:flex;align-items:center;gap:7px;min-width:0;}
+  .st-team > span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .st-team > span > b{display:block;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .st-team .fxr-logo,.st-team .fxr-logo-ph{width:22px;height:22px;margin:0;flex:none;font-size:8px;}
+  .st-team .pimg,.st-team .pimg-ini{flex:none;}
+  table.st-t td.nm{max-width:180px;}
+  table.st-t td.nm .sub{display:block;}
+  .stk-row .pimg,.stk-row .pimg-ini,.elm-row .pimg,.elm-row .pimg-ini,
+  .h2h-sig-row .pimg,.h2h-sig-row .pimg-ini,.fa-row .pimg,.fa-row .pimg-ini,
+  .gl-row .pimg,.gl-row .pimg-ini{flex:none;}
   .sc-filter{display:flex;gap:7px;align-items:center;margin-bottom:8px;}
   .sc-filter input{flex:1;min-width:0;background:var(--surface-2);border:1px solid var(--border);
     border-radius:9px;padding:9px 12px;color:var(--text);font-size:13px;font-family:inherit;outline:none;}
@@ -1089,6 +1099,13 @@ function dayKey(ms){ var d=new Date(ms); return d.getFullYear()+'-'+String(d.get
 function teamName(key, t){
   var rec = (state.sports[key].idx.teamMap || {})[t];
   return (rec && (rec.name || rec.school || rec.displayName)) || String(t);
+}
+// Club label for tables: prefer a real name where the data has one. AFL and EPL key teams by
+// name already; MLB carries a `name` field beside the code; NFL has neither, so its three-letter
+// code is genuinely all there is and the abbreviation stands on its own.
+function teamFullName(key, t){
+  var rec = (state.sports[key].idx.teamMap || {})[t] || {};
+  return rec.name || rec.fullName || t;
 }
 function teamLogo(key, t){
   var S = state.sports[key], cfg = S.config || {};
@@ -2506,6 +2523,7 @@ function streakRow(key, r){
       return '<span>'+(v % 1 ? v.toFixed(1) : v)+'</span>'; }).join('')+'</div>';
   var ask = (Math.round(r.line) === r.line) ? (r.line + 1) : Math.ceil(r.line);
   return '<div class="stk-row" onclick="LAB.player(\''+key+'\',\''+esc(r.name).replace(/'/g,"\\'")+'\')">'
+    + playerImgP(key, r.name, 28)
     + '<div class="stk-left">'
       + '<div class="stk-nm"><b>'+esc(r.name)+'</b><span class="stk-tag">'
         + esc((r.pos ? r.pos+' \u00b7 ' : '')+abbrOf(key, r.team))+'</span></div>'
@@ -2612,6 +2630,7 @@ function eliteRow(key, r){
   var soft = Math.round((1 - (r.dvp.rank - 1) / Math.max(1, r.dvp.total - 1)) * 100);
   var ask = r.entry ? ((Math.round(r.entry.line) === r.entry.line) ? r.entry.line + 1 : Math.ceil(r.entry.line)) : null;
   return '<div class="elm-row" onclick="LAB.player(\''+key+'\',\''+esc(r.name).replace(/'/g,"\\'")+'\')">'
+    + playerImgP(key, r.name, 28)
     + '<div class="elm-left">'
       + '<div class="elm-nm"><b>'+esc(r.name)+'</b><span class="elm-rk">'+ord(r.lgRank)+' IN LEAGUE</span></div>'
       + '<div class="elm-stat">'+r.val.toFixed(r.val < 3 ? 2 : 1)+' '+esc(r.label)+'/gm \u00b7 v '
@@ -2741,6 +2760,7 @@ function h2hSigRow(key, r){
     ? (up ? '+' : '-')+Math.abs(r.diffPct).toFixed(0)+'% vs next-'+(up ? 'best' : 'worst')+' matchup'
     : 'only matchup on file';
   return '<div class="h2h-sig-row" onclick="LAB.player(\''+key+'\',\''+esc(r.name).replace(/'/g,"\\'")+'\')">'
+    + playerImgP(key, r.name, 28)
     + '<div class="h2h-sig-left">'
       + '<div class="h2h-sig-nm"><b>'+esc(r.name)+'</b>'
         + '<span class="h2h-flav '+(r.lineFlag ? 'line' : (up ? 'avg' : 'cold'))+'">'
@@ -2945,6 +2965,7 @@ function ouRow(key, r){
     + ctxChips(key, (state.sports[key].idx.byName||{})[r.name], r.mkt, r.line, r.opp)
     + '<span class="gl-chip">'+r.avg.toFixed(r.avg < 3 ? 2 : 1)+' avg \u00b7 '+r.games+' gm</span></div>';
   return '<div class="gl-row" onclick="LAB.player(\''+key+'\',\''+esc(r.name).replace(/'/g,"\\'")+'\')">'
+    + playerImgP(key, r.name, 28)
     + '<div class="gl-left">'
       + '<div class="gl-nm"><b>'+esc(r.name)+'</b><span class="gl-tag">'
         + esc((r.pos ? r.pos+' \u00b7 ' : '')+abbrOf(key, r.team)+' v '+abbrOf(key, r.opp))+'</span></div>'
@@ -3052,6 +3073,7 @@ function formRow(key, r){
       + dec(r.seasonAvg)+' season \u00b7 v '+esc(abbrOf(key, r.opp))
     : esc(r.label)+' L3 '+dec(r.l3)+' v '+dec(r.seasonAvg)+' season \u00b7 v '+esc(abbrOf(key, r.opp));
   return '<div class="fa-row" onclick="LAB.player(\''+key+'\',\''+esc(r.name).replace(/'/g,"\\'")+'\')">'
+    + playerImgP(key, r.name, 28)
     + '<div class="fa-left">'
       + '<div class="fa-nm"><b>'+esc(r.name)+'</b><span class="fa-dir '+(r.dry ? 'down' : (r.up?'up':'down'))+'">'
         + tag+'</span></div>'
@@ -4450,10 +4472,12 @@ function scannerView(key){
     + '<th class="'+(sortKey==='games'?'on':'')+'" onclick="LAB.stSort(\'games\')">GP</th>'
     + cols.map(function(c){ return th(c[0], c[1]); }).join('')+'</tr></thead><tbody>'
     + rows.map(function(r){
-        var face = playerImgP(key, r.p, 22);
+        var face = playerImgP(key, r.p, 24);
         return '<tr onclick="LAB.player(\''+key+'\',\''+esc(r.p.name).replace(/'/g,"\\'")+'\')">'
-          + '<td class="nm">'+(face ? face+' ' : '')+esc(r.p.name)+'<br><span class="sub">'
-          + esc([posShortP(r.p), abbrOf(key, r.p.team)].filter(Boolean).join(' \u00b7 '))+'</span></td>'
+          + '<td class="nm"><span class="st-team">'+(face || '')
+          + '<span><b>'+esc(r.p.name)+'</b><span class="sub">'
+          + esc([posShortP(r.p), abbrOf(key, r.p.team)].filter(Boolean).join(' \u00b7 '))
+          + '</span></span></span></td>'
           + '<td>'+r.games+'</td>'
           + cols.map(function(c){
               var val = r.vals[c[0]];
@@ -4495,8 +4519,8 @@ function teamsView(key){
         return '<th class="'+(sortKey===c[0]?'on':'')+'" onclick="LAB.stTeamSort(\''+c[0]+'\')">'
           + esc(c[1])+(sortKey===c[0]?' \u25be':'')+'</th>'; }).join('')+'</tr></thead><tbody>'
     + rows.map(function(t){
-        return '<tr><td class="nm">'+teamLogo(key, t.team)+' '+esc(abbrOf(key, t.team))
-          + '<br><span class="sub">'+esc(t.team)+'</span></td>'
+        return '<tr><td class="nm"><span class="st-team">'+teamLogo(key, t.team)
+          + '<span>'+esc(teamFullName(key, t.team))+'</span></span></td>'
           + '<td>'+(t.matches || 0)+'</td>'
           + cols.map(function(c){
               var val = +t[c[0]+suf] || 0, a = avg[c[0]];
@@ -4548,7 +4572,8 @@ function dvpView(key){
         return '<th class="'+(sortKey===c[0]?'on':'')+'" onclick="LAB.stDvpSort(\''+c[0]+'\')">'
           + esc(c[1])+(sortKey===c[0]?' \u25be':'')+'</th>'; }).join('')+'</tr></thead><tbody>'
     + rows.map(function(t){
-        return '<tr><td class="nm">'+teamLogo(key, t.team)+' '+esc(abbrOf(key, t.team))+'</td>'
+        return '<tr><td class="nm"><span class="st-team">'+teamLogo(key, t.team)
+          + '<span>'+esc(teamFullName(key, t.team))+'</span></span></td>'
           + stats.map(function(c){
               var val = t[c[0]];
               if (val == null) return '<td>\u2014</td>';
