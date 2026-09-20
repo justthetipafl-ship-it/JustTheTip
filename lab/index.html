@@ -3260,7 +3260,10 @@ function cmbMatchMarket(key, q){
 function cmbParse(key, q){
   var raw = String(q || '').trim();
   if (!raw) return null;
-  var side = /\bunder\b|\bu\b/i.test(raw) ? 'under' : 'over';
+  // "under 30.5", "30.5 under", "u30.5", "u 30.5" all mean the same thing. \bu\b never matched
+  // "u30.5" because the digit is a word character, which is why the shorthand silently
+  // resolved to an over.
+  var side = (/(^|\s)(under|u)(\s|\d|$)/i.test(raw) || /\bunders?\b/i.test(raw)) ? 'under' : 'over';
   var hit = cmbMatchMarket(key, raw);
   var num = raw.match(/(\d+(?:\.\d+)?)\s*\+?/);
   var line = num ? +num[1] : null;
@@ -3278,7 +3281,8 @@ function cmbParse(key, q){
       if (joined && hit.tokens.indexOf(joined) >= 0){ wi++; continue; }
     }
     if (!c || CMB_STOP[c] || CMB_STOP[w.toLowerCase()]) continue;
-    if (/^(under|over|plus|o|u)$/i.test(w)) continue;
+    if (/^(under|unders|over|overs|plus)$/i.test(w)) continue;
+    if (/^[ou]$/i.test(w) || /^[ou]\d/i.test(w)) continue;      // "u30.5" shorthand
     if (hit && (hit.tokens.indexOf(c) >= 0 || c === hit.squash)) continue;
     keep.push(w);
   }
@@ -3486,7 +3490,7 @@ function cmbPosted(key, name, mkt){
 }
 // Who has faced this opponent MOST RECENTLY in the same position - the current picture, not
 // whoever happens to have the longest history against them.
-function cmbSimilar(key, p, mkt, line, opp){
+function cmbSimilar(key, p, mkt, line, opp, side){
   if (!opp) return null;
   var S = state.sports[key], pos = p.position || p.pos;
   if (!pos) return null;
@@ -3507,7 +3511,7 @@ function cmbSimilar(key, p, mkt, line, opp){
     });
     if (!vals.length || recent == null) return;
     out.push({ name:q.name, vals:vals, recent:recent,
-               hits:vals.filter(function(v){ return v > line; }).length });
+               hits:vals.filter(function(v){ return side === 'under' ? v <= line : v > line; }).length });
   });
   out.sort(function(a,b){ return b.recent - a.recent; });     // most recent meeting first
   var rows2 = out.slice(0, 10);
@@ -3534,7 +3538,9 @@ function cmbAnalysis(l){
   var seasonAvg = avg(cur.map(function(r){ return r.v; })) || avg(vals);
   var l3 = avg(vals.slice(0,3)), l5 = avg(vals.slice(0,5)), l10 = avg(vals.slice(0,10));
   var high = Math.max.apply(null, (cur.length ? cur : rows).map(function(r){ return r.v; }));
-  var hitAll = vals.filter(function(v){ return v > line; }).length;
+  var isUnder = l.side === 'under';
+  var cleared = function(v){ return isUnder ? v <= line : v > line; };
+  var hitAll = vals.filter(cleared).length;
   var hitPct = Math.round(hitAll / vals.length * 100);
   var sd = Math.sqrt(avg(vals.map(function(v){ return (v - avg(vals))*(v - avg(vals)); })) || 0);
   var cv = avg(vals) ? sd / avg(vals) : null;
@@ -3542,12 +3548,14 @@ function cmbAnalysis(l){
   /* verdict from the sport's own engine */
   var score = null;
   try { score = S.scoring && S.scoring.scoreCMP ? S.scoring.scoreCMP(p, mkt, line, opp) : null; } catch(e){}
+  // the engine scores the OVER; for an under bet the same number means the opposite
+  var dirScore = (score == null || !isFinite(score)) ? null : (isUnder ? -score : score);
   var vt, vcls;
-  if (score == null || !isFinite(score)){ vt = 'No Engine Score'; vcls = ''; }
-  else if (score >= GL_SCORE){ vt = 'Strong Play'; vcls = 'good'; }
-  else if (score >= 2){ vt = 'Leans Over'; vcls = 'good'; }
-  else if (score <= DR_SCORE){ vt = 'Fade It'; vcls = 'bad'; }
-  else if (score <= -2){ vt = 'Leans Under'; vcls = 'bad'; }
+  if (dirScore == null){ vt = 'No Engine Score'; vcls = ''; }
+  else if (dirScore >= GL_SCORE){ vt = 'Strong Play'; vcls = 'good'; }
+  else if (dirScore >= 2){ vt = 'Leans '+(isUnder ? 'Under' : 'Over'); vcls = 'good'; }
+  else if (dirScore <= DR_SCORE){ vt = 'Fade It'; vcls = 'bad'; }
+  else if (dirScore <= -2){ vt = 'Leans '+(isUnder ? 'Over' : 'Under'); vcls = 'bad'; }
   else { vt = 'No Clear Edge'; vcls = ''; }
 
   var posted = cmbPosted(key, p.name, mkt);
@@ -3590,22 +3598,23 @@ function cmbAnalysis(l){
     + '<div class="ca-cell"><b>'+dec(l5)+'</b><span>L5</span></div>'
     + '<div class="ca-cell"><b>'+dec(l10)+'</b><span>L10</span></div>'
     + '<div class="ca-cell"><b>'+(isFinite(high) ? dec(high) : '\u2014')+'</b><span>high</span></div>'
-    + '<div class="ca-cell"><b>'+hitPct+'%</b><span>hit '+Math.ceil(line)+'+ ('+vals.length+')</span></div>'
+    + '<div class="ca-cell"><b>'+hitPct+'%</b><span>hit '
+      +(isUnder ? 'u'+line : Math.ceil(line)+'+')+' ('+vals.length+')</span></div>'
     + '</div>';
 
   /* last 20, marked against the line, opponent games flagged */
   var last20 = rows.slice(0, 20).reverse();
   var mx = Math.max.apply(null, last20.map(function(r){ return r.v; }).concat([line])) * 1.12 || 1;
   h += '<div class="ca-lab">Last '+last20.length+' games'+(opp ? ' \u00b7 amber = vs '+esc(abbrOf(key,opp)) : '')
-    + ' \u00b7 dashed = '+Math.ceil(line)+'+</div><div class="ca-chart">'
+    + ' \u00b7 dashed = '+(isUnder ? 'under '+line : Math.ceil(line)+'+')+'</div><div class="ca-chart">'
     + '<div class="ca-bval">'+last20.map(function(r){
         var isOpp = opp && r.opp && normTeam(r.opp) === normTeam(opp);
-        return '<span class="'+(isOpp ? 'opp' : (r.v > line ? 'hit' : 'miss'))+'">'
+        return '<span class="'+(isOpp ? 'opp' : (cleared(r.v) ? 'hit' : 'miss'))+'">'
           + (r.v % 1 ? r.v.toFixed(1) : r.v)+'</span>'; }).join('')+'</div>'
     + '<div class="ca-bars"><div class="ca-line" style="bottom:'+(line/mx*100)+'%"><b>'+Math.ceil(line)+'</b></div>'
     + last20.map(function(r){
         var isOpp = opp && r.opp && normTeam(r.opp) === normTeam(opp);
-        return '<span class="ca-bar'+(isOpp ? ' opp' : (r.v > line ? '' : ' miss'))+'">'
+        return '<span class="ca-bar'+(isOpp ? ' opp' : (cleared(r.v) ? '' : ' miss'))+'">'
           + '<i style="height:'+Math.max(2, Math.round(r.v/mx*100))+'%"></i></span>'; }).join('')
     + '</div><div class="ca-blab">'+last20.map(function(r){
         var rd = String(r.rd == null ? '' : r.rd).replace(/[^0-9]/g, '');
@@ -3628,11 +3637,11 @@ function cmbAnalysis(l){
   h += '<div class="ca-block"><div class="ca-bt">H2H vs '+esc(opp ? abbrOf(key, opp) : 'opponent')
     + ' ('+h2hRows.length+')</div>';
   if (h2hRows.length){
-    var hh = h2hRows.filter(function(r){ return r.v > line; }).length;
+    var hh = h2hRows.filter(function(r){ return cleared(r.v); }).length;
     var lastM = h2hRows[0];
     h += '<div class="ca-bs">last '+dec(lastM.v)+' ('+esc([lastM.yr, lastM.rd ? 'Round '+String(lastM.rd).replace(/[^0-9]/g,'') : ''].filter(Boolean).join(' '))+')'
       + ' \u00b7 avg '+dec(avg(h2hRows.map(function(r){ return r.v; })))
-      + ' \u00b7 '+hh+'/'+h2hRows.length+' hit '+Math.ceil(line)+'+</div>';
+      + ' \u00b7 '+hh+'/'+h2hRows.length+' hit '+(isUnder ? 'under '+line : Math.ceil(line)+'+')+'</div>';
   } else h += '<div class="ca-bs">No meetings on file.</div>';
   h += '</div>';
 
@@ -3643,29 +3652,39 @@ function cmbAnalysis(l){
     'Hit rate '+hitAll+'/'+vals.length+' ('+hitPct+'%) \u2014 '
     + (hitPct >= 70 ? 'highly reliable' : hitPct >= 50 ? 'coin-flip territory' : 'rarely clears'));
   var gap = seasonAvg != null && line > 0 ? (seasonAvg - line) / line * 100 : null;
-  if (gap != null) push(gap > 5 ? 'good' : (gap > -5 ? 'warn' : 'bad'), 'ti-target',
-    'Season avg '+dec(seasonAvg)+' \u2014 '+Math.abs(gap).toFixed(0)+'% '+(gap >= 0 ? 'above' : 'below')+' the line');
+  if (gap != null){
+    var helps = isUnder ? gap < -5 : gap > 5;
+    var hurts = isUnder ? gap > 5 : gap < -5;
+    push(helps ? 'good' : (hurts ? 'bad' : 'warn'), 'ti-target',
+      'Season avg '+dec(seasonAvg)+' \u2014 '+Math.abs(gap).toFixed(0)+'% '
+      + (gap >= 0 ? 'above' : 'below')+' the line'+(isUnder ? ' (an under wants it below)' : ''));
+  }
   [['L3', l3, 3], ['L5', l5, 5]].forEach(function(w){
     if (w[1] == null || seasonAvg == null || !seasonAvg) return;
     var d2 = (w[1] - seasonAvg) / seasonAvg * 100;
     if (Math.abs(d2) < 8) { push('info', 'ti-arrow-right', w[0]+' avg '+dec(w[1])+' \u2014 in line with the season'); return; }
-    push(d2 > 0 ? 'good' : 'bad', d2 > 0 ? 'ti-flame' : 'ti-snowflake',
-      w[0]+' avg '+dec(w[1])+' \u2014 '+Math.abs(d2).toFixed(0)+'% '+(d2 > 0 ? 'above season avg, hot form' : 'below season avg, cold form'));
+    var good2 = isUnder ? d2 < 0 : d2 > 0;
+    push(good2 ? 'good' : 'bad', d2 > 0 ? 'ti-flame' : 'ti-snowflake',
+      w[0]+' avg '+dec(w[1])+' \u2014 '+Math.abs(d2).toFixed(0)+'% '+(d2 > 0 ? 'above season avg, hot form' : 'below season avg, cold form')
+      + (isUnder ? (good2 ? ' \u2014 helps the under' : ' \u2014 against the under') : ''));
   });
   if (cv != null) push(cv < 0.3 ? 'good' : (cv < 0.5 ? 'warn' : 'bad'), 'ti-wave-sine',
     (cv < 0.3 ? 'Consistent' : cv < 0.5 ? 'Some swing' : 'Volatile')+' \u2014 CV '+cv.toFixed(2)
     + ' (spread of '+dec(Math.min.apply(null, vals))+'\u2013'+dec(Math.max.apply(null, vals))+')');
-  if (dr) push(dr.pct > 8 ? 'good' : (dr.pct < -8 ? 'bad' : 'info'), 'ti-shield-half',
+  if (dr) push((isUnder ? dr.pct < -8 : dr.pct > 8) ? 'good' : ((isUnder ? dr.pct > 8 : dr.pct < -8) ? 'bad' : 'info'), 'ti-shield-half',
     'DVP: '+esc(abbrOf(key, opp))+' '+(dr.pct > 8 ? 'leaks' : dr.pct < -8 ? 'suppresses' : 'is average vs')
     + ' '+esc(l.label)+' to '+esc(posShortP(p) || 'this position')
     + ' (#'+dr.rank+'/'+dr.total+', '+(dr.pct > 0 ? '+' : '')+dr.pct.toFixed(0)+'%)');
-  if (h2hRows.length) push(h2hRows[0].v > line ? 'good' : 'info', 'ti-history',
+  if (h2hRows.length) push(cleared(h2hRows[0].v) ? 'good' : 'info', 'ti-history',
     'Last vs '+esc(abbrOf(key, opp))+': '+dec(h2hRows[0].v)+' '+esc(l.label)+' \u2014 '
-    + (h2hRows[0].v > line ? 'cleared' : 'missed')+' \u00b7 '
-    + h2hRows.filter(function(r){ return r.v > line; }).length+'/'+h2hRows.length+' historically');
-  if (isFinite(high)) push(high >= line ? 'info' : 'bad', 'ti-mountain',
-    high >= line ? 'Season high '+dec(high)+' \u2014 has reached this line' :
-    'Season high only '+dec(high)+' \u2014 has never hit this line this season');
+    + (cleared(h2hRows[0].v) ? 'landed this bet' : 'missed it')+' \u00b7 '
+    + h2hRows.filter(function(r){ return cleared(r.v); }).length+'/'+h2hRows.length+' historically');
+  if (isFinite(high)) push(isUnder ? (high < line ? 'good' : 'info') : (high >= line ? 'info' : 'bad'),
+    'ti-mountain',
+    high >= line ? 'Season high '+dec(high)+' \u2014 has reached this line'
+      + (isUnder ? ', so the under can be beaten' : '')
+      : 'Season high only '+dec(high)+' \u2014 has never hit this line this season'
+      + (isUnder ? ', which favours the under' : ''));
   if (l.price != null && l.prob != null){
     var ev = l.prob * (l.price - 1) - (1 - l.prob);
     push(ev > 0.05 ? 'good' : (ev > -0.05 ? 'warn' : 'bad'), 'ti-coin',
@@ -3675,14 +3694,14 @@ function cmbAnalysis(l){
   h += '<div class="ca-lab">Analysis</div>'+notes.join('');
 
   /* similar players vs this opponent */
-  var sim = cmbSimilar(key, p, mkt, line, opp);
+  var sim = cmbSimilar(key, p, mkt, line, opp, l.side);
   if (sim && sim.rows.length){
     h += '<div class="ca-simhd"><b>Recent '+esc(sim.pos)+' vs '+esc(abbrOf(key, opp))+'</b>'
       + '<span>'+sim.hit+'/'+sim.tot+' hit ('+Math.round(sim.hit/sim.tot*100)+'%)</span></div>'
       + sim.rows.map(function(r){
           return '<div class="ca-sim"><span class="ca-sim-n">'+esc(r.name)+'</span>'
             + '<span class="ca-sim-v">'+r.vals.map(function(v){
-                return v > line ? '<u>'+(v % 1 ? v.toFixed(1) : v)+'</u>' : '<s>'+(v % 1 ? v.toFixed(1) : v)+'</s>';
+                return cleared(v) ? '<u>'+(v % 1 ? v.toFixed(1) : v)+'</u>' : '<s>'+(v % 1 ? v.toFixed(1) : v)+'</s>';
               }).join(', ')+'</span>'
             + '<span class="ca-sim-g">'+r.vals.length+'g</span></div>'; }).join('')
       + '<div class="cmb-corr">The '+sim.rows.length+' players in this position who met '
