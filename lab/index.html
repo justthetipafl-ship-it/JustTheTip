@@ -897,9 +897,18 @@ function loadTier1(key){
 }
 function asArray(v){ return Array.isArray(v) ? v : (v && v.fixture) || (v && v.teams) || (v && v.players) || null; }
 function buildTeamMap(key){
-  var S = state.sports[key], m = {};
-  (asArray(S.data.teams)||[]).forEach(function(t){ if (t && t.team != null) m[t.team] = t; });
-  S.idx.teamMap = m;
+  var S = state.sports[key], m = {}, mN = {};
+  (asArray(S.data.teams)||[]).forEach(function(t){
+    if (!t || t.team == null) return;
+    m[t.team] = t;
+    mN[normTeam(t.team)] = t;                 // EPL's dvp.json says "Tottenham" where teams.json
+  });                                          // says "Spurs" - an exact-match lookup loses the crest
+  S.idx.teamMap = m; S.idx.teamMapN = mN;
+}
+// One resolver for every team lookup: exact first, then the normalised/aliased name.
+function teamRec(key, t){
+  var ix = state.sports[key].idx || {};
+  return (ix.teamMap || {})[t] || (ix.teamMapN || {})[normTeam(t)] || {};
 }
 
 // Tier 2: odds (~12 MB across four sports) - loaded only when a page needs it, and only
@@ -1031,7 +1040,7 @@ function buildIndexes(key){
   ix.byName = {};
   players.forEach(function(p){ if (p && p.name) ix.byName[p.name] = p; });
 
-  ix.lgAvg = {}; ix.winAvg = {}; ix.matchOpp = null;   // derived caches die with the index
+  ix.lgAvg = {}; ix.winAvg = {}; ix.matchOpp = null; ix.fs = null;   // derived caches die with the index
   var logs = asArray(d.gamelogs) || [];
   ix.logsByName = {};
   logs.forEach(function(r){
@@ -1097,22 +1106,24 @@ function localTime(ms){ return new Date(ms).toLocaleTimeString([], {hour:'numeri
 function dayKey(ms){ var d=new Date(ms); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
 
 function teamName(key, t){
-  var rec = (state.sports[key].idx.teamMap || {})[t];
-  return (rec && (rec.name || rec.school || rec.displayName)) || String(t);
+  var rec = teamRec(key, t);
+  return (rec.name || rec.school || rec.displayName) || String(t);
 }
 // Club label for tables: prefer a real name where the data has one. AFL and EPL key teams by
 // name already; MLB carries a `name` field beside the code; NFL has neither, so its three-letter
 // code is genuinely all there is and the abbreviation stands on its own.
 function teamFullName(key, t){
-  var rec = (state.sports[key].idx.teamMap || {})[t] || {};
-  return rec.name || rec.fullName || t;
+  var rec = teamRec(key, t);
+  return rec.name || rec.fullName || rec.team || t;
 }
 function teamLogo(key, t){
   var S = state.sports[key], cfg = S.config || {};
-  var rec = (S.idx.teamMap || {})[t] || {};
+  var rec = teamRec(key, t);
   var url = rec.logo || '';                                   // EPL: baked into teams.json
   if (!url && cfg.logoCdn){                                   // AFL / NFL / MLB: CDN + id
-    var id = (cfg.teamIds && cfg.teamIds[t] != null) ? cfg.teamIds[t] : String(t||'').toLowerCase();
+    var canon = rec.team || t;                                // resolve aliases before hitting the CDN
+    var id = (cfg.teamIds && cfg.teamIds[canon] != null) ? cfg.teamIds[canon]
+           : (cfg.teamIds && cfg.teamIds[t] != null) ? cfg.teamIds[t] : String(canon||'').toLowerCase();
     // extension default matters: AFL/NFL set logoCdnExt='.png', MLB sets none and the
     // MLB Stats API serves SVG - production defaults to '.svg', so match that exactly.
     url = cfg.logoCdn + id + (cfg.logoCdnExt || cfg.logoExt || '.svg');
@@ -1142,7 +1153,7 @@ function rowsForMarket(d, mk){
   return (d.alt || []).filter(function(r){ return r && r.market === mk && r.over != null; });
 }
 function abbrOf(key, t){
-  var rec = (state.sports[key].idx.teamMap || {})[t] || {};
+  var rec = teamRec(key, t);
   return rec.abbr || rec.short || String(t);
 }
 function mktLabel(key, mk){
@@ -1976,10 +1987,16 @@ function dvpMarkets(key){
   return (cfg.dvpStats || cfg.oddsMkts || cfg.multiMkts || []).slice(0, 8);
 }
 function dvpBoard(key, mkt){
-  var rows = asArray(state.sports[key].data.dvp) || [];
+  var S = state.sports[key];
+  var rows = asArray(S.data.dvp) || [];
+  // dvp.json keeps clubs from earlier seasons - EPL carries Leicester, Southampton, Burnley and
+  // co. Ranking a 20-team league out of 25 makes every "3rd softest" wrong, so the board is
+  // restricted to clubs in this season's teams.json when that file is there to restrict it by.
+  var current = S.idx.teamMapN && Object.keys(S.idx.teamMapN).length ? S.idx.teamMapN : null;
   var byPos = {};
   rows.forEach(function(r){
     if (!r || !r.pos || r.team == null) return;
+    if (current && !current[normTeam(r.team)]) return;
     var v = r[mkt]; if (v == null || !isFinite(+v)) return;
     var list = (byPos[r.pos] = byPos[r.pos] || []);
     // EPL's dvp.json carries each club twice under two naming styles ("Spurs" and
@@ -4548,9 +4565,11 @@ function dvpView(key){
   var fullest = positions.slice().sort(function(a,b){ return count[b] - count[a]; })[0];
   var pos = (v.stPos && v.stPos[key] && positions.indexOf(v.stPos[key]) >= 0) ? v.stPos[key] : fullest;
   var sortKey = (v.stDvpSort && stats.some(function(c){ return c[0] === v.stDvpSort; })) ? v.stDvpSort : stats[0][0];
-  // one row per club, collapsed on the normalised name
+  // one row per club, collapsed on the normalised name, and only clubs playing this season -
+  // the same restriction dvpBoard applies, so the grid and the ranks agree
+  var current = S.idx.teamMapN && Object.keys(S.idx.teamMapN).length ? S.idx.teamMapN : null;
   var seen = {}, rows = [];
-  raw.filter(function(r){ return r.pos === pos; }).forEach(function(r){
+  raw.filter(function(r){ return r.pos === pos && (!current || current[normTeam(r.team)]); }).forEach(function(r){
     var k2 = normTeam(r.team);
     if (seen[k2]){
       stats.forEach(function(c){ if (r[c[0]] != null && (seen[k2][c[0]] == null || +r[c[0]] > +seen[k2][c[0]])) seen[k2][c[0]] = r[c[0]]; });
