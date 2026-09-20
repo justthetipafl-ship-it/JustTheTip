@@ -903,7 +903,7 @@ var state = {
              slMkt: {}, slWin: 'season', dvpMkt: {}, ppTab: 'form',
              cmbQ: '', cmbSel: null, cmbRecent: [],
              cmbOpen: false, cmbMode: 'single', cmbLegs: [], cmbResult: null, cmbSugOff: false,
-             cmbLadOpen: false, mbFix: 0, mbMode: 'value', pc: null,
+             cmbLadOpen: false, mbFix: 0, mbMode: 'value', pc: null, ttWin: 10,
              rdrPick: null, ulMk: 'snapPct', ulWin: 'l5',
              stSport: null, stMode: 'scanner', stMkt: {}, stPos: {},
              stQ: '', stPosF: '', stWin: 'season', stSort: null, stDir: -1, stAllowed: false,
@@ -3525,11 +3525,24 @@ function ttRow(label, val, pct, amber){
     + Math.max(3, Math.min(100, Math.round(pct)))+'%"></i></span>'
     + '<span class="tt-val">'+esc(val)+'</span></div>';
 }
+function impliedTeamTotal(key, team, opp){
+  var mo = (state.sports[key].data.odds || {}).matchOdds || [];
+  var row = null;
+  mo.forEach(function(m){
+    if ((normTeam(m.home) === normTeam(team) && normTeam(m.away) === normTeam(opp)) ||
+        (normTeam(m.home) === normTeam(opp) && normTeam(m.away) === normTeam(team))) row = m;
+  });
+  if (!row || !row.total || !isFinite(+row.total.points)) return null;
+  var tot = +row.total.points, sp = 0;
+  if (row.line && isFinite(+row.line.home)) sp = normTeam(row.home) === normTeam(team) ? +row.line.home : -(+row.line.home);
+  return (tot / 2) - (sp / 2);                        // the market's own points expectation for this side
+}
 function tuddyProfile(key, r){
   var S = state.sports[key];
   var logs = sortLogsDesc(((S.idx.logsByName || {})[r.name] || []).slice());
   if (!logs.length) return '';
-  var win = logs.slice(0, 10);
+  var wn = state.view.ttWin || 10;
+  var win = wn === 'all' ? logs : logs.slice(0, wn);
   var avgOf = function(rows, f){
     var v = rows.map(f).filter(function(x){ return x != null && isFinite(x); });
     return v.length ? v.reduce(function(a,b){ return a+b; }, 0) / v.length : null;
@@ -3539,7 +3552,10 @@ function tuddyProfile(key, r){
   var tgtSh = avgOf(win, function(x){ return x.tgtShare != null ? +x.tgtShare : null; });
   var tdRate = avgOf(win, function(x){ return +x.totalTds || 0; });
   var f1 = function(v){ return v == null ? '\u2014' : v.toFixed(1); };
-  var h = '<div class="tt-sec">Usage \u00b7 last '+win.length+'</div>'
+  var h = '<div class="sl-bar" style="margin-bottom:4px">'+[[5,'L5'],[10,'L10'],['all','All']].map(function(w){
+      return '<button class="sl-chip'+(String(wn) === String(w[0]) ? ' on' : '')
+        + '" onclick="event.stopPropagation();LAB.ttWin(\''+w[0]+'\')">'+w[1]+'</button>'; }).join('')+'</div>'
+    + '<div class="tt-sec">Usage \u00b7 '+(wn === 'all' ? 'all '+win.length+' games' : 'last '+win.length)+'</div>'
     + (touches != null ? ttRow('Volume', f1(touches)+' tch/g', touches/28*100) : '')
     + (snap != null ? ttRow('Snap share', Math.round(snap)+'%', snap) : '')
     + (tgtSh != null ? ttRow('Target share', Math.round(tgtSh)+'%', tgtSh/40*100) : '')
@@ -3552,6 +3568,17 @@ function tuddyProfile(key, r){
     return (v == null || v === 0) ? '' : '<div class="tt-zcell"><b>'+v.toFixed(1)+'</b><span>'+z[1]+'</span></div>';
   }).filter(Boolean);
   if (cells.length) h += '<div class="tt-sec">Scoring zones \u00b7 per game</div><div class="tt-zone">'+cells.join('')+'</div>';
+  // Opportunity, as production had it: what the market expects this offence to score, and how
+  // freely the opponent gives up touchdowns to the position.
+  var p = (S.idx.byName || {})[r.name] || {};
+  var imp = r.opp ? impliedTeamTotal(key, p.team, r.opp) : null;
+  var tdD = r.opp ? dvpRankFor(key, r.opp, p.position, 'totalTds') : null;
+  if (imp != null || tdD){
+    h += '<div class="tt-sec">Opportunity</div>'
+      + (imp != null ? ttRow('Implied total', imp.toFixed(1)+' pts', imp/34*100) : '')
+      + (tdD ? ttRow('TDs allowed', '#'+tdD.rank+'/'+tdD.total+' \u00b7 '+(tdD.pct > 0 ? '+' : '')
+          + tdD.pct.toFixed(0)+'%', (1 - (tdD.rank-1)/Math.max(1, tdD.total-1))*100, true) : '');
+  }
   // TD strike rate by window, plus against this opponent
   var strike = function(rows){
     if (!rows.length) return null;
@@ -4131,7 +4158,10 @@ function tackleRow(key, r){
     + playerImgP(key, r.name, 28)
     + '<div class="stk-left"><div class="stk-nm"><b>'+esc(r.name)+'</b><span class="stk-tag">'
       + esc((posShortP(r.p) ? posShortP(r.p)+' \u00b7 ' : '')+abbrOf(key, r.team))+'</span></div>'
-    + '<div class="stk-bet">'+Math.ceil(r.line)+'+ Tackles \u00b7 v '+esc(abbrOf(key, r.opp))
+    + '<div class="stk-bet">'+Math.ceil(r.line)+'+ '
+      // NFL's tackles column is solo + assisted on every row, and the market is priced that
+      // way too - naming it plainly stops it reading as solo tackles
+      + (key === 'nfl' ? 'Tackles + Ast' : 'Tackles')+' \u00b7 v '+esc(abbrOf(key, r.opp))
       + ' \u00b7 avg '+r.avg.toFixed(1)
       + (r.snap != null ? ' \u00b7 '+Math.round(r.snap)+'% snaps' : '')
       + (r.funnel ? ' \u00b7 funnel '+(r.funnel.pct > 0 ? '+' : '')+r.funnel.pct.toFixed(0)+'%' : '')
@@ -4357,10 +4387,15 @@ function ppCalc(key, name){
       + '<span><b>'+(prob != null ? Math.round(prob*100)+'%' : '\u2014')+'</b>model</span>'
       + '<span><b class="'+(ev != null && ev > 0 ? 'pos' : (ev != null ? 'neg' : ''))+'">'
         + (ev != null ? (ev > 0 ? '+' : '')+Math.round(ev*100)+'%' : '\u2014')+'</b>edge</span></div>'
-    + '<div class="pc-bars">'+vals.slice(0, 14).reverse().map(function(v){
-        var hit = over ? v >= st.line : v < st.line;
-        return '<span class="'+(hit ? '' : 'miss')+'" style="height:'+Math.max(6, Math.round(v/mx*100))+'%"></span>';
-      }).join('')+'</div>'
+    + (function(){
+        var seq = vals.slice(0, 14).reverse();
+        return '<div class="pc-bars">'+seq.map(function(v){
+            var hit = over ? v >= st.line : v < st.line;
+            return '<span class="'+(hit ? '' : 'miss')+'" style="height:'+Math.max(6, Math.round(v/mx*100))+'%"></span>';
+          }).join('')+'</div>'
+          + '<div class="pf-vals">'+seq.map(function(v){
+            return '<span>'+(v % 1 ? v.toFixed(1) : v)+'</span>'; }).join('')+'</div>';
+      })()
     + (price != null && over
         ? '<button class="pc-add" onclick="LAB.pcAdd()">Add to multi</button>'
         : '<div class="cmb-corr" style="margin-top:9px">'
@@ -5968,7 +6003,7 @@ function playerPanel(){
     + ' \u00b7 '+keys.length+' market'+(keys.length===1?'':'s')+'</div></div>'
     + '<button class="pp-x" onclick="LAB.player(null)">&times;</button></div>'
     + '<div class="pp-tabs">'
-      + [['form','Form'],['calc','Calculator'],['dvp','Matchup'],['profile','Profile'],
+      + [['form','Form'],['calc','Calculator'],['dvp','Matchup'],['profile','Scoring'],
          ['radar','Radar'],['cover','Coverage'],['mkts','All markets']]
         .filter(function(t){
           // profile/radar/coverage only exist where the sport has the data behind them
@@ -6186,6 +6221,7 @@ window.LAB = {
   slWin: function(w){ state.view.slWin = w; render(); },
   dvpMkt: function(k, m){ state.view.dvpMkt[k] = m; render(); },
   ppTab: function(t){ state.view.ppTab = t; render(); },
+  ttWin: function(w){ state.view.ttWin = (w === 'all' ? 'all' : +w); render(); },
   pcMkt: function(m){
     var st = state.view.pc; if (!st) return;
     st.mkt = m; st.line = pcDefaultLine(state.view.player.sport, st.name, m); render();
