@@ -588,6 +588,59 @@ window.JTTScoring = (function () {
   }
 
   /* ============== ENGINE (verbatim) ============== */
+  /* ---- probability model ---------------------------------------------------
+     AFL had no prob(): callers recovered one from getHitRate, i.e. how often the player
+     beat this line historically. Walk-forward over 31,945 player-games that ranks barely
+     better than a coin (top quartile 57.8% vs bottom 58.6%) because drLine sits on the
+     player's own average, so the hit rate hovers at the base rate whatever the matchup.
+
+     Measured alternatives, same games, same lines (Brier / top-vs-bottom quartile):
+       hit rate (old)              0.2521  WORSE than base rate   9.9pt
+       poisson(flat average)       0.2432  beats                 16.9pt
+       negbin(EWMA)                0.2437  beats                 16.4pt
+       + per-TOG rate              0.2443  beats                 15.4pt   <- no help, AFL
+                                                                              rotation is flat
+       + DVP                       0.2409  beats                 21.2pt
+       + shrink to season form     0.2387  beats                 25.1pt   <- this
+     Half-life, shrink weight and DVP weight swept over 27 combinations.                */
+  const P_HALFLIFE = 8, P_SHRINK = 3, P_DVP_W = 0.7, P_WIN = 10;
+  function _ewma(vals, hl){
+    const lam = Math.pow(0.5, 1/hl);
+    let num = 0, den = 0;
+    for (let i = vals.length-1, w = 1; i >= 0; i--, w *= lam){ num += vals[i]*w; den += w; }
+    return den ? num/den : 0;
+  }
+  function _countAtLeast(mu, k, vals){
+    if(!(mu > 0)) return 0;
+    const pois = () => { let cum = 0, term = Math.exp(-mu);
+      for(let i = 0; i < k; i++){ cum += term; term = term*mu/(i+1); }
+      return Math.max(0, Math.min(1, 1-cum)); };
+    if(!vals || vals.length < 4) return pois();
+    const m = vals.reduce((a,b)=>a+b,0)/vals.length;
+    const v = vals.reduce((a,b)=>a+(b-m)*(b-m),0)/vals.length;
+    if(!(v > m*1.05)) return pois();                    // not overdispersed: Poisson is right
+    let size = (m*m)/(v-m); size = Math.max(0.35, Math.min(50, size));
+    const pp = size/(size+mu);
+    let cum = 0, term = Math.pow(pp, size);
+    for(let i = 0; i < k; i++){ cum += term; term = term*(size+i)/(i+1)*(1-pp); }
+    return Math.max(0, Math.min(1, 1-cum));
+  }
+  function prob(p, statKey, line, opp){
+    if(!p || !statKey || line == null) return null;
+    const all = dvpByName(p.name) || [];
+    if(all.length < 4) return null;
+    const hist = all.slice(-P_WIN).map(r => +r[statKey] || 0);
+    if(!hist.length) return null;
+    const cur = all.filter(isCurSeason).map(r => +r[statKey] || 0);
+    const baseline = cur.length ? cur.reduce((a,b)=>a+b,0)/cur.length
+                                : hist.reduce((a,b)=>a+b,0)/hist.length;
+    // recent form, pulled toward season baseline so a hot fortnight can't run away with it
+    const mu0 = (_ewma(hist, P_HALFLIFE)*hist.length + baseline*P_SHRINK)/(hist.length + P_SHRINK);
+    let f = 1;
+    const pct = opp ? getDVPPct(opp, p.position, statKey) : null;
+    if(pct != null) f *= Math.max(0.75, Math.min(1.3, 1 + (pct/100)*P_DVP_W));
+    return Math.max(0.01, Math.min(0.99, _countAtLeast(mu0*f, Math.ceil(line), hist)));
+  }
   function drLine(avg){ if(avg<15) return null; return Math.round(avg); }
 
   function scoreCMP(p, statKey, line, opp){
@@ -851,8 +904,8 @@ window.JTTScoring = (function () {
   // ---- configure ----
   function configure(ctx){
     PD=(ctx.players||[]).map(aliasPlayer);
-    // TD was declared and read (muPct at ~L109, BA=_avgsOf(TD) below) but never assigned here,
-    // so muPct() returned null for every opponent and the matchup term in scoreCMP never fired.
+    // TD was declared and read (muPct, BA=_avgsOf(TD)) but never assigned here, so muPct()
+    // returned null for every opponent and the matchup term in scoreCMP never fired.
     TD=ctx.teams||[];
     TF=ctx.teamsForm||ctx.teams||[];
     DVP=ctx.dvp||[];
@@ -868,6 +921,6 @@ window.JTTScoring = (function () {
   return {
     configure, scoreCMP, cmpFactors, getContextSignals, scoreOverLine, scoreUnderLine,
     verdict, drLine, getDVPPct, muPct, muInfo, getL5Avg, getRecentAvg, getHitRate,
-    POS_TO_DVP
+    prob, POS_TO_DVP
   };
 })();
