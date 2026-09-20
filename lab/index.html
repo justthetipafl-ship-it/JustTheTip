@@ -589,7 +589,13 @@
   .ca-posted{font-size:11px;color:var(--text-2);margin-bottom:9px;}
   .ca-posted b{color:var(--text);}
   .ca-lab{font-size:9px;font-weight:800;letter-spacing:.07em;text-transform:uppercase;color:var(--text-3);margin:11px 0 5px;}
-  .ca-ladder{display:flex;flex-wrap:wrap;gap:5px;}
+  .ca-lad-wrap{margin-bottom:4px;}
+  .ca-lad-sum{display:flex;align-items:center;gap:8px;cursor:pointer;list-style:none;padding:4px 0;}
+  .ca-lad-sum::-webkit-details-marker{display:none;}
+  .ca-lad-sum::after{content:'\25be';color:var(--text-3);font-size:10px;margin-left:auto;}
+  details[open] .ca-lad-sum::after{content:'\25b4';}
+  .ca-lad-now{font-family:var(--font-mono);font-size:10px;color:var(--accent);}
+  .ca-ladder{display:flex;flex-wrap:wrap;gap:5px;padding-bottom:4px;}
   .ca-rung{background:var(--surface-2);border:1px solid var(--border);border-radius:7px;padding:5px 9px;
     font-family:var(--font-mono);font-size:10px;color:var(--text-2);cursor:pointer;white-space:nowrap;}
   .ca-rung.on{border-color:var(--accent);color:var(--accent);background:color-mix(in srgb,var(--accent) 12%,transparent);}
@@ -739,7 +745,8 @@ var state = {
   view:   { active: {}, tab: 'fixture', mkt: {}, match: {}, player: null, books: null, showDone: false, focus: null, h2hMode: 'for',
              slMkt: {}, slWin: 'season', dvpMkt: {}, ppTab: 'form',
              cmbQ: '', cmbSel: null, cmbRecent: [],
-             cmbOpen: false, cmbMode: 'single', cmbLegs: [], cmbResult: null, cmbSugOff: false }   // filter + current page + market per sport
+             cmbOpen: false, cmbMode: 'single', cmbLegs: [], cmbResult: null, cmbSugOff: false,
+             cmbLadOpen: false }   // filter + current page + market per sport
 };
 Object.keys(SPORTS).forEach(function(k){
   state.sports[k] = { data:{}, idx:{teamMap:{}}, status:'idle' };
@@ -2636,6 +2643,8 @@ function h2hSignals(key, g, kind){
         if (!avgFlag && !lineFlag) return;
         out.push({ name:p.name, team:team, opp:opp, pos:posShortP(p), mkt:k, label:m[1],
                    mine:mine, base:lg.avg, edge:edge, edgeOpp:edgeOpp, diffPct:diffPct,
+                   // the strip shows the six most recent meetings; the count must be the real one
+                   meetings:vals.length,
                    vals:vals.slice(0, 6), line:od ? od.line : null, price:od ? od.price : null,
                    book:od ? od.book : null, lineFlag:lineFlag, kind:kind });
       });
@@ -2666,7 +2675,8 @@ function h2hSigRow(key, r){
         + ' \u00b7 '+r.base.toFixed(r.base < 3 ? 2 : 1)+' overall \u00b7 '+esc(vsField)+'</div>'
       + meets
     + '</div>'
-    + '<div class="h2h-sig-right"><div class="h2h-sig-v '+(up ? 'up' : 'down')+'">'+r.vals.length+'</div>'
+    + '<div class="h2h-sig-right"><div class="h2h-sig-v '+(up ? 'up' : 'down')+'">'
+      +(r.meetings != null ? r.meetings : r.vals.length)+'</div>'
       + '<div class="h2h-sig-l">MEETINGS</div>'
       + (r.price != null ? '<div class="h2h-sig-odds">'+(up ? ask+'+ ' : 'U'+r.line+' ')+'$'+r.price.toFixed(2)+'</div>' : '')
     + '</div></div>';
@@ -3165,32 +3175,108 @@ var CMB_SIDE_WORDS = { under:'under', u:'under', over:'over', o:'over' };
 function cmbMarkets(key){
   return ((state.sports[key].config || {}).oddsMkts || (state.sports[key].config || {}).multiMkts || []);
 }
+// Punters type what they say, not what the config calls it: "pass yards", "receiving yds",
+// "strike outs", "home runs". Canonicalise both sides token by token, then match on tokens
+// rather than on the literal label - "Pass Yds" and "passing yards" reduce to the same thing.
+var CMB_SYN = {
+  yards:'yd', yard:'yd', yds:'yd', ydss:'yd',
+  passing:'pass', pass:'pass', passes:'pass',
+  rushing:'rush', rush:'rush', rushes:'rush', carries:'rushatt', carry:'rushatt',
+  receiving:'rec', reception:'rec', receptions:'rec', catches:'rec', catch:'rec', recs:'rec',
+  touchdown:'td', touchdowns:'td', tds:'td', td:'td',
+  interception:'int', interceptions:'int', ints:'int', picks:'int',
+  attempt:'att', attempts:'att', atts:'att',
+  strikeout:'k', strikeouts:'k', ks:'k', punchouts:'k',
+  homerun:'hr', homeruns:'hr', hrs:'hr', dinger:'hr', dingers:'hr',
+  hits:'h', hit:'h', knocks:'h',
+  rbis:'rbi', runs:'r', run:'r', bases:'tb', totalbases:'tb',
+  disposal:'disposals', disposals:'disposals', poss:'disposals', touches:'disposals',
+  mark:'marks', marks:'marks', tackle:'tackles', tackles:'tackles',
+  clearance:'clearances', clearances:'clearances', goal:'goals', goals:'goals',
+  behind:'behinds', hitout:'hitouts', hitouts:'hitouts',
+  fantasy:'dreamteam', dreamteam:'dreamteam', fpts:'dreamteam', supercoach:'supercoach', sc:'supercoach',
+  shot:'shots', shots:'shots', sot:'shotson', target:'', targets:'targets',
+  save:'saves', saves:'saves', foul:'fouls', fouls:'fouls', card:'cards', cards:'cards',
+  assist:'assists', assists:'assists', keypass:'keypasses', keypasses:'keypasses',
+  points:'pts', pts:'pts', plus:'', over:'', under:'',
+  possession:'disposals', possessions:'disposals', poss:'disposals',
+  sot:'shotson', ontarget:'shotson', shotsontarget:'shotson',
+  rushrec:'rushrec', scrimmage:'rushrec'
+};
+// words that are never part of a player's name or a market, just noise around the bet
+var CMB_STOP = { pts:1, point:1, points:1, line:1, odds:1, bet:1, prop:1, at:1, vs:1, v:1, the:1 };
+function cmbCanon(tok){
+  var t = String(tok || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+  if (!t) return '';
+  return CMB_SYN[t] != null ? CMB_SYN[t] : t;
+}
+function cmbTokens(str){
+  var raw = String(str || '')
+    .replace(/([a-z])([A-Z])/g, '$1 $2')          // recYds -> rec Yds
+    .split(/[^A-Za-z0-9]+/).filter(Boolean);
+  // people split compound markets: "strike outs", "home runs", "on target". Fold an adjacent
+  // pair whenever the two words together are a known term.
+  var out = [];
+  for (var i=0;i<raw.length;i++){
+    if (i+1 < raw.length){
+      var pair = cmbCanon(raw[i] + raw[i+1]);
+      if (pair && CMB_SYN[String(raw[i]+raw[i+1]).toLowerCase().replace(/[^a-z0-9]/g,'')] != null){
+        out.push(pair); i++; continue;
+      }
+    }
+    var c = cmbCanon(raw[i]);
+    if (c) out.push(c);
+  }
+  return out;
+}
+function cmbMatchMarket(key, q){
+  var qt = cmbTokens(q), best = null, bestScore = 0;
+  cmbMarkets(key).forEach(function(m){
+    // label tokens, key tokens, and the key squashed to one word - so "sot" reaches shotsOn
+    // and "rush+rec" reaches rushRecYds however the punter spaces it
+    var squash = [cmbCanon(String(m[0]).replace(/[^A-Za-z0-9]/g, '')),
+                  cmbCanon(String(m[1]).replace(/[^A-Za-z0-9]/g, ''))];
+    [cmbTokens(m[1]), cmbTokens(m[0]), [squash[0]], [squash[1]]].forEach(function(mt){
+      mt = mt.filter(Boolean);
+      if (!mt.length) return;
+      var matched = mt.filter(function(t){ return qt.indexOf(t) >= 0; }).length;
+      if (matched !== mt.length) return;          // every token of the market must be present
+      var score = mt.length * 10 + mt.join('').length;
+      if (score > bestScore){
+        bestScore = score;
+        best = { m:m, tokens:mt, squash:cmbCanon(String(m[0]).replace(/[^A-Za-z0-9]/g, '')) };
+      }
+    });
+  });
+  return best;
+}
 function cmbParse(key, q){
   var raw = String(q || '').trim();
   if (!raw) return null;
-  var side = 'over', txt = ' ' + raw.toLowerCase() + ' ';
-  Object.keys(CMB_SIDE_WORDS).forEach(function(w){
-    if (txt.indexOf(' ' + w + ' ') >= 0 || (w.length > 1 && txt.indexOf(' ' + w) >= 0 && /under|over/.test(w)))
-      side = CMB_SIDE_WORDS[w];
-  });
-  // market: longest configured label or key appearing in the text
-  var mk = null, best = 0;
-  cmbMarkets(key).forEach(function(m){
-    [m[1].toLowerCase(), m[0].toLowerCase()].forEach(function(cand){
-      if (cand.length > best && txt.indexOf(cand) >= 0){ mk = m; best = cand.length; }
-    });
-  });
+  var side = /\bunder\b|\bu\b/i.test(raw) ? 'under' : 'over';
+  var hit = cmbMatchMarket(key, raw);
   var num = raw.match(/(\d+(?:\.\d+)?)\s*\+?/);
   var line = num ? +num[1] : null;
-  // the name is whatever is left once the number, market words and side words are removed
+  // strip the number and every word that fed the market match; the rest is the name
   var nm = raw;
   if (num) nm = nm.replace(num[0], ' ');
-  // "Rush+Rec" and friends are not regexes: escaping this is the difference between finding
-  // the player and searching for someone called "Bijan Robinson rush+rec".
-  var esc2 = function(t){ return String(t).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); };
-  if (mk) nm = nm.replace(new RegExp(esc2(mk[1]), 'ig'), ' ').replace(new RegExp(esc2(mk[0]), 'ig'), ' ');
-  nm = nm.replace(/\b(under|over|o|u|plus|pts|points)\b/ig, ' ').replace(/\s+/g, ' ').trim();
-  return { name:nm, mkt:mk, line:line, side:side };
+  // split on anything that isn't part of a name: "rush+rec" must become two tokens, or the
+  // whole phrase survives into the name and the lookup fails
+  var words = nm.split(/[^A-Za-z0-9\u00C0-\u024F'\-]+/).filter(Boolean), keep = [];
+  for (var wi=0; wi<words.length; wi++){
+    var w = words[wi], c = cmbCanon(w);
+    // a folded pair ("strike outs") has to drop BOTH words or the leftover lands in the name
+    if (wi+1 < words.length && hit){
+      var joined = cmbCanon(words[wi] + words[wi+1]);
+      if (joined && hit.tokens.indexOf(joined) >= 0){ wi++; continue; }
+    }
+    if (!c || CMB_STOP[c] || CMB_STOP[w.toLowerCase()]) continue;
+    if (/^(under|over|plus|o|u)$/i.test(w)) continue;
+    if (hit && (hit.tokens.indexOf(c) >= 0 || c === hit.squash)) continue;
+    keep.push(w);
+  }
+  nm = keep.join(' ').trim();
+  return { name:nm, mkt:(hit ? hit.m : null), line:line, side:side };
 }
 // players.json lands in TIER 2, the index in TIER 3 - so search the raw list, or nothing is
 // findable until you have opened a fixture for that sport.
@@ -3391,26 +3477,36 @@ function cmbPosted(key, name, mkt){
   }
   return null;
 }
+// Who has faced this opponent MOST RECENTLY in the same position - the current picture, not
+// whoever happens to have the longest history against them.
 function cmbSimilar(key, p, mkt, line, opp){
   if (!opp) return null;
   var S = state.sports[key], pos = p.position || p.pos;
   if (!pos) return null;
-  var out = [], tot = 0, hit = 0;
+  var out = [];
   (cmbPool(key)).forEach(function(q){
     if (!q || q.name === p.name || (q.position || q.pos) !== pos) return;
     var rows = ((S.idx.logsByName || {})[q.name] || []).filter(function(r){
       var o = oppOf(key, r); return o && normTeam(o) === normTeam(opp);
     });
-    var vals = [];
-    sortLogsDesc(rows).forEach(function(r){ var v = statOf(key, r, mkt); if (v != null) vals.push(v); });
-    if (vals.length < 3) return;
-    vals = vals.slice(0, 7);
-    var h = vals.filter(function(v){ return v > line; }).length;
-    tot += vals.length; hit += h;
-    out.push({ name:q.name, vals:vals, hits:h });
+    if (!rows.length) return;
+    sortLogsDesc(rows);
+    var vals = [], recent = null;
+    rows.forEach(function(r){
+      var v = statOf(key, r, mkt);
+      if (v == null) return;
+      if (recent == null) recent = logMs(r) || logSeq(r);
+      if (vals.length < 5) vals.push(v);
+    });
+    if (!vals.length || recent == null) return;
+    out.push({ name:q.name, vals:vals, recent:recent,
+               hits:vals.filter(function(v){ return v > line; }).length });
   });
-  out.sort(function(a,b){ return b.vals.length - a.vals.length; });
-  return { rows:out.slice(0, 10), tot:tot, hit:hit, pos:pos };
+  out.sort(function(a,b){ return b.recent - a.recent; });     // most recent meeting first
+  var rows2 = out.slice(0, 10);
+  var tot = 0, hit = 0;
+  rows2.forEach(function(r){ tot += r.vals.length; hit += r.hits; });
+  return { rows:rows2, tot:tot, hit:hit, pos:pos };
 }
 function cmbAnalysis(l){
   var key = l.key, p = l.p, mkt = l.mkt, line = l.line, opp = l.opp;
@@ -3468,11 +3564,17 @@ function cmbAnalysis(l){
     : 'No two-way line posted'+(ladder.length ? ' \u2014 alt ladder only' : ' for this market'))+'</div>';
 
   if (ladder.length){
-    h += '<div class="ca-lab">Alt lines \u00b7 tap to check</div><div class="ca-ladder">'
+    var sel = null;
+    ladder.forEach(function(r){ if (Math.ceil(r.line) === Math.ceil(line)) sel = r; });
+    h += '<details class="ca-lad-wrap"'+(state.view.cmbLadOpen ? ' open' : '')
+      + ' ontoggle="LAB.cmbLad(this.open)"><summary class="ca-lad-sum">'
+      + '<span class="ca-lab" style="margin:0">Alt lines \u00b7 '+ladder.length+' rungs</span>'
+      + '<span class="ca-lad-now">'+(sel ? Math.ceil(sel.line)+'+ $'+sel.over.toFixed(2) : 'tap to check')
+      + '</span></summary><div class="ca-ladder">'
       + ladder.map(function(r){
           var on = Math.ceil(r.line) === Math.ceil(line);
           return '<button class="ca-rung'+(on?' on':'')+'" onclick="LAB.cmbLine('+r.line+')">'
-            + Math.ceil(r.line)+'+ $'+r.over.toFixed(2)+'</button>'; }).join('')+'</div>';
+            + Math.ceil(r.line)+'+ $'+r.over.toFixed(2)+'</button>'; }).join('')+'</div></details>';
   }
 
   h += '<div class="ca-cells">'
@@ -3568,7 +3670,7 @@ function cmbAnalysis(l){
   /* similar players vs this opponent */
   var sim = cmbSimilar(key, p, mkt, line, opp);
   if (sim && sim.rows.length){
-    h += '<div class="ca-simhd"><b>Similar '+esc(sim.pos)+' vs '+esc(abbrOf(key, opp))+'</b>'
+    h += '<div class="ca-simhd"><b>Recent '+esc(sim.pos)+' vs '+esc(abbrOf(key, opp))+'</b>'
       + '<span>'+sim.hit+'/'+sim.tot+' hit ('+Math.round(sim.hit/sim.tot*100)+'%)</span></div>'
       + sim.rows.map(function(r){
           return '<div class="ca-sim"><span class="ca-sim-n">'+esc(r.name)+'</span>'
@@ -3576,8 +3678,8 @@ function cmbAnalysis(l){
                 return v > line ? '<u>'+(v % 1 ? v.toFixed(1) : v)+'</u>' : '<s>'+(v % 1 ? v.toFixed(1) : v)+'</s>';
               }).join(', ')+'</span>'
             + '<span class="ca-sim-g">'+r.vals.length+'g</span></div>'; }).join('')
-      + '<div class="cmb-corr">Based on '+sim.rows.length+' players in the same position \u00b7 '
-      + 'actual returns against '+esc(abbrOf(key, opp))+'.</div>';
+      + '<div class="cmb-corr">The '+sim.rows.length+' players in this position who met '
+      + esc(abbrOf(key, opp))+' most recently \u00b7 their actual returns, newest meeting first.</div>';
   }
   return h;
 }
@@ -4016,6 +4118,7 @@ window.LAB = {
     else state.view.cmbResult = r;
     render();
   },
+  cmbLad: function(open){ state.view.cmbLadOpen = !!open; },
   cmbLine: function(line){
     var r = state.view.cmbResult;
     if (!r || !r.leg) return;
