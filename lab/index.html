@@ -532,10 +532,11 @@
     font-size:11px;font-weight:800;display:inline-flex;align-items:center;justify-content:center;}
   @media(max-width:480px){ .cmb-fab{padding:10px 14px;font-size:12px;} .cmb-fab .cmb-lbl{display:none;} }
   .cmb-overlay{position:fixed;inset:0;z-index:200;background:rgba(0,0,0,.6);display:flex;align-items:flex-end;
-    justify-content:center;}
+    justify-content:center;overscroll-behavior:contain;}
   @media(min-width:600px){ .cmb-overlay{align-items:center;} }
   .cmb-modal{background:var(--surface);border:1px solid var(--border);border-radius:14px 14px 0 0;width:100%;
-    max-width:560px;max-height:88vh;display:flex;flex-direction:column;overflow:hidden;}
+    max-width:560px;max-height:88dvh;display:flex;flex-direction:column;overflow:hidden;
+    padding-bottom:env(safe-area-inset-bottom,0px);}
   @media(min-width:600px){ .cmb-modal{border-radius:14px;} }
   .cmb-hdr{display:flex;align-items:center;gap:9px;padding:13px 14px 10px;}
   .cmb-hdr h2{margin:0;font-family:var(--font-display);font-size:15px;font-weight:800;letter-spacing:.02em;}
@@ -546,7 +547,7 @@
     font-size:12px;padding:8px 10px;border-radius:6px;cursor:pointer;display:flex;align-items:center;
     justify-content:center;gap:5px;}
   .cmb-tab.on{background:var(--surface);color:var(--text);}
-  .cmb-body{padding:0 14px 16px;overflow-y:auto;}
+  .cmb-body{padding:0 14px 16px;overflow-y:auto;-webkit-overflow-scrolling:touch;overscroll-behavior:contain;}
   .cmb-in{display:flex;gap:7px;margin-bottom:9px;}
   .cmb-in input{flex:1;min-width:0;background:var(--surface-2);border:1px solid var(--border);border-radius:9px;
     padding:10px 12px;color:var(--text);font-size:13px;font-family:inherit;outline:none;}
@@ -3729,7 +3730,7 @@ function cmbOdds(pv){
   if (pv >= 0.01) return (pv*100).toFixed(1)+'%';
   return '1 in '+Math.round(1/pv).toLocaleString();
 }
-function cmbSugList(q, mode){
+function cmbSugInner(q, mode){
   var sug = (state.view.cmbSugOff ? [] : cmbSuggest(q));
   if (!sug.length) return '';
   return '<div class="cmb-hits">'+sug.map(function(r){
@@ -3793,6 +3794,16 @@ function cmbLegQuality(l){
   });
   return { n:all.length, hit:all.filter(Boolean).length,
            vsN:vs.length, vsHit:vs.filter(Boolean).length };
+}
+// Typing must NOT re-render the page. On mobile a full render tears out the focused input,
+// which drops the caret, closes the keyboard and jumps the scroll position on every keystroke.
+function cmbSugList(q, mode){
+  return '<div id="cmbSug" data-mode="'+mode+'">'+cmbSugInner(q, mode)+'</div>';
+}
+function cmbSugRefresh(){
+  var host = $('cmbSug');
+  if (!host) return;
+  host.innerHTML = cmbSugInner(state.view.cmbQ, host.getAttribute('data-mode') || 'single');
 }
 function cmbPanel(){
   var v = state.view;
@@ -4154,9 +4165,7 @@ window.LAB = {
   cmbType: function(q){
     state.view.cmbQ = q;
     state.view.cmbSugOff = false;
-    render();
-    var i = $('cmbInput');
-    if (i){ i.focus(); i.setSelectionRange(i.value.length, i.value.length); }
+    cmbSugRefresh();          // patch the list only: the input keeps focus, caret and keyboard
   },
   cmbUse: function(name, mode){
     // keep whatever line/market the user already typed, swap in the full name
