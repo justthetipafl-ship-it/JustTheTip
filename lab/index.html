@@ -2741,7 +2741,7 @@ function ouTile(key, g, kind){
    player is running hot or cold, not that there is a bet in it. Production's thresholds kept:
    25% swing, 3+ current-season games, and a per-market floor so a man going from 0.2 to 0.4
    tackles doesn't read as a 100% spike.                                                      */
-var ALERT_THRESHOLD = 0.25, ALERT_MIN_L3 = 3;
+var ALERT_THRESHOLD = 0.25, ALERT_MIN_L3 = 3, ALERT_MAX_DRY = 2;
 var ALERT_FLOOR = {
   disposals:15, goals:1.2, marks:4, tackles:4, clearances:4, dreamteam:70,
   recYds:25, rushYds:25, passYds:150, receptions:2, targets:3,
@@ -2775,29 +2775,51 @@ function formAlerts(key, g){
           if (up && l3 < floor) return;
           if (!up && seasonAvg < floor) return;
         }
+        // A run of zeros is a different animal to a graded decline: -100% is the floor for
+        // every drought, so they all tie and crowd out real movement. Count the drought
+        // instead and rank it on the baseline it fell from.
+        var dry = 0;
+        if (l3 === 0){
+          for (var di=0; di<cur.length; di++){
+            var dv = statOf(key, cur[di], k);
+            if (dv == null || dv > 0) break;
+            dry++;
+          }
+        }
         out.push({ name:p.name, team:team, opp:opp, pos:posShortP(p), label:m[1], mkt:k,
-                   seasonAvg:seasonAvg, l3:l3, swing:swing, up:up, n:l3v.length });
+                   seasonAvg:seasonAvg, l3:l3, swing:swing, up:up, n:l3v.length, dry:dry });
       });
     });
   });
-  out.sort(function(a,b){ return Math.abs(b.swing) - Math.abs(a.swing); });
-  return out.slice(0, SIG_MAX_ROWS);
+  var moved = out.filter(function(r){ return !r.dry; })
+    .sort(function(a,b){ return Math.abs(b.swing) - Math.abs(a.swing); });
+  var droughts = out.filter(function(r){ return r.dry; })
+    .sort(function(a,b){ return (b.seasonAvg - a.seasonAvg) || (b.dry - a.dry); })
+    .slice(0, ALERT_MAX_DRY);                      // never let droughts take over the tile
+  return moved.concat(droughts).slice(0, SIG_MAX_ROWS);
 }
 function formRow(key, r){
   var pc = Math.round(Math.abs(r.swing) * 100);
   var w = Math.min(50, Math.round(Math.abs(r.swing) * 100 / 2));
   var dec = function(v){ return v < 3 ? v.toFixed(2) : v.toFixed(1); };
+  var tag = r.dry ? 'DRY' : (r.up ? 'HEATING' : 'COOLING');
+  var right = r.dry
+    ? '<div class="fa-pc down">'+r.dry+'</div><div class="fa-pcl">GAMES DRY</div>'
+    : '<div class="fa-pc '+(r.up?'up':'down')+'">'+(r.up?'+':'\u2212')+pc+'%</div>'
+      + '<div class="fa-pcl">VS SEASON</div>';
+  var sub = r.dry
+    ? 'No '+esc(r.label).toLowerCase()+' in '+r.dry+' game'+(r.dry===1?'':'s')+' \u00b7 '
+      + dec(r.seasonAvg)+' season \u00b7 v '+esc(abbrOf(key, r.opp))
+    : esc(r.label)+' L3 '+dec(r.l3)+' v '+dec(r.seasonAvg)+' season \u00b7 v '+esc(abbrOf(key, r.opp));
   return '<div class="fa-row" onclick="LAB.player(\''+key+'\',\''+esc(r.name).replace(/'/g,"\\'")+'\')">'
     + '<div class="fa-left">'
-      + '<div class="fa-nm"><b>'+esc(r.name)+'</b><span class="fa-dir '+(r.up?'up':'down')+'">'
-        + (r.up ? 'HEATING' : 'COOLING')+'</span></div>'
-      + '<div class="fa-sub">'+esc(r.label)+' L3 '+dec(r.l3)+' v '+dec(r.seasonAvg)+' season \u00b7 v '
-        + esc(abbrOf(key, r.opp))+'</div>'
-      + '<div class="fa-bar"><span class="fa-track"><span class="fa-mid"></span>'
-        + '<i class="'+(r.up?'up':'down')+'" style="width:'+w+'%"></i></span></div>'
+      + '<div class="fa-nm"><b>'+esc(r.name)+'</b><span class="fa-dir '+(r.dry ? 'down' : (r.up?'up':'down'))+'">'
+        + tag+'</span></div>'
+      + '<div class="fa-sub">'+sub+'</div>'
+      + (r.dry ? '' : '<div class="fa-bar"><span class="fa-track"><span class="fa-mid"></span>'
+        + '<i class="'+(r.up?'up':'down')+'" style="width:'+w+'%"></i></span></div>')
     + '</div>'
-    + '<div class="fa-right"><div class="fa-pc '+(r.up?'up':'down')+'">'+(r.up?'+':'\u2212')+pc+'%</div>'
-      + '<div class="fa-pcl">VS SEASON</div></div></div>';
+    + '<div class="fa-right">'+right+'</div></div>';
 }
 function signalsSection(key, g){
   var S = state.sports[key], cfg = S.config || {};
@@ -2872,6 +2894,10 @@ function focusPage(){
   return head + t3
     + (S.t3==='ready' ? valueBets(key, g) : '')
     + '<div class="dayband"><span>Match markets</span></div>' + moBlock(key, g)
+    // Team-level reading comes first: season averages head to head, then the last meeting.
+    // Everything below this point is about individual players.
+    + h2hSection(key, g)
+    + h2hHistory(key, g)
     + (S.t3==='ready' ? formSection(key, g) : '')
     + (S.t3==='ready' ? leadersSection(key, g) : '')
     + (S.t3==='ready' ? lineupSection(key, g) : '')
@@ -2882,8 +2908,6 @@ function focusPage(){
     + (S.t3==='ready' ? subsSection(key, g) : '')
     + (S.t3==='ready' ? firstLastSection(key, g) : '')
     + (S.t3==='ready' ? signalsSection(key, g) : '')
-    + h2hSection(key, g)
-    + h2hHistory(key, g)
     + '<div class="dayband"><span>Players \u00b7 '+ps.length+'</span></div><div class="gp-list">'+list+'</div>';
 }
 function playerPanel(){
