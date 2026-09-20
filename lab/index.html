@@ -2532,14 +2532,16 @@ var GL_SCORE = 5.5, DR_SCORE = -3.5, GL_MIN_GAMES = 3, GL_RUNGS = 6;
 //                                      form shrunk to season baseline, DVP-adjusted, negative
 //                                      binomial. Was -0.8pt (worse than random) on hit-rate-as-
 //                                      probability. Needs AFL/scoring.js deployed.
-//   nfl    2817    +6.8pt   +10.5pt   modest but real signal (a one-week fit had flattered it at
-//                                      20.8). Still hit-rate-as-probability - next for rebuild.
+//   nfl    2651    +3.9pt   +32.8pt   REBUILT 20 Sep: prob() added to nfl/scoring.js - gamma tail
+//                                      for yardage, negative binomial for counts, EWMA form shrunk
+//                                      to season, DVP-adjusted. Was +10.5pt on hit-rate-as-
+//                                      probability. Needs nfl/scoring.js deployed.
 //   epl    2090    +7.0pt   +35.8pt   rebuilt 19 Sep: unconditional minutes, negative binomial,
 //                                      window 14, blend 0.8. Raw Brier now beats the base rate.
 //   mlb   21755    +1.7pt   +27.4pt   calibrated and discriminating - the reference model
 var CALIB = {
   afl: { a:0.358, b: 0.172, spread: 0.152, n:2548 },
-  nfl: { a:0.244, b:-0.136, spread: 0.105, n:2817 },
+  nfl: { a:0.589, b:-0.139, spread: 0.328, n:2651 },
   epl: { a:0.727, b:-0.399, spread: 0.358, n:2090 },
   mlb: { a:0.677, b:-0.391, spread: 0.274, n:21755 }
 };
@@ -2570,7 +2572,7 @@ function glProb(key, p, mkt, line, score){
   }
   // EPL and MLB define score as (prob - 0.5) * 20, so it inverts exactly.
   if (key === 'epl' || key === 'mlb') return Math.max(0.01, Math.min(0.99, score / 20 + 0.5));
-  // NFL still scores heuristically - take the empirical rate its module already blends.
+  // Fallback for any module without prob(): the empirical rate it already blends.
   try {
     var hr = sc && sc.getHitRate ? sc.getHitRate(p.name, mkt, line, false) : null;
     var rate = hr == null ? null : (hr.rate != null ? hr.rate : (isFinite(+hr) ? +hr : null));
