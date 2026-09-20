@@ -706,6 +706,15 @@
     font-size:8px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:var(--text-3);}
   .ul-hnm{flex:1;} .ul-hv{width:46px;text-align:right;} .ul-hl{width:52px;text-align:right;}
   .ul-last{width:52px;flex:none;text-align:right;font-family:var(--font-mono);font-size:10px;}
+  .sig-quiet{margin:4px 0 10px;background:var(--surface-2);border:1px solid var(--border);border-radius:9px;}
+  .sig-quiet summary{list-style:none;cursor:pointer;padding:9px 12px;font-size:10px;font-weight:700;
+    color:var(--text-3);display:flex;align-items:center;gap:6px;}
+  .sig-quiet summary::-webkit-details-marker{display:none;}
+  .sig-quiet summary::after{content:'\25be';margin-left:auto;}
+  .sig-quiet[open] summary::after{content:'\25b4';}
+  .sig-quiet-row{padding:7px 12px;border-top:1px solid var(--border);font-size:10px;line-height:1.5;}
+  .sig-quiet-row b{display:block;font-size:11px;color:var(--text-2);margin-bottom:2px;}
+  .sig-quiet-row span{color:var(--text-3);}
   .sc-filter{display:flex;gap:7px;align-items:center;margin-bottom:8px;}
   .sc-filter input{flex:1;min-width:0;background:var(--surface-2);border:1px solid var(--border);
     border-radius:9px;padding:9px 12px;color:var(--text);font-size:13px;font-family:inherit;outline:none;}
@@ -2542,13 +2551,33 @@ function streakCandidates(key, name, mkt){
   });
   return out.sort(function(a,b){ return b.line - a.line; });     // hardest first
 }
+// A signal that did not trigger is not worth a card's height. It is still worth KNOWING about -
+// "nothing fired" and "this tile is broken" look identical once you hide them - so untriggered
+// tiles collapse into one line at the foot of the section that expands to show why each stayed
+// quiet. Genuine data failures still shout: those go through secNote, not here.
+var SIG_QUIET = [];
 function sigTile(icon, title, desc, rows, emptyWhy){
+  if (!rows || !rows.length){
+    SIG_QUIET.push({ title:title, why:emptyWhy || 'Nothing cleared the gate for this fixture.' });
+    return '';
+  }
   var head = '<summary class="sig-head"><span class="sig-ico"><i class="ti '+esc(icon)+'"></i></span>'
     + '<span><span class="sig-ttl">'+esc(title)+'</span><span class="sig-desc">'+esc(desc)+'</span></span>'
-    + '<span class="sig-n">'+(rows ? rows.length : 0)+'</span></summary>';
-  var body = (rows && rows.length) ? rows.join('')
-    : '<div class="sig-empty">'+esc(emptyWhy || 'Nothing cleared the gate for this fixture.')+'</div>';
-  return '<details class="sig-tile" open>'+head+body+'</details>';
+    + '<span class="sig-n">'+rows.length+'</span></summary>';
+  return '<details class="sig-tile" open>'+head+rows.join('')+'</details>';
+}
+function sigQuietNote(){
+  if (!SIG_QUIET.length) return '';
+  var list = SIG_QUIET.slice();
+  return '<details class="sig-quiet"><summary>'+list.length+' signal'+(list.length === 1 ? '' : 's')
+    + ' quiet on this fixture</summary>'
+    + list.map(function(q){
+        return '<div class="sig-quiet-row"><b>'+esc(q.title)+'</b><span>'+esc(q.why)+'</span></div>';
+      }).join('')+'</details>';
+}
+// A band header with nothing under it is the same waste as an empty tile.
+function sigBand(title, body){
+  return body && body.replace(/\s+/g, '') ? '<div class="dayband"><span>'+title+'</span></div>'+body : '';
 }
 function streakers(key, g){
   var S = state.sports[key], cfg = S.config || {};
@@ -4217,8 +4246,8 @@ function nflSignals(key, g){
   if (key !== 'nfl') return '';
   var tud = nflTuddy(key, g), chk = nflChunk(key, g);
   var sck = nflTeamAngle(key, g, 'sacks'), pck = nflTeamAngle(key, g, 'picks');
-  return '<div class="dayband"><span>NFL Signals</span></div>'
-    + sigTile('ti-ball-american-football', 'Tuddy Targets', 'Red-zone royalty into a soft TD defence',
+  return sigBand('NFL Signals',
+    sigTile('ti-ball-american-football', 'Tuddy Targets', 'Red-zone royalty into a soft TD defence',
               tud.rows.map(function(r){ return nflTuddyRow(key, r); }), tud.why)
     + sigTile('ti-bolt', 'Chunk Plays', 'Explosive-play streaks',
               chk.rows.map(function(r){ return nflChunkRow(key, r); }), chk.why)
@@ -4228,7 +4257,7 @@ function nflSignals(key, g){
               pck.rows.map(function(r){ return nflAngleRow(key, r, 'picks'); }), pck.why)
     + sigTile('ti-target-arrow', 'Kicker Matchup', 'Projected points against the posted line',
               kickerRows(key, g).map(function(r){ return kickerRow(key, r); }),
-              'No kicker on this fixture has a posted kicking market.');
+              'No kicker on this fixture has a posted kicking market.'));
 }
 function signalsSection(key, g){
   var S = state.sports[key], cfg = S.config || {};
@@ -4249,40 +4278,39 @@ function signalsSection(key, g){
         : 'No league top-'+ELITE_TOP_N+' player in this fixture draws a bottom-'+ELITE_DVP_GATE
           + ' defence for their stat at a priced line.');
   // Two bands: things with a price attached, and things that only tell you something.
-  return '<div class="dayband"><span>Degen Signals \u00b7 Picks</span></div>'
-    + ouTile(key, g, 'over')
+  SIG_QUIET = [];
+  var picks = ouTile(key, g, 'over')
     + ouTile(key, g, 'under')
     + sigTile('ti-flame', 'Streakers', 'Cleared the posted line, game after game',
               rows.map(function(r){ return streakRow(key, r); }), why)
     + sigTile('ti-trophy', 'Elite Matchups', 'League\u2019s best against the softest defences',
               elite.map(function(r){ return eliteRow(key, r); }), eliteWhy)
+    + (WRAP_CFG[key] ? (function(){
+        var tm = tackleMachines(key, g);
+        return sigTile('ti-hammer', 'Tackle Machines', 'Tackle volume into an opponent that concedes it',
+          tm.rows.map(function(r){ return tackleRow(key, r); }), tm.why);
+      })() : '')
     + sigTile('ti-carrot', 'Bunnies', 'Cleared this line in every meeting with them',
               h2hSignals(key, g, 'bunny').map(function(r){ return h2hSigRow(key, r); }),
               'No player has cleared their line in every one of '+H2H_MIN_BUNNY+'+ meetings with '
               + 'this opponent. Posted two-way lines are used where they exist ('+SPORTS[key].name
               + ' has '+(twoWayMarketCount(key) || 'none')+'), otherwise an alt rung paying $'
               + BUNNY_ALT_FLOOR.toFixed(2)+'+.')
-    + (WRAP_CFG[key] ? (function(){
-        var tm = tackleMachines(key, g);
-        return sigTile('ti-hammer', 'Tackle Machines', 'Tackle volume into an opponent that concedes it',
-          tm.rows.map(function(r){ return tackleRow(key, r); }), tm.why);
-      })() : '')
     + sigTile('ti-ghost-2', 'Bogey', 'Never cleared this line against them',
               h2hSignals(key, g, 'bogey').map(function(r){ return h2hSigRow(key, r); }),
               'No player has a posted under they have never cleared in '+H2H_MIN_BOGEY
-              + '+ meetings with this opponent.')
-    + nflSignals(key, g)
-    + '<div class="dayband"><span>Form &amp; Matchups</span></div>'
-    + radarSection(key, g)
-    + coverageSection(key, g)
-    + usageSection(key, g)
-    + sigTile('ti-trending-up', 'Form Alerts', 'Running hot or cold against their own season',
+              + '+ meetings with this opponent.');
+  var nfl = nflSignals(key, g);
+  var reads = radarSection(key, g) + coverageSection(key, g) + usageSection(key, g);
+  var form = sigTile('ti-trending-up', 'Form Alerts', 'Running hot or cold against their own season',
               formAlerts(key, g).map(function(r){ return formRow(key, r); }),
               'No priced player is '+Math.round(ALERT_THRESHOLD*100)+'%+ above or below their season '
-              + 'average on a market that carries enough volume to mean anything.')
-    + nflSignals(key, g);
+              + 'average on a market that carries enough volume to mean anything.');
+  return sigBand('Degen Signals \u00b7 Picks', picks)
+    + nfl
+    + sigBand('Form &amp; Matchups', reads + form)
+    + sigQuietNote();
 }
-
 function secNote(title, why){
   return '<div class="dayband"><span>'+title+'</span></div>'
     + '<div class="sec-miss"><i class="ti ti-alert-triangle"></i>'+esc(why)+'</div>';
