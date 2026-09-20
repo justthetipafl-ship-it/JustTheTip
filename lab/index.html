@@ -2434,7 +2434,13 @@ var STREAK_MIN = 4, STREAK_PIPS = 8, SIG_MAX_ROWS = 8;
 // EPL row that HAS coverage (passes is recorded for anyone who played) but no shots means the
 // player took none - a real zero. A row with no coverage at all is genuinely unverifiable.
 // Sports with no entry here keep the strict reading: null = can't verify.
-var COVER_FIELD = { epl: 'passes' };
+// A null is not always a gap. EPL's feed omits a stat the player didn't record; NFL leaves
+// longRec/longRush/expRec null when a player took the field and simply didn't produce one.
+// Both are zeros, and counting them as missing inflates every hit rate built on them - NFL's
+// longRec is non-null on just 217 of 1,073 rows, so Chunk Plays was grading 20% of the games.
+// `min` guards the NFL case: snapPct is present on every row INCLUDING players who never
+// dressed, so a zero snap share still means "no game", not "a zero".
+var COVER_FIELD = { epl: { field:'passes' }, nfl: { field:'snapPct', min:0.1 } };
 // A posted market does not always share its name with the gamelog field. NFL's "sacks" market
 // is priced for pass RUSHERS (Derrick Brown, Von Miller), but the gamelog's `sacks` column is
 // sacks TAKEN by the quarterback - grading one against the other made every QB a sack artist
@@ -2446,8 +2452,11 @@ function statOf(key, row, mkt){
   var v = row ? row[mkt] : null;
   if (v != null && isFinite(+v)) return +v;
   var cf = COVER_FIELD[key];
-  if (cf && row && row[cf] != null && isFinite(+row[cf])) return 0;   // covered, stat absent = zero
-  return null;                                                        // not covered = unverifiable
+  if (!cf || !row) return null;
+  var cv = row[cf.field];
+  if (cv == null || !isFinite(+cv)) return null;                      // no coverage: unverifiable
+  if (cf.min != null && +cv < cf.min) return null;                    // on the sheet but never played
+  return 0;                                                           // played, didn't record one
 }
 // Production runs one floor for every signal (SIG_ODDS_FLOOR = 1.60, enforced in
 // collectOU). Streakers gets its own, lower one: the play here is a live run, not a
@@ -2695,6 +2704,10 @@ function eliteRow(key, r){
    AFL gamelogs carry no opponent field, so it's derived from MatchId - both teams
    in a match share one - rather than skipping the sport.                            */
 var H2H_MIN_BUNNY = 3, H2H_MIN_BOGEY = 2, H2H_MIN_OTHER = 2;
+// A bunny wants the line the book actually hangs on him. Where a sport posts no two-way market
+// at all (EPL) or only one (AFL: disposals), fall back to the alt ladder - but only at $1.75+,
+// so the fallback can't quietly become "he clears a 0.5 rung at $1.02".
+var BUNNY_ALT_FLOOR = 1.75;
 function oppIndex(key){
   var S = state.sports[key];
   if (S.idx.matchOpp) return S.idx.matchOpp;
@@ -2714,6 +2727,23 @@ function oppOf(key, r){
   var pair = oppIndex(key)[id]; if (!pair || pair.length < 2) return null;
   var mine = r.Team || r.team;
   return normTeam(pair[0]) === normTeam(mine) ? pair[1] : pair[0];
+}
+// The main posted line, from a two-way row only.
+function twoWayMarketCount(key){
+  var d = state.sports[key].data.odds || {};
+  var rows = (d.books && d.books.length ? d.books : (d.lines || []));
+  var seen = {};
+  rows.forEach(function(r){ if (r && r.over != null && r.market) seen[r.market] = 1; });
+  return Object.keys(seen).length;
+}
+function twoWayOverFor(key, name, mkt){
+  var d = state.sports[key].data.odds || {};
+  var rows = (d.books && d.books.length ? d.books : (d.lines || [])), out = [];
+  rows.forEach(function(r){
+    if (!r || r.player !== name || r.market !== mkt || r.over == null || r.line == null) return;
+    out.push({ line:+r.line, price:+r.over, book:r.book, alt:false });
+  });
+  return out.sort(function(a,b){ return b.line - a.line; });
 }
 function underCandidates(key, name, mkt){
   // Unders live only on two-way rows - no alt ladder in any sport carries one - so a Bogey
@@ -2768,8 +2798,20 @@ function h2hSignals(key, g, kind){
         // the side being described. Bunnies price off the over, Bogeys off the under - and an
         // under only exists on a two-way row, so a sport with no two-way market has no Bogeys.
         var od = null, lineFlag = false;
-        var cands = kind === 'bunny' ? streakCandidates(key, p.name, k) : underCandidates(key, p.name, k);
-        var floor = kind === 'bunny' ? STREAK_ODDS_FLOOR : SIG_ODDS_FLOOR;
+        // Posted two-way lines only - no alt rungs. A bunny is "he clears the line they actually
+        // hang on him against this opponent", not "there exists a rung on the ladder he clears".
+        var cands, floor;
+        if (kind === 'bunny'){
+          cands = twoWayOverFor(key, p.name, k);
+          floor = STREAK_ODDS_FLOOR;
+          if (!cands.length){                              // no posted two-way line for this market
+            cands = streakCandidates(key, p.name, k);
+            floor = BUNNY_ALT_FLOOR;
+          }
+        } else {
+          cands = underCandidates(key, p.name, k);
+          floor = SIG_ODDS_FLOOR;
+        }
         for (var ci=0; ci<cands.length; ci++){
           var c = cands[ci];
           if (c.price < floor) continue;
@@ -3134,9 +3176,9 @@ function formRow(key, r){
    because the data behind them is NFL-only: red-zone usage, explosive-play streaks, team
    sacks/interceptions allowed, and the per-fixture weather file.                          */
 var CHUNK_DEFS = [
-  { k:'longRec',  l:'Longest Rec',  thr:20, pos:['WR','TE','RB'] },
-  { k:'longRush', l:'Longest Rush', thr:12, pos:['RB','QB'] },
-  { k:'longComp', l:'Longest Comp', thr:35, pos:['QB'] }
+  { k:'longRec',  l:'Longest Rec',  thr:20, pos:['WR','TE','RB'], exp:'expRec',  style:'aDot', styleL:'aDot' },
+  { k:'longRush', l:'Longest Rush', thr:12, pos:['RB','QB'],      exp:'expRush', style:'ypc',  styleL:'yds/carry' },
+  { k:'longComp', l:'Longest Comp', thr:35, pos:['QB'],           exp:'expRec',  style:null,   styleL:null }
 ];
 var CHUNK_HIT = 0.70, CHUNK_MIN_G = 6, WX_WIND = 25;
 var TUDDY_STATS = {
@@ -3221,11 +3263,26 @@ function nflChunk(key, g){
         var rate = hits / vals.length;
         if (rate < CHUNK_HIT) return;
         var dr = dvpRankFor(key, opp, p.position, def.k);
-        if (dr && dr.pct <= -12) return;                   // production clamp: they smother explosives
+        // production's clamp reads the EXPLOSIVE dvp, not the longest-play dvp: a defence that
+        // gives up few explosives makes a long-play history close to meaningless
+        var expDvp = dvpRankFor(key, opp, p.position, def.exp);
+        if (expDvp && expDvp.pct <= -12) return;
+        // the player's own explosive rate and style, both of which the data carries and the
+        // first cut ignored entirely
+        var expVals = [];
+        sortLogsDesc(((S.idx.logsByName || {})[p.name] || []).slice()).forEach(function(r){
+          var v = statOf(key, r, def.exp); if (v != null) expVals.push(v);
+        });
+        var expRate = expVals.length
+          ? expVals.slice(0, 10).reduce(function(a,b){ return a+b; }, 0) / Math.min(10, expVals.length) : null;
+        var style = def.style && p[def.style] != null ? +p[def.style] : null;
         out.push({ name:p.name, p:p, opp:opp, def:def, line:line, hits:hits, n:vals.length, rate:rate,
-                   last:vals.slice(0, 6), dvp:dr, price:(od && od.over != null ? +od.over : null),
+                   last:vals.slice(0, 8), dvp:dr, expDvp:expDvp, expRate:expRate, style:style,
+                   avg:vals.reduce(function(a,b){ return a+b; }, 0) / vals.length,
+                   price:(od && od.over != null ? +od.over : null),
                    book:(od ? od.book : null), posted:!!(od && od.line != null),
-                   score: rate*100 + (dr ? dr.pct*0.3 : 0) });
+                   score: rate*100 + (expDvp ? expDvp.pct*0.6 : 0) + (dr ? dr.pct*0.3 : 0)
+                          + (expRate != null ? expRate*4 : 0) });
       });
     });
   });
@@ -3412,17 +3469,25 @@ function nflTuddyRow(key, r){
     + '<div class="gl-right"><div class="gl-ev pos">'+r.dvp.rank+'</div><div class="gl-evl">TD RANK</div></div></div>';
 }
 function nflChunkRow(key, r){
-  var pips = '<div class="stk-pips">'+r.last.slice().reverse().map(function(v){
-    return '<span class="stk-pip'+(v >= r.line ? '' : ' miss')+'"><i style="height:'
-      + Math.max(8, Math.min(100, Math.round(v / Math.max(r.line*2, 1) * 100)))+'%"></i></span>'; }).join('')+'</div>';
+  var seq = r.last.slice().reverse();
+  var mx = Math.max.apply(null, seq.concat([r.line])) || 1;
+  var pips = '<div class="stk-pips">'+seq.map(function(v){
+      return '<span class="stk-pip'+(v >= r.line ? '' : ' miss')+'"><i style="height:'
+        + Math.max(6, Math.round(v / mx * 100))+'%"></i></span>'; }).join('')+'</div>'
+    + '<div class="stk-vals">'+seq.map(function(v){
+        return '<span>'+(v % 1 ? v.toFixed(1) : v)+'</span>'; }).join('')+'</div>';
   // shares the streak-row look, but must be distinguishable from Streakers in the DOM
   return '<div class="stk-row chunk-row" onclick="LAB.player(\'' + key + '\',\'' + esc(r.name).replace(/'/g,"\\'") + '\')">'
     + playerImgP(key, r.name, 28)
     + '<div class="stk-left"><div class="stk-nm"><b>'+esc(r.name)+'</b><span class="stk-tag">'
       + esc((posShortP(r.p) ? posShortP(r.p)+' \u00b7 ' : '')+abbrOf(key, r.p.team))+'</span></div>'
     + '<div class="stk-bet">'+r.line+'+ '+esc(r.def.l)+' \u00b7 v '+esc(abbrOf(key, r.opp))
-      + (r.posted ? ' \u00b7 posted' : ' \u00b7 no market, '+r.def.thr+'+ used')
-      + (r.dvp ? ' \u00b7 DVP '+(r.dvp.pct > 0 ? '+' : '')+r.dvp.pct.toFixed(0)+'%' : '')+'</div>'
+      + (r.posted ? '' : ' \u00b7 no market, '+r.def.thr+'+ used')
+      + ' \u00b7 avg '+r.avg.toFixed(1)
+      + (r.expRate != null ? ' \u00b7 '+r.expRate.toFixed(1)+' explosive/gm' : '')
+      + (r.style != null ? ' \u00b7 '+r.style.toFixed(1)+' '+esc(r.def.styleL) : '')
+      + (r.expDvp ? ' \u00b7 opp explosives '+(r.expDvp.pct > 0 ? '+' : '')+r.expDvp.pct.toFixed(0)+'%' : '')
+      + '</div>'
     + pips + '</div>'
     + '<div class="stk-right"><div class="stk-hit">'+Math.round(r.rate*100)+'%</div>'
       + '<div class="stk-hitl">'+r.hits+'/'+r.n+' GAMES</div>'
@@ -3565,8 +3630,10 @@ function signalsSection(key, g){
               elite.map(function(r){ return eliteRow(key, r); }), eliteWhy)
     + sigTile('ti-carrot', 'Bunnies', 'Cleared this line in every meeting with them',
               h2hSignals(key, g, 'bunny').map(function(r){ return h2hSigRow(key, r); }),
-              'No player with a posted price has cleared a line in every one of '+H2H_MIN_BUNNY
-              + '+ meetings with this opponent.')
+              'No player has cleared their line in every one of '+H2H_MIN_BUNNY+'+ meetings with '
+              + 'this opponent. Posted two-way lines are used where they exist ('+SPORTS[key].name
+              + ' has '+(twoWayMarketCount(key) || 'none')+'), otherwise an alt rung paying $'
+              + BUNNY_ALT_FLOOR.toFixed(2)+'+.')
     + sigTile('ti-ghost-2', 'Bogey', 'Never cleared this line against them',
               h2hSignals(key, g, 'bogey').map(function(r){ return h2hSigRow(key, r); }),
               'No player has a posted under they have never cleared in '+H2H_MIN_BOGEY
