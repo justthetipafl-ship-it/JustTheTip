@@ -223,7 +223,8 @@
   .sl-chip{font-size:9px;font-weight:800;letter-spacing:.04em;text-transform:uppercase;padding:4px 9px;
     border-radius:999px;border:1px solid var(--border);background:var(--surface-2);color:var(--text-3);cursor:pointer;}
   .sl-chip.on{border-color:var(--accent);color:var(--accent);background:color-mix(in srgb,var(--accent) 12%,transparent);}
-  .sl-win{margin-left:auto;display:flex;gap:4px;}
+  .sl-win{margin-left:auto;display:flex;gap:4px;flex-wrap:wrap;min-width:0;}
+  .sl-chip{white-space:nowrap;max-width:100%;overflow:hidden;text-overflow:ellipsis;}
   .sl-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:8px;margin-bottom:6px;}
   .sl-card{background:var(--surface-2);border:1px solid var(--border);border-radius:10px;padding:10px 12px;}
   .sl-head{display:flex;align-items:center;gap:7px;margin-bottom:7px;}
@@ -555,9 +556,14 @@
   .cmb-overlay{position:fixed;inset:0;z-index:200;background:rgba(0,0,0,.6);display:flex;align-items:flex-end;
     justify-content:center;overscroll-behavior:contain;}
   @media(min-width:600px){ .cmb-overlay{align-items:center;} }
-  .cmb-modal{background:var(--surface);border:1px solid var(--border);border-radius:14px 14px 0 0;width:100%;
-    max-width:560px;max-height:88dvh;display:flex;flex-direction:column;overflow:hidden;
-    padding-bottom:env(safe-area-inset-bottom,0px);}
+  /* on a phone the modal must never exceed the visible viewport: dvh follows the keyboard,
+     and the width caps at the screen so a wide table inside cannot stretch it */
+  .cmb-modal{background:var(--surface);border:1px solid var(--border);border-radius:14px 14px 0 0;
+    width:100%;max-width:min(560px,100vw);max-height:min(88dvh,100%);display:flex;flex-direction:column;
+    overflow:hidden;padding-bottom:env(safe-area-inset-bottom,0px);}
+  .cmb-body{max-width:100%;overflow-x:hidden;}
+  .cmb-body .st-wrap,.cmb-body table{max-width:100%;}
+  .cmb-overlay{padding-top:env(safe-area-inset-top,0px);}
   @media(min-width:600px){ .cmb-modal{border-radius:14px;} }
   .cmb-hdr{display:flex;align-items:center;gap:9px;padding:13px 14px 10px;}
   .cmb-hdr h2{margin:0;font-family:var(--font-display);font-size:15px;font-weight:800;letter-spacing:.02em;}
@@ -715,7 +721,11 @@
   .sig-quiet-row{padding:7px 12px;border-top:1px solid var(--border);font-size:10px;line-height:1.5;}
   .sig-quiet-row b{display:block;font-size:11px;color:var(--text-2);margin-bottom:2px;}
   .sig-quiet-row span{color:var(--text-3);}
-  .deja-ctrl{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-bottom:8px;}
+  .deja-ctrl{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-bottom:8px;max-width:100%;}
+  .deja-ctrl input{min-width:0;background:var(--surface);border:1px solid var(--border);border-radius:6px;
+    color:var(--text);font-family:inherit;font-size:11px;padding:4px 6px;}
+  .deja-step{flex-wrap:wrap;max-width:100%;}
+  .j-wrap{overflow-x:hidden;}
   .deja-step{display:inline-flex;align-items:center;gap:5px;background:var(--surface-2);border:1px solid var(--border);
     border-radius:9px;padding:4px 8px;font-size:10px;color:var(--text-3);}
   .deja-step button{background:var(--surface);border:1px solid var(--border);color:var(--text);width:24px;height:24px;
@@ -940,7 +950,7 @@ var state = {
              rdrPick: null, ulMk: 'snapPct', ulWin: 'l5',
              dvMeets: 3, dvLegs: 3, jMkt: null, jLine: 'auto', jSel: {},
              jHide: {}, jMin: null, jMax: null, jFocus: null,
-             dvMkts: null, dvHail: false, dvDrop: {}, dvMin: null, dvMax: null,
+             dvMkts: null, dvHail: false, dvDrop: {}, dvMin: null, dvMax: null, dvBook: null,
              stSport: null, stMode: 'scanner', stMkt: {}, stPos: {},
              stQ: '', stPosF: '', stWin: 'season', stSort: null, stDir: -1, stAllowed: false,
              stTeamSort: null, stDvpSort: null }   // filter + current page + market per sport
@@ -1154,7 +1164,7 @@ function buildIndexes(key){
   players.forEach(function(p){ if (p && p.name) ix.byName[p.name] = p; });
 
   ix.lgAvg = {}; ix.winAvg = {}; ix.matchOpp = null; ix.fs = null;
-  ix.pricedSet = null; ix.oddsName = null; ix.vac = null;
+  ix.pricedSet = null; ix.oddsName = null; ix.vac = null; ix.bookList = null;
   var logs = asArray(d.gamelogs) || [];
   ix.logsByName = {};
   logs.forEach(function(r){
@@ -4304,10 +4314,15 @@ function dvLegs(key, g, meets){
     var opp = (team === g.home) ? g.away : g.home;
     playersOnTeam(key, team).forEach(function(p){
       if (!isPlayingP(key, p.name, team) || !hasAnyOddsFor(key, p.name)) return;
+      // A player's history against this opponent only counts if he was wearing THIS shirt.
+      // Jauan Jennings faced the Bears three times for San Francisco and once for Minnesota;
+      // counting the 49ers games as Vikings meetings invents a streak that never existed.
       var rows = ((S.idx.logsByName || {})[p.name] || []).filter(function(r){
         var d = String(r.date || r.Date || '').slice(0, 10)
           || ((r.Year||r.year)+'|'+(r.RoundName != null ? r.RoundName : r.Week));
-        return dset[d];
+        if (!dset[d]) return false;
+        var worn = r.Team || r.team;
+        return !worn || normTeam(worn) === normTeam(team);
       });
       if (rows.length < meets) return;
       var only = state.view.dvMkts;
@@ -4319,7 +4334,7 @@ function dvLegs(key, g, meets){
         var lo = Math.min.apply(null, vals);
         if (!(lo > 0)) return;
         // the line he cleared every time, priced where the book has it
-        var od = bestPriceFor(key, p.name, m[0], lo - 0.5);
+        var od = bookPriceFor(key, p.name, m[0], lo - 0.5, state.view.dvBook);
         if (!od || od.price < STREAK_ODDS_FLOOR) return;
         var lo2 = state.view.dvMin, hi2 = state.view.dvMax;
         if (lo2 != null && od.price < lo2) return;
@@ -4356,6 +4371,11 @@ function dejaVuSection(key, g){
       + '" placeholder="min" style="width:52px" onchange="LAB.dvOdds(\'min\',this.value)">'
       + '<input type="number" step="0.05" min="1" value="'+(state.view.dvMax != null ? state.view.dvMax : '')
       + '" placeholder="max" style="width:52px" onchange="LAB.dvOdds(\'max\',this.value)"></span></div>'
+    + '<div class="sl-bar">'
+      + '<button class="sl-chip'+(!state.view.dvBook ? ' on' : '')+'" onclick="LAB.dvBook(\'\')">Best price</button>'
+      + booksFor(key).slice(0, 10).map(function(b){
+          return '<button class="sl-chip'+(state.view.dvBook === b ? ' on' : '')+'" onclick="LAB.dvBook(\''
+            + esc(b).replace(/'/g,"\\'")+'\')">'+esc(b)+'</button>'; }).join('')+'</div>'
     + '<div class="sl-bar">'
       + '<button class="sl-chip'+(!only || !only.length ? ' on' : '')+'" onclick="LAB.dvMkt(null)">All markets</button>'
       + allMkts.slice(0, 8).map(function(m){
@@ -4394,7 +4414,10 @@ function dejaVuSection(key, g){
         + '<div class="cmb-sum-row"><span>Edge</span><b class="'+(comb*joint - 1 > 0 ? 'cmb-vscore good' : 'cmb-vscore bad')
         + '" style="font-size:14px">'+((comb*joint - 1) > 0 ? '+' : '')+Math.round((comb*joint-1)*100)+'%</b></div>' : '')
       + '<div class="cmb-corr">Every leg cleared its line in all '+meets+' straight meetings between these '
-      + 'clubs. Lines are each player\u2019s minimum across those games, so the record held every time.</div>'
+      + 'clubs, in this shirt \u2014 games played for a former club do not count. Lines are each '
+      + 'player\u2019s minimum across those games, so the record held every time.'
+      + (state.view.dvBook ? ' Priced at '+esc(state.view.dvBook)+', so the whole multi is placeable there.'
+         : ' Best price per leg \u2014 pick a book to make it placeable as one ticket.')+'</div>'
       + '<button class="pc-add" onclick="LAB.dvAdd()">Send to Check My Multi</button></div>';
 }
 /* JUPITER ------------------------------------------------------------------------
@@ -4484,10 +4507,10 @@ function jupiterSection(key, g){
     + '<div class="sl-bar">'
       + [g.home, g.away].map(function(t){
           return '<button class="sl-chip'+(hide[t] ? '' : ' on')+'" onclick="LAB.jTeam(\''
-            + esc(t).replace(/'/g,"\\'")+'\')">'+esc(abbrOf(key, t))+'</button>'; }).join('')
-      + '<span class="sl-win">'+mkts.slice(0, 8).map(function(m){
+            + esc(t).replace(/'/g,"\\'")+'\')">'+esc(abbrOf(key, t))+'</button>'; }).join('')+'</div>'
+    + '<div class="sl-bar j-mkts">'+mkts.slice(0, 8).map(function(m){
           return '<button class="sl-chip'+(m[0] === data.mkt ? ' on' : '')+'" onclick="LAB.jMkt(\''+m[0]+'\')">'
-            + esc(m[1])+'</button>'; }).join('')+'</span></div>'
+            + esc(m[1])+'</button>'; }).join('')+'</div>'
     + '<div class="deja-ctrl">'
       + '<span class="deja-step">Line<button onclick="LAB.jLine(-1)">\u2212</button><b>'+lineTxt+'</b>'
         + '<button onclick="LAB.jLine(1)">+</button>'
@@ -5296,6 +5319,29 @@ function hasAnyOddsFor(key, name){
     S.idx.pricedSet = set;
   }
   return !!S.idx.pricedSet[oddsPlayer(key, name)];
+}
+// Every book that prices anything in this sport, for the single-book filters.
+function booksFor(key){
+  var S = state.sports[key];
+  if (!S.idx.bookList){
+    var seen = {};
+    oddsRowsAll(key).forEach(function(r){ if (r && r.book && r.over != null) seen[r.book] = 1; });
+    S.idx.bookList = Object.keys(seen).sort();
+  }
+  return S.idx.bookList;
+}
+// Price at one named book. An SGM you cannot place at a single book is not a real bet, which is
+// why production priced Deja Vu per book rather than taking the best of each leg.
+function bookPriceFor(key, name, mkt, line, book){
+  if (!book) return bestPriceFor(key, name, mkt, line);
+  name = oddsPlayer(key, name);
+  var best = null;
+  oddsRowsAll(key).forEach(function(r){
+    if (!r || r.player !== name || r.market !== mkt || r.over == null || r.book !== book) return;
+    if (line != null && Math.ceil(+r.line) !== Math.ceil(line)) return;
+    if (!best || +r.over > best.price) best = { price:+r.over, line:+r.line, book:r.book };
+  });
+  return best;
 }
 function bestPriceFor(key, name, mkt, line){
   name = oddsPlayer(key, name);   // books spell accents differently to players.json
@@ -6721,6 +6767,7 @@ window.LAB = {
     state.view.dvMkts = cur.length ? cur : null;
     render();
   },
+  dvBook: function(b){ state.view.dvBook = b || null; state.view.dvDrop = {}; render(); },
   dvOdds: function(which, v){
     var n = parseFloat(v);
     state.view[which === 'min' ? 'dvMin' : 'dvMax'] = isFinite(n) && n > 0 ? n : null;
