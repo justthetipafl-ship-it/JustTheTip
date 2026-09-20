@@ -1060,7 +1060,8 @@ function buildIndexes(key){
   ix.byName = {};
   players.forEach(function(p){ if (p && p.name) ix.byName[p.name] = p; });
 
-  ix.lgAvg = {}; ix.winAvg = {}; ix.matchOpp = null; ix.fs = null;   // derived caches die with the index
+  ix.lgAvg = {}; ix.winAvg = {}; ix.matchOpp = null; ix.fs = null;
+  ix.pricedSet = null; ix.oddsName = null;
   var logs = asArray(d.gamelogs) || [];
   ix.logsByName = {};
   logs.forEach(function(r){
@@ -2469,6 +2470,7 @@ var BAT_ONLY = { H:1, TB:1, HR:1, RBI:1, R:1, SB:1 }, ARM_ONLY = { K:1 };
 // is the HARDEST line the player is still clearing - picking the lowest rung would hand
 // back "45 straight over 0.5 fouls", which is a line choice, not a trend.
 function streakCandidates(key, name, mkt){
+  name = oddsPlayer(key, name);   // books spell accents differently to players.json
   var out = [], seen = {};
   var od = oddsForP(key, name, mkt);
   if (od && od.line != null && od.over != null){
@@ -2668,9 +2670,11 @@ function eliteMatchups(key, g){
         var key2 = p.name + '|' + k;
         if (seen[key2]) return;
         seen[key2] = 1;
+        var entry = eliteEntry(key, p.name, k);
+        if (!entry) return;                                // unpriced: either no market or not playing
         out.push({ name:p.name, team:team, opp:opp, pos:posShortP(p), mkt:k, label:m[1],
                    val:lg[p.name].avg, games:lg[p.name].games, window:lg._window,
-                   lgRank:i+1, dvp:dr, entry:eliteEntry(key, p.name, k) });
+                   lgRank:i+1, dvp:dr, entry:entry });
       });
   });
   out.sort(function(a,b){
@@ -2737,6 +2741,7 @@ function twoWayMarketCount(key){
   return Object.keys(seen).length;
 }
 function twoWayOverFor(key, name, mkt){
+  name = oddsPlayer(key, name);   // books spell accents differently to players.json
   var d = state.sports[key].data.odds || {};
   var rows = (d.books && d.books.length ? d.books : (d.lines || [])), out = [];
   rows.forEach(function(r){
@@ -2746,6 +2751,7 @@ function twoWayOverFor(key, name, mkt){
   return out.sort(function(a,b){ return b.line - a.line; });
 }
 function underCandidates(key, name, mkt){
+  name = oddsPlayer(key, name);   // books spell accents differently to players.json
   // Unders live only on two-way rows - no alt ladder in any sport carries one - so a Bogey
   // can only be priced where a posted under exists. EPL has none at all today.
   var d = state.sports[key].data.odds || {}, rows = (d.books && d.books.length ? d.books : (d.lines || [])), out = [];
@@ -3103,6 +3109,7 @@ function formAlerts(key, g){
     var opp = (team === g.home) ? g.away : g.home;
     playersOnTeam(key, team).forEach(function(p){
       if (!p || !p.name || !isPlayingP(key, p.name, team)) return;
+      if (!hasAnyOddsFor(key, p.name)) return;             // no price anywhere: not in this game
       var all = sortLogsDesc(((S.idx.logsByName || {})[p.name] || []).slice());
       var cur = all.filter(function(r){ return (+(r.Year||r.year)||0) === season; });
       if (cur.length < ALERT_MIN_L3) return;
@@ -3250,6 +3257,7 @@ function nflChunk(key, g){
     var opp = (team === g.home) ? g.away : g.home;
     playersOnTeam(key, team).forEach(function(p){
       if (!p || !isPlayingP(key, p.name, team)) return;
+      if (!hasAnyOddsFor(key, p.name)) return;             // not priced anywhere: not playing
       CHUNK_DEFS.forEach(function(def){
         if (def.pos.indexOf(p.position) < 0) return;
         var vals = [];
@@ -3619,7 +3627,8 @@ function signalsSection(key, g){
     ? SPORTS[key].name+' config.js lists no elite or DVP stats, so there is nothing to rank on.'
     : (!(asArray(S.data.dvp)||[]).length
         ? 'dvp.json returned nothing for '+SPORTS[key].name+', so no defence can be graded.'
-        : 'No league top-'+ELITE_TOP_N+' player in this fixture draws a bottom-'+ELITE_DVP_GATE+' defence for their stat.');
+        : 'No league top-'+ELITE_TOP_N+' player in this fixture draws a bottom-'+ELITE_DVP_GATE
+          + ' defence for their stat at a priced line.');
   // Two bands: things with a price attached, and things that only tell you something.
   return '<div class="dayband"><span>Degen Signals \u00b7 Picks</span></div>'
     + ouTile(key, g, 'over')
@@ -3641,8 +3650,8 @@ function signalsSection(key, g){
     + '<div class="dayband"><span>Form &amp; Matchups</span></div>'
     + sigTile('ti-trending-up', 'Form Alerts', 'Running hot or cold against their own season',
               formAlerts(key, g).map(function(r){ return formRow(key, r); }),
-              'No player is '+Math.round(ALERT_THRESHOLD*100)+'%+ above or below their season average '
-              + 'on a market that carries enough volume to mean anything.')
+              'No priced player is '+Math.round(ALERT_THRESHOLD*100)+'%+ above or below their season '
+              + 'average on a market that carries enough volume to mean anything.')
     + nflSignals(key, g);
 }
 
@@ -4095,6 +4104,7 @@ function cmbLegLabel(l){
    Written generically so every sport gets it. Where a sport genuinely lacks the data - MLB has
    no positional DVP, EPL posts no two-way lines - the block says so rather than vanishing.     */
 function cmbLadder(key, name, mkt){
+  name = oddsPlayer(key, name);   // books spell accents differently to players.json
   var d = state.sports[key].data.odds || {}, seen = {}, out = [];
   var two = (d.books && d.books.length ? d.books : (d.lines || []));
   two.concat(d.alt || []).forEach(function(r){
@@ -4107,7 +4117,42 @@ function cmbLadder(key, name, mkt){
 }
 // Best price for a market, wherever it lives. anytimeTd is alt-only in NFL (6,988 rungs, no
 // two-way row at all), so an oddsFor() lookup alone returns nothing and the tile shows no price.
+// Books only price players they expect to take the field, so "has a price in any market" is a
+// better availability gate than the lineup files - lineups.json covers skill positions only in
+// NFL, and EPL has none at all, which is how rested and injured players kept appearing.
+// players.json says "Joao Gomes", the book says "Jo\u00e3o Gomes". Fold accents and punctuation
+// so a priced player is never treated as unpriced - which, now that a price gates availability,
+// would quietly drop him from every signal.
+function foldName(n){
+  return String(n || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+function oddsRowsAll(key){
+  var d = state.sports[key].data.odds || {};
+  return (d.books && d.books.length ? d.books : (d.lines || [])).concat(d.alt || []);
+}
+function oddsPlayer(key, name){
+  var S = state.sports[key];
+  if (!S.idx.oddsName){
+    var m = {};
+    oddsRowsAll(key).forEach(function(r){ if (r && r.player) m[foldName(r.player)] = r.player; });
+    S.idx.oddsName = m;
+  }
+  return S.idx.oddsName[foldName(name)] || name;
+}
+function hasAnyOddsFor(key, name){
+  var S = state.sports[key];
+  if (!S.idx.pricedSet){
+    var set = {}, d = S.data.odds || {};
+    (d.books && d.books.length ? d.books : (d.lines || [])).concat(d.alt || []).forEach(function(r){
+      if (r && r.player && r.over != null) set[r.player] = 1;
+    });
+    S.idx.pricedSet = set;
+  }
+  return !!S.idx.pricedSet[oddsPlayer(key, name)];
+}
 function bestPriceFor(key, name, mkt, line){
+  name = oddsPlayer(key, name);   // books spell accents differently to players.json
   var od = oddsForP(key, name, mkt);
   if (od && od.over != null && (line == null || Math.ceil(+od.line) === Math.ceil(line)))
     return { price:+od.over, line:+od.line, book:od.book };
@@ -4121,6 +4166,7 @@ function bestPriceFor(key, name, mkt, line){
   return best;
 }
 function cmbPosted(key, name, mkt){
+  name = oddsPlayer(key, name);   // books spell accents differently to players.json
   var d = state.sports[key].data.odds || {};
   var two = (d.books && d.books.length ? d.books : (d.lines || []));
   for (var i=0;i<two.length;i++){
@@ -4246,6 +4292,7 @@ function firstScorerRead(key, p){
            teamRate:teamRate, share:share, n:n, teamTot:teamTot, teamGames:tg, scorers:scorers };
 }
 function fsPrice(key, name){
+  name = oddsPlayer(key, name);   // books spell accents differently to players.json
   var d = state.sports[key].data.odds || {};
   var rows = (d.books && d.books.length ? d.books : (d.lines || [])).concat(d.alt || []);
   var best = null;
