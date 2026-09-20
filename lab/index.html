@@ -574,6 +574,25 @@
     border-radius:4px;background:var(--surface-3,var(--border));color:var(--text-3);overflow:hidden;
     text-overflow:ellipsis;white-space:nowrap;}
   .cmb-hist-pip.on{background:color-mix(in srgb,var(--accent) 18%,transparent);color:var(--accent);font-weight:700;}
+  .mb-modes{display:flex;flex-wrap:wrap;gap:4px;margin-bottom:8px;}
+  .mb-fixsel{width:100%;background:var(--surface-2);border:1px solid var(--border);border-radius:9px;
+    padding:9px 11px;color:var(--text);font-size:12px;font-family:inherit;margin-bottom:8px;}
+  .mb-auto{width:100%;display:flex;align-items:center;justify-content:center;gap:6px;background:var(--accent);
+    color:#08140c;border:0;border-radius:9px;padding:10px;font-family:var(--font-display);font-weight:800;
+    font-size:12px;cursor:pointer;margin-bottom:9px;}
+  .mb-card{display:flex;align-items:center;gap:9px;background:var(--surface-2);border:1px solid var(--border);
+    border-radius:9px;padding:9px 11px;margin-bottom:6px;cursor:pointer;}
+  .mb-card.on{border-color:var(--accent);background:color-mix(in srgb,var(--accent) 10%,transparent);}
+  .mb-card .fxr-logo,.mb-card .fxr-logo-ph{width:22px;height:22px;margin:0;font-size:8px;}
+  .mb-m{flex:1;min-width:0;}
+  .mb-nm{font-size:12px;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .mb-bet{font-family:var(--font-mono);font-size:10px;color:var(--text-2);margin-top:2px;}
+  .mb-why{font-family:var(--font-mono);font-size:8px;color:var(--text-3);margin-top:3px;
+    overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .mb-px{flex:none;text-align:right;}
+  .mb-px b{display:block;font-family:var(--font-display);font-size:14px;}
+  .mb-px span{display:block;font-family:var(--font-mono);font-size:8px;color:var(--text-3);margin-top:2px;}
+  .mb-ev{color:var(--accent);}
   .cmb-leg-x{background:none;border:0;color:var(--text-3);font-size:17px;cursor:pointer;flex:none;line-height:1;}
   .cmb-sum{background:var(--surface-2);border:1px solid var(--border);border-radius:10px;padding:11px 13px;margin-top:8px;}
   .cmb-sum-row{display:flex;justify-content:space-between;align-items:baseline;padding:4px 0;font-size:11px;}
@@ -753,7 +772,7 @@ var state = {
              slMkt: {}, slWin: 'season', dvpMkt: {}, ppTab: 'form',
              cmbQ: '', cmbSel: null, cmbRecent: [],
              cmbOpen: false, cmbMode: 'single', cmbLegs: [], cmbResult: null, cmbSugOff: false,
-             cmbLadOpen: false }   // filter + current page + market per sport
+             cmbLadOpen: false, mbFix: 0, mbMode: 'value' }   // filter + current page + market per sport
 };
 Object.keys(SPORTS).forEach(function(k){
   state.sports[k] = { data:{}, idx:{teamMap:{}}, status:'idle' };
@@ -3973,13 +3992,181 @@ function cmbSugRefresh(){
   if (!host) return;
   host.innerHTML = cmbSugInner(state.view.cmbQ, host.getAttribute('data-mode') || 'single');
 }
+
+/* MULTI BUILDER ----------------------------------------------------------------
+   Benchmarked on the production builder: the same five ways of generating a leg pool
+   (safest / value / longshot / history vs this opponent / matchup), leg cards you tap into
+   the slip, priced off the real ladder.
+
+   Four things it does that the old one couldn't:
+     - probabilities are the CALIBRATED model, not a raw hit rate, so "90%" means 90%;
+     - value is measured against the book's no-vig fair price where a two-way market exists,
+       not just against the quoted over;
+     - Auto-build picks the combination greedily on CORRELATED joint EV, so it will not hand
+       you three legs from the same team that all die together;
+     - whatever it builds drops into the same slip, so the history backtest and copula in the
+       Multi tab apply to a built multi exactly as to a typed one.                            */
+var MB_MODES = [['safe','Safest'],['value','Value'],['lotto','Longshot'],['hist','History'],['match','Matchup']];
+var MB_MIN_GAMES = 4, MB_MAX_CARDS = 14;
+function mbFixtures(){
+  var out = [];
+  Object.keys(SPORTS).forEach(function(key){
+    if (!state.view.active[key]) return;
+    (asArray(state.sports[key].data.fixture) || []).forEach(function(g, i){
+      if (gameStart(g).ms && gameStart(g).ms < Date.now() - 3*36e5) return;   // done and dusted
+      out.push({ key:key, i:i, g:g });
+    });
+  });
+  return out.slice(0, 40);
+}
+function mbCandidates(key, g, mode){
+  var S = state.sports[key], out = [];
+  var mkts = (S.config || {}).oddsMkts || (S.config || {}).multiMkts || [];
+  [g.away, g.home].forEach(function(team){
+    var opp = (team === g.home) ? g.away : g.home;
+    playersOnTeam(key, team).forEach(function(p){
+      if (!p || !p.name || !isPlayingP(key, p.name, team)) return;
+      var best = null;
+      mkts.forEach(function(m){
+        var k = m[0];
+        if (key === 'mlb'){
+          if (p.role === 'pitch' && BAT_ONLY[k]) return;
+          if (p.role !== 'pitch' && ARM_ONLY[k]) return;
+        }
+        var lg = leagueAvg(key, k)[p.name];
+        if (!lg || lg.games < MB_MIN_GAMES) return;
+        var logs = sortLogsDesc(((S.idx.logsByName || {})[p.name] || []).slice());
+        var vals = [];
+        logs.forEach(function(r){ var v = statOf(key, r, k); if (v != null) vals.push(v); });
+        if (vals.length < 5) return;
+        var h2h = [];
+        logs.forEach(function(r){
+          var o = oppOf(key, r);
+          if (!o || normTeam(o) !== normTeam(opp)) return;
+          var v = statOf(key, r, k); if (v != null) h2h.push(v);
+        });
+        var dr = dvpRankFor(key, opp, p.position || p.pos, k);
+        streakCandidates(key, p.name, k).forEach(function(c){
+          if (c.price == null || c.price < STREAK_ODDS_FLOOR) return;
+          var raw = null;
+          try { raw = S.scoring && S.scoring.prob ? S.scoring.prob(p, k, c.line, opp) : null; } catch(e){}
+          var prob = (raw != null && isFinite(raw)) ? calibrate(key, raw)
+                   : vals.slice(0,10).filter(function(v){ return v > c.line; }).length / Math.min(10, vals.length);
+          if (!(prob > 0)) return;
+          // Tail guard: at a $251 rung the book implies 0.4%. A model claiming 15% there is not
+          // finding value, it is extrapolating past the end of its data. Anything claiming more
+          // than four times the market's own number is thrown out rather than sold as a longshot.
+          var implied = 1 / c.price;
+          if (prob > Math.min(0.97, implied * 4)) return;
+          var ev = prob * (c.price - 1) - (1 - prob);
+          var fair = novigFair(key, p.name, k, c.line, 'over');
+          var l10 = vals.slice(0, 10), hits = l10.filter(function(v){ return v > c.line; }).length;
+          var hHit = h2h.filter(function(v){ return v > c.line; }).length;
+          var why = [], ok2 = false;
+          if (mode === 'safe'){
+            ok2 = (hits === l10.length && l10.length >= 5);
+            why = [hits+'/'+l10.length+' last '+l10.length];
+          } else if (mode === 'value'){
+            var edge = fair != null ? prob - fair : prob - 1/c.price;
+            ok2 = edge >= 0.03;
+            why = [(edge*100).toFixed(0)+'% over '+(fair != null ? 'fair' : 'the quote')];
+          } else if (mode === 'lotto'){
+            ok2 = c.price >= 3 && prob >= 0.15;
+            why = [Math.round(prob*100)+'% at $'+c.price.toFixed(2)];
+          } else if (mode === 'hist'){
+            ok2 = h2h.length >= 2 && hHit / h2h.length >= 0.75 && h2h[0] > c.line;
+            why = [hHit+'/'+h2h.length+' v '+abbrOf(key, opp), 'landed last meeting'];
+          } else if (mode === 'match'){
+            var l5 = vals.slice(0, 5);
+            var l5avg = l5.reduce(function(a,b){ return a+b; }, 0) / Math.max(1, l5.length);
+            ok2 = !!dr && dr.pct >= 8 && l5avg > c.line;
+            why = dr ? ['+'+dr.pct.toFixed(0)+'% DVP', 'L5 '+l5avg.toFixed(1)] : [];
+          }
+          if (!ok2) return;
+          var rank = mode === 'lotto' ? prob * c.price : (mode === 'safe' ? c.price : ev);
+          if (!best || rank > best.rank)
+            best = { key:key, p:p, mkt:k, label:m[1], line:c.line, price:c.price, book:c.book,
+                     prob:prob, ev:ev, opp:opp, team:team, why:why, rank:rank,
+                     id:key+'|'+p.name+'|'+k+'|'+c.line };
+        });
+      });
+      if (best) out.push(best);
+    });
+  });
+  out.sort(function(a,b){ return b.rank - a.rank; });
+  return out.slice(0, MB_MAX_CARDS);
+}
+function mbToLeg(c){
+  return cmbLeg(c.key, c.p, [c.mkt, c.label], c.line, 'over');
+}
+// Greedy on correlated joint EV: each addition is judged on what it does to the WHOLE multi,
+// so a second leg from the same team has to earn its correlation.
+function mbAuto(cands, want){
+  var picked = [], pool = cands.slice(0, 10);
+  for (var step=0; step<want && pool.length; step++){
+    var bestIdx = -1, bestVal = -Infinity;
+    for (var i=0;i<pool.length;i++){
+      var trial = picked.concat([pool[i]]).map(mbToLeg).filter(function(l){ return l.prob != null; });
+      if (trial.length !== picked.length + 1) continue;
+      var joint = cmbJoint(trial);
+      if (joint == null) continue;
+      var price = trial.reduce(function(a,l){ return a * (l.price || 1); }, 1);
+      var val = joint * price - 1;                       // EV per unit staked on the whole multi
+      if (val > bestVal){ bestVal = val; bestIdx = i; }
+    }
+    if (bestIdx < 0) break;
+    picked.push(pool[bestIdx]);
+    pool.splice(bestIdx, 1);
+  }
+  return picked;
+}
+function mbPanel(){
+  var v = state.view;
+  var fixes = mbFixtures();
+  if (!fixes.length) return '<div class="empty" style="padding:18px">No upcoming fixtures in the sports you have on.</div>';
+  var selIdx = Math.min(v.mbFix || 0, fixes.length - 1), f = fixes[selIdx];
+  var S = state.sports[f.key];
+  var h = '<select class="mb-fixsel" onchange="LAB.mbFix(this.value)">'
+    + fixes.map(function(x, i){
+        return '<option value="'+i+'"'+(i===selIdx?' selected':'')+'>'
+          + esc(SPORTS[x.key].name+' \u00b7 '+abbrOf(x.key, x.g.away)+' @ '+abbrOf(x.key, x.g.home))+'</option>';
+      }).join('')+'</select>';
+  var mode = v.mbMode || 'value';
+  h += '<div class="mb-modes">'+MB_MODES.map(function(m){
+    return '<button class="sl-chip'+(m[0]===mode?' on':'')+'" onclick="LAB.mbMode(\''+m[0]+'\')">'
+      + m[1]+'</button>'; }).join('')+'</div>';
+  if (S.t3 !== 'ready'){
+    ensureSport(f.key);
+    return h + '<div class="empty" style="padding:18px">Loading '+esc(SPORTS[f.key].name)+' history\u2026</div>';
+  }
+  var cands = mbCandidates(f.key, f.g, mode);
+  if (!cands.length) return h + '<div class="empty" style="padding:18px">No legs qualify for '
+    + esc((MB_MODES.filter(function(m){ return m[0]===mode; })[0]||['',''])[1])+' on this game.</div>';
+  h += '<button class="mb-auto" onclick="LAB.mbAuto()"><i class="ti ti-wand"></i> Auto-build best 3-leg multi</button>';
+  var inSlip = {};
+  (v.cmbLegs || []).forEach(function(l){ inSlip[l.key+'|'+l.p.name+'|'+l.mkt+'|'+l.line] = 1; });
+  h += cands.map(function(c){
+    var on = !!inSlip[c.id];
+    return '<div class="mb-card'+(on?' on':'')+'" onclick="LAB.mbAdd(\''+esc(c.id).replace(/'/g,"\\'")+'\')">'
+      + teamLogo(c.key, c.team)
+      + '<div class="mb-m"><div class="mb-nm">'+esc(c.p.name)+'</div>'
+      + '<div class="mb-bet">'+Math.ceil(c.line)+'+ '+esc(c.label)+' \u00b7 v '+esc(abbrOf(c.key, c.opp))+'</div>'
+      + '<div class="mb-why">'+esc(c.why.join(' \u00b7 '))+'</div></div>'
+      + '<div class="mb-px"><b>$'+c.price.toFixed(2)+'</b>'
+      + '<span>'+Math.round(c.prob*100)+'% \u00b7 <span class="mb-ev">'
+      + (c.ev > 0 ? '+' : '')+Math.round(c.ev*100)+'%</span></span></div></div>';
+  }).join('');
+  return h;
+}
 function cmbPanel(){
   var v = state.view;
   if (!v.cmbOpen) return '';
   var mode = v.cmbMode || 'single';
   var legs = v.cmbLegs || [];
   var body;
-  if (mode === 'single'){
+  if (mode === 'build'){
+    body = mbPanel();
+  } else if (mode === 'single'){
     var res = v.cmbResult;
     body = '<div class="cmb-in"><input id="cmbInput" placeholder="e.g. Cripps 28+ disposals" '
       + 'value="'+esc(v.cmbQ || '')+'" autocomplete="off" '
@@ -4064,13 +4251,15 @@ function cmbPanel(){
   }
   return '<div class="cmb-overlay" onclick="if(event.target===this)LAB.cmbClose()">'
     + '<div class="cmb-modal"><div class="cmb-hdr"><i class="ti ti-checkbox"></i>'
-    + '<h2>Check My '+(mode === 'multi' ? 'Multi' : 'Bet')+'</h2>'
+    + '<h2>'+(mode === 'build' ? 'Multi Builder' : 'Check My '+(mode === 'multi' ? 'Multi' : 'Bet'))+'</h2>'
     + '<button class="cmb-close" onclick="LAB.cmbClose()">&times;</button></div>'
     + '<div class="cmb-tabs">'
       + '<button class="cmb-tab'+(mode==='single'?' on':'')+'" onclick="LAB.cmbMode(\'single\')">'
       + '<i class="ti ti-target"></i> Single</button>'
       + '<button class="cmb-tab'+(mode==='multi'?' on':'')+'" onclick="LAB.cmbMode(\'multi\')">'
       + '<i class="ti ti-stack-2"></i> Multi'+(legs.length ? ' ('+legs.length+')' : '')+'</button>'
+      + '<button class="cmb-tab'+(mode==='build'?' on':'')+'" onclick="LAB.cmbMode(\'build\')">'
+      + '<i class="ti ti-wand"></i> Build</button>'
     + '</div><div class="cmb-body">'+body+'</div></div></div>';
 }
 function cmbFab(){
@@ -4384,6 +4573,30 @@ window.LAB = {
     render();
   },
   cmbLad: function(open){ state.view.cmbLadOpen = !!open; },
+  mbFix: function(i){ state.view.mbFix = +i; render(); },
+  mbMode: function(m){ state.view.mbMode = m; render(); },
+  mbAdd: function(id){
+    var fixes = mbFixtures(), f = fixes[Math.min(state.view.mbFix || 0, fixes.length - 1)];
+    if (!f) return;
+    var c = mbCandidates(f.key, f.g, state.view.mbMode || 'value').filter(function(x){ return x.id === id; })[0];
+    if (!c) return;
+    var legs = (state.view.cmbLegs || []).slice();
+    var at = -1;
+    legs.forEach(function(l, i){ if (l.key+'|'+l.p.name+'|'+l.mkt+'|'+l.line === id) at = i; });
+    if (at >= 0) legs.splice(at, 1); else legs.push(mbToLeg(c));     // tap again to remove
+    state.view.cmbLegs = legs;
+    render();
+  },
+  mbAuto: function(){
+    var fixes = mbFixtures(), f = fixes[Math.min(state.view.mbFix || 0, fixes.length - 1)];
+    if (!f) return;
+    var cands = mbCandidates(f.key, f.g, state.view.mbMode || 'value');
+    var picked = mbAuto(cands, 3);
+    if (!picked.length) return;
+    state.view.cmbLegs = picked.map(mbToLeg);
+    state.view.cmbMode = 'multi';                       // straight to the analysis
+    render();
+  },
   cmbLine: function(line){
     var r = state.view.cmbResult;
     if (!r || !r.leg) return;
