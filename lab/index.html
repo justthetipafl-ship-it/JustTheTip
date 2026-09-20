@@ -593,6 +593,27 @@
   .mb-px b{display:block;font-family:var(--font-display);font-size:14px;}
   .mb-px span{display:block;font-family:var(--font-mono);font-size:8px;color:var(--text-3);margin-top:2px;}
   .mb-ev{color:var(--accent);}
+  .st-bar{display:flex;flex-wrap:wrap;gap:4px;align-items:center;margin-bottom:8px;}
+  .st-seg{display:flex;gap:3px;background:var(--surface-2);padding:3px;border-radius:8px;margin-left:auto;}
+  .st-seg button{background:transparent;border:0;color:var(--text-3);font-family:var(--font-display);
+    font-weight:800;font-size:11px;padding:6px 11px;border-radius:6px;cursor:pointer;}
+  .st-seg button.on{background:var(--surface);color:var(--text);}
+  .st-tbl{background:var(--surface-2);border:1px solid var(--border);border-radius:10px;overflow:hidden;}
+  .st-hd,.st-row{display:flex;align-items:center;gap:8px;padding:8px 11px;}
+  .st-hd{font-size:8px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:var(--text-3);
+    border-bottom:1px solid var(--border);}
+  .st-row{border-top:1px solid var(--border);cursor:pointer;}
+  .st-row:first-of-type{border-top:0;}
+  .st-rk{width:18px;flex:none;font-family:var(--font-mono);font-size:9px;color:var(--text-3);}
+  .st-who{flex:1;min-width:0;}
+  .st-who b{display:block;font-size:11px;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .st-who span{font-family:var(--font-mono);font-size:8px;color:var(--text-3);}
+  .st-n{width:46px;flex:none;text-align:right;font-variant-numeric:tabular-nums;font-size:12px;font-weight:800;}
+  .st-n.dim{font-size:10px;font-weight:600;color:var(--text-3);}
+  .st-px{width:54px;flex:none;text-align:right;font-family:var(--font-mono);font-size:10px;color:var(--accent);}
+  .st-bar-in{flex:1;height:4px;border-radius:2px;background:var(--surface-3,var(--border));overflow:hidden;min-width:40px;}
+  .st-bar-in i{display:block;height:100%;background:var(--accent);}
+  .st-bar-in i.tough{background:#f97316;}
   .cmb-leg-x{background:none;border:0;color:var(--text-3);font-size:17px;cursor:pointer;flex:none;line-height:1;}
   .cmb-sum{background:var(--surface-2);border:1px solid var(--border);border-radius:10px;padding:11px 13px;margin-top:8px;}
   .cmb-sum-row{display:flex;justify-content:space-between;align-items:baseline;padding:4px 0;font-size:11px;}
@@ -772,7 +793,8 @@ var state = {
              slMkt: {}, slWin: 'season', dvpMkt: {}, ppTab: 'form',
              cmbQ: '', cmbSel: null, cmbRecent: [],
              cmbOpen: false, cmbMode: 'single', cmbLegs: [], cmbResult: null, cmbSugOff: false,
-             cmbLadOpen: false, mbFix: 0, mbMode: 'value' }   // filter + current page + market per sport
+             cmbLadOpen: false, mbFix: 0, mbMode: 'value',
+             stSport: null, stMode: 'players', stMkt: {}, stPos: {} }   // filter + current page + market per sport
 };
 Object.keys(SPORTS).forEach(function(k){
   state.sports[k] = { data:{}, idx:{teamMap:{}}, status:'idle' };
@@ -4268,6 +4290,114 @@ function cmbFab(){
     + '<i class="ti ti-checkbox"></i><span class="cmb-lbl">Check My Bet</span>'
     + (n ? '<span class="cmb-badge">'+n+'</span>' : '')+'</button>';
 }
+
+/* STATS / DVP -------------------------------------------------------------------
+   The standalone board production has: every player ranked on a market, and every defence
+   ranked on what it concedes by position. Scoped to one sport at a time because the markets
+   differ; everything reads through the same statOf / leagueAvg / dvpBoard the signals use,
+   so a number here and a number in a tile are the same number.                              */
+function statsPage(){
+  var v = state.view;
+  var keys = Object.keys(SPORTS).filter(function(k){ return v.active[k]; });
+  if (!keys.length) return '<div class="empty"><i class="ti ti-ban"></i>No sports switched on.</div>';
+  var key = keys.indexOf(v.stSport) >= 0 ? v.stSport : keys[0];
+  var S = state.sports[key];
+  var mode = v.stMode || 'players';
+  var h = '<div class="st-bar">'
+    + keys.map(function(k){
+        return '<button class="sl-chip'+(k===key?' on':'')+'" onclick="LAB.stSport(\''+k+'\')">'
+          + esc(SPORTS[k].name)+'</button>'; }).join('')
+    + '<span class="st-seg">'
+      + '<button class="'+(mode==='players'?'on':'')+'" onclick="LAB.stMode(\'players\')">Players</button>'
+      + '<button class="'+(mode==='dvp'?'on':'')+'" onclick="LAB.stMode(\'dvp\')">DVP</button>'
+    + '</span></div>';
+  if (S.status !== 'ready') return h + '<div class="empty"><i class="ti ti-loader"></i>Loading\u2026</div>';
+  if (S.t3 !== 'ready'){
+    ensureSport(key);
+    return h + '<div class="empty"><i class="ti ti-loader"></i>Loading '+esc(SPORTS[key].name)+' history\u2026</div>';
+  }
+  var mkts = (mode === 'dvp')
+    ? ((S.config || {}).dvpStats || (S.config || {}).oddsMkts || [])
+    : ((S.config || {}).oddsMkts || (S.config || {}).multiMkts || []);
+  if (!mkts.length) return h + secNote('Stats', SPORTS[key].name+' config.js lists no markets.');
+  var mkt = (v.stMkt && v.stMkt[key]) || mkts[0][0];
+  if (!mkts.some(function(m){ return m[0] === mkt; })) mkt = mkts[0][0];
+  h += '<div class="sl-bar">'+mkts.slice(0, 10).map(function(m){
+    return '<button class="sl-chip'+(m[0]===mkt?' on':'')+'" onclick="LAB.stMkt(\''+key+'\',\''+m[0]+'\')">'
+      + esc(m[1])+'</button>'; }).join('')+'</div>';
+  var label = mktLabel(key, mkt);
+
+  if (mode === 'dvp'){
+    var board = dvpBoard(key, mkt);
+    var positions = ((S.config || {}).posOrder || []).filter(function(p){ return board[p]; });
+    Object.keys(board).forEach(function(p){ if (positions.indexOf(p) < 0) positions.push(p); });
+    if (!positions.length)
+      return h + secNote('DVP', 'No team records '+esc(label)+' allowed by position in '+SPORTS[key].name+'.');
+    // default to the position with the fullest board: posOrder starts at GK for EPL, where
+    // barely any club records shots conceded to keepers, and a 3-team board looks broken
+    var fullest = positions.slice().sort(function(a,b){ return board[b].length - board[a].length; })[0];
+    var pos = (v.stPos && v.stPos[key]) || fullest;
+    if (positions.indexOf(pos) < 0) pos = fullest;
+    h += '<div class="sl-bar">'+positions.map(function(p2){
+      return '<button class="sl-chip'+(p2===pos?' on':'')+'" onclick="LAB.stPos(\''+key+'\',\''+esc(p2)+'\')">'
+        + esc(p2 === 'ALL' ? 'All' : p2)+'</button>'; }).join('')+'</div>';
+    var list = board[pos] || [];
+    var mx = list.length ? list[0].val : 1;
+    var avg = list.reduce(function(a,b){ return a + b.val; }, 0) / Math.max(1, list.length);
+    h += '<div class="st-tbl"><div class="st-hd"><span class="st-rk">#</span>'
+      + '<span class="st-who">Team</span><span class="st-bar-in" style="background:none"></span>'
+      + '<span class="st-n">'+esc(label)+'</span><span class="st-px">vs avg</span></div>'
+      + list.map(function(e, i){
+          var third = Math.max(1, Math.round(list.length/3));
+          var tough = i >= list.length - third;
+          var pct = avg ? (e.val - avg) / avg * 100 : 0;
+          return '<div class="st-row"><span class="st-rk">'+(i+1)+'</span>'
+            + '<span class="st-who"><b>'+esc(abbrOf(key, e.team))+'</b>'
+            + '<span>'+esc(e.team)+'</span></span>'
+            + '<span class="st-bar-in"><i class="'+(tough?'tough':'')+'" style="width:'
+            + Math.max(4, Math.round(e.val/mx*100))+'%"></i></span>'
+            + '<span class="st-n">'+(e.val < 3 ? e.val.toFixed(2) : e.val.toFixed(1))+'</span>'
+            + '<span class="st-px" style="color:'+(pct > 0 ? 'var(--accent)' : '#f97316')+'">'
+            + (pct > 0 ? '+' : '')+pct.toFixed(0)+'%</span></div>';
+        }).join('')+'</div>'
+      + '<div class="cmb-corr">Per game, conceded to '+esc(pos === 'ALL' ? 'all players' : pos)
+      + '. Rank 1 concedes the most \u2014 the softest draw.</div>';
+    return h;
+  }
+
+  // players board
+  var lg = leagueAvg(key, mkt);
+  var rows = (S.idx.players || []).map(function(p){
+    var e = lg[p.name];
+    if (!e || e.games < 3) return null;
+    var logs = sortLogsDesc(((S.idx.logsByName || {})[p.name] || []).slice());
+    var l5 = [];
+    logs.forEach(function(r){ if (l5.length < 5){ var val = statOf(key, r, mkt); if (val != null) l5.push(val); } });
+    var od = oddsForP(key, p.name, mkt);
+    return { p:p, avg:e.avg, games:e.games,
+             l5:(l5.length ? l5.reduce(function(a,b){ return a+b; },0)/l5.length : null),
+             line:(od && od.line != null ? od.line : null), price:(od && od.over != null ? +od.over : null) };
+  }).filter(Boolean).sort(function(a,b){ return b.avg - a.avg; }).slice(0, 60);
+  if (!rows.length) return h + secNote('Stats', 'No player has 3+ games with '+esc(label)+' recorded.');
+  var top = rows[0].avg || 1;
+  h += '<div class="st-tbl"><div class="st-hd"><span class="st-rk">#</span>'
+    + '<span class="st-who">Player</span><span class="st-bar-in" style="background:none"></span>'
+    + '<span class="st-n">Avg</span><span class="st-n dim">L5</span><span class="st-px">Line</span></div>'
+    + rows.map(function(r, i){
+        return '<div class="st-row" onclick="LAB.player(\''+key+'\',\''
+          + esc(r.p.name).replace(/'/g,"\\'")+'\')"><span class="st-rk">'+(i+1)+'</span>'
+          + '<span class="st-who"><b>'+esc(r.p.name)+'</b><span>'
+          + esc([posShortP(r.p), abbrOf(key, r.p.team), r.games+'g'].filter(Boolean).join(' \u00b7 '))+'</span></span>'
+          + '<span class="st-bar-in"><i style="width:'+Math.max(4, Math.round(r.avg/top*100))+'%"></i></span>'
+          + '<span class="st-n">'+(r.avg < 3 ? r.avg.toFixed(2) : r.avg.toFixed(1))+'</span>'
+          + '<span class="st-n dim">'+(r.l5 == null ? '\u2014' : (r.l5 < 3 ? r.l5.toFixed(2) : r.l5.toFixed(1)))+'</span>'
+          + '<span class="st-px">'+(r.line != null ? Math.ceil(r.line)+'+ '+(r.price != null ? '$'+r.price.toFixed(2) : '') : '\u2014')+'</span>'
+          + '</div>';
+      }).join('')+'</div>'
+    + '<div class="cmb-corr">Per-game average from gamelogs, 3+ games. Posted line is the main market '
+    + 'where one exists. Tap a player for the full read.</div>';
+  return h;
+}
 function playerPanel(){
   var sel = state.view.player;
   if (!sel) return '';
@@ -4446,7 +4576,7 @@ function render(){
   var loading = Object.keys(SPORTS).filter(function(k){ return state.sports[k].status==='loading'; });
   $('status').textContent = loading.length ? ('loading '+loading.join(', ')+'…') : 'ready';
 
-  var tabs = [['fixture','ti-calendar','Fixture'],['odds','ti-coin','Odds']];
+  var tabs = [['fixture','ti-calendar','Fixture'],['odds','ti-coin','Odds'],['stats','ti-chart-bar','Stats']];
   var h = '<div class="tabs">'+tabs.map(function(t){
     return '<button class="tab'+(state.view.tab===t[0]?' on':'')+'" onclick="LAB.tab(\''+t[0]+'\')">'
       +'<i class="ti '+t[1]+'"></i>'+t[2]+'</button>'; }).join('')+'</div>';
@@ -4457,7 +4587,9 @@ function render(){
     $('app').innerHTML = h + playerPanel() + booksPanel() + cmbFab() + cmbPanel();
     return;
   }
-  if (state.view.tab === 'odds'){
+  if (state.view.tab === 'stats'){
+    h += statsPage();
+  } else if (state.view.tab === 'odds'){
     h += oddsPage();
   } else {
     var games = allGames();
@@ -4573,6 +4705,10 @@ window.LAB = {
     render();
   },
   cmbLad: function(open){ state.view.cmbLadOpen = !!open; },
+  stSport: function(k){ state.view.stSport = k; ensureSport(k); render(); },
+  stMode: function(m){ state.view.stMode = m; render(); },
+  stMkt: function(k, m){ state.view.stMkt = state.view.stMkt || {}; state.view.stMkt[k] = m; render(); },
+  stPos: function(k, p){ state.view.stPos = state.view.stPos || {}; state.view.stPos[k] = p; render(); },
   mbFix: function(i){ state.view.mbFix = +i; render(); },
   mbMode: function(m){ state.view.mbMode = m; render(); },
   mbAdd: function(id){
