@@ -680,7 +680,7 @@ var state = {
   view:   { active: {}, tab: 'fixture', mkt: {}, match: {}, player: null, books: null, showDone: false, focus: null, h2hMode: 'for',
              slMkt: {}, slWin: 'season', dvpMkt: {}, ppTab: 'form',
              cmbQ: '', cmbSel: null, cmbRecent: [],
-             cmbOpen: false, cmbMode: 'single', cmbLegs: [], cmbResult: null }   // filter + current page + market per sport
+             cmbOpen: false, cmbMode: 'single', cmbLegs: [], cmbResult: null, cmbSugOff: false }   // filter + current page + market per sport
 };
 Object.keys(SPORTS).forEach(function(k){
   state.sports[k] = { data:{}, idx:{teamMap:{}}, status:'idle' };
@@ -3130,13 +3130,19 @@ function cmbParse(key, q){
   nm = nm.replace(/\b(under|over|o|u|plus|pts|points)\b/ig, ' ').replace(/\s+/g, ' ').trim();
   return { name:nm, mkt:mk, line:line, side:side };
 }
+// players.json lands in TIER 2, the index in TIER 3 - so search the raw list, or nothing is
+// findable until you have opened a fixture for that sport.
+function cmbPool(key){
+  var S = state.sports[key];
+  return (S.idx.players && S.idx.players.length) ? S.idx.players : (asArray(S.data.players) || []);
+}
 function cmbFindPlayer(nameRaw){
   var q = String(nameRaw || '').trim().toLowerCase();
   if (q.length < 2) return null;
   var hits = [];
   Object.keys(SPORTS).forEach(function(key){
     if (!state.view.active[key]) return;
-    (state.sports[key].idx.players || []).forEach(function(p){
+    cmbPool(key).forEach(function(p){
       if (!p || !p.name) return;
       var n = p.name.toLowerCase();
       if (n === q) hits.push({ key:key, p:p, rank:0 });
@@ -3203,10 +3209,17 @@ function cmbChol(R){
   }
   return L;
 }
+var _cmbJointCache = {};
 function cmbJoint(legs){
   var k = legs.length;
   if (!k) return null;
   if (k === 1) return legs[0].prob;
+  // 8,000 simulations per call would re-roll on every render and make the headline number
+  // flicker. Same legs, same answer.
+  var sig = legs.map(function(l){
+    return l.key+'|'+l.p.name+'|'+l.mkt+'@'+l.line+l.side+'#'+Math.round((l.prob||0)*1000);
+  }).sort().join('~');
+  if (_cmbJointCache[sig] != null) return _cmbJointCache[sig];
   var R = [];
   for (var i=0;i<k;i++){
     R[i] = [];
@@ -3224,9 +3237,28 @@ function cmbJoint(legs){
     }
     if (all) hit++;
   }
-  return hit / M;
+  return (_cmbJointCache[sig] = hit / M);
 }
 /* ---- one leg, fully resolved ---- */
+function cmbSuggest(q){
+  var parsed = null;
+  Object.keys(SPORTS).some(function(k){ if (state.view.active[k]){ parsed = cmbParse(k, q); return true; } return false; });
+  var nameQ = String((parsed && parsed.name) || q || '').trim().toLowerCase();
+  if (nameQ.length < 2) return [];
+  var out = [];
+  Object.keys(SPORTS).forEach(function(key){
+    if (!state.view.active[key]) return;
+    cmbPool(key).forEach(function(p){
+      if (!p || !p.name) return;
+      var n = p.name.toLowerCase(), last = n.split(' ').pop();
+      var rank = n.indexOf(nameQ) === 0 ? 0 : (last.indexOf(nameQ) === 0 ? 1 : (n.indexOf(nameQ) >= 0 ? 2 : -1));
+      if (rank < 0) return;
+      out.push({ key:key, name:p.name, team:p.team, pos:posShortP(p), rank:rank });
+    });
+  });
+  out.sort(function(a,b){ return (a.rank - b.rank) || a.name.localeCompare(b.name); });
+  return out.slice(0, 6);
+}
 function cmbLeg(key, p, mkt, line, side){
   var S = state.sports[key], opp = ppOpponent(key, p.name);
   var logs = sortLogsDesc(((S.idx.logsByName || {})[p.name] || []).slice());
@@ -3239,6 +3271,8 @@ function cmbLeg(key, p, mkt, line, side){
   try { raw = S.scoring && S.scoring.prob ? S.scoring.prob(p, mkt[0], line, opp) : null; } catch(e){}
   var pOver = (raw != null && isFinite(raw)) ? calibrate(key, raw) : (last.length ? hits/last.length : null);
   var prob = pOver == null ? null : (over ? pOver : (raw != null ? 1 - pOver : pOver));
+  // 0/10 is not a zero per cent chance, and a literal 0 poisons every product it enters
+  if (prob != null) prob = Math.max(0.01, Math.min(0.99, prob));
   var od = oddsForP(key, p.name, mkt[0]);
   var price = null, book = null;
   if (od && +od.line === +line){ price = over ? od.over : od.under; book = od.book; }
@@ -3283,17 +3317,53 @@ function cmbAnalysis(l){
       + '</div></div>';
 }
 function cmbResolve(q){
-  var keys = Object.keys(SPORTS).filter(function(k){ return state.view.active[k]; });
-  var found = cmbFindPlayer((cmbParse(keys[0] || 'afl', q) || {}).name || q);
-  if (!found) return { err:'Player not found. Try a surname, or check the sport is switched on.' };
-  var parsed = cmbParse(found.key, q);
-  if (!parsed || !parsed.mkt) return { err:'Which market? Try "'+esc(found.p.name)+' '
-    + (cmbMarkets(found.key)[0] ? '20+ '+cmbMarkets(found.key)[0][1].toLowerCase() : '20+ disposals')+'".' };
-  if (parsed.line == null) return { err:'Add a line, e.g. "'+esc(found.p.name)+' 20+ '
-    + parsed.mkt[1].toLowerCase()+'".' };
-  ensureSport(found.key);
-  if (state.sports[found.key].t3 !== 'ready') return { loading:true, key:found.key };
-  return { leg: cmbLeg(found.key, found.p, parsed.mkt, parsed.line, parsed.side) };
+  // Parse ONCE PER SPORT: market names differ, and parsing "235+ pass yds" with AFL's market
+  // list leaves "pass yds" stuck in the player name, which is why nothing was ever found while
+  // more than one sport was switched on. Score each sport's interpretation and take the best.
+  var cands = [];
+  Object.keys(SPORTS).forEach(function(key){
+    if (!state.view.active[key]) return;
+    var parsed = cmbParse(key, q);
+    if (!parsed || !parsed.name) return;
+    var nameQ = parsed.name.toLowerCase();
+    var best = null;
+    cmbPool(key).forEach(function(p){
+      if (!p || !p.name) return;
+      var n = p.name.toLowerCase(), last = n.split(' ').pop();
+      var rank = n === nameQ ? 0 : (last === nameQ ? 1 : (n.indexOf(nameQ) >= 0 ? 2 : -1));
+      if (rank < 0) return;
+      if (!best || rank < best.rank) best = { p:p, rank:rank };
+    });
+    if (!best) return;
+    cands.push({ key:key, p:best.p, rank:best.rank, parsed:parsed,
+                 score:(best.rank) + (parsed.mkt ? 0 : 10) + (parsed.line != null ? 0 : 5) });
+  });
+  if (!cands.length) return { err:'Player not found. Try a surname, or check the sport is switched on.' };
+  cands.sort(function(a,b){ return a.score - b.score; });
+  var c = cands[0];
+  if (!c.parsed.mkt) return { err:'Which market? Try \u201c'+esc(c.p.name)+' '
+    + (cmbMarkets(c.key)[0] ? '20+ '+cmbMarkets(c.key)[0][1].toLowerCase() : '20+ disposals')+'\u201d.' };
+  if (c.parsed.line == null) return { err:'Add a line, e.g. \u201c'+esc(c.p.name)+' 20+ '
+    + c.parsed.mkt[1].toLowerCase()+'\u201d.' };
+  ensureSport(c.key);
+  if (state.sports[c.key].t3 !== 'ready') return { loading:true, key:c.key };
+  return { leg: cmbLeg(c.key, c.p, c.parsed.mkt, c.parsed.line, c.parsed.side) };
+}
+// A four-leg multi can land at 0.04%, which renders as "0%" and tells the punter nothing.
+// Below 1% say it the way people say it.
+function cmbOdds(pv){
+  if (pv == null || !isFinite(pv) || pv <= 0) return '\u2014';
+  if (pv >= 0.01) return (pv*100).toFixed(1)+'%';
+  return '1 in '+Math.round(1/pv).toLocaleString();
+}
+function cmbSugList(q, mode){
+  var sug = (state.view.cmbSugOff ? [] : cmbSuggest(q));
+  if (!sug.length) return '';
+  return '<div class="cmb-hits">'+sug.map(function(r){
+    return '<div class="cmb-hit" onclick="LAB.cmbUse(\''+esc(r.name).replace(/'/g,"\\'")+'\',\''+mode+'\')">'
+      + teamLogo(r.key, r.team)+'<b>'+esc(r.name)+'</b>'
+      + '<span>'+esc((r.pos ? r.pos+' \u00b7 ' : '')+abbrOf(r.key, r.team))+' \u00b7 '
+      + esc(SPORTS[r.key].name)+'</span></div>'; }).join('')+'</div>';
 }
 function cmbPanel(){
   var v = state.view;
@@ -3305,8 +3375,9 @@ function cmbPanel(){
     var res = v.cmbResult;
     body = '<div class="cmb-in"><input id="cmbInput" placeholder="e.g. Cripps 28+ disposals" '
       + 'value="'+esc(v.cmbQ || '')+'" autocomplete="off" '
+      + 'oninput="LAB.cmbType(this.value)" '
       + 'onkeydown="if(event.key===\'Enter\')LAB.cmbRun(this.value)"></div>'
-      + '<button class="cmb-go" style="display:none"></button>'
+      + cmbSugList(v.cmbQ, 'single')
       + (res ? (res.err ? '<div class="empty" style="padding:18px">'+esc(res.err)+'</div>'
              : (res.loading ? '<div class="empty" style="padding:18px">Loading history\u2026</div>'
              : cmbAnalysis(res.leg) + '<button class="cmb-go" style="width:100%;justify-content:center;padding:10px"'
@@ -3317,13 +3388,19 @@ function cmbPanel(){
       + '<div class="cmb-hint">Type a player, a line and a market \u2014 <b>Cripps 28+ disposals</b>, '
       + '<b>Nacua 60+ rec yds</b>, <b>Haaland 2+ shots</b>. Add <b>under</b> for the other side.</div>';
   } else {
-    var joint = legs.length ? cmbJoint(legs) : null;
+    // A leg with no model must not be quietly floored to 1% inside the simulation: if we can't
+    // price one leg we can't price the multi, and saying so is better than inventing a number.
+    var unpriced = legs.filter(function(l){ return l.prob == null; });
+    var joint = (legs.length && !unpriced.length) ? cmbJoint(legs) : null;
+    if (joint == null || !isFinite(joint) || joint <= 0) joint = null;
     var fair = joint ? 1/joint : null;
     var priced = legs.every(function(l){ return l.price != null; });
     var combined = priced ? legs.reduce(function(a,l){ return a * l.price; }, 1) : null;
     var indep = legs.reduce(function(a,l){ return a * (l.prob || 0); }, 1);
     body = '<div class="cmb-in"><input id="cmbInput" placeholder="Add a leg \u2014 e.g. Cripps 28+ disposals" '
-      + 'autocomplete="off" onkeydown="if(event.key===\'Enter\')LAB.cmbAddLeg(this.value)"></div>'
+      + 'value="'+esc(v.cmbQ || '')+'" autocomplete="off" oninput="LAB.cmbType(this.value)" '
+      + 'onkeydown="if(event.key===\'Enter\')LAB.cmbAddLeg(this.value)"></div>'
+      + cmbSugList(v.cmbQ, 'multi')
       + (legs.length ? legs.map(function(l, i){
           return '<div class="cmb-leg"><div class="cmb-leg-m"><b>'+esc(l.p.name)+'</b>'
             + '<span>'+esc(cmbLegLabel(l))+(l.opp ? ' \u00b7 v '+esc(abbrOf(l.key, l.opp)) : '')
@@ -3333,15 +3410,20 @@ function cmbPanel(){
         }).join('') : '<div class="empty" style="padding:18px">No legs yet. Add one above.</div>')
       + (legs.length ? '<div class="cmb-sum">'
           + '<div class="cmb-sum-row"><span>Independent (wrong, for reference)</span><b>'
-            + (indep*100).toFixed(1)+'%</b></div>'
-          + '<div class="cmb-sum-row"><span>Correlated model</span><b>'+(joint*100).toFixed(1)+'%</b></div>'
-          + '<div class="cmb-sum-row tot"><span>Fair price</span><b>$'+fair.toFixed(2)+'</b></div>'
-          + (combined ? '<div class="cmb-sum-row"><span>Posted combined</span><b>$'
+            + cmbOdds(isFinite(indep) ? indep : null)+'</b></div>'
+          + '<div class="cmb-sum-row"><span>Correlated model</span><b>'
+            + cmbOdds(joint)+'</b></div>'
+          + '<div class="cmb-sum-row tot"><span>Fair price</span><b>'
+            + (fair != null ? '$'+fair.toFixed(2) : 'no model for every leg')+'</b></div>'
+          + (combined && joint != null ? '<div class="cmb-sum-row"><span>Posted combined</span><b>$'
               + combined.toFixed(2)+'</b></div>'
             + '<div class="cmb-sum-row"><span>Edge</span><b class="'
               + (combined*joint - 1 > 0 ? 'cmb-vscore good' : 'cmb-vscore bad')
               + '" style="font-size:14px">'+((combined*joint - 1) > 0 ? '+' : '')
               + Math.round((combined*joint - 1)*100)+'%</b></div>' : '')
+          + (unpriced.length ? '<div class="cmb-corr">No combined price: '
+              + esc(unpriced.map(function(l){ return l.p.name; }).join(', '))
+              + ' ha'+(unpriced.length===1?'s':'ve')+' too little history to model.</div>' : '')
           + '<div class="cmb-corr">Legs in the same match move together, so the independent product '
           + 'overstates a multi. The correlated figure measures how often these legs have actually '
           + 'cleared their lines in the same games and prices that in.</div></div>' : '');
@@ -3608,11 +3690,45 @@ window.LAB = {
   slWin: function(w){ state.view.slWin = w; render(); },
   dvpMkt: function(k, m){ state.view.dvpMkt[k] = m; render(); },
   ppTab: function(t){ state.view.ppTab = t; render(); },
-  cmbOpen: function(){ state.view.cmbOpen = true; render(); },
+  cmbOpen: function(){
+    state.view.cmbOpen = true;
+    ensureTier2();                              // players.json is tier 2 - without it nothing is searchable
+    render();
+    var i = $('cmbInput'); if (i) i.focus();
+  },
+  cmbType: function(q){
+    state.view.cmbQ = q;
+    state.view.cmbSugOff = false;
+    render();
+    var i = $('cmbInput');
+    if (i){ i.focus(); i.setSelectionRange(i.value.length, i.value.length); }
+  },
+  cmbUse: function(name, mode){
+    // keep whatever line/market the user already typed, swap in the full name
+    var q = String(state.view.cmbQ || '');
+    var tail = q.replace(/[A-Za-z\u00C0-\u024F'\-\.]+/g, function(w){
+      return name.toLowerCase().indexOf(w.toLowerCase()) >= 0 ? '' : w; }).trim();
+    state.view.cmbQ = (name + ' ' + tail).trim();
+    state.view.cmbSugOff = true;
+    var parsed = null;
+    Object.keys(SPORTS).forEach(function(k){
+      if (!state.view.active[k] || parsed) return;
+      var pp = cmbParse(k, state.view.cmbQ);
+      if (pp && pp.mkt && pp.line != null) parsed = pp;     // first sport that understands it
+    });
+    if (parsed){
+      if (mode === 'multi') LAB.cmbAddLeg(state.view.cmbQ); else LAB.cmbRun(state.view.cmbQ);
+      return;
+    }
+    render();
+    var i = $('cmbInput');
+    if (i){ i.focus(); i.setSelectionRange(i.value.length, i.value.length); }
+  },
   cmbClose: function(){ state.view.cmbOpen = false; render(); },
   cmbMode: function(m){ state.view.cmbMode = m; render(); },
   cmbRun: function(q){
     state.view.cmbQ = q;
+    state.view.cmbSugOff = true;
     state.view.cmbResult = cmbResolve(q);
     if (!state.view.cmbResult.err && !state.view.cmbResult.loading){
       var r = (state.view.cmbRecent || []).filter(function(x){ return x !== q; });
