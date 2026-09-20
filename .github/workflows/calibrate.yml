@@ -1,0 +1,42 @@
+name: Calibrate Models
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 8 * * 1'     # Mondays 08:00 UTC — after the weekend's results are in the gamelogs
+
+permissions:
+  contents: write
+
+concurrency:
+  group: calibrate
+  cancel-in-progress: false
+
+jobs:
+  calibrate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      # Walk-forward backtest: each sport's scoring.js is configured with the games BEFORE
+      # each match-day, then scored against what actually happened. Writes <SPORT>/data/calib.json.
+      # A sport with fewer than 300 predictions keeps its previous fit rather than writing a
+      # noisy one, so an early-season run can't wreck a good calibration.
+      - name: Fit calibration
+        run: node --max-old-space-size=6000 tools/calibrate.js
+
+      - name: Commit calibration
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add AFL/data/calib.json nfl/data/calib.json EPL/data/calib.json mlb/data/calib.json
+          if git diff --staged --quiet; then
+            echo "No calibration changes."
+          else
+            git commit -m "Calibration $(date -u +%Y-%m-%dT%H:%MZ)"
+            git push
+          fi
