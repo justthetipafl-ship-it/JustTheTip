@@ -2521,6 +2521,32 @@ function h2hSigRow(key, r){
      3. where a two-way market exists the vig is stripped from the pair, giving the
         book's own fair probability to price the model against.                     */
 var GL_SCORE = 5.5, DR_SCORE = -3.5, GL_MIN_GAMES = 3, GL_RUNGS = 6;
+// Platt scaling fitted by walk-forward backtest (calibrate.js, 19 Sep 2026): the model is
+// configured with games BEFORE each match-day, then scored against what happened. `a` below 1
+// means overconfident - EPL predicted 46.9% on events that landed 27.9%. `spread` is how far
+// the top quartile of picks outperformed the bottom: that is whether the model ranks at all.
+//   sport  n       bias      spread   verdict
+//   afl    1044    +1.0pt     1.1pt   ranks nothing - probability is noise, do not rank on EV
+//   nfl     195    +9.9pt    20.8pt   real signal, overconfident (ONE match-day - re-fit after wk2)
+//   epl    1175   +11.9pt    38.2pt   REBUILT 19 Sep: unconditional expected minutes, negative
+//                                       binomial, window 14, blend 0.8. Brier 0.2356 -> 0.1972 raw
+//                                       (now beats the base rate), 0.1905 -> 0.1799 calibrated,
+//                                       discrimination 26.6 -> 38.2pt. Needs EPL/scoring.js deployed.
+//   mlb   11555    +1.5pt    28.0pt   calibrated and discriminating
+var CALIB = {
+  afl: { a:0.408, b: 0.080, spread:0.011, n:1044 },
+  nfl: { a:0.915, b:-0.397, spread:0.208, n:195 },
+  epl: { a:0.849, b:-0.651, spread:0.382, n:1175 },
+  mlb: { a:0.692, b:-0.363, spread:0.280, n:11555 }
+};
+var EV_MIN_SPREAD = 0.05;          // below this the model can't rank, so EV is not a ranking key
+function calibrate(key, prob){
+  var c = CALIB[key];
+  if (!c || prob == null) return prob;
+  var lg = Math.log(Math.max(1e-6, prob) / Math.max(1e-6, 1 - prob));
+  return 1 / (1 + Math.exp(-(c.a * lg + c.b)));
+}
+function evTrusted(key){ return (CALIB[key] || {}).spread >= EV_MIN_SPREAD; }
 function glProb(key, p, mkt, line, score){
   var sc = state.sports[key].scoring;
   // EPL and MLB define score as (prob - 0.5) * 20, so it inverts exactly.
@@ -2585,6 +2611,7 @@ function ouSignals(key, g, kind){
           if (over ? score < GL_SCORE : score > DR_SCORE) return;
           var pOver = glProb(key, p, k, c.line, score);
           if (pOver == null) return;
+          pOver = calibrate(key, pOver);                 // raw model -> backtested probability
           var prob = over ? pOver : 1 - pOver;
           var ev = prob * (c.price - 1) - (1 - prob);
           var fair = novigFair(key, p.name, k, c.line, over ? 'over' : 'under');
@@ -2592,14 +2619,18 @@ function ouSignals(key, g, kind){
                       line:c.line, price:c.price, book:c.book, score:score, prob:prob, ev:ev,
                       edge:(fair != null ? prob - fair : null), avg:lg.avg, games:lg.games,
                       dvpPct:dvpPct, over:over };
-          if (row.ev <= 0) return;                    // the model likes it but the price doesn't pay
+          // Where the model can't separate winners from losers, EV is noise dressed as maths -
+          // so it neither filters nor ranks; the score does, and EV shows as information.
+          if (evTrusted(key) && row.ev <= 0) return;     // the model likes it but the price doesn't pay
           if (!best || row.ev > best.ev) best = row;
         });
         if (best) out.push(best);
       });
     });
   });
-  out.sort(function(a,b){ return (b.ev - a.ev) || (over ? b.score - a.score : a.score - b.score); });
+  out.sort(evTrusted(key)
+    ? function(a,b){ return (b.ev - a.ev) || (over ? b.score - a.score : a.score - b.score); }
+    : function(a,b){ return over ? b.score - a.score : a.score - b.score; });
   return out.slice(0, SIG_MAX_ROWS);
 }
 function ctxChips(key, p, mkt, line, opp){
@@ -2629,6 +2660,7 @@ function ouRow(key, r){
     + (r.edge != null ? '<span class="gl-chip '+(r.edge > 0 ? 'good' : 'bad')+'">'
         + (r.edge > 0 ? '+' : '')+Math.round(r.edge*100)+' pts vs fair</span>' : '')
     + '<span class="gl-chip">score '+r.score.toFixed(1)+'</span>'
+    + (evTrusted(key) ? '' : '<span class="gl-chip bad">unranked model</span>')
     + (r.dvpPct != null ? '<span class="gl-chip '+(r.over ? 'good' : 'bad')+'">'
         + (r.dvpPct > 0 ? '+' : '')+r.dvpPct.toFixed(0)+'% DVP</span>' : '')
     + ctxChips(key, (state.sports[key].idx.byName||{})[r.name], r.mkt, r.line, r.opp)
@@ -2642,7 +2674,7 @@ function ouRow(key, r){
     + '</div>'
     + '<div class="gl-right"><div class="gl-ev '+(r.ev >= 0 ? 'pos' : 'neg')+'">'
       + (r.ev > 0 ? '+' : '')+Math.round(r.ev*100)+'%</div>'
-      + '<div class="gl-evl">EDGE</div>'
+      + '<div class="gl-evl">'+(evTrusted(key) ? 'EDGE' : 'EDGE?')+'</div>'
       + '<div class="gl-odds">$'+r.price.toFixed(2)+'</div>'
       + '<span class="gl-book">'+esc(r.book||'')+'</span></div></div>';
 }
