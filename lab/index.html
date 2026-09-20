@@ -813,7 +813,7 @@ var state = {
              cmbOpen: false, cmbMode: 'single', cmbLegs: [], cmbResult: null, cmbSugOff: false,
              cmbLadOpen: false, mbFix: 0, mbMode: 'value',
              stSport: null, stMode: 'scanner', stMkt: {}, stPos: {},
-             stQ: '', stPosF: '', stSort: null, stDir: -1, stAllowed: false,
+             stQ: '', stPosF: '', stWin: 'season', stSort: null, stDir: -1, stAllowed: false,
              stTeamSort: null, stDvpSort: null }   // filter + current page + market per sport
 };
 Object.keys(SPORTS).forEach(function(k){
@@ -1015,7 +1015,7 @@ function buildIndexes(key){
   ix.byName = {};
   players.forEach(function(p){ if (p && p.name) ix.byName[p.name] = p; });
 
-  ix.lgAvg = {}; ix.matchOpp = null;   // derived caches are invalid the moment the index is rebuilt
+  ix.lgAvg = {}; ix.winAvg = {}; ix.matchOpp = null;   // derived caches die with the index
   var logs = asArray(d.gamelogs) || [];
   ix.logsByName = {};
   logs.forEach(function(r){
@@ -4317,6 +4317,43 @@ function cmbFab(){
    full column set per team. All read through statOf / leagueAvg / dvpBoard, so the numbers
    agree with every tile and the player card.                                                 */
 var STATS_SUBS = [['scanner','Scanner','ti-table'],['teams','Teams','ti-shield'],['dvp','DVP','ti-shield-half']];
+
+/* Window filter for the Scanner. Defaults to the current season - that is the question
+   people are actually asking - but a season two games old says almost nothing, so when the
+   fullest sample in the league is under four games the board falls back to all games on file
+   and says so rather than showing a near-empty table.                                        */
+var ST_WINDOWS = [['season','Season'],['l10','L10'],['l5','L5'],['all','All']];
+function windowAvg(key, mkt, win){
+  var S = state.sports[key];
+  S.idx.winAvg = S.idx.winAvg || {};
+  var ck = mkt+'|'+win;
+  if (S.idx.winAvg[ck]) return S.idx.winAvg[ck];
+  var season = curSeason(key), byName = S.idx.logsByName || {}, out = {}, maxThis = 0;
+  if (win === 'season'){
+    Object.keys(byName).forEach(function(n){
+      var c = 0;
+      byName[n].forEach(function(r){
+        if ((+(r.Year||r.year)||0) !== season) return;
+        if (statOf(key, r, mkt) != null) c++;
+      });
+      if (c > maxThis) maxThis = c;
+    });
+  }
+  var thin = (win === 'season') && maxThis < 4;
+  Object.keys(byName).forEach(function(n){
+    var rows = byName[n];
+    if (win === 'season' && !thin) rows = rows.filter(function(r){ return (+(r.Year||r.year)||0) === season; });
+    else if (win === 'l10' || win === 'l5'){
+      rows = sortLogsDesc(rows.slice()).filter(function(r){ return statOf(key, r, mkt) != null; })
+        .slice(0, win === 'l10' ? 10 : 5);
+    }
+    var sum = 0, cnt = 0;
+    rows.forEach(function(r){ var v = statOf(key, r, mkt); if (v == null) return; sum += v; cnt++; });
+    if (cnt) out[n] = { avg:sum/cnt, games:cnt };
+  });
+  out._thin = thin;
+  return (S.idx.winAvg[ck] = out);
+}
 function stCols(key){
   var cfg = state.sports[key].config || {};
   return (cfg.pcStats || cfg.oddsMkts || cfg.dvpStats || []).slice(0, 8);
@@ -4336,17 +4373,18 @@ function scannerView(key){
   var positions = [''].concat(((S.config || {}).posOrder || []));
   var posF = v.stPosF || '';
   var q = String(v.stQ || '').trim().toLowerCase();
+  var win = v.stWin || 'season';
+  var thin = false;
   var rows = (S.idx.players || []).map(function(p){
-    var vals = {}, any = false;
+    var vals = {}, any = false, games = 0;
     cols.forEach(function(c){
-      var e = leagueAvg(key, c[0])[p.name];
-      vals[c[0]] = e && e.games >= 2 ? e.avg : null;
-      if (vals[c[0]] != null) any = true;
+      var board = windowAvg(key, c[0], win);
+      if (board._thin) thin = true;
+      var e = board[p.name];
+      vals[c[0]] = e && e.games >= 1 ? e.avg : null;
+      if (vals[c[0]] != null){ any = true; if (e.games > games) games = e.games; }
     });
-    if (!any) return null;
-    var games = 0;
-    cols.forEach(function(c){ var e = leagueAvg(key, c[0])[p.name]; if (e && e.games > games) games = e.games; });
-    return { p:p, vals:vals, games:games };
+    return any ? { p:p, vals:vals, games:games } : null;
   }).filter(Boolean);
   if (posF) rows = rows.filter(function(r){ return (r.p.position || r.p.pos) === posF; });
   if (q) rows = rows.filter(function(r){
@@ -4360,7 +4398,10 @@ function scannerView(key){
     + 'value="'+esc(v.stQ||'')+'" oninput="LAB.stQ(this.value)" autocomplete="off"></div>'
     + '<div class="sl-bar">'+positions.map(function(p2){
         return '<button class="sl-chip'+(posF===p2?' on':'')+'" onclick="LAB.stPosF(\''+esc(p2)+'\')">'
-          + esc(p2 || 'All')+'</button>'; }).join('')+'</div>';
+          + esc(p2 || 'All')+'</button>'; }).join('')
+      + '<span class="sl-win">'+ST_WINDOWS.map(function(w){
+          return '<button class="sl-chip'+(win===w[0]?' on':'')+'" onclick="LAB.stWin(\''+w[0]+'\')">'
+            + w[1]+'</button>'; }).join('')+'</span></div>';
   if (!rows.length) return h + '<div class="empty"><i class="ti ti-search-off"></i>No players match.</div>';
   h += '<div class="st-wrap" id="stTbl"><table class="st-t"><thead><tr><th>Player</th>'
     + '<th class="'+(sortKey==='games'?'on':'')+'" onclick="LAB.stSort(\'games\')">GP</th>'
@@ -4375,7 +4416,11 @@ function scannerView(key){
               return '<td>'+(val == null ? '\u2014' : (val < 3 ? val.toFixed(2) : val.toFixed(1)))+'</td>';
             }).join('')+'</tr>';
       }).join('')+'</tbody></table></div>'
-    + '<div class="cmb-corr">'+rows.length+' shown \u00b7 per-game from gamelogs. Tap a row for the full read.</div>';
+    + '<div class="cmb-corr">'+rows.length+' shown \u00b7 per-game from gamelogs \u00b7 '
+    + (win === 'season' ? (thin ? 'season is too young to rank on, so this is all games on file'
+                                : 'this season')
+       : (win === 'all' ? 'all games on file' : 'last '+(win === 'l10' ? 10 : 5)+' games'))
+    + '. Tap a row for the full read.</div>';
   return h;
 }
 function teamsView(key){
@@ -4809,6 +4854,7 @@ window.LAB = {
   stDvpSort: function(k){ state.view.stDvpSort = k; render(); },
   stAllowed: function(a){ state.view.stAllowed = !!a; render(); },
   stPosF: function(p){ state.view.stPosF = p; render(); },
+  stWin: function(w){ state.view.stWin = w; render(); },
   stQ: function(q){
     // same rule as the bet search: patch the table, never the focused input
     state.view.stQ = q;
