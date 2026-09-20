@@ -1,0 +1,33 @@
+name: Grade Odds
+
+on:
+  workflow_dispatch:
+    inputs:
+      minEv:
+        description: 'Minimum modelled edge, in percent'
+        required: false
+        default: '3'
+  schedule:
+    - cron: '30 8 * * 1'     # Mondays, just after the calibration run
+
+permissions:
+  contents: read
+
+jobs:
+  grade:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      # Settles every stored price against what actually happened, using a model configured
+      # only on games from before the capture day. Reports strike rate and return on turnover
+      # by price band and edge band. Read-only: it grades, it does not write data.
+      - name: Grade stored odds
+        run: |
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          node --max-old-space-size=6000 tools/grade-odds.js --min-ev "${{ github.event.inputs.minEv || '3' }}" | tee -a $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
