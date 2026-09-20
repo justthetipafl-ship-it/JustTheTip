@@ -939,6 +939,8 @@ var state = {
              cmbLadOpen: false, mbFix: 0, mbMode: 'value', pc: null, ttWin: 10,
              rdrPick: null, ulMk: 'snapPct', ulWin: 'l5',
              dvMeets: 3, dvLegs: 3, jMkt: null, jLine: 'auto', jSel: {},
+             jHide: {}, jMin: null, jMax: null, jFocus: null,
+             dvMkts: null, dvHail: false, dvDrop: {}, dvMin: null, dvMax: null,
              stSport: null, stMode: 'scanner', stMkt: {}, stPos: {},
              stQ: '', stPosF: '', stWin: 'season', stSort: null, stDir: -1, stAllowed: false,
              stTeamSort: null, stDvpSort: null }   // filter + current page + market per sport
@@ -4308,7 +4310,9 @@ function dvLegs(key, g, meets){
         return dset[d];
       });
       if (rows.length < meets) return;
+      var only = state.view.dvMkts;
       posMarkets(key, p).forEach(function(m){
+        if (only && only.length && only.indexOf(m[0]) < 0) return;
         var vals = [];
         rows.forEach(function(r){ var v = statOf(key, r, m[0]); if (v != null) vals.push(v); });
         if (vals.length < meets) return;
@@ -4317,6 +4321,9 @@ function dvLegs(key, g, meets){
         // the line he cleared every time, priced where the book has it
         var od = bestPriceFor(key, p.name, m[0], lo - 0.5);
         if (!od || od.price < STREAK_ODDS_FLOOR) return;
+        var lo2 = state.view.dvMin, hi2 = state.view.dvMax;
+        if (lo2 != null && od.price < lo2) return;
+        if (hi2 != null && od.price > hi2) return;
         out.push({ name:p.name, p:p, team:team, opp:opp, mkt:m[0], label:m[1], line:lo,
                    vals:vals, price:od.price, book:od.book, strength:lo * od.price });
       });
@@ -4329,31 +4336,56 @@ function dejaVuSection(key, g){
   var avail = dvMeetings(key, g).length;
   if (!avail) return '';
   var meets = Math.min(Math.max(1, state.view.dvMeets || 3), avail);
-  var legN = Math.max(2, Math.min(state.view.dvLegs || 3, 6));
+  var hail = !!state.view.dvHail;
   var res = dvLegs(key, g, meets);
+  var distinct = {};
+  res.legs.forEach(function(l){ distinct[l.name] = 1; });
+  var distinctN = Object.keys(distinct).length;
+  // Hail Mary: every qualifying player, one leg each, however long that gets
+  var legN = hail ? Math.max(1, distinctN) : Math.max(2, Math.min(state.view.dvLegs || 3, 6));
+  var allMkts = (state.sports[key].config || {}).oddsMkts || [];
+  var only = state.view.dvMkts;
   var ctrl = '<div class="deja-ctrl">'
     + '<span class="deja-step">Hit streak<button onclick="LAB.dvMeets(-1)"'+(meets <= 1 ? ' disabled' : '')+'>\u2212</button>'
       + '<b>'+meets+'</b><button onclick="LAB.dvMeets(1)"'+(meets >= avail ? ' disabled' : '')+'>+</button>/'+avail+'</span>'
-    + '<span class="deja-step">Legs<button onclick="LAB.dvLegs(-1)"'+(legN <= 2 ? ' disabled' : '')+'>\u2212</button>'
-      + '<b>'+legN+'</b><button onclick="LAB.dvLegs(1)">+</button></span></div>';
+    + '<span class="deja-step">Legs<button onclick="LAB.dvLegs(-1)"'+(legN <= 2 || hail ? ' disabled' : '')+'>\u2212</button>'
+      + '<b>'+legN+'</b><button onclick="LAB.dvLegs(1)"'+(hail ? ' disabled' : '')+'>+</button></span>'
+    + '<button class="sl-chip'+(hail ? ' on' : '')+'" onclick="LAB.dvHail()">Hail Mary</button>'
+    + '<span class="deja-step">Odds'
+      + '<input type="number" step="0.05" min="1" value="'+(state.view.dvMin != null ? state.view.dvMin : '')
+      + '" placeholder="min" style="width:52px" onchange="LAB.dvOdds(\'min\',this.value)">'
+      + '<input type="number" step="0.05" min="1" value="'+(state.view.dvMax != null ? state.view.dvMax : '')
+      + '" placeholder="max" style="width:52px" onchange="LAB.dvOdds(\'max\',this.value)"></span></div>'
+    + '<div class="sl-bar">'
+      + '<button class="sl-chip'+(!only || !only.length ? ' on' : '')+'" onclick="LAB.dvMkt(null)">All markets</button>'
+      + allMkts.slice(0, 8).map(function(m){
+          return '<button class="sl-chip'+(only && only.indexOf(m[0]) >= 0 ? ' on' : '')
+            + '" onclick="LAB.dvMkt(\''+m[0]+'\')">'+esc(m[1])+'</button>'; }).join('')+'</div>';
   if (!res.legs.length)
     return '<div class="dayband"><span>D\u00e9j\u00e0 Vu SGM</span></div>'+ctrl
       + '<div class="sig-empty">No player with a posted price cleared a line in all '+meets
       + ' straight meetings between these clubs. Lower the hit streak to widen the pool.</div>';
   // one leg per player, best first
   var seen = {}, picked = [];
-  res.legs.forEach(function(l){ if (picked.length < legN && !seen[l.name]){ seen[l.name] = 1; picked.push(l); } });
+  var dropped = state.view.dvDrop || {};
+  res.legs.forEach(function(l){
+    if (dropped[l.name]) return;                       // removed from the Hail Mary by hand
+    if (picked.length < legN && !seen[l.name]){ seen[l.name] = 1; picked.push(l); }
+  });
   var legs = picked.map(function(l){ return cmbLeg(key, l.p, [l.mkt, l.label], l.line - 0.5, 'over'); })
     .filter(function(l){ return l && l.prob != null; });
   var comb = picked.reduce(function(a,l){ return a * l.price; }, 1);
-  var joint = legs.length === picked.length ? cmbJoint(legs) : null;
+  var joint = (picked.length > 1 && legs.length === picked.length) ? cmbJoint(legs) : null;
+  if (joint == null || !isFinite(joint) || joint <= 0) joint = null;
   var fair = joint ? 1/joint : null;
   return '<div class="dayband"><span>D\u00e9j\u00e0 Vu SGM</span></div>'+ctrl
     + picked.map(function(l){
         return '<div class="deja-card">'+playerImgP(key, l.p, 26)
           + '<div class="deja-m"><b>'+esc(l.name)+'</b><span>'+Math.ceil(l.line)+'+ '+esc(l.label)
           + ' \u00b7 '+esc(abbrOf(key, l.team))+' \u00b7 <span class="deja-vals">'+l.vals.join(' / ')+'</span></span></div>'
-          + '<span class="deja-px">$'+l.price.toFixed(2)+'</span></div>';
+          + '<span class="deja-px">$'+l.price.toFixed(2)+'</span>'
+          + (hail ? '<button class="cmb-leg-x" onclick="LAB.dvDrop(\''+esc(l.name).replace(/'/g,"\\'")
+              + '\')">&times;</button>' : '')+'</div>';
       }).join('')
     + '<div class="deja-sum">'
       + '<div class="cmb-sum-row"><span>Combined at the book</span><b>$'+comb.toFixed(2)+'</b></div>'
@@ -4373,8 +4405,10 @@ function jupiterData(key, g){
   var S = state.sports[key], mkt = state.view.jMkt;
   var mkts = (S.config || {}).oddsMkts || [];
   if (!mkt || !mkts.some(function(m){ return m[0] === mkt; })) mkt = (mkts[0] || [])[0];
+  var hide = state.view.jHide || {};
   var out = [];
   [g.away, g.home].forEach(function(team){
+    if (hide[team]) return;
     var opp = (team === g.home) ? g.away : g.home;
     playersOnTeam(key, team).forEach(function(p){
       if (!isPlayingP(key, p.name, team) || !hasAnyOddsFor(key, p.name)) return;
@@ -4394,6 +4428,12 @@ function jupiterData(key, g){
       if (raw == null) return;
       var prob = calibrate(key, raw);
       var ev = prob * (od.price - 1) - (1 - prob);
+      // the original's odds-range filter: keep a selected player regardless, so a pick you have
+      // already made never vanishes when you narrow the band
+      var oMin = state.view.jMin, oMax = state.view.jMax;
+      var selKeep = (state.view.jSel || {})[p.name];
+      if (!selKeep && oMin != null && od.price < oMin) return;
+      if (!selKeep && oMax != null && od.price > oMax) return;
       var dr = dvpRankFor(key, opp, p.position || p.pos, mkt);
       out.push({ p:p, name:p.name, team:team, opp:opp, mkt:mkt, line:od.line, price:od.price,
                  book:od.book, prob:prob, ev:ev, avg:lg.avg, dvp:dr, home:(team === g.home) });
@@ -4436,12 +4476,34 @@ function jupiterSection(key, g){
   var legs = picks.map(function(d){ return cmbLeg(key, d.p, [d.mkt, mktLabel(key, d.mkt)], d.line, 'over'); })
     .filter(function(l){ return l && l.prob != null; });
   var joint = legs.length === picks.length && picks.length > 1 ? cmbJoint(legs) : null;
+  var hide = state.view.jHide || {};
+  var lineTxt = state.view.jLine === 'auto' ? 'Auto' : (state.view.jLine+'+');
+  var focus = state.view.jFocus && data.rows.filter(function(d){ return d.name === state.view.jFocus; })[0];
   return '<div class="dayband"><span>Jupiter</span></div>'
     + '<div class="j-wrap">'
-    + '<div class="sl-bar">'+mkts.slice(0, 8).map(function(m){
-        return '<button class="sl-chip'+(m[0] === data.mkt ? ' on' : '')+'" onclick="LAB.jMkt(\''+m[0]+'\')">'
-          + esc(m[1])+'</button>'; }).join('')+'</div>'
+    + '<div class="sl-bar">'
+      + [g.home, g.away].map(function(t){
+          return '<button class="sl-chip'+(hide[t] ? '' : ' on')+'" onclick="LAB.jTeam(\''
+            + esc(t).replace(/'/g,"\\'")+'\')">'+esc(abbrOf(key, t))+'</button>'; }).join('')
+      + '<span class="sl-win">'+mkts.slice(0, 8).map(function(m){
+          return '<button class="sl-chip'+(m[0] === data.mkt ? ' on' : '')+'" onclick="LAB.jMkt(\''+m[0]+'\')">'
+            + esc(m[1])+'</button>'; }).join('')+'</span></div>'
+    + '<div class="deja-ctrl">'
+      + '<span class="deja-step">Line<button onclick="LAB.jLine(-1)">\u2212</button><b>'+lineTxt+'</b>'
+        + '<button onclick="LAB.jLine(1)">+</button>'
+        + (state.view.jLine !== 'auto' ? '<button onclick="LAB.jLine(0)">Auto</button>' : '')+'</span>'
+      + '<span class="deja-step">Odds'
+        + '<input type="number" step="0.05" min="1" value="'+(state.view.jMin != null ? state.view.jMin : '')
+        + '" placeholder="min" style="width:52px" onchange="LAB.jOdds(\'min\',this.value)">'
+        + '<input type="number" step="0.05" min="1" value="'+(state.view.jMax != null ? state.view.jMax : '')
+        + '" placeholder="max" style="width:52px" onchange="LAB.jOdds(\'max\',this.value)"></span>'
+      + '<span class="cmb-corr" style="margin:0">'+data.rows.length+' plotted</span></div>'
     + jupiterOrb(data.rows, g, key)
+    + (focus ? '<div class="j-detail"><b>'+esc(focus.name)+'</b> '+Math.ceil(focus.line)+'+ '
+        + esc(mktLabel(key, focus.mkt))+' \u00b7 $'+focus.price.toFixed(2)+' '+esc(focus.book||'')
+        + ' \u00b7 model '+Math.round(focus.prob*100)+'% \u00b7 '+(focus.ev > 0 ? '+' : '')
+        + Math.round(focus.ev*100)+'% edge \u00b7 avg '+focus.avg.toFixed(1)
+        + (focus.dvp ? ' \u00b7 DVP #'+focus.dvp.rank+'/'+focus.dvp.total : '')+'</div>' : '')
     + '<div class="j-key"><span><i style="background:var(--accent)"></i>+EV</span>'
       + '<span><i style="background:#eab308"></i>close to fair</span>'
       + '<span><i style="background:#6b7280"></i>priced against</span>'
@@ -4561,7 +4623,6 @@ function focusPage(){
       + '<span class="gp-n">'+n+' market'+(n===1?'':'s')+'</span></div>';
   }).join('') : '<div class="empty" style="padding:16px">No player markets posted for this game.</div>';
   return head + t3
-    + (S.t3==='ready' ? valueBets(key, g) : '')
     + '<div class="dayband"><span>Match markets</span></div>' + moBlock(key, g)
     // Team-level reading comes first: season averages head to head, then the last meeting.
     // Everything below this point is about individual players.
@@ -4577,9 +4638,12 @@ function focusPage(){
     + (S.t3==='ready' ? halvesSection(key, g) : '')
     + (S.t3==='ready' ? subsSection(key, g) : '')
     + (S.t3==='ready' ? firstLastSection(key, g) : '')
+    + (S.t3==='ready' ? signalsSection(key, g) : '')
+    // the build-your-own tools sit at the foot, above the player list: you read the match, then
+    // the signals, then you go and make something
+    + (S.t3==='ready' ? valueBets(key, g) : '')
     + (S.t3==='ready' ? dejaVuSection(key, g) : '')
     + (S.t3==='ready' ? jupiterSection(key, g) : '')
-    + (S.t3==='ready' ? signalsSection(key, g) : '')
     + '<div class="dayband"><span>Players \u00b7 '+ps.length+'</span></div><div class="gp-list">'+list+'</div>';
 }
 
@@ -6644,24 +6708,63 @@ window.LAB = {
   rdrPick: function(n){ state.view.rdrPick = n; render(); },
   dvMeets: function(d){ state.view.dvMeets = Math.max(1, (state.view.dvMeets || 3) + d); render(); },
   dvLegs: function(d){ state.view.dvLegs = Math.max(2, Math.min(6, (state.view.dvLegs || 3) + d)); render(); },
+  dvHail: function(){ state.view.dvHail = !state.view.dvHail; state.view.dvDrop = {}; render(); },
+  dvDrop: function(n){
+    state.view.dvDrop = state.view.dvDrop || {};
+    state.view.dvDrop[n] = 1; render();
+  },
+  dvMkt: function(m){
+    if (!m){ state.view.dvMkts = null; render(); return; }
+    var cur = (state.view.dvMkts || []).slice();
+    var i = cur.indexOf(m);
+    if (i >= 0) cur.splice(i, 1); else cur.push(m);
+    state.view.dvMkts = cur.length ? cur : null;
+    render();
+  },
+  dvOdds: function(which, v){
+    var n = parseFloat(v);
+    state.view[which === 'min' ? 'dvMin' : 'dvMax'] = isFinite(n) && n > 0 ? n : null;
+    render();
+  },
   dvAdd: function(){
     var f = state.view.focus; if (!f || !f.g) return;
     var meets = Math.max(1, state.view.dvMeets || 3);
     var res = dvLegs(f.sport, f.g, meets);
+    var distinct = {}; res.legs.forEach(function(l){ distinct[l.name] = 1; });
+    var want = state.view.dvHail ? Object.keys(distinct).length
+      : Math.max(2, Math.min(state.view.dvLegs || 3, 6));
+    var dropped = state.view.dvDrop || {};
     var seen = {}, picked = [];
     res.legs.forEach(function(l){
-      if (picked.length < Math.max(2, Math.min(state.view.dvLegs || 3, 6)) && !seen[l.name]){
-        seen[l.name] = 1; picked.push(l); } });
+      if (dropped[l.name]) return;
+      if (picked.length < want && !seen[l.name]){ seen[l.name] = 1; picked.push(l); } });
     var legs = picked.map(function(l){ return cmbLeg(f.sport, l.p, [l.mkt, l.label], l.line - 0.5, 'over'); })
       .filter(Boolean);
     if (!legs.length) return;
     state.view.cmbLegs = legs; state.view.cmbOpen = true; state.view.cmbMode = 'multi';
     render();
   },
-  jMkt: function(m){ state.view.jMkt = m; state.view.jSel = {}; render(); },
+  jMkt: function(m){ state.view.jMkt = m; state.view.jSel = {}; state.view.jFocus = null; render(); },
+  jTeam: function(t){
+    state.view.jHide = state.view.jHide || {};
+    state.view.jHide[t] = !state.view.jHide[t];
+    render();
+  },
+  jLine: function(d){
+    if (d === 0){ state.view.jLine = 'auto'; render(); return; }
+    if (state.view.jLine === 'auto') state.view.jLine = 10;
+    state.view.jLine = Math.max(1, state.view.jLine + d);
+    render();
+  },
+  jOdds: function(which, v){
+    var n = parseFloat(v);
+    state.view[which === 'min' ? 'jMin' : 'jMax'] = isFinite(n) && n > 0 ? n : null;
+    render();
+  },
   jPick: function(n){
     state.view.jSel = state.view.jSel || {};
     if (state.view.jSel[n]) delete state.view.jSel[n]; else state.view.jSel[n] = 1;
+    state.view.jFocus = n;                       // the original showed a detail line on focus
     render();
   },
   jAdd: function(){
