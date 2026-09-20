@@ -715,6 +715,30 @@
   .sig-quiet-row{padding:7px 12px;border-top:1px solid var(--border);font-size:10px;line-height:1.5;}
   .sig-quiet-row b{display:block;font-size:11px;color:var(--text-2);margin-bottom:2px;}
   .sig-quiet-row span{color:var(--text-3);}
+  .deja-ctrl{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-bottom:8px;}
+  .deja-step{display:inline-flex;align-items:center;gap:5px;background:var(--surface-2);border:1px solid var(--border);
+    border-radius:9px;padding:4px 8px;font-size:10px;color:var(--text-3);}
+  .deja-step button{background:var(--surface);border:1px solid var(--border);color:var(--text);width:24px;height:24px;
+    border-radius:6px;font-size:13px;line-height:1;cursor:pointer;}
+  .deja-step button:disabled{opacity:.35;cursor:default;}
+  .deja-step b{font-family:var(--font-display);font-size:13px;min-width:14px;text-align:center;}
+  .deja-card{display:flex;align-items:center;gap:9px;background:var(--surface-2);border:1px solid var(--border);
+    border-radius:9px;padding:9px 11px;margin-bottom:6px;}
+  .deja-m{flex:1;min-width:0;}
+  .deja-m b{display:block;font-size:12px;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .deja-m span{display:block;font-family:var(--font-mono);font-size:9px;color:var(--text-3);margin-top:2px;}
+  .deja-vals{font-family:var(--font-mono);font-size:9px;color:var(--accent);}
+  .deja-px{flex:none;text-align:right;font-family:var(--font-display);font-size:14px;}
+  .deja-sum{background:var(--surface-2);border:1px solid var(--border);border-radius:10px;padding:11px 13px;margin-top:4px;}
+  .j-wrap{background:var(--surface-2);border:1px solid var(--border);border-radius:10px;padding:10px 12px;}
+  .j-orb{display:block;margin:0 auto;max-width:330px;width:100%;}
+  .j-dot{cursor:pointer;}
+  .j-detail{margin-top:8px;font-size:11px;}
+  .j-detail b{font-size:12px;}
+  .j-slip{margin-top:9px;border-top:1px solid var(--border);padding-top:8px;}
+  .j-slip-row{display:flex;align-items:center;gap:8px;font-size:11px;padding:4px 0;}
+  .j-key{display:flex;gap:10px;flex-wrap:wrap;font-size:8px;color:var(--text-3);margin-top:6px;}
+  .j-key i{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:4px;}
   .sc-filter{display:flex;gap:7px;align-items:center;margin-bottom:8px;}
   .sc-filter input{flex:1;min-width:0;background:var(--surface-2);border:1px solid var(--border);
     border-radius:9px;padding:9px 12px;color:var(--text);font-size:13px;font-family:inherit;outline:none;}
@@ -914,6 +938,7 @@ var state = {
              cmbOpen: false, cmbMode: 'single', cmbLegs: [], cmbResult: null, cmbSugOff: false,
              cmbLadOpen: false, mbFix: 0, mbMode: 'value', pc: null, ttWin: 10,
              rdrPick: null, ulMk: 'snapPct', ulWin: 'l5',
+             dvMeets: 3, dvLegs: 3, jMkt: null, jLine: 'auto', jSel: {},
              stSport: null, stMode: 'scanner', stMkt: {}, stPos: {},
              stQ: '', stPosF: '', stWin: 'season', stSort: null, stDir: -1, stAllowed: false,
              stTeamSort: null, stDvpSort: null }   // filter + current page + market per sport
@@ -4242,6 +4267,198 @@ function tackleRow(key, r){
       + '<div class="stk-odds">$'+r.price.toFixed(2)+'</div>'
       + '<span class="stk-book">'+esc(r.book||'')+'</span></div></div>';
 }
+
+/* DEJA VU SGM -------------------------------------------------------------------
+   The premise: find players who have cleared a line in EVERY one of the last N meetings between
+   these two clubs, set the line at their minimum across those meetings (so it held every time),
+   price it, and stack them into a same-game multi.
+
+   Production's controls kept: a hit-streak stepper (how many straight meetings), a leg count,
+   and one-leg-per-player. Added here: the correlated joint probability, because these legs are
+   all from the same match and multiplying them straight overstates the multi badly.            */
+function dvMeetings(key, g){
+  var S = state.sports[key], seen = {};
+  [g.home, g.away].forEach(function(t){
+    playersOnTeam(key, t).forEach(function(p){
+      ((S.idx.logsByName || {})[p.name] || []).forEach(function(r){
+        var o = oppOf(key, r);
+        if (!o) return;
+        var mine = r.Team || r.team;
+        var pair = [normTeam(mine), normTeam(o)].sort().join('|');
+        if (pair !== [normTeam(g.home), normTeam(g.away)].sort().join('|')) return;
+        var d = String(r.date || r.Date || '').slice(0, 10)
+          || ((r.Year||r.year)+'|'+(r.RoundName != null ? r.RoundName : r.Week));
+        seen[d] = (logMs(r) || logSeq(r));
+      });
+    });
+  });
+  return Object.keys(seen).sort(function(a,b){ return seen[b] - seen[a]; });
+}
+function dvLegs(key, g, meets){
+  var S = state.sports[key], dates = dvMeetings(key, g).slice(0, meets), out = [];
+  if (dates.length < meets) return { legs:[], dates:dates };
+  var dset = {}; dates.forEach(function(d){ dset[d] = 1; });
+  [g.away, g.home].forEach(function(team){
+    var opp = (team === g.home) ? g.away : g.home;
+    playersOnTeam(key, team).forEach(function(p){
+      if (!isPlayingP(key, p.name, team) || !hasAnyOddsFor(key, p.name)) return;
+      var rows = ((S.idx.logsByName || {})[p.name] || []).filter(function(r){
+        var d = String(r.date || r.Date || '').slice(0, 10)
+          || ((r.Year||r.year)+'|'+(r.RoundName != null ? r.RoundName : r.Week));
+        return dset[d];
+      });
+      if (rows.length < meets) return;
+      posMarkets(key, p).forEach(function(m){
+        var vals = [];
+        rows.forEach(function(r){ var v = statOf(key, r, m[0]); if (v != null) vals.push(v); });
+        if (vals.length < meets) return;
+        var lo = Math.min.apply(null, vals);
+        if (!(lo > 0)) return;
+        // the line he cleared every time, priced where the book has it
+        var od = bestPriceFor(key, p.name, m[0], lo - 0.5);
+        if (!od || od.price < STREAK_ODDS_FLOOR) return;
+        out.push({ name:p.name, p:p, team:team, opp:opp, mkt:m[0], label:m[1], line:lo,
+                   vals:vals, price:od.price, book:od.book, strength:lo * od.price });
+      });
+    });
+  });
+  out.sort(function(a,b){ return b.strength - a.strength; });
+  return { legs:out, dates:dates };
+}
+function dejaVuSection(key, g){
+  var avail = dvMeetings(key, g).length;
+  if (!avail) return '';
+  var meets = Math.min(Math.max(1, state.view.dvMeets || 3), avail);
+  var legN = Math.max(2, Math.min(state.view.dvLegs || 3, 6));
+  var res = dvLegs(key, g, meets);
+  var ctrl = '<div class="deja-ctrl">'
+    + '<span class="deja-step">Hit streak<button onclick="LAB.dvMeets(-1)"'+(meets <= 1 ? ' disabled' : '')+'>\u2212</button>'
+      + '<b>'+meets+'</b><button onclick="LAB.dvMeets(1)"'+(meets >= avail ? ' disabled' : '')+'>+</button>/'+avail+'</span>'
+    + '<span class="deja-step">Legs<button onclick="LAB.dvLegs(-1)"'+(legN <= 2 ? ' disabled' : '')+'>\u2212</button>'
+      + '<b>'+legN+'</b><button onclick="LAB.dvLegs(1)">+</button></span></div>';
+  if (!res.legs.length)
+    return '<div class="dayband"><span>D\u00e9j\u00e0 Vu SGM</span></div>'+ctrl
+      + '<div class="sig-empty">No player with a posted price cleared a line in all '+meets
+      + ' straight meetings between these clubs. Lower the hit streak to widen the pool.</div>';
+  // one leg per player, best first
+  var seen = {}, picked = [];
+  res.legs.forEach(function(l){ if (picked.length < legN && !seen[l.name]){ seen[l.name] = 1; picked.push(l); } });
+  var legs = picked.map(function(l){ return cmbLeg(key, l.p, [l.mkt, l.label], l.line - 0.5, 'over'); })
+    .filter(function(l){ return l && l.prob != null; });
+  var comb = picked.reduce(function(a,l){ return a * l.price; }, 1);
+  var joint = legs.length === picked.length ? cmbJoint(legs) : null;
+  var fair = joint ? 1/joint : null;
+  return '<div class="dayband"><span>D\u00e9j\u00e0 Vu SGM</span></div>'+ctrl
+    + picked.map(function(l){
+        return '<div class="deja-card">'+playerImgP(key, l.p, 26)
+          + '<div class="deja-m"><b>'+esc(l.name)+'</b><span>'+Math.ceil(l.line)+'+ '+esc(l.label)
+          + ' \u00b7 '+esc(abbrOf(key, l.team))+' \u00b7 <span class="deja-vals">'+l.vals.join(' / ')+'</span></span></div>'
+          + '<span class="deja-px">$'+l.price.toFixed(2)+'</span></div>';
+      }).join('')
+    + '<div class="deja-sum">'
+      + '<div class="cmb-sum-row"><span>Combined at the book</span><b>$'+comb.toFixed(2)+'</b></div>'
+      + (joint != null ? '<div class="cmb-sum-row"><span>Correlated model</span><b>'+cmbOdds(joint)+'</b></div>'
+        + '<div class="cmb-sum-row tot"><span>Fair price</span><b>$'+fair.toFixed(2)+'</b></div>'
+        + '<div class="cmb-sum-row"><span>Edge</span><b class="'+(comb*joint - 1 > 0 ? 'cmb-vscore good' : 'cmb-vscore bad')
+        + '" style="font-size:14px">'+((comb*joint - 1) > 0 ? '+' : '')+Math.round((comb*joint-1)*100)+'%</b></div>' : '')
+      + '<div class="cmb-corr">Every leg cleared its line in all '+meets+' straight meetings between these '
+      + 'clubs. Lines are each player\u2019s minimum across those games, so the record held every time.</div>'
+      + '<button class="pc-add" onclick="LAB.dvAdd()">Send to Check My Multi</button></div>';
+}
+/* JUPITER ------------------------------------------------------------------------
+   The orb: every priced player in the fixture placed by how hot they are for one market.
+   Radius is the calibrated model probability at their line - outer rim is hotter - and colour
+   is the edge against the posted price. Tap a dot to add it to the slip.                       */
+function jupiterData(key, g){
+  var S = state.sports[key], mkt = state.view.jMkt;
+  var mkts = (S.config || {}).oddsMkts || [];
+  if (!mkt || !mkts.some(function(m){ return m[0] === mkt; })) mkt = (mkts[0] || [])[0];
+  var out = [];
+  [g.away, g.home].forEach(function(team){
+    var opp = (team === g.home) ? g.away : g.home;
+    playersOnTeam(key, team).forEach(function(p){
+      if (!isPlayingP(key, p.name, team) || !hasAnyOddsFor(key, p.name)) return;
+      if (!posMarkets(key, p).some(function(m){ return m[0] === mkt; })) return;
+      var lg = leagueAvg(key, mkt)[p.name];
+      if (!lg || lg.games < 3 || !(lg.avg > 0)) return;
+      var od = state.view.jLine === 'auto'
+        ? bestPriceFor(key, p.name, mkt)
+        : bestPriceFor(key, p.name, mkt, state.view.jLine - 0.5);
+      if (!od) return;
+      var raw = null;
+      try { raw = S.scoring && S.scoring.prob ? S.scoring.prob(p, mkt, od.line, opp) : null; } catch(e){}
+      if (raw == null && (key === 'epl' || key === 'mlb')){
+        try { var sc = S.scoring.scoreCMP(p, mkt, od.line, opp);
+          if (sc != null && isFinite(sc)) raw = Math.max(0.01, Math.min(0.99, sc/20 + 0.5)); } catch(e){}
+      }
+      if (raw == null) return;
+      var prob = calibrate(key, raw);
+      var ev = prob * (od.price - 1) - (1 - prob);
+      var dr = dvpRankFor(key, opp, p.position || p.pos, mkt);
+      out.push({ p:p, name:p.name, team:team, opp:opp, mkt:mkt, line:od.line, price:od.price,
+                 book:od.book, prob:prob, ev:ev, avg:lg.avg, dvp:dr, home:(team === g.home) });
+    });
+  });
+  out.sort(function(a,b){ return b.prob - a.prob; });
+  return { rows:out.slice(0, 26), mkt:mkt };
+}
+function jupiterOrb(rows, g, key){
+  var W = 320, C = 160, R = 138, IN = 26;
+  var map = function(pr){ var t = Math.max(0, Math.min(1, (pr - 0.2) / 0.65)); return R - t*(R-IN); };
+  var col = function(ev){ return ev > 0.05 ? 'var(--accent)' : (ev > -0.05 ? '#eab308' : '#6b7280'); };
+  var dots = rows.map(function(d, i){
+    var a = -Math.PI/2 + i * 2*Math.PI/Math.max(1, rows.length);
+    var r = map(d.prob);
+    var x = C + Math.cos(a)*r, y = C + Math.sin(a)*r;
+    var on = state.view.jSel && state.view.jSel[d.name];
+    return '<g class="j-dot" onclick="LAB.jPick(\'' + esc(d.name).replace(/'/g,"\\'") + '\')">'
+      + '<circle cx="'+x.toFixed(1)+'" cy="'+y.toFixed(1)+'" r="'+(on ? 9 : 6)+'" fill="'+col(d.ev)+'" '
+      + 'stroke="'+(d.home ? '#38bdf8' : '#fb7185')+'" stroke-width="'+(on ? 3 : 1.5)+'"/>'
+      + '<title>'+esc(d.name)+' \u00b7 '+Math.ceil(d.line)+'+ \u00b7 '+Math.round(d.prob*100)+'% \u00b7 $'
+      + d.price.toFixed(2)+'</title></g>';
+  }).join('');
+  var rings = [0.33, 0.66, 1].map(function(f){
+    return '<circle cx="'+C+'" cy="'+C+'" r="'+(IN + (R-IN)*f).toFixed(1)
+      + '" fill="none" stroke="var(--border)"/>'; }).join('');
+  return '<svg class="j-orb" viewBox="0 0 '+W+' '+W+'">'+rings
+    + '<text x="'+C+'" y="'+(C+4)+'" text-anchor="middle" font-size="9" fill="var(--text-3)">hotter</text>'
+    + dots+'</svg>';
+}
+function jupiterSection(key, g){
+  var S = state.sports[key];
+  var mkts = (S.config || {}).oddsMkts || [];
+  if (!mkts.length) return '';
+  var data = jupiterData(key, g);
+  if (!data.rows.length) return '';
+  var sel = state.view.jSel || {};
+  var picks = data.rows.filter(function(d){ return sel[d.name]; });
+  var comb = picks.reduce(function(a,d){ return a * d.price; }, 1);
+  var legs = picks.map(function(d){ return cmbLeg(key, d.p, [d.mkt, mktLabel(key, d.mkt)], d.line, 'over'); })
+    .filter(function(l){ return l && l.prob != null; });
+  var joint = legs.length === picks.length && picks.length > 1 ? cmbJoint(legs) : null;
+  return '<div class="dayband"><span>Jupiter</span></div>'
+    + '<div class="j-wrap">'
+    + '<div class="sl-bar">'+mkts.slice(0, 8).map(function(m){
+        return '<button class="sl-chip'+(m[0] === data.mkt ? ' on' : '')+'" onclick="LAB.jMkt(\''+m[0]+'\')">'
+          + esc(m[1])+'</button>'; }).join('')+'</div>'
+    + jupiterOrb(data.rows, g, key)
+    + '<div class="j-key"><span><i style="background:var(--accent)"></i>+EV</span>'
+      + '<span><i style="background:#eab308"></i>close to fair</span>'
+      + '<span><i style="background:#6b7280"></i>priced against</span>'
+      + '<span><i style="background:none;border:2px solid #38bdf8"></i>'+esc(abbrOf(key, g.home))+'</span>'
+      + '<span><i style="background:none;border:2px solid #fb7185"></i>'+esc(abbrOf(key, g.away))+'</span>'
+      + '<span>outer rim = hotter</span></div>'
+    + (picks.length ? '<div class="j-slip">'+picks.map(function(d){
+        return '<div class="j-slip-row">'+playerImgP(key, d.p, 20)
+          + '<span style="flex:1">'+esc(d.name)+' '+Math.ceil(d.line)+'+ '+esc(mktLabel(key, d.mkt))+'</span>'
+          + '<span class="deja-vals">'+Math.round(d.prob*100)+'%</span>'
+          + '<span class="deja-px">$'+d.price.toFixed(2)+'</span></div>';
+      }).join('')
+      + '<div class="cmb-sum-row tot"><span>'+picks.length+' leg'+(picks.length === 1 ? '' : 's')
+      + (joint != null ? ' \u00b7 correlated '+cmbOdds(joint) : '')+'</span><b>$'+comb.toFixed(2)+'</b></div>'
+      + '<button class="pc-add" onclick="LAB.jAdd()">Send to Check My Multi</button></div>' : '')
+    + '</div>';
+}
 function nflSignals(key, g){
   if (key !== 'nfl') return '';
   var tud = nflTuddy(key, g), chk = nflChunk(key, g);
@@ -4360,6 +4577,8 @@ function focusPage(){
     + (S.t3==='ready' ? halvesSection(key, g) : '')
     + (S.t3==='ready' ? subsSection(key, g) : '')
     + (S.t3==='ready' ? firstLastSection(key, g) : '')
+    + (S.t3==='ready' ? dejaVuSection(key, g) : '')
+    + (S.t3==='ready' ? jupiterSection(key, g) : '')
     + (S.t3==='ready' ? signalsSection(key, g) : '')
     + '<div class="dayband"><span>Players \u00b7 '+ps.length+'</span></div><div class="gp-list">'+list+'</div>';
 }
@@ -6423,6 +6642,39 @@ window.LAB = {
   stPosF: function(p){ state.view.stPosF = p; render(); },
   stWin: function(w){ state.view.stWin = w; render(); },
   rdrPick: function(n){ state.view.rdrPick = n; render(); },
+  dvMeets: function(d){ state.view.dvMeets = Math.max(1, (state.view.dvMeets || 3) + d); render(); },
+  dvLegs: function(d){ state.view.dvLegs = Math.max(2, Math.min(6, (state.view.dvLegs || 3) + d)); render(); },
+  dvAdd: function(){
+    var f = state.view.focus; if (!f || !f.g) return;
+    var meets = Math.max(1, state.view.dvMeets || 3);
+    var res = dvLegs(f.sport, f.g, meets);
+    var seen = {}, picked = [];
+    res.legs.forEach(function(l){
+      if (picked.length < Math.max(2, Math.min(state.view.dvLegs || 3, 6)) && !seen[l.name]){
+        seen[l.name] = 1; picked.push(l); } });
+    var legs = picked.map(function(l){ return cmbLeg(f.sport, l.p, [l.mkt, l.label], l.line - 0.5, 'over'); })
+      .filter(Boolean);
+    if (!legs.length) return;
+    state.view.cmbLegs = legs; state.view.cmbOpen = true; state.view.cmbMode = 'multi';
+    render();
+  },
+  jMkt: function(m){ state.view.jMkt = m; state.view.jSel = {}; render(); },
+  jPick: function(n){
+    state.view.jSel = state.view.jSel || {};
+    if (state.view.jSel[n]) delete state.view.jSel[n]; else state.view.jSel[n] = 1;
+    render();
+  },
+  jAdd: function(){
+    var f = state.view.focus; if (!f || !f.g) return;
+    var data = jupiterData(f.sport, f.g);
+    var sel = state.view.jSel || {};
+    var legs = data.rows.filter(function(d){ return sel[d.name]; })
+      .map(function(d){ return cmbLeg(f.sport, d.p, [d.mkt, mktLabel(f.sport, d.mkt)], d.line, 'over'); })
+      .filter(Boolean);
+    if (!legs.length) return;
+    state.view.cmbLegs = legs; state.view.cmbOpen = true; state.view.cmbMode = 'multi';
+    render();
+  },
   ulMk: function(m){ state.view.ulMk = m; render(); },
   ulWin: function(w){ state.view.ulWin = w; render(); },
   ulTeam: function(t){ state.view.ulTeam = t; render(); },
