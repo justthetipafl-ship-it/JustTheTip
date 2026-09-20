@@ -3180,7 +3180,9 @@ function ppFormTab(key, name){
    which overstates it badly) and runs a Gaussian copula. Same approach here.                */
 var CMB_SIDE_WORDS = { under:'under', u:'under', over:'over', o:'over' };
 function cmbMarkets(key){
-  return ((state.sports[key].config || {}).oddsMkts || (state.sports[key].config || {}).multiMkts || []);
+  var base = ((state.sports[key].config || {}).oddsMkts || (state.sports[key].config || {}).multiMkts || []);
+  // first scorer has no line, so it is not in oddsMkts - but punters still ask for it by name
+  return FS_MKT[key] ? base.concat([FS_MKT[key]]) : base;
 }
 // Punters type what they say, not what the config calls it: "pass yards", "receiving yds",
 // "strike outs", "home runs". Canonicalise both sides token by token, then match on tokens
@@ -3208,7 +3210,9 @@ var CMB_SYN = {
   points:'pts', pts:'pts', plus:'', over:'', under:'',
   possession:'disposals', possessions:'disposals', poss:'disposals',
   sot:'shotson', ontarget:'shotson', shotsontarget:'shotson',
-  rushrec:'rushrec', scrimmage:'rushrec'
+  rushrec:'rushrec', scrimmage:'rushrec',
+  first:'first', scorer:'scorer', firstscorer:'firstscorer', fts:'firstscorer',
+  firsttd:'firstscorer', firstgoal:'firstscorer', anytime:'anytime', opener:'firstscorer'
 };
 // words that are never part of a player's name or a market, just noise around the bet
 var CMB_STOP = { pts:1, point:1, points:1, line:1, odds:1, bet:1, prop:1, at:1, vs:1, v:1, the:1 };
@@ -3420,6 +3424,13 @@ function cmbSuggest(q){
 }
 function cmbLeg(key, p, mkt, line, side){
   var S = state.sports[key], opp = ppOpponent(key, p.name);
+  if (mkt[0] === 'firstScorer'){
+    var fr = firstScorerRead(key, p), fp = fsPrice(key, p.name);
+    return { key:key, p:p, mkt:'firstScorer', label:mkt[1], line:0, side:'over',
+             prob:(fr ? fr.prob : null), price:(fp ? fp.over : null), book:(fp ? fp.book : null),
+             hits:(fr ? fr.n : 0), n:(fr ? fr.teamTot : 0), last:[], opp:opp, dvp:null,
+             avg:null, meetings:null };
+  }
   var logs = sortLogsDesc(((S.idx.logsByName || {})[p.name] || []).slice());
   var vals = [];
   logs.forEach(function(r){ var v = statOf(key, r, mkt[0]); if (v != null) vals.push(v); });
@@ -3519,8 +3530,146 @@ function cmbSimilar(key, p, mkt, line, opp, side){
   rows2.forEach(function(r){ tot += r.vals.length; hit += r.hits; });
   return { rows:rows2, tot:tot, hit:hit, pos:pos };
 }
+
+/* FIRST SCORER -----------------------------------------------------------------
+   The one posted market with no line to clear: 3,174 NFL rows and 2,123 EPL, and until now
+   the tool ignored all of it because every other path needs a threshold.
+
+   Modelled as two questions rather than one:
+       P(this player scores first) = P(their team scores first) x P(it is him, given the team does)
+   Team rate comes from how often that side has opened the scoring; the player's share comes from
+   his cut of his own team's first scores, shrunk toward an even split so one lucky game doesn't
+   read as a third of the team's openings. NFL names arrive abbreviated ("Mi.Wilson"), so they are
+   resolved back to the roster by surname plus initial.                                          */
+var FS_MKT = { nfl:['firstScorer','First TD'], epl:['firstScorer','First Goal'] };
+var FS_SHRINK = 4;
+function fsResolve(key, raw){
+  var pool = cmbPool(key), n = String(raw || '');
+  for (var i=0;i<pool.length;i++) if (pool[i].name === n) return pool[i].name;
+  var m = n.match(/^([A-Za-z]{1,3})\.\s*(.+)$/);        // "Mi.Wilson" / "J.Allen"
+  if (!m) return null;
+  var ini = m[1].toLowerCase(), last = m[2].toLowerCase().replace(/[^a-z]/g, '');
+  var hit = null;
+  pool.forEach(function(p){
+    var parts = String(p.name).toLowerCase().split(/\s+/);
+    if (parts.length < 2) return;
+    if (parts[parts.length-1].replace(/[^a-z]/g, '') !== last) return;
+    if (parts[0].indexOf(ini) !== 0) return;
+    if (!hit) hit = p.name;
+  });
+  return hit;
+}
+function fsIndex(key){
+  var S = state.sports[key];
+  if (S.idx.fs) return S.idx.fs;
+  var teamGames = {}, teamFirst = {}, byPlayer = {}, teamScores = {};
+  if (key === 'nfl'){
+    var rows = asArray(S.data.firsttd) || [];
+    var seen = {};
+    rows.forEach(function(r){
+      if (!r || !r.matchId) return;
+      var pr = String(r.matchId).split('_');
+      [pr[2], pr[3]].forEach(function(t){
+        if (!t) return;
+        var gk = normTeam(t) + '|' + r.matchId;
+        if (!seen[gk]){ seen[gk] = 1; teamGames[normTeam(t)] = (teamGames[normTeam(t)] || 0) + 1; }
+      });
+      if (r.gameFirst) teamFirst[normTeam(r.team)] = (teamFirst[normTeam(r.team)] || 0) + 1;
+      teamScores[normTeam(r.team)] = (teamScores[normTeam(r.team)] || 0) + 1;
+      var nm = fsResolve(key, r.player);
+      if (!nm) return;
+      var k = normTeam(r.team) + '|' + nm;
+      byPlayer[k] = byPlayer[k] || { team:normTeam(r.team), name:nm, n:0 };
+      byPlayer[k].n++;
+    });
+  } else {
+    var ev = (S.data.events || {}).byTeam || {};
+    Object.keys(ev).forEach(function(t){
+      var e = ev[t] || {};
+      var tk = normTeam(t);
+      teamGames[tk] = e.matches || 0;
+      teamFirst[tk] = Math.round((e.opensScoring || 0) * (e.matches || 0));
+      (e.firstScorers || []).forEach(function(fsRow){
+        var nm = fsResolve(key, fsRow[0]) || fsRow[0];
+        var k = tk + '|' + nm;
+        byPlayer[k] = byPlayer[k] || { team:tk, name:nm, n:0 };
+        byPlayer[k].n += (+fsRow[1] || 0);
+        teamScores[tk] = (teamScores[tk] || 0) + (+fsRow[1] || 0);
+      });
+    });
+  }
+  return (S.idx.fs = { teamGames:teamGames, teamFirst:teamFirst, byPlayer:byPlayer, teamScores:teamScores });
+}
+function firstScorerRead(key, p){
+  var ix = fsIndex(key);
+  var team = normTeam(p.team);
+  var tg = ix.teamGames[team] || 0, tf = ix.teamFirst[team] || 0;
+  if (!tg) return null;
+  var teamRate = tf / tg;
+  var mine = ix.byPlayer[team + '|' + p.name];
+  var teamTot = ix.teamScores[team] || 0;
+  var scorers = Object.keys(ix.byPlayer).filter(function(k){ return ix.byPlayer[k].team === team; }).length || 1;
+  var prior = 1 / scorers;
+  var n = mine ? mine.n : 0;
+  var share = (n + FS_SHRINK * prior) / (teamTot + FS_SHRINK);     // shrunk toward an even split
+  return { prob: Math.max(0.005, Math.min(0.85, teamRate * share)),
+           teamRate:teamRate, share:share, n:n, teamTot:teamTot, teamGames:tg, scorers:scorers };
+}
+function fsPrice(key, name){
+  var d = state.sports[key].data.odds || {};
+  var rows = (d.books && d.books.length ? d.books : (d.lines || [])).concat(d.alt || []);
+  var best = null;
+  rows.forEach(function(r){
+    if (!r || r.market !== 'firstScorer' || r.player !== name || r.over == null) return;
+    if (!best || +r.over > best.over) best = { over:+r.over, book:r.book };
+  });
+  return best;
+}
+function fsCard(key, p, leg){
+  var read = firstScorerRead(key, p);
+  var label = (FS_MKT[key] || ['firstScorer','First Scorer'])[1];
+  var opp = ppOpponent(key, p.name);
+  var head = '<div class="ca-hd">'+(p.team ? teamLogo(key, p.team) : '')
+    + '<div><div class="ca-nm">'+esc(p.name)+'</div><div class="ca-meta">'
+    + esc([posShortP(p), p.team ? abbrOf(key, p.team) : ''].filter(Boolean).join(' \u00b7 '))
+    + (opp ? ' \u00b7 <b>vs '+esc(abbrOf(key, opp))+'</b>' : '')+'</div></div></div>'
+    + '<div class="ca-mkt">'+esc(label)+'</div>';
+  if (!read) return head + '<div class="empty" style="padding:18px">No first-scorer history on file for '
+    + esc(SPORTS[key].name)+'.</div>';
+  var price = leg && leg.price != null ? { over:leg.price, book:leg.book } : fsPrice(key, p.name);
+  var ev = price ? read.prob * (price.over - 1) - (1 - read.prob) : null;
+  var imp = price ? 1/price.over : null;
+  var vt = ev == null ? 'No price posted' : (ev > 0.05 ? 'Value' : (ev > -0.15 ? 'Close to fair' : 'Priced against you'));
+  var vcls = ev == null ? '' : (ev > 0.05 ? 'good' : (ev > -0.15 ? '' : 'bad'));
+  var pc = function(x){ return (x*100).toFixed(1)+'%'; };
+  return head
+    + '<div class="ca-verdict '+vcls+'"><div class="ca-vt">'+esc(vt)+'</div><div class="ca-vs">'
+      + 'model '+pc(read.prob)+(price ? ' \u00b7 market '+pc(imp)+' ($'+price.over.toFixed(2)+' '+esc(price.book||'')+')' : '')
+      + (ev != null ? ' \u00b7 '+(ev > 0 ? '+' : '')+Math.round(ev*100)+'% edge' : '')+'</div></div>'
+    + '<div class="ca-cells">'
+      + '<div class="ca-cell"><b>'+pc(read.teamRate)+'</b><span>team opens</span></div>'
+      + '<div class="ca-cell"><b>'+pc(read.share)+'</b><span>his share</span></div>'
+      + '<div class="ca-cell"><b>'+read.n+'</b><span>times first</span></div>'
+      + '<div class="ca-cell"><b>'+read.teamGames+'</b><span>team games</span></div></div>'
+    + '<div class="ca-lab">Analysis</div>'
+    + '<div class="ca-note '+(read.teamRate > 0.5 ? 'good' : (read.teamRate < 0.35 ? 'bad' : 'info'))+'">'
+      + '<i class="ti ti-flag"></i><span>'+esc(abbrOf(key, p.team))+' open the scoring '+pc(read.teamRate)
+      + ' of the time ('+Math.round(read.teamRate*read.teamGames)+' of '+read.teamGames+' games on file) \u2014 every first-scorer bet starts here.</span></div>'
+    + '<div class="ca-note '+(read.n >= 3 ? 'good' : 'warn')+'"><i class="ti ti-user-check"></i><span>'
+      + esc(p.name)+' has been his team\u2019s first scorer '+read.n+' time'+(read.n === 1 ? '' : 's')
+      + ' out of '+read.teamTot+' \u2014 a '+pc(read.share)+' share once shrunk toward an even split of '
+      + read.scorers+' scorers'+(read.n < 3 ? ', so treat it as thin' : '')+'.</span></div>'
+    + (price ? '<div class="ca-note '+(ev > 0 ? 'good' : 'bad')+'"><i class="ti ti-coin"></i><span>'
+      + 'The market implies '+pc(imp)+' at $'+price.over.toFixed(2)+'; the model says '+pc(read.prob)
+      + '. '+(ev > 0 ? 'That is an edge' : 'That is a worse price than the read justifies')+'.</span></div>'
+      : '<div class="ca-note info"><i class="ti ti-coin-off"></i><span>No first-scorer price posted for him '
+      + 'right now.</span></div>')
+    + '<div class="cmb-corr">First scorer is modelled as P(team opens) \u00d7 P(it is him). There is no line '
+    + 'to clear, so form charts and hit rates do not apply.</div>';
+}
 function cmbAnalysis(l){
   var key = l.key, p = l.p, mkt = l.mkt, line = l.line, opp = l.opp;
+  if (mkt === 'firstScorer') return fsCard(key, p, l);
   var S = state.sports[key];
   var logs = sortLogsDesc(((S.idx.logsByName || {})[p.name] || []).slice());
   var rows = [];
@@ -3736,11 +3885,11 @@ function cmbResolve(q){
   var c = cands[0];
   if (!c.parsed.mkt) return { err:'Which market? Try \u201c'+esc(c.p.name)+' '
     + (cmbMarkets(c.key)[0] ? '20+ '+cmbMarkets(c.key)[0][1].toLowerCase() : '20+ disposals')+'\u201d.' };
-  if (c.parsed.line == null) return { err:'Add a line, e.g. \u201c'+esc(c.p.name)+' 20+ '
-    + c.parsed.mkt[1].toLowerCase()+'\u201d.' };
+  if (c.parsed.line == null && c.parsed.mkt[0] !== 'firstScorer')
+    return { err:'Add a line, e.g. \u201c'+esc(c.p.name)+' 20+ '+c.parsed.mkt[1].toLowerCase()+'\u201d.' };
   ensureSport(c.key);
   if (state.sports[c.key].t3 !== 'ready') return { loading:true, key:c.key };
-  return { leg: cmbLeg(c.key, c.p, c.parsed.mkt, c.parsed.line, c.parsed.side) };
+  return { leg: cmbLeg(c.key, c.p, c.parsed.mkt, (c.parsed.line == null ? 0 : c.parsed.line), c.parsed.side) };
 }
 // A four-leg multi can land at 0.04%, which renders as "0%" and tells the punter nothing.
 // Below 1% say it the way people say it.
