@@ -3548,6 +3548,11 @@ function tuddyProfile(key, r){
     return v.length ? v.reduce(function(a,b){ return a+b; }, 0) / v.length : null;
   };
   var touches = avgOf(win, function(x){ return (+x.rushAtt||0) + (+x.targets||0); });
+  // a back is two players in one: the old tool split his carries and his targets
+  var carries = avgOf(win, function(x){ return +x.rushAtt != null ? +x.rushAtt : null; });
+  var tgts = avgOf(win, function(x){ return +x.targets != null ? +x.targets : null; });
+  var rushY = avgOf(win, function(x){ return +x.rushYds != null ? +x.rushYds : null; });
+  var recY = avgOf(win, function(x){ return +x.recYds != null ? +x.recYds : null; });
   var snap = avgOf(win, function(x){ return x.snapPct != null ? +x.snapPct : null; });
   var tgtSh = avgOf(win, function(x){ return x.tgtShare != null ? +x.tgtShare : null; });
   var tdRate = avgOf(win, function(x){ return +x.totalTds || 0; });
@@ -3557,6 +3562,10 @@ function tuddyProfile(key, r){
         + '" onclick="event.stopPropagation();LAB.ttWin(\''+w[0]+'\')">'+w[1]+'</button>'; }).join('')+'</div>'
     + '<div class="tt-sec">Usage \u00b7 '+(wn === 'all' ? 'all '+win.length+' games' : 'last '+win.length)+'</div>'
     + (touches != null ? ttRow('Volume', f1(touches)+' tch/g', touches/28*100) : '')
+    + (carries != null && carries > 0 ? ttRow('Carries', f1(carries)+'/g', carries/22*100) : '')
+    + (tgts != null && tgts > 0 ? ttRow('Targets', f1(tgts)+'/g', tgts/12*100) : '')
+    + (rushY != null && rushY > 0 ? ttRow('Rush yards', f1(rushY)+'/g', rushY/110*100) : '')
+    + (recY != null && recY > 0 ? ttRow('Rec yards', f1(recY)+'/g', recY/100*100) : '')
     + (snap != null ? ttRow('Snap share', Math.round(snap)+'%', snap) : '')
     + (tgtSh != null ? ttRow('Target share', Math.round(tgtSh)+'%', tgtSh/40*100) : '')
     + (tdRate != null ? ttRow('TD rate', tdRate.toFixed(2)+' TD/g', tdRate/1.2*100, true) : '');
@@ -3568,6 +3577,21 @@ function tuddyProfile(key, r){
     return (v == null || v === 0) ? '' : '<div class="tt-zcell"><b>'+v.toFixed(1)+'</b><span>'+z[1]+'</span></div>';
   }).filter(Boolean);
   if (cells.length) h += '<div class="tt-sec">Scoring zones \u00b7 per game</div><div class="tt-zone">'+cells.join('')+'</div>';
+  // season red-zone SHARES from redzone.json - the per-game columns say how often he is used,
+  // these say how much of the team's red-zone work is his
+  var rz = (asArray(S.data.redzone) || []).filter(function(x){ return x.player === r.name; })[0];
+  if (rz){
+    var shares = [['rzTgtPct','RZ target share'],['i10TgtPct','Inside-10 tgt share'],
+                  ['rzRushPct','RZ carry share'],['i10RushPct','Inside-10 carry share'],
+                  ['i5RushPct','Inside-5 carry share']]
+      .filter(function(x){ return rz[x[0]] != null && +rz[x[0]] > 0; });
+    if (shares.length){
+      h += '<div class="tt-sec">Red zone \u00b7 season share</div>'
+        + shares.map(function(x){ return ttRow(x[1], (+rz[x[0]]).toFixed(0)+'%', +rz[x[0]], true); }).join('')
+        + ttRow('RZ touches', ((+rz.rzTgt||0) + (+rz.rzAtt||0))+' total',
+            Math.min(100, ((+rz.rzTgt||0) + (+rz.rzAtt||0)) / 50 * 100));
+    }
+  }
   // Opportunity, as production had it: what the market expects this offence to score, and how
   // freely the opponent gives up touchdowns to the position.
   var p = (S.idx.byName || {})[r.name] || {};
@@ -3578,6 +3602,17 @@ function tuddyProfile(key, r){
       + (imp != null ? ttRow('Implied total', imp.toFixed(1)+' pts', imp/34*100) : '')
       + (tdD ? ttRow('TDs allowed', '#'+tdD.rank+'/'+tdD.total+' \u00b7 '+(tdD.pct > 0 ? '+' : '')
           + tdD.pct.toFixed(0)+'%', (1 - (tdD.rank-1)/Math.max(1, tdD.total-1))*100, true) : '');
+  }
+  // coverage split, where the player has one: how he is used against man and against zone
+  if (p.cov && (p.cov.man || p.cov.zone)){
+    var cm = p.cov.man || { tgt:0, yds:0, td:0 }, cz = p.cov.zone || { tgt:0, yds:0, td:0 };
+    var mypt = cm.tgt ? cm.yds/cm.tgt : 0, zypt = cz.tgt ? cz.yds/cz.tgt : 0;
+    var tot = (cm.tgt||0) + (cz.tgt||0);
+    h += '<div class="tt-sec">Coverage split</div>'
+      + ttRow('vs man', mypt.toFixed(1)+' yd/tgt ('+cm.tgt+')', tot ? cm.tgt/tot*100 : 0)
+      + ttRow('vs zone', zypt.toFixed(1)+' yd/tgt ('+cz.tgt+')', tot ? cz.tgt/tot*100 : 0)
+      + ttRow('TDs', (cm.td||0)+' man / '+(cz.td||0)+' zone',
+          Math.min(100, ((cm.td||0)+(cz.td||0)) * 20), true);
   }
   // TD strike rate by window, plus against this opponent
   var strike = function(rows){
@@ -3812,7 +3847,7 @@ function radarSVG(rows){
     + '</svg>';
 }
 function radarMarkets(key, p, opp){
-  var mkts = ((state.sports[key].config || {}).oddsMkts || []).slice(0, 10);
+  var mkts = posMarkets(key, p).slice(0, 10);
   var rows = [];
   mkts.forEach(function(m){
     var lg = leagueAvg(key, m[0])[p.name];
@@ -4335,7 +4370,7 @@ function pcGames(key, name, scope, opp){
 function ppCalc(key, name){
   var S = state.sports[key], p = (S.idx.byName || {})[name];
   if (!p) return '<div class="empty" style="padding:20px">No player record.</div>';
-  var mkts = ((S.config || {}).oddsMkts || (S.config || {}).multiMkts || []).slice(0, 10);
+  var mkts = posMarkets(key, p).slice(0, 10);
   if (!mkts.length) return '<div class="empty" style="padding:20px">No markets configured.</div>';
   var st = state.view.pc || {};
   if (st.name !== name){
@@ -4454,7 +4489,7 @@ function ppDvp(key, name){
   var S = state.sports[key], p = (S.idx.byName || {})[name];
   var opp = ppOpponent(key, name);
   if (!p) return '<div class="empty" style="padding:20px">No player record.</div>';
-  var mkts = ((S.config || {}).oddsMkts || (S.config || {}).multiMkts || []).slice(0, 10);
+  var mkts = posMarkets(key, p).slice(0, 10);          // a QB has no receiving matchup
   var rows = mkts.map(function(m){
     var lg = leagueAvg(key, m[0])[name];
     if (!lg) return null;
@@ -4480,11 +4515,51 @@ function ppDvp(key, name){
           + '<td class="'+cls+'">'+(r.dvp ? '#'+r.dvp.rank+'/'+r.dvp.total : '\u2014')+'</td></tr>';
       }).join('')+'</tbody></table></div>';
 }
+
+/* Which markets actually belong to a position. Showing a quarterback's receiving yards or a
+   goalkeeper's shots is noise at best and misleading at worst - a DVP rank against a market the
+   player never records reads as a matchup signal when it is nothing.                          */
+var POS_MKTS = {
+  nfl: {
+    QB: ['passYds','passAtt','passComp','passTds','passInt','longComp','rushYds','rushAtt','anytimeTd'],
+    RB: ['rushYds','rushAtt','receptions','recYds','rushRecYds','longRush','longRec','anytimeTd'],
+    WR: ['receptions','recYds','longRec','rushRecYds','anytimeTd','rushYds','rushAtt'],
+    TE: ['receptions','recYds','longRec','anytimeTd'],
+    K:  ['kickingPts','fgMade'],
+    LB: ['tackles','sacks'], DL: ['tackles','sacks'], DB: ['tackles','sacks']
+  },
+  epl: {
+    GK: ['saves','cards'],
+    DEF:['tackles','cards','foulsCommitted','shotsOn','goals','assists'],
+    MID:['goals','assists','shots','shotsOn','keyPasses','tackles','cards','foulsCommitted'],
+    FWD:['goals','assists','shots','shotsOn','keyPasses','cards']
+  }
+};
+function posMarkets(key, p, all){
+  all = all || ((state.sports[key].config || {}).oddsMkts || (state.sports[key].config || {}).multiMkts || []);
+  if (!p) return all;
+  if (key === 'mlb'){                                   // batters and arms never share a market
+    return all.filter(function(m){
+      return p.role === 'pitch' ? !BAT_ONLY[m[0]] : !ARM_ONLY[m[0]];
+    });
+  }
+  var map = POS_MKTS[key];
+  if (!map) return all;
+  var pos = p.position || p.pos;
+  var allowed = map[pos];
+  if (!allowed){                                        // EPL ships long position names too
+    Object.keys(map).forEach(function(k2){
+      if (!allowed && String(pos || '').toUpperCase().indexOf(k2) === 0) allowed = map[k2];
+    });
+  }
+  if (!allowed) return all;
+  return all.filter(function(m){ return allowed.indexOf(m[0]) >= 0; });
+}
 function ppFormTab(key, name){
   var S = state.sports[key], p = (S.idx.byName || {})[name];
   if (!p) return '<div class="empty" style="padding:20px">No player record on file.</div>';
   var opp = ppOpponent(key, name);
-  var mkts = (S.config || {}).oddsMkts || (S.config || {}).multiMkts || [];
+  var mkts = posMarkets(key, p);                        // only the markets this position records
   var logs = sortLogsDesc(((S.idx.logsByName || {})[name] || []).slice());
   if (!logs.length) return '<div class="empty" style="padding:20px">No game logs for this player.</div>';
   var h2h = opp ? (h2hSplit(key, name)[normTeam(opp)] || []) : [];
@@ -5882,6 +5957,12 @@ function teamsView(key){
 function dvpView(key){
   var S = state.sports[key], v = state.view;
   var stats = ((S.config || {}).dvpStats || (S.config || {}).oddsMkts || []).slice(0, 8);
+  // drop columns the position never records: a GK has no shots, a DB has no receiving yards
+  var posProbe = { position: (v.stPos && v.stPos[key]) || null };
+  if (posProbe.position){
+    var lim = posMarkets(key, posProbe, stats);
+    if (lim.length) stats = lim;
+  }
   var raw = asArray(S.data.dvp) || [];
   if (!stats.length || !raw.length)
     return secNote('DVP', 'dvp.json returned nothing for '+SPORTS[key].name+'.');
