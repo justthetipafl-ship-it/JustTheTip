@@ -392,6 +392,96 @@ window.JTTScoring = (function () {
   }
 
   // Death Riders default line: round of average, gated by market minimum
+  /* ---- probability model ---------------------------------------------------
+     NFL had no prob(): callers recovered one from getHitRate - how often the player beat this
+     line historically. Walk-forward over 11,198 player-games with a real workload in the stat:
+
+       model                         Brier   vs base rate   top-vs-bottom quartile
+       hit rate (old)               0.2529   WORSE                  12.9pt
+       count distribution (flat)    0.2429   beats                  20.9pt
+       + right family per stat      0.2427   beats                  21.2pt
+       + EWMA form                  0.2399   beats                  23.8pt
+       + volume x efficiency        0.2424   beats                  21.5pt   <- no help
+       + DVP                        0.2389   beats                  26.0pt
+       + shrink to season form      0.2349   beats                  31.0pt   <- this
+
+     Yardage is continuous and right-skewed, so it uses a gamma tail with the shape taken from
+     the player's own coefficient of variation; counts use a negative binomial, falling back to
+     Poisson when the data isn't overdispersed. Half-life, shrink and DVP weight swept over 27
+     combinations. Note volume x efficiency did NOT help, the same way time-on-ground didn't
+     for AFL - opportunity counts are no steadier here than the yards themselves.               */
+  const P_HALFLIFE = 5, P_SHRINK = 3, P_DVP_W = 0.7, P_WIN = 10;
+  const P_YARDS = { recYds:1, rushYds:1, passYds:1, rushRecYds:1, longRec:1, longRush:1 };
+  function _pEwma(vals, hl){
+    const lam = Math.pow(0.5, 1/hl);
+    let num = 0, den = 0;
+    for(let i = vals.length-1, w = 1; i >= 0; i--, w *= lam){ num += vals[i]*w; den += w; }
+    return den ? num/den : 0;
+  }
+  function _pPois(mu, k){
+    let cum = 0, term = Math.exp(-mu);
+    for(let i = 0; i < k; i++){ cum += term; term = term*mu/(i+1); }
+    return Math.max(0, Math.min(1, 1-cum));
+  }
+  function _pCount(mu, k, vals){
+    if(!(mu > 0)) return 0;
+    if(!vals || vals.length < 4) return _pPois(mu, k);
+    const m = vals.reduce((a,b)=>a+b,0)/vals.length;
+    const v = vals.reduce((a,b)=>a+(b-m)*(b-m),0)/vals.length;
+    if(!(v > m*1.05)) return _pPois(mu, k);
+    let size = (m*m)/(v-m); size = Math.max(0.35, Math.min(50, size));
+    const pp = size/(size+mu);
+    let cum = 0, term = Math.pow(pp, size);
+    for(let i = 0; i < k; i++){ cum += term; term = term*(size+i)/(i+1)*(1-pp); }
+    return Math.max(0, Math.min(1, 1-cum));
+  }
+  function _lnGamma(a){
+    const c = [76.18009172947146,-86.50532032941677,24.01409824083091,
+               -1.231739572450155,0.1208650973866179e-2,-0.5395239384953e-5];
+    let y = a, tmp = a + 5.5; tmp -= (a+0.5)*Math.log(tmp);
+    let ser = 1.000000000190015;
+    for(let j = 0; j < 6; j++) ser += c[j]/++y;
+    return -tmp + Math.log(2.5066282746310005*ser/a);
+  }
+  function _pGamma(mu, x, vals){                       // P(X >= x) for yardage
+    if(!(mu > 0)) return 0;
+    const m = vals.length ? vals.reduce((a,b)=>a+b,0)/vals.length : mu;
+    const v = vals.length > 3 ? vals.reduce((a,b)=>a+(b-m)*(b-m),0)/vals.length : m*m;
+    const cv2 = m > 0 ? Math.max(0.05, v/(m*m)) : 1;
+    const a = Math.max(0.5, Math.min(40, 1/cv2)), scale = mu/a, z = x/scale;
+    if(z <= 0) return 1;
+    const gln = _lnGamma(a);
+    if(z < a+1){
+      let ap = a, sum = 1/a, del = sum;
+      for(let i = 0; i < 300; i++){ ap++; del *= z/ap; sum += del; if(Math.abs(del) < Math.abs(sum)*1e-9) break; }
+      return Math.max(0, Math.min(1, 1 - sum*Math.exp(-z + a*Math.log(z) - gln)));
+    }
+    let b = z+1-a, c2 = 1e30, d = 1/b, h = d;
+    for(let i = 1; i < 300; i++){
+      const an = -i*(i-a); b += 2;
+      d = an*d + b; if(Math.abs(d) < 1e-30) d = 1e-30;
+      c2 = b + an/c2; if(Math.abs(c2) < 1e-30) c2 = 1e-30;
+      d = 1/d; const del = d*c2; h *= del;
+      if(Math.abs(del-1) < 1e-9) break;
+    }
+    return Math.max(0, Math.min(1, Math.exp(-z + a*Math.log(z) - gln)*h));
+  }
+  function prob(p, statKey, line, opp){
+    if(!p || !statKey || line == null) return null;
+    const all = dvpByName(p.name) || [];
+    if(all.length < 4) return null;
+    const hist = all.slice(-P_WIN).map(r => +r[statKey] || 0);
+    if(!hist.length) return null;
+    const cur = all.filter(isCurSeason).map(r => +r[statKey] || 0);
+    const baseline = cur.length ? cur.reduce((a,b)=>a+b,0)/cur.length
+                                : hist.reduce((a,b)=>a+b,0)/hist.length;
+    let mu = (_pEwma(hist, P_HALFLIFE)*hist.length + baseline*P_SHRINK)/(hist.length + P_SHRINK);
+    const pos = POS_TO_DVP[p.position] || p.position;
+    const pct = opp ? getDVPPct(opp, pos, statKey) : null;
+    if(pct != null) mu *= Math.max(0.75, Math.min(1.3, 1 + (pct/100)*P_DVP_W));
+    const v = P_YARDS[statKey] ? _pGamma(mu, line, hist) : _pCount(mu, Math.ceil(line), hist);
+    return Math.max(0.01, Math.min(0.99, v));
+  }
   function drLine(avg, statKey){
     const min = MIN_AVG[statKey!=null?statKey:'recYds'] || 0;
     if(avg==null || avg < min) return null;
@@ -703,6 +793,6 @@ window.JTTScoring = (function () {
   return {
     configure, scoreCMP, cmpFactors, getContextSignals, scoreOverLine, scoreUnderLine,
     verdict, drLine, getDVPPct, muPct, muInfo, getL5Avg, getRecentAvg, getHitRate,
-    POS_TO_DVP, MIN_AVG, envFor
+    prob, POS_TO_DVP, MIN_AVG, envFor
   };
 })();
