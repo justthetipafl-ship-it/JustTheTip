@@ -467,6 +467,24 @@
   .gl-odds{margin-top:7px;display:inline-block;font-family:var(--font-mono);font-size:10px;color:var(--text);
     border:1px solid var(--border);border-radius:5px;padding:3px 7px;}
   .gl-book{display:block;font-family:var(--font-mono);font-size:7px;color:var(--text-3);margin-top:3px;}
+  .fa-row{display:flex;gap:10px;padding:9px 12px;border-top:1px solid var(--border);align-items:center;cursor:pointer;}
+  .fa-left{flex:1;min-width:0;}
+  .fa-nm{font-size:12px;font-weight:700;display:flex;align-items:center;gap:6px;min-width:0;}
+  .fa-nm b{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:700;}
+  .fa-dir{font-family:var(--font-mono);font-size:7px;letter-spacing:.07em;padding:2px 5px;border-radius:3px;flex:none;}
+  .fa-dir.up{background:color-mix(in srgb,var(--accent) 16%,transparent);color:var(--accent);}
+  .fa-dir.down{background:color-mix(in srgb,#f97316 16%,transparent);color:#f97316;}
+  .fa-sub{font-family:var(--font-mono);font-size:10px;color:var(--text-2);margin-top:4px;
+    overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .fa-bar{display:flex;align-items:center;gap:6px;margin-top:7px;}
+  .fa-track{flex:1;height:4px;border-radius:2px;background:var(--surface-3,var(--border));position:relative;}
+  .fa-track i{position:absolute;top:0;bottom:0;display:block;border-radius:2px;}
+  .fa-track i.up{background:var(--accent);left:50%;} .fa-track i.down{background:#f97316;right:50%;}
+  .fa-mid{position:absolute;top:-2px;bottom:-2px;left:50%;width:1px;background:var(--text-3);opacity:.5;}
+  .fa-right{flex:none;width:64px;text-align:right;}
+  .fa-pc{font-family:var(--font-display);font-size:17px;line-height:1;}
+  .fa-pc.up{color:var(--accent);} .fa-pc.down{color:#f97316;}
+  .fa-pcl{font-family:var(--font-mono);font-size:7px;color:var(--text-3);letter-spacing:.06em;margin-top:3px;}
   .lm-wrap{background:var(--surface-2);border:1px solid var(--border);border-radius:10px;padding:10px 12px;margin-bottom:6px;}
   .lm-stats{display:flex;flex-wrap:wrap;gap:7px;padding-bottom:9px;margin-bottom:6px;border-bottom:1px solid var(--border);}
   .lm-stat{flex:1 1 84px;background:var(--surface);border:1px solid var(--border);border-radius:7px;padding:6px 9px;}
@@ -2718,6 +2736,69 @@ function ouTile(key, g, kind){
     over ? 'Model and price both say over' : 'Model and price both say under',
     rows.map(function(r){ return ouRow(key, r); }), why);
 }
+
+/* FORM ALERTS: last 3 against the player's own baseline. Informational by nature - it says a
+   player is running hot or cold, not that there is a bet in it. Production's thresholds kept:
+   25% swing, 3+ current-season games, and a per-market floor so a man going from 0.2 to 0.4
+   tackles doesn't read as a 100% spike.                                                      */
+var ALERT_THRESHOLD = 0.25, ALERT_MIN_L3 = 3;
+var ALERT_FLOOR = {
+  disposals:15, goals:1.2, marks:4, tackles:4, clearances:4, dreamteam:70,
+  recYds:25, rushYds:25, passYds:150, receptions:2, targets:3,
+  shots:1, shotsOn:0.6, keyPasses:1, H:0.7, TB:1.2, K:4
+};
+function formAlerts(key, g){
+  var S = state.sports[key], out = [];
+  var mkts = (S.config || {}).oddsMkts || (S.config || {}).multiMkts || [];
+  var season = curSeason(key);
+  [g.away, g.home].forEach(function(team){
+    var opp = (team === g.home) ? g.away : g.home;
+    playersOnTeam(key, team).forEach(function(p){
+      if (!p || !p.name || !isPlayingP(key, p.name, team)) return;
+      var all = sortLogsDesc(((S.idx.logsByName || {})[p.name] || []).slice());
+      var cur = all.filter(function(r){ return (+(r.Year||r.year)||0) === season; });
+      if (cur.length < ALERT_MIN_L3) return;
+      var base = cur.length >= 10 ? cur : all.slice(0, 10);
+      mkts.forEach(function(m){
+        var k = m[0], floor = ALERT_FLOOR[k];
+        var bv = [], l3v = [];
+        base.forEach(function(r){ var v = statOf(key, r, k); if (v != null) bv.push(v); });
+        cur.slice(0, 3).forEach(function(r){ var v = statOf(key, r, k); if (v != null) l3v.push(v); });
+        if (bv.length < 4 || l3v.length < ALERT_MIN_L3) return;
+        var seasonAvg = bv.reduce(function(a,b){ return a+b; }, 0) / bv.length;
+        var l3 = l3v.reduce(function(a,b){ return a+b; }, 0) / l3v.length;
+        if (!(seasonAvg > 0)) return;
+        var swing = (l3 - seasonAvg) / seasonAvg;
+        if (Math.abs(swing) < ALERT_THRESHOLD) return;
+        var up = swing > 0;
+        if (floor != null){                       // a spike has to reach a real number, a drop to fall from one
+          if (up && l3 < floor) return;
+          if (!up && seasonAvg < floor) return;
+        }
+        out.push({ name:p.name, team:team, opp:opp, pos:posShortP(p), label:m[1], mkt:k,
+                   seasonAvg:seasonAvg, l3:l3, swing:swing, up:up, n:l3v.length });
+      });
+    });
+  });
+  out.sort(function(a,b){ return Math.abs(b.swing) - Math.abs(a.swing); });
+  return out.slice(0, SIG_MAX_ROWS);
+}
+function formRow(key, r){
+  var pc = Math.round(Math.abs(r.swing) * 100);
+  var w = Math.min(50, Math.round(Math.abs(r.swing) * 100 / 2));
+  var dec = function(v){ return v < 3 ? v.toFixed(2) : v.toFixed(1); };
+  return '<div class="fa-row" onclick="LAB.player(\''+key+'\',\''+esc(r.name).replace(/'/g,"\\'")+'\')">'
+    + '<div class="fa-left">'
+      + '<div class="fa-nm"><b>'+esc(r.name)+'</b><span class="fa-dir '+(r.up?'up':'down')+'">'
+        + (r.up ? 'HEATING' : 'COOLING')+'</span></div>'
+      + '<div class="fa-sub">'+esc(r.label)+' L3 '+dec(r.l3)+' v '+dec(r.seasonAvg)+' season \u00b7 v '
+        + esc(abbrOf(key, r.opp))+'</div>'
+      + '<div class="fa-bar"><span class="fa-track"><span class="fa-mid"></span>'
+        + '<i class="'+(r.up?'up':'down')+'" style="width:'+w+'%"></i></span></div>'
+    + '</div>'
+    + '<div class="fa-right"><div class="fa-pc '+(r.up?'up':'down')+'">'+(r.up?'+':'\u2212')+pc+'%</div>'
+      + '<div class="fa-pcl">VS SEASON</div></div></div>';
+}
 function signalsSection(key, g){
   var S = state.sports[key], cfg = S.config || {};
   if (!(cfg.oddsMkts || cfg.multiMkts || []).length)
@@ -2735,19 +2816,25 @@ function signalsSection(key, g){
     : (!(asArray(S.data.dvp)||[]).length
         ? 'dvp.json returned nothing for '+SPORTS[key].name+', so no defence can be graded.'
         : 'No league top-'+ELITE_TOP_N+' player in this fixture draws a bottom-'+ELITE_DVP_GATE+' defence for their stat.');
-  return '<div class="dayband"><span>Degen Signals</span></div>'
+  // Two bands: things with a price attached, and things that only tell you something.
+  return '<div class="dayband"><span>Degen Signals \u00b7 Picks</span></div>'
+    + ouTile(key, g, 'over')
+    + ouTile(key, g, 'under')
     + sigTile('ti-flame', 'Streakers', 'Cleared the posted line, game after game',
               rows.map(function(r){ return streakRow(key, r); }), why)
     + sigTile('ti-trophy', 'Elite Matchups', 'League\u2019s best against the softest defences',
               elite.map(function(r){ return eliteRow(key, r); }), eliteWhy)
+    + '<div class="dayband"><span>Form &amp; Matchups</span></div>'
+    + sigTile('ti-trending-up', 'Form Alerts', 'Running hot or cold against their own season',
+              formAlerts(key, g).map(function(r){ return formRow(key, r); }),
+              'No player is '+Math.round(ALERT_THRESHOLD*100)+'%+ above or below their season average '
+              + 'on a market that carries enough volume to mean anything.')
     + sigTile('ti-carrot', 'Bunnies', 'Players who feast on this opponent',
               h2hSignals(key, g, 'bunny').map(function(r){ return h2hSigRow(key, r); }),
               'No player has '+H2H_MIN_BUNNY+'+ meetings with this opponent that beat their other matchups.')
     + sigTile('ti-ghost-2', 'Bogey', 'Players this opponent shuts down',
               h2hSignals(key, g, 'bogey').map(function(r){ return h2hSigRow(key, r); }),
-              'No player has '+H2H_MIN_BOGEY+'+ meetings with this opponent below their other matchups.')
-    + ouTile(key, g, 'over')
-    + ouTile(key, g, 'under');
+              'No player has '+H2H_MIN_BOGEY+'+ meetings with this opponent below their other matchups.');
 }
 
 function secNote(title, why){
