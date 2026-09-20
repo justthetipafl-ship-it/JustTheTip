@@ -485,6 +485,26 @@
   .fa-pc{font-family:var(--font-display);font-size:17px;line-height:1;}
   .fa-pc.up{color:var(--accent);} .fa-pc.down{color:#f97316;}
   .fa-pcl{font-family:var(--font-mono);font-size:7px;color:var(--text-3);letter-spacing:.06em;margin-top:3px;}
+  .pp-tabs{display:flex;gap:4px;padding:0 12px 9px;}
+  .pp-tab{font-size:9px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;padding:5px 11px;
+    border-radius:999px;border:1px solid var(--border);background:var(--surface-2);color:var(--text-3);cursor:pointer;}
+  .pp-tab.on{border-color:var(--accent);color:var(--accent);background:color-mix(in srgb,var(--accent) 12%,transparent);}
+  .pf-row{background:var(--surface-2);border:1px solid var(--border);border-radius:10px;padding:10px 12px;margin-bottom:7px;}
+  .pf-hd{display:flex;align-items:baseline;gap:8px;}
+  .pf-mk{font-family:var(--font-display);font-size:12px;font-weight:800;}
+  .pf-line{font-family:var(--font-mono);font-size:10px;color:var(--text-2);}
+  .pf-ev{margin-left:auto;font-family:var(--font-mono);font-size:10px;}
+  .pf-ev.pos{color:var(--accent);} .pf-ev.neg{color:var(--text-3);}
+  .pf-pips{display:flex;gap:3px;margin:8px 0 3px;}
+  .pf-pip{flex:1;height:18px;border-radius:3px;background:var(--surface-3,var(--border));position:relative;overflow:hidden;}
+  .pf-pip i{position:absolute;left:0;right:0;bottom:0;display:block;background:var(--accent);opacity:.85;}
+  .pf-pip.miss i{background:#f97316;opacity:.5;}
+  .pf-vals{display:flex;gap:3px;}
+  .pf-vals span{flex:1;text-align:center;font-family:var(--font-mono);font-size:7px;color:var(--text-3);}
+  .pf-cells{display:flex;gap:6px;margin-top:9px;}
+  .pf-cell{flex:1;background:var(--surface);border:1px solid var(--border);border-radius:7px;padding:5px 6px;text-align:center;}
+  .pf-cell b{display:block;font-family:var(--font-display);font-size:12px;font-weight:800;font-variant-numeric:tabular-nums;}
+  .pf-cell span{display:block;font-size:7px;font-weight:800;letter-spacing:.05em;text-transform:uppercase;color:var(--text-3);}
   .lm-wrap{background:var(--surface-2);border:1px solid var(--border);border-radius:10px;padding:10px 12px;margin-bottom:6px;}
   .lm-stats{display:flex;flex-wrap:wrap;gap:7px;padding-bottom:9px;margin-bottom:6px;border-bottom:1px solid var(--border);}
   .lm-stat{flex:1 1 84px;background:var(--surface);border:1px solid var(--border);border-radius:7px;padding:6px 9px;}
@@ -590,7 +610,7 @@ var TIER1 = { fixture:'data/fixture.json', teams:'data/teams.json', meta:'data/m
 var state = {
   sports: {},                               // sports[key] = {data:{}, idx:{}, status:''}
   view:   { active: {}, tab: 'fixture', mkt: {}, match: {}, player: null, books: null, showDone: false, focus: null, h2hMode: 'for',
-             slMkt: {}, slWin: 'season', dvpMkt: {} }   // filter + current page + market per sport
+             slMkt: {}, slWin: 'season', dvpMkt: {}, ppTab: 'form' }   // filter + current page + market per sport
 };
 Object.keys(SPORTS).forEach(function(k){
   state.sports[k] = { data:{}, idx:{teamMap:{}}, status:'idle' };
@@ -2910,6 +2930,90 @@ function focusPage(){
     + (S.t3==='ready' ? signalsSection(key, g) : '')
     + '<div class="dayband"><span>Players \u00b7 '+ps.length+'</span></div><div class="gp-list">'+list+'</div>';
 }
+
+/* Player modal, Form tab: the receipts behind a pick. Every number here is the same one the
+   signals are built on - same statOf null handling, same calibrated probability, same price
+   floor - so a row in a tile and a row in here can never disagree.                            */
+function ppOpponent(key, name){
+  var S = state.sports[key], team = (S.idx.playerTeam || {})[name];
+  var f = state.view.focus;
+  if (team && f && f.sport === key && f.g){
+    if (normTeam(f.g.home) === normTeam(team)) return f.g.away;
+    if (normTeam(f.g.away) === normTeam(team)) return f.g.home;
+  }
+  return team ? (S.idx.nextOpp || {})[team] : null;
+}
+function ppFormTab(key, name){
+  var S = state.sports[key], p = (S.idx.byName || {})[name];
+  if (!p) return '<div class="empty" style="padding:20px">No player record on file.</div>';
+  var opp = ppOpponent(key, name);
+  var mkts = (S.config || {}).oddsMkts || (S.config || {}).multiMkts || [];
+  var logs = sortLogsDesc(((S.idx.logsByName || {})[name] || []).slice());
+  if (!logs.length) return '<div class="empty" style="padding:20px">No game logs for this player.</div>';
+  var h2h = opp ? (h2hSplit(key, name)[normTeam(opp)] || []) : [];
+  var out = [];
+  mkts.forEach(function(m){
+    var k = m[0];
+    if (key === 'mlb'){
+      if (p.role === 'pitch' && BAT_ONLY[k]) return;
+      if (p.role !== 'pitch' && ARM_ONLY[k]) return;
+    }
+    var od = oddsForP(key, name, k);
+    var cands = streakCandidates(key, name, k).filter(function(c){ return c.price >= SIG_ODDS_FLOOR; });
+    var bet = (od && od.line != null && od.over != null && od.over >= SIG_ODDS_FLOOR)
+      ? { line:+od.line, price:+od.over, book:od.book } : (cands.length ? cands[cands.length-1] : null);
+    var vals = [];
+    logs.forEach(function(r){ var v = statOf(key, r, k); if (v != null) vals.push(v); });
+    if (vals.length < 3) return;
+    var last = vals.slice(0, 10);
+    var lg = leagueAvg(key, k)[name];
+    var l5 = last.slice(0, 5);
+    var avg = function(a){ return a.length ? a.reduce(function(x,y){ return x+y; }, 0) / a.length : null; };
+    var h2hVals = [];
+    h2h.forEach(function(r){ var v = statOf(key, r, k); if (v != null) h2hVals.push(v); });
+    var line = bet ? bet.line : null;
+    var hits = line != null ? last.filter(function(v){ return v > line; }).length : null;
+    var prob = null, ev = null;
+    if (bet){
+      var raw = null;
+      try { raw = S.scoring && S.scoring.prob ? S.scoring.prob(p, k, bet.line, opp) : null; } catch(e){}
+      if (raw != null && isFinite(raw)){
+        prob = calibrate(key, raw);
+        ev = prob * (bet.price - 1) - (1 - prob);
+      }
+    }
+    var dr = opp ? dvpRankFor(key, opp, p.position || p.pos, k) : null;
+    out.push({ mkt:k, label:m[1], bet:bet, last:last, hits:hits, prob:prob, ev:ev,
+               season:lg ? lg.avg : avg(vals), l5:avg(l5), h2h:avg(h2hVals), h2hN:h2hVals.length, dvp:dr });
+  });
+  if (!out.length) return '<div class="empty" style="padding:20px">No markets with enough history for this player.</div>';
+  out.sort(function(a,b){ return (b.ev == null ? -9 : b.ev) - (a.ev == null ? -9 : a.ev); });
+  var dec = function(v){ return v == null ? '\u2014' : (v < 3 ? v.toFixed(2) : v.toFixed(1)); };
+  return out.map(function(r){
+    var mx = Math.max.apply(null, r.last.concat([r.bet ? r.bet.line : 0])) || 1;
+    var pips = r.last.slice().reverse();
+    return '<div class="pf-row">'
+      + '<div class="pf-hd"><span class="pf-mk">'+esc(r.label)+'</span>'
+        + (r.bet ? '<span class="pf-line">'+(Math.ceil(r.bet.line))+'+ @ $'+r.bet.price.toFixed(2)
+            +' '+esc(r.bet.book||'')+'</span>' : '<span class="pf-line">no priced line</span>')
+        + (r.ev != null ? '<span class="pf-ev '+(r.ev > 0 ? 'pos' : 'neg')+'">'
+            + Math.round(r.prob*100)+'% \u00b7 '+(r.ev > 0 ? '+' : '')+Math.round(r.ev*100)+'% edge</span>' : '')
+      + '</div>'
+      + '<div class="pf-pips">'+pips.map(function(v){
+          var hit = r.bet && v > r.bet.line;
+          return '<span class="pf-pip'+(r.bet && !hit ? ' miss' : '')+'"><i style="height:'
+            + Math.max(6, Math.round(v / mx * 100))+'%"></i></span>'; }).join('')+'</div>'
+      + '<div class="pf-vals">'+pips.map(function(v){
+          return '<span>'+(v % 1 ? v.toFixed(1) : v)+'</span>'; }).join('')+'</div>'
+      + '<div class="pf-cells">'
+        + '<div class="pf-cell"><b>'+(r.hits == null ? '\u2014' : r.hits+'/'+r.last.length)+'</b><span>hit</span></div>'
+        + '<div class="pf-cell"><b>'+dec(r.l5)+'</b><span>L5</span></div>'
+        + '<div class="pf-cell"><b>'+dec(r.season)+'</b><span>season</span></div>'
+        + '<div class="pf-cell"><b>'+dec(r.h2h)+'</b><span>v opp'+(r.h2hN ? ' ('+r.h2hN+')' : '')+'</span></div>'
+        + (r.dvp ? '<div class="pf-cell"><b>'+r.dvp.rank+'/'+r.dvp.total+'</b><span>dvp</span></div>' : '')
+      + '</div></div>';
+  }).join('');
+}
 function playerPanel(){
   var sel = state.view.player;
   if (!sel) return '';
@@ -2922,7 +3026,8 @@ function playerPanel(){
   });
   var keys = Object.keys(mkts);
   var team = (state.sports[key].idx.playerTeam || {})[name] || '';
-  var body = keys.length ? keys.sort().map(function(mk){
+  var tab = state.view.ppTab || 'form';
+  var body = tab === 'form' ? ppFormTab(key, name) : (keys.length ? keys.sort().map(function(mk){
     var best = {};
     mkts[mk].forEach(function(r){
       var k = String(r.line);
@@ -2940,13 +3045,17 @@ function playerPanel(){
             + (r.under!=null?'<u>'+(+r.under).toFixed(2)+'</u>':'')
             + '<i>'+esc(r.book||'')+(n>1?' +'+(n-1):'')+'</i></span>'; }).join('')
       + '</div></div>';
-  }).join('') : '<div class="empty" style="padding:20px">No posted markets for this player.</div>';
+  }).join('') : '<div class="empty" style="padding:20px">No posted markets for this player.</div>');
   return '<div class="pp-back" onclick="LAB.player(null)"></div>'
     + '<div class="pp"><div class="pp-hd">'
     + '<div><div class="pp-nm">'+esc(name)+'</div>'
     + '<div class="pp-sub">'+esc(SPORTS[key].name)+(team?' \u00b7 '+esc(abbrOf(key,team)):'')
     + ' \u00b7 '+keys.length+' market'+(keys.length===1?'':'s')+'</div></div>'
     + '<button class="pp-x" onclick="LAB.player(null)">&times;</button></div>'
+    + '<div class="pp-tabs">'
+      + '<button class="pp-tab'+(tab==='form'?' on':'')+'" onclick="LAB.ppTab(\'form\')">Form</button>'
+      + '<button class="pp-tab'+(tab==='mkts'?' on':'')+'" onclick="LAB.ppTab(\'mkts\')">All markets</button>'
+    + '</div>'
     + '<div class="pp-body">'+body+'</div></div>';
 }
 function oddsPage(){
@@ -3149,6 +3258,7 @@ window.LAB = {
   slMkt: function(k, m){ state.view.slMkt[k] = m; render(); },
   slWin: function(w){ state.view.slWin = w; render(); },
   dvpMkt: function(k, m){ state.view.dvpMkt[k] = m; render(); },
+  ppTab: function(t){ state.view.ppTab = t; render(); },
   showDone: function(){ state.view.showDone = !state.view.showDone; render(); },
   books: function(k, player, market, line){ state.view.books = k ? {sport:k, player:player, market:market, line:line} : null; render(); },
   state: state
