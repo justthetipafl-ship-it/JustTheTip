@@ -4041,6 +4041,113 @@ function kickerRow(key, r){
     + '<div class="gl-right"><div class="gl-ev '+(r.picks.some(function(x){ return x.good; }) ? 'pos' : 'neg')+'">'
       + (r.proj != null ? r.proj.toFixed(1) : '\u2014')+'</div><div class="gl-evl">PROJ PTS</div></div></div>';
 }
+
+/* TACKLE MACHINES ---------------------------------------------------------------
+   Ported from nfl/signals.js with production's thresholds: 6+ games, 65% hit rate, 4.5+ per
+   game, 60%+ snap share, and dropped when the opponent STARVES the position of tackle chances
+   (DVP 15%+ below average). Scored on hit rate plus the tackle funnel, with a bump for a
+   high-volume or run-heavy opponent and for three-down players.
+
+   All three sports post a tackles market, so all three get a version - but the shape of the bet
+   is different in each, so the gates are:
+     NFL  defenders only (LB/DL/DB), 4.5+ per game, snap share matters
+     AFL  a midfield/forward pressure stat, so no position gate and a lower bar
+     EPL  defensive midfielders and full-backs; the market sits at 0.5-2.5, so the bar is lower
+   Every version requires a posted price.                                                      */
+var WRAP_CFG = {
+  nfl: { pos:['LB','DL','DB'], minAvg:4.5, minSnap:60, hit:0.65, minG:6, starve:-15 },
+  afl: { pos:null,             minAvg:3.5, minSnap:0,  hit:0.65, minG:6, starve:-15 },
+  epl: { pos:null,             minAvg:1.8, minSnap:0,  hit:0.60, minG:6, starve:-15 }
+};
+function oppVolume(key, opp){
+  var rows = asArray(state.sports[key].data.teams) || [];
+  var arr = rows.filter(function(t){ return t.plays != null; });
+  if (!arr.length) return null;
+  var me = null;
+  arr.forEach(function(t){ if (normTeam(t.team) === normTeam(opp)) me = t; });
+  if (!me) return null;
+  var byPlays = arr.slice().sort(function(a,b){ return (+b.plays||0) - (+a.plays||0); });
+  var byRush = arr.slice().sort(function(a,b){ return (+b.rushAtt||0) - (+a.rushAtt||0); });
+  var idx = function(list){ var n = 0; list.forEach(function(t, i){ if (t === me) n = i + 1; }); return n; };
+  return { plays:+me.plays || 0, playsRank:idx(byPlays), rushAtt:+me.rushAtt || 0,
+           rushRank:idx(byRush), n:arr.length };
+}
+function tackleMachines(key, g){
+  var cfg = WRAP_CFG[key];
+  if (!cfg) return { rows:[], why:'' };
+  var S = state.sports[key], out = [];
+  [g.away, g.home].forEach(function(team){
+    var opp = (team === g.home) ? g.away : g.home;
+    var vol = oppVolume(key, opp);
+    playersOnTeam(key, team).forEach(function(p){
+      if (!p || !isPlayingP(key, p.name, team)) return;
+      if (cfg.pos && cfg.pos.indexOf(p.position) < 0) return;
+      if (!hasAnyOddsFor(key, p.name)) return;
+      var logs = sortLogsDesc(((S.idx.logsByName || {})[p.name] || []).slice());
+      var vals = [];
+      logs.forEach(function(r){ var v = statOf(key, r, 'tackles'); if (v != null) vals.push(v); });
+      if (vals.length < cfg.minG) return;
+      var avg = vals.reduce(function(a,b){ return a+b; }, 0) / vals.length;
+      if (avg < cfg.minAvg) return;
+      // snap share, where the sport records it: a rotational defender is a different bet
+      var snaps = logs.slice(0, 10).map(function(r){ return r.snapPct != null ? +r.snapPct : null; })
+        .filter(function(v){ return v != null; });
+      var snap = snaps.length ? snaps.reduce(function(a,b){ return a+b; }, 0) / snaps.length : null;
+      if (cfg.minSnap && snap != null && snap < cfg.minSnap) return;
+      // The line has to be the one his record supports, not the best-priced rung on the ladder -
+      // that is always the hardest number and nobody clears it. Walk the rungs hardest-first and
+      // take the first he still clears at the required rate; NFL's two-way line is in this list too.
+      var cands = streakCandidates(key, p.name, 'tackles')
+        .filter(function(c){ return c.price >= STREAK_ODDS_FLOOR; });
+      if (!cands.length) return;
+      var od = null, line = null, hits = 0, rate = 0;
+      for (var ci=0; ci<cands.length; ci++){
+        var c = cands[ci];
+        var h = vals.filter(function(v){ return v > c.line; }).length;
+        var rt = h / vals.length;
+        if (rt >= cfg.hit){ od = c; line = c.line; hits = h; rate = rt; break; }
+      }
+      if (!od) return;
+      var funnel = dvpRankFor(key, opp, p.position || p.pos, 'tackles');
+      if (funnel && funnel.pct <= cfg.starve) return;       // they starve this position of chances
+      var score = rate*100 + (funnel ? funnel.pct*0.7 : 0)
+        + (vol && vol.playsRank <= 8 ? 6 : 0)
+        + (vol && vol.rushRank <= 8 && p.position !== 'DB' ? 6 : 0)
+        + (snap != null && snap >= 90 ? 4 : 0);
+      out.push({ name:p.name, p:p, team:team, opp:opp, line:line, price:od.price, book:od.book,
+                 hits:hits, n:vals.length, rate:rate, avg:avg, funnel:funnel, vol:vol, snap:snap,
+                 last:vals.slice(0, 8), score:score });
+    });
+  });
+  out.sort(function(a,b){ return b.score - a.score; });
+  return { rows:out.slice(0, SIG_MAX_ROWS),
+           why:'No '+(cfg.pos ? 'defender' : 'player')+' with a posted tackles price clears their line in '
+             + Math.round(cfg.hit*100)+'% of games against an opponent that concedes them.' };
+}
+function tackleRow(key, r){
+  var seq = r.last.slice().reverse();
+  var mx = Math.max.apply(null, seq.concat([r.line])) || 1;
+  return '<div class="stk-row chunk-row" onclick="LAB.player(\'' + key + '\',\'' + esc(r.name).replace(/'/g,"\\'") + '\')">'
+    + playerImgP(key, r.name, 28)
+    + '<div class="stk-left"><div class="stk-nm"><b>'+esc(r.name)+'</b><span class="stk-tag">'
+      + esc((posShortP(r.p) ? posShortP(r.p)+' \u00b7 ' : '')+abbrOf(key, r.team))+'</span></div>'
+    + '<div class="stk-bet">'+Math.ceil(r.line)+'+ Tackles \u00b7 v '+esc(abbrOf(key, r.opp))
+      + ' \u00b7 avg '+r.avg.toFixed(1)
+      + (r.snap != null ? ' \u00b7 '+Math.round(r.snap)+'% snaps' : '')
+      + (r.funnel ? ' \u00b7 funnel '+(r.funnel.pct > 0 ? '+' : '')+r.funnel.pct.toFixed(0)+'%' : '')
+      + (r.vol && r.vol.playsRank <= 8 ? ' \u00b7 #'+r.vol.playsRank+' in plays' : '')
+      + (r.vol && r.vol.rushRank <= 8 ? ' \u00b7 #'+r.vol.rushRank+' in carries' : '')
+      + '</div>'
+    + '<div class="stk-pips">'+seq.map(function(v){
+        return '<span class="stk-pip'+(v > r.line ? '' : ' miss')+'"><i style="height:'
+          + Math.max(6, Math.round(v/mx*100))+'%"></i></span>'; }).join('')+'</div>'
+    + '<div class="stk-vals">'+seq.map(function(v){
+        return '<span>'+(v % 1 ? v.toFixed(1) : v)+'</span>'; }).join('')+'</div></div>'
+    + '<div class="stk-right"><div class="stk-hit">'+Math.round(r.rate*100)+'%</div>'
+      + '<div class="stk-hitl">'+r.hits+'/'+r.n+' GAMES</div>'
+      + '<div class="stk-odds">$'+r.price.toFixed(2)+'</div>'
+      + '<span class="stk-book">'+esc(r.book||'')+'</span></div></div>';
+}
 function nflSignals(key, g){
   if (key !== 'nfl') return '';
   var tud = nflTuddy(key, g), chk = nflChunk(key, g);
@@ -4090,6 +4197,11 @@ function signalsSection(key, g){
               + 'this opponent. Posted two-way lines are used where they exist ('+SPORTS[key].name
               + ' has '+(twoWayMarketCount(key) || 'none')+'), otherwise an alt rung paying $'
               + BUNNY_ALT_FLOOR.toFixed(2)+'+.')
+    + (WRAP_CFG[key] ? (function(){
+        var tm = tackleMachines(key, g);
+        return sigTile('ti-hammer', 'Tackle Machines', 'Tackle volume into an opponent that concedes it',
+          tm.rows.map(function(r){ return tackleRow(key, r); }), tm.why);
+      })() : '')
     + sigTile('ti-ghost-2', 'Bogey', 'Never cleared this line against them',
               h2hSignals(key, g, 'bogey').map(function(r){ return h2hSigRow(key, r); }),
               'No player has a posted under they have never cleared in '+H2H_MIN_BOGEY
