@@ -36,7 +36,10 @@ window.SPORT_CONFIG = {
   cmpLabels: {passYds:'Pass Yds',passTds:'Pass TDs',passAtt:'Pass Att',passComp:'Completions',passInt:'INTs',rushYds:'Rush Yds',rushAtt:'Carries',rushTds:'Rush TDs',recYds:'Rec Yds',receptions:'Receptions',recTds:'Rec TDs',rushRecYds:'Rush+Rec Yds',anytimeTd:'Anytime TD',targets:'Targets',fanPts:'Fantasy Pts',longRec:'Longest Rec',longRush:'Longest Rush',longComp:'Longest Comp',tackles:'Tackles+Ast',soloTk:'Solo Tackles'},
   teamCols: [['points','Pts'],['plays','Plays'],['passYds','PaYd'],['passAtt','PaAtt'],['passComp','Cmp'],['passTds','PaTD'],['passInt','INT'],['sacks','Sck'],['rushYds','RuYd'],['rushAtt','RuAtt'],['rushTds','RuTD'],['receptions','Rec'],['targets','Tgt']],
   viewDefaults: { sortKey:'fanPts', statsStat:'receptions', teamsSort:'points' },
-  oddsMkts: [['passYds','Pass Yds'],['passTds','Pass TDs'],['passAtt','Pass Att'],['rushYds','Rush Yds'],['rushAtt','Rush Att'],['receptions','Receptions'],['recYds','Rec Yds'],['rushRecYds','Rush+Rec'],['anytimeTd','Anytime TD'],['tackles','Tackles+Ast'],['sacks','Sacks'],['passInt','Pass INTs'],['kickingPts','Kicking Pts'],['fgMade','FG Made']],
+  oddsMkts: [['passYds','Pass Yds'],['passTds','Pass TDs'],['passAtt','Pass Att'],['rushYds','Rush Yds'],['rushAtt','Rush Att'],['receptions','Receptions'],['recYds','Rec Yds'],['rushRecYds','Rush+Rec'],['anytimeTd','Anytime TD'],['tackles','Tackles+Ast'],['sacks','Sacks'],['passInt','Pass INTs'],['kickingPts','Kicking Pts'],['fgMade','FG Made',['longRec','Longest Rec'],['longRush','Longest Rush'],['longComp','Longest Comp']]],   // longRec/longRush/longComp were posted (4,125 / 869 / 756 rows) with gamelog AND dvp
+                 // support already in place, but were never listed here - so every signal and
+                 // Check My Bet ignored them. Appended, not prepended: the first entry is the
+                 // default market on several pages.
   // Tiles that inform a read but don't name a bet - the shell files these under Research
   // instead of the Degen Crew grid, so the crew stays "here is a bet" end to end.
   research: ['usage','form','next','wx','clamp','push','coverageBusters'],
