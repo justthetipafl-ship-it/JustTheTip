@@ -14,7 +14,7 @@ const ROOT = process.env.JTT_ROOT || path.resolve(__dirname, '..');
 const SERVE = ROOT;
 const WRITE = process.env.CALIB_WRITE !== '0';      // set CALIB_WRITE=0 to report without committing
 const SPORTS = [['afl','AFL'], ['nfl','nfl'], ['epl','EPL'], ['mlb','mlb']];
-const TEST_DAYS = 8, MAX_MARKETS = 5;
+const TEST_DAYS = 8, MAX_MARKETS = 5, MIN_PREDS = 1000;
 
 const COVER = { epl: 'passes' };
 function statOf(key, row, mkt){
@@ -25,6 +25,8 @@ function statOf(key, row, mkt){
   return null;
 }
 const J = (d, f) => JSON.parse(fs.readFileSync(`${SERVE}/${d}/data/${f}.json`, 'utf8'));
+// rough sample size for a set of days, used to decide how far back to reach
+const countable = (perDay, days) => days.reduce((a, d) => a + (perDay[d] || []).length, 0) / 3;
 
 function loadModule(dir){
   const sandbox = { window: {}, console, Math, Date, JSON, isFinite, isNaN, parseInt, parseFloat, Object, Array, String, Number, Set, Map };
@@ -57,11 +59,22 @@ function run(key, dir){
 
   const perDay = {};
   logs.forEach(r => { const d = dayOf(r); (perDay[d] = perDay[d] || []).push(r); });
-  const days = Object.keys(perDay).filter(d => {
-    const y = +String(d).slice(0, 4); return y === season;
-  }).sort();
-  const testDays = days.slice(-TEST_DAYS);
-  if (!testDays.length) return console.log(`${key}: no current-season days to test`);
+  // Test on the current season first - that is the model as it stands today. But two weeks
+  // into a season that is a handful of match-days, so keep walking back through earlier
+  // seasons until there is enough to fit on. Training is unaffected either way: at every test
+  // day the model still sees every game that came before it, across all seasons.
+  const allDays = Object.keys(perDay).sort();
+  const curDays = allDays.filter(d => +String(d).slice(0, 4) === season);
+  let testDays = curDays.slice(-TEST_DAYS);
+  let reach = TEST_DAYS;
+  const roughPerDay = testDays.length ? 0 : 0;
+  while (testDays.length && countable(perDay, testDays) < MIN_PREDS && reach < allDays.length){
+    reach += TEST_DAYS;
+    testDays = allDays.slice(-reach);
+  }
+  if (!testDays.length) testDays = allDays.slice(-TEST_DAYS);
+  if (!testDays.length) return console.log(`${key}: no days to test`);
+  const seasonsUsed = [...new Set(testDays.map(d => String(d).slice(0, 4)))];
 
   const preds = [];
   testDays.forEach(day => {
@@ -117,7 +130,8 @@ function run(key, dir){
   const actual = preds.reduce((a, x) => a + x.hit, 0) / n;
   const brier = preds.reduce((a, x) => a + (x.prob - x.hit) ** 2, 0) / n;
   const base = preds.reduce((a, x) => a + (actual - x.hit) ** 2, 0) / n;   // always-predict-base-rate
-  console.log(`\n===== ${key.toUpperCase()} — ${n} predictions over ${testDays.length} match-days (${testDays[0]} → ${testDays[testDays.length-1]})`);
+  console.log(`\n===== ${key.toUpperCase()} — ${n} predictions over ${testDays.length} match-days `
+    + `(${testDays[0]} → ${testDays[testDays.length-1]}, season${seasonsUsed.length > 1 ? 's' : ''} ${seasonsUsed.join('+')})`);
   console.log(`  mean predicted ${(meanP*100).toFixed(1)}%  |  actually landed ${(actual*100).toFixed(1)}%  |  bias ${((meanP-actual)*100).toFixed(1)} pts`);
   console.log(`  Brier ${brier.toFixed(4)} vs ${base.toFixed(4)} for always guessing the base rate  (${brier < base ? 'model adds signal' : 'NO BETTER THAN THE BASE RATE'})`);
   const buckets = {};
@@ -171,7 +185,7 @@ function run(key, dir){
     a: +a.toFixed(3), b: +b.toFixed(3), spread: +(th - bh).toFixed(3), n,
     bias: +(meanP - actual).toFixed(3), brier: +brier.toFixed(4), brierCalibrated: +brierCal.toFixed(4),
     brierBaseRate: +base.toFixed(4), days: testDays.length,
-    window: [testDays[0], testDays[testDays.length - 1]]
+    window: [testDays[0], testDays[testDays.length - 1]], seasons: seasonsUsed
   });
 }
 
