@@ -2415,7 +2415,14 @@ var STREAK_MIN = 4, STREAK_PIPS = 8, SIG_MAX_ROWS = 8;
 // player took none - a real zero. A row with no coverage at all is genuinely unverifiable.
 // Sports with no entry here keep the strict reading: null = can't verify.
 var COVER_FIELD = { epl: 'passes' };
+// A posted market does not always share its name with the gamelog field. NFL's "sacks" market
+// is priced for pass RUSHERS (Derrick Brown, Von Miller), but the gamelog's `sacks` column is
+// sacks TAKEN by the quarterback - grading one against the other made every QB a sack artist
+// and every rusher invisible. `defSacks` is the right column.
+var MKT_FIELD = { nfl: { sacks:'defSacks' } };
+function mktField(key, mkt){ return ((MKT_FIELD[key] || {})[mkt]) || mkt; }
 function statOf(key, row, mkt){
+  mkt = mktField(key, mkt);
   var v = row ? row[mkt] : null;
   if (v != null && isFinite(+v)) return +v;
   var cf = COVER_FIELD[key];
@@ -3156,15 +3163,16 @@ function nflTuddy(key, g){
     if (!isPlayingP(key, nm, e.p.team)) return;
     var dr = dvpRankFor(key, opp, e.p.position, 'anytimeTd');
     if (!dr || dr.rank > 10) return;                       // production: bottom-10 TD defence only
-    var od = oddsForP(key, nm, 'anytimeTd');
-    var price = od && od.over != null ? +od.over : null;
-    out.push({ name:nm, p:e.p, opp:opp, chips:e.chips.slice(0, 3), dvp:dr, price:price,
-               book:(od ? od.book : null), rz:e.r,
+    var od = bestPriceFor(key, nm, 'anytimeTd');
+    if (!od) return;                                       // a TD tile with no TD price is not a tip
+    out.push({ name:nm, p:e.p, opp:opp, chips:e.chips.slice(0, 3), dvp:dr,
+               price:od.price, book:od.book, rz:e.r,
                score: (11 - dr.rank) * 2 + e.chips.length * 3 });
   });
   out.sort(function(a,b){ return b.score - a.score; });
   return { rows:out.slice(0, SIG_MAX_ROWS),
-           why:'No red-zone regular on this game draws a bottom-10 TD defence for their position.' };
+           why:'No red-zone regular with a posted anytime-TD price draws a bottom-10 TD defence '
+             + 'for their position.' };
 }
 /* Chunk Plays: explosive-play streaks against a defence that does not suppress them */
 function nflChunk(key, g){
@@ -3216,21 +3224,23 @@ function nflTeamAngle(key, g, kind){
     playersOnTeam(key, team).forEach(function(p){
       if (!p || !isPlayingP(key, p.name, team)) return;
       if (kind === 'picks' && p.position !== 'QB') return;
+      if (kind === 'sacks' && ['QB','RB','WR','TE','K'].indexOf(p.position) >= 0) return;   // rushers only
       var lg = leagueAvg(key, stat)[p.name];
       if (!lg || lg.games < 3 || !(lg.avg > 0)) return;
-      if (kind === 'sacks' && lg.avg < 0.4) return;
-      var od = oddsForP(key, p.name, stat);
+      if (kind === 'sacks' && lg.avg < 0.25) return;
+      // both angles are bets, not trivia: no posted price, no row
+      var od = bestPriceFor(key, p.name, stat);
+      if (!od) return;
       out.push({ name:p.name, p:p, opp:opp, stat:stat, avg:lg.avg, games:lg.games,
-                 oppPer:oppPer, pct:pct, price:(od && od.over != null ? +od.over : null),
-                 line:(od && od.line != null ? od.line : null), book:(od ? od.book : null),
+                 oppPer:oppPer, pct:pct, price:od.price, line:od.line, book:od.book,
                  score: lg.avg * (1 + pct/100) });
     });
   });
   out.sort(function(a,b){ return b.score - a.score; });
   return { rows:out.slice(0, SIG_MAX_ROWS),
            why: kind === 'sacks'
-             ? 'Neither offensive line on this game concedes sacks at 10%+ above league average.'
-             : 'Neither defence on this game picks the ball off at 10%+ above league average.' };
+             ? 'No rusher with a posted price faces a line conceding sacks 10%+ above league average.'
+             : 'No quarterback with a posted price faces a defence intercepting 10%+ above league average.' };
 }
 /* Weather Watch: production's thresholds - outdoors only, 25 km/h wind or actual rain */
 function nflWeather(key, g){
@@ -3273,7 +3283,7 @@ function nflTuddyRow(key, r){
     + playerImgP(key, r.name, 28)
     + '<div class="gl-left"><div class="gl-nm"><b>'+esc(r.name)+'</b><span class="gl-tag">'
       + esc((posShortP(r.p) ? posShortP(r.p)+' \u00b7 ' : '')+abbrOf(key, r.p.team)+' v '+abbrOf(key, r.opp))+'</span></div>'
-    + '<div class="gl-bet"><b>Anytime TD</b>'+(r.price != null ? ' \u00b7 $'+r.price.toFixed(2)+' '+esc(r.book||'') : ' \u00b7 no price')+'</div>'
+    + '<div class="gl-bet"><b>Anytime TD</b> \u00b7 $'+r.price.toFixed(2)+' '+esc(r.book||'')+'</div>'
     + '<div class="gl-why">'+r.chips.map(function(c){ return '<span class="gl-chip good">'+esc(c)+'</span>'; }).join('')
       + '<span class="gl-chip">'+esc(abbrOf(key, r.opp))+' #'+r.dvp.rank+'/'+r.dvp.total+' softest TD D</span>'
       + (r.rz.rzTgtPct ? '<span class="gl-chip">'+r.rz.rzTgtPct.toFixed(0)+'% RZ target share</span>' : '')
@@ -3322,11 +3332,75 @@ function nflWxRow(key, r){
     + '<div class="fa-right"><div class="fa-pc '+(r.dir === 'up' ? 'up' : 'down')+'">'
       + (r.dir === 'up' ? '\u2191' : '\u2193')+'</div><div class="fa-pcl">CONDITIONS</div></div></div>';
 }
+
+/* CONDITIONS ------------------------------------------------------------------
+   Team-level, so it sits with the match rather than in the signal stack, and it runs for any
+   sport with a forecast. What the weather DOES differs by sport, so the read does too:
+     NFL  wind kills the deep ball and pushes teams to the ground
+     AFL  wind and wet suppress marking and clean disposal, lift tackles and stoppages
+     MLB  the forecast comes with the park's own HR factor, so it is about the ball carrying
+   EPL ships no forecast at all, so nothing is claimed for it.                                */
+var WX_SPORT = {
+  nfl: { wind:25, up:[['rushAtt','more carries']], down:[['recYds','deep passing']] },
+  afl: { wind:25, up:[['tackles','contested football']], down:[['marks','clean marking']] },
+  mlb: { wind:20, up:[], down:[] }
+};
+function conditionsFor(key, g){
+  var S = state.sports[key];
+  var w = (asArray(S.data.weather) || []).filter(function(x){
+    return x && normTeam(x.home) === normTeam(g.home) && normTeam(x.away) === normTeam(g.away); })[0];
+  if (!w && key === 'mlb' && g.weather) w = { temp:g.weather.tempF, wind:g.weather.windMph,
+    desc:g.weather.summary, code:null, venue:(g.park || {}).name, roof:(g.park || {}).roof,
+    hrMult:g.weather.hrMult, effect:g.weather.effect, imperial:true };
+  return w || null;
+}
+function conditionsSection(key, g){
+  var w = conditionsFor(key, g);
+  if (!w) return '';
+  var cfg = WX_SPORT[key] || { wind:25, up:[], down:[] };
+  var windKmh = w.imperial ? +w.wind * 1.609 : +w.wind;
+  var indoors = w.roof && w.roof !== 'outdoors' && w.roof !== 'open';
+  var windy = isFinite(windKmh) && windKmh >= cfg.wind;
+  var wet = (w.code != null && +w.code >= 61) || (+w.rainProb >= 60);
+  var bits = [];
+  if (w.temp != null) bits.push(Math.round(w.temp)+(w.imperial ? '\u00b0F' : '\u00b0C'));
+  if (w.wind != null) bits.push(Math.round(w.wind)+(w.imperial ? ' mph' : ' km/h')+' wind');
+  if (w.desc) bits.push(esc(w.desc));
+  if (w.rainProb != null && !w.imperial) bits.push(Math.round(w.rainProb)+'% rain');
+  var head = bits.join(' \u00b7 ');
+  var verdict, cls;
+  if (indoors){ verdict = 'Indoors \u2014 no weather angle'; cls = ''; }
+  else if (windy && wet){ verdict = 'Wind and wet'; cls = 'bad'; }
+  else if (windy){ verdict = 'Windy'; cls = 'bad'; }
+  else if (wet){ verdict = 'Wet'; cls = 'bad'; }
+  else { verdict = 'Benign'; cls = 'good'; }
+  var lines = [];
+  if (!indoors && (windy || wet)){
+    cfg.up.forEach(function(x){ lines.push(['up', 'More '+x[1]+' \u2014 '+mktLabel(key, x[0])+' trends up']); });
+    cfg.down.forEach(function(x){ lines.push(['down', 'Less '+x[1]+' \u2014 '+mktLabel(key, x[0])+' trends down']); });
+  }
+  if (key === 'mlb' && w.hrMult != null && Math.abs(w.hrMult - 1) > 0.02)
+    lines.push([w.hrMult > 1 ? 'up' : 'down',
+      'Ball '+(w.hrMult > 1 ? 'carries' : 'dies')+' \u2014 home runs '
+      + (w.hrMult > 1 ? '+' : '')+Math.round((w.hrMult - 1)*100)+'%'
+      + (w.effect ? ' ('+esc(w.effect)+'wind)' : '')]);
+  if (key === 'mlb' && g.park && g.park.hrFactor != null && Math.abs(g.park.hrFactor - 1) > 0.03)
+    lines.push([g.park.hrFactor > 1 ? 'up' : 'down',
+      esc(g.park.name || 'This park')+' plays '+(g.park.hrFactor > 1 ? '+' : '')
+      + Math.round((g.park.hrFactor - 1)*100)+'% for home runs']);
+  return '<div class="dayband"><span>Conditions</span></div>'
+    + '<div class="ca-block"><div class="ca-bt">'+esc(w.venue || g.venue || 'Venue')+'</div>'
+    + '<div class="ca-bv" style="color:'+(cls === 'bad' ? '#f97316' : (cls === 'good' ? 'var(--accent)' : 'var(--text)'))+'">'
+      + esc(verdict)+'</div>'
+    + '<div class="ca-bs">'+head+'</div>'
+    + (lines.length ? '<div class="gl-why" style="margin-top:8px">'+lines.map(function(l){
+        return '<span class="gl-chip '+(l[0] === 'up' ? 'good' : 'bad')+'">'+l[1]+'</span>'; }).join('')+'</div>' : '')
+    + '</div>';
+}
 function nflSignals(key, g){
   if (key !== 'nfl') return '';
   var tud = nflTuddy(key, g), chk = nflChunk(key, g);
   var sck = nflTeamAngle(key, g, 'sacks'), pck = nflTeamAngle(key, g, 'picks');
-  var wx = nflWeather(key, g);
   return '<div class="dayband"><span>NFL Signals</span></div>'
     + sigTile('ti-ball-american-football', 'Tuddy Targets', 'Red-zone royalty into a soft TD defence',
               tud.rows.map(function(r){ return nflTuddyRow(key, r); }), tud.why)
@@ -3335,9 +3409,7 @@ function nflSignals(key, g){
     + sigTile('ti-bolt-off', 'Sack Artists', 'Rushers into a leaky offensive line',
               sck.rows.map(function(r){ return nflAngleRow(key, r, 'sacks'); }), sck.why)
     + sigTile('ti-hand-stop', 'Pick Watch', 'Interception risk into a ball-hawk defence',
-              pck.rows.map(function(r){ return nflAngleRow(key, r, 'picks'); }), pck.why)
-    + sigTile('ti-wind', 'Weather Watch', wx.head ? esc(wx.head) : 'Conditions angles',
-              wx.rows.map(function(r){ return nflWxRow(key, r); }), wx.why);
+              pck.rows.map(function(r){ return nflAngleRow(key, r, 'picks'); }), pck.why);
 }
 function signalsSection(key, g){
   var S = state.sports[key], cfg = S.config || {};
@@ -3415,6 +3487,7 @@ function focusPage(){
     + '<div class="dayband"><span>Match markets</span></div>' + moBlock(key, g)
     // Team-level reading comes first: season averages head to head, then the last meeting.
     // Everything below this point is about individual players.
+    + conditionsSection(key, g)
     + h2hSection(key, g)
     + h2hHistory(key, g)
     + (S.t3==='ready' ? formSection(key, g) : '')
@@ -3835,6 +3908,21 @@ function cmbLadder(key, name, mkt){
   });
   Object.keys(seen).forEach(function(k){ out.push(seen[k]); });
   return out.sort(function(a,b){ return a.line - b.line; });
+}
+// Best price for a market, wherever it lives. anytimeTd is alt-only in NFL (6,988 rungs, no
+// two-way row at all), so an oddsFor() lookup alone returns nothing and the tile shows no price.
+function bestPriceFor(key, name, mkt, line){
+  var od = oddsForP(key, name, mkt);
+  if (od && od.over != null && (line == null || Math.ceil(+od.line) === Math.ceil(line)))
+    return { price:+od.over, line:+od.line, book:od.book };
+  var d = state.sports[key].data.odds || {}, best = null;
+  var rows = (d.books && d.books.length ? d.books : (d.lines || [])).concat(d.alt || []);
+  rows.forEach(function(r){
+    if (!r || r.player !== name || r.market !== mkt || r.over == null) return;
+    if (line != null && Math.ceil(+r.line) !== Math.ceil(line)) return;
+    if (!best || +r.over > best.price) best = { price:+r.over, line:+r.line, book:r.book };
+  });
+  return best;
 }
 function cmbPosted(key, name, mkt){
   var d = state.sports[key].data.odds || {};
