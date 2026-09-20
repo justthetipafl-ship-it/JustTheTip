@@ -614,6 +614,12 @@
   .st-bar-in{flex:1;height:4px;border-radius:2px;background:var(--surface-3,var(--border));overflow:hidden;min-width:40px;}
   .st-bar-in i{display:block;height:100%;background:var(--accent);}
   .st-bar-in i.tough{background:#f97316;}
+  .pimg{display:inline-block;border-radius:50%;overflow:hidden;background:var(--surface-3,var(--border));
+    flex:none;vertical-align:middle;}
+  .pimg img{width:100%;height:100%;object-fit:cover;display:block;}
+  .pimg-ini{display:inline-flex;align-items:center;justify-content:center;border-radius:50%;flex:none;
+    background:var(--surface-3,var(--border));color:var(--text-3);font-family:var(--font-display);
+    font-weight:800;letter-spacing:.02em;vertical-align:middle;}
   .sc-filter{display:flex;gap:7px;align-items:center;margin-bottom:8px;}
   .sc-filter input{flex:1;min-width:0;background:var(--surface-2);border:1px solid var(--border);
     border-radius:9px;padding:9px 12px;color:var(--text);font-size:13px;font-family:inherit;outline:none;}
@@ -3690,7 +3696,7 @@ function fsCard(key, p, leg){
   var read = firstScorerRead(key, p);
   var label = (FS_MKT[key] || ['firstScorer','First Scorer'])[1];
   var opp = ppOpponent(key, p.name);
-  var head = '<div class="ca-hd">'+(p.team ? teamLogo(key, p.team) : '')
+  var head = '<div class="ca-hd">'+(playerImgP(key, p, 40) || (p.team ? teamLogo(key, p.team) : ''))
     + '<div><div class="ca-nm">'+esc(p.name)+'</div><div class="ca-meta">'
     + esc([posShortP(p), p.team ? abbrOf(key, p.team) : ''].filter(Boolean).join(' \u00b7 '))
     + (opp ? ' \u00b7 <b>vs '+esc(abbrOf(key, opp))+'</b>' : '')+'</div></div></div>'
@@ -3773,7 +3779,7 @@ function cmbAnalysis(l){
   var dr = opp ? dvpRankFor(key, opp, p.position || p.pos, mkt) : null;
   var h2hRows = opp ? rows.filter(function(r){ return r.opp && normTeam(r.opp) === normTeam(opp); }) : [];
 
-  var h = '<div class="ca-hd">'+(p.team ? teamLogo(key, p.team) : '')
+  var h = '<div class="ca-hd">'+(playerImgP(key, p, 40) || (p.team ? teamLogo(key, p.team) : ''))
     + '<div><div class="ca-nm">'+esc(p.name)+'</div><div class="ca-meta">'
     + esc([posShortP(p), p.team ? abbrOf(key, p.team) : ''].filter(Boolean).join(' \u00b7 '))
     + (opp ? ' \u00b7 <b>vs '+esc(abbrOf(key, opp))+'</b>' : ' \u00b7 no fixture')+'</div></div></div>'
@@ -3964,7 +3970,7 @@ function cmbSugInner(q, mode){
   if (!sug.length) return '';
   return '<div class="cmb-hits">'+sug.map(function(r){
     return '<div class="cmb-hit" onclick="LAB.cmbUse(\''+esc(r.name).replace(/'/g,"\\'")+'\',\''+mode+'\')">'
-      + teamLogo(r.key, r.team)+'<b>'+esc(r.name)+'</b>'
+      + (playerImgP(r.key, r.name, 22) || teamLogo(r.key, r.team))+'<b>'+esc(r.name)+'</b>'
       + '<span>'+esc((r.pos ? r.pos+' \u00b7 ' : '')+abbrOf(r.key, r.team))+' \u00b7 '
       + esc(SPORTS[r.key].name)+'</span></div>'; }).join('')+'</div>';
 }
@@ -4190,7 +4196,7 @@ function mbPanel(){
   h += cands.map(function(c){
     var on = !!inSlip[c.id];
     return '<div class="mb-card'+(on?' on':'')+'" onclick="LAB.mbAdd(\''+esc(c.id).replace(/'/g,"\\'")+'\')">'
-      + teamLogo(c.key, c.team)
+      + (playerImgP(c.key, c.p, 26) || teamLogo(c.key, c.team))
       + '<div class="mb-m"><div class="mb-nm">'+esc(c.p.name)+'</div>'
       + '<div class="mb-bet">'+Math.ceil(c.line)+'+ '+esc(c.label)+' \u00b7 v '+esc(abbrOf(c.key, c.opp))+'</div>'
       + '<div class="mb-why">'+esc(c.why.join(' \u00b7 '))+'</div></div>'
@@ -4240,7 +4246,8 @@ function cmbPanel(){
       + cmbSugList(v.cmbQ, 'multi')
       + (legs.length ? legs.map(function(l, i){
           var q = cmbLegQuality(l);
-          return '<div class="cmb-leg"><div class="cmb-leg-m"><b>'+esc(l.p.name)+'</b>'
+          return '<div class="cmb-leg">'+(playerImgP(l.key, l.p, 24) || '')
+            + '<div class="cmb-leg-m"><b>'+esc(l.p.name)+'</b>'
             + '<span>'+esc(cmbLegLabel(l))+(l.opp ? ' \u00b7 v '+esc(abbrOf(l.key, l.opp)) : '')
             + (l.price != null ? ' \u00b7 $'+l.price.toFixed(2) : ' \u00b7 no price')+'</span>'
             + '<span class="cmb-leg-q">'+q.hit+'/'+q.n+' all time'
@@ -4354,6 +4361,42 @@ function windowAvg(key, mkt, win){
   out._thin = thin;
   return (S.idx.winAvg[ck] = out);
 }
+
+/* Headshots where a source actually exists. NFL has ESPN ids on 1,688 of 2,173 players, EPL a
+   Premier League photo code on all 662, MLB an id that resolves against its own CDN (production
+   never used that one). AFL ships no id, so it gets initials rather than a broken image.
+   Any image that 404s swaps itself for initials, so a dead id never leaves a hole in a row.   */
+var IMG_SPORTS = { nfl:1, epl:1, mlb:1 };
+function playerImgUrl(key, p){
+  if (!p) return '';
+  if (key === 'nfl' && p.espnId) return 'https://a.espncdn.com/i/headshots/nfl/players/full/'+p.espnId+'.png';
+  if (key === 'epl' && p.code)   return 'https://resources.premierleague.com/premierleague/photos/players/110x140/p'+p.code+'.png';
+  if (key === 'mlb' && p.id)     return 'https://img.mlbstatic.com/mlb-photos/image/upload/w_120,q_auto:best/v1/people/'+p.id+'/headshot/67/current';
+  return '';
+}
+function playerInitials(nm){
+  var parts = String(nm || '').replace(/[^A-Za-z .'-]/g, '').split(/\s+/).filter(Boolean);
+  if (!parts.length) return '?';
+  return ((parts[0][0] || '') + (parts.length > 1 ? (parts[parts.length-1][0] || '') : '')).toUpperCase();
+}
+function playerImgP(key, nameOrP, size){
+  var p = (typeof nameOrP === 'string')
+    ? ((state.sports[key].idx.byName || {})[nameOrP] ||
+       cmbPool(key).filter(function(x){ return x.name === nameOrP; })[0])
+    : nameOrP;
+  var nm = (typeof nameOrP === 'string') ? nameOrP : (p && p.name);
+  if (!IMG_SPORTS[key] || !nm) return '';
+  var sz = size || 30;
+  var ini = '<span class="pimg-ini" style="width:'+sz+'px;height:'+sz+'px;font-size:'
+    + Math.round(sz*0.38)+'px">'+esc(playerInitials(nm))+'</span>';
+  var url = playerImgUrl(key, p);
+  if (!url) return ini;
+  // the fallback markup goes inside a double-quoted attribute, so its own quotes have to be
+  // entities - otherwise the attribute terminates early and a dead headshot stays broken
+  var iniAttr = ini.replace(/"/g, '&quot;').replace(/'/g, "\\'");
+  return '<span class="pimg" style="width:'+sz+'px;height:'+sz+'px"><img src="'+esc(url)+'" alt="" '
+    + 'loading="lazy" onerror="this.parentNode.outerHTML=\''+iniAttr+'\'"></span>';
+}
 function stCols(key){
   var cfg = state.sports[key].config || {};
   return (cfg.pcStats || cfg.oddsMkts || cfg.dvpStats || []).slice(0, 8);
@@ -4407,8 +4450,9 @@ function scannerView(key){
     + '<th class="'+(sortKey==='games'?'on':'')+'" onclick="LAB.stSort(\'games\')">GP</th>'
     + cols.map(function(c){ return th(c[0], c[1]); }).join('')+'</tr></thead><tbody>'
     + rows.map(function(r){
+        var face = playerImgP(key, r.p, 22);
         return '<tr onclick="LAB.player(\''+key+'\',\''+esc(r.p.name).replace(/'/g,"\\'")+'\')">'
-          + '<td class="nm">'+esc(r.p.name)+'<br><span class="sub">'
+          + '<td class="nm">'+(face ? face+' ' : '')+esc(r.p.name)+'<br><span class="sub">'
           + esc([posShortP(r.p), abbrOf(key, r.p.team)].filter(Boolean).join(' \u00b7 '))+'</span></td>'
           + '<td>'+r.games+'</td>'
           + cols.map(function(c){
@@ -4451,7 +4495,8 @@ function teamsView(key){
         return '<th class="'+(sortKey===c[0]?'on':'')+'" onclick="LAB.stTeamSort(\''+c[0]+'\')">'
           + esc(c[1])+(sortKey===c[0]?' \u25be':'')+'</th>'; }).join('')+'</tr></thead><tbody>'
     + rows.map(function(t){
-        return '<tr><td class="nm">'+esc(abbrOf(key, t.team))+'<br><span class="sub">'+esc(t.team)+'</span></td>'
+        return '<tr><td class="nm">'+teamLogo(key, t.team)+' '+esc(abbrOf(key, t.team))
+          + '<br><span class="sub">'+esc(t.team)+'</span></td>'
           + '<td>'+(t.matches || 0)+'</td>'
           + cols.map(function(c){
               var val = +t[c[0]+suf] || 0, a = avg[c[0]];
@@ -4503,7 +4548,7 @@ function dvpView(key){
         return '<th class="'+(sortKey===c[0]?'on':'')+'" onclick="LAB.stDvpSort(\''+c[0]+'\')">'
           + esc(c[1])+(sortKey===c[0]?' \u25be':'')+'</th>'; }).join('')+'</tr></thead><tbody>'
     + rows.map(function(t){
-        return '<tr><td class="nm">'+esc(abbrOf(key, t.team))+'</td>'
+        return '<tr><td class="nm">'+teamLogo(key, t.team)+' '+esc(abbrOf(key, t.team))+'</td>'
           + stats.map(function(c){
               var val = t[c[0]];
               if (val == null) return '<td>\u2014</td>';
@@ -4570,6 +4615,7 @@ function playerPanel(){
   }).join('') : '<div class="empty" style="padding:20px">No posted markets for this player.</div>');
   return '<div class="pp-back" onclick="LAB.player(null)"></div>'
     + '<div class="pp"><div class="pp-hd">'
+    + (playerImgP(key, name, 38) || (team ? teamLogo(key, team) : ''))
     + '<div><div class="pp-nm">'+esc(name)+'</div>'
     + '<div class="pp-sub">'+esc(SPORTS[key].name)+(team?' \u00b7 '+esc(abbrOf(key,team)):'')
     + ' \u00b7 '+keys.length+' market'+(keys.length===1?'':'s')+'</div></div>'
