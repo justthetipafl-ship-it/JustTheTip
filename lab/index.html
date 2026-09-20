@@ -2764,10 +2764,9 @@ function h2hSignals(key, g, kind){
         var avgFlag = (edge != null) && (kind === 'bunny' ? mine > edge : mine < edge);
         var diffPct = (edge != null && edge > 0)
           ? (kind === 'bunny' ? (mine - edge) / edge : (edge - mine) / edge) * 100 : null;
-        // LINE flavour: find the line the record actually supports, not whichever one is posted.
-        // Bunny  -> hardest line they cleared in EVERY meeting (candidates run hardest-first).
-        // Bogey  -> tightest under they NEVER cleared (candidates run cheapest-line-first), priced
-        //           off the posted under, since that is the bet being described.
+        // These are bets now, not trivia: a row only exists where there is a posted price on
+        // the side being described. Bunnies price off the over, Bogeys off the under - and an
+        // under only exists on a two-way row, so a sport with no two-way market has no Bogeys.
         var od = null, lineFlag = false;
         var cands = kind === 'bunny' ? streakCandidates(key, p.name, k) : underCandidates(key, p.name, k);
         var floor = kind === 'bunny' ? STREAK_ODDS_FLOOR : SIG_ODDS_FLOOR;
@@ -2777,6 +2776,8 @@ function h2hSignals(key, g, kind){
           var holds = vals.every(function(v){ return kind === 'bunny' ? v > c.line : v <= c.line; });
           if (holds){ od = c; lineFlag = true; break; }
         }
+        // no posted price on this side -> no row, whatever the history says
+        if (!od) return;
         if (!avgFlag && !lineFlag) return;
         out.push({ name:p.name, team:team, opp:opp, pos:posShortP(p), mkt:k, label:m[1],
                    mine:mine, base:lg.avg, edge:edge, edgeOpp:edgeOpp, diffPct:diffPct,
@@ -3159,10 +3160,13 @@ function nflTuddy(key, g){
   var S = state.sports[key], rz = asArray(S.data.redzone) || [];
   if (!rz.length) return { rows:[], why:'redzone.json returned nothing \u2014 the red-zone build has not run.' };
   var scope = {}; scope[normTeam(g.home)] = g.away; scope[normTeam(g.away)] = g.home;
+  // Rank across the WHOLE LEAGUE first, then keep the players in this fixture. Ranking inside
+  // the fixture made "#1 RB RZ carries" mean first of the two lead backs on the slate, which is
+  // not a credential at all.
   var byPos = {};
   rz.forEach(function(r){
     var p = (S.idx.byName || {})[r.player];
-    if (!p || !TUDDY_STATS[p.position] || scope[normTeam(p.team)] === undefined) return;
+    if (!p || !TUDDY_STATS[p.position]) return;
     (byPos[p.position] = byPos[p.position] || []).push({ r:r, p:p });
   });
   var qual = {};
@@ -3170,9 +3174,10 @@ function nflTuddy(key, g){
     TUDDY_STATS[pos].forEach(function(kl){
       byPos[pos].filter(function(x){ return (x.r[kl[0]] || 0) > 0; })
         .sort(function(a,b){ return (b.r[kl[0]]||0) - (a.r[kl[0]]||0); })
-        .slice(0, 5).forEach(function(x, i){
+        .slice(0, 10).forEach(function(x, i){          // top 10 in the league for that usage
+          if (scope[normTeam(x.p.team)] === undefined) return;
           var q = qual[x.p.name] = qual[x.p.name] || { p:x.p, r:x.r, chips:[] };
-          q.chips.push('#'+(i+1)+' '+pos+' '+kl[1]);
+          q.chips.push('#'+(i+1)+' in NFL \u00b7 '+pos+' '+kl[1]);
         });
     });
   });
@@ -3183,7 +3188,9 @@ function nflTuddy(key, g){
     if (!isPlayingP(key, nm, e.p.team)) return;
     var dr = dvpRankFor(key, opp, e.p.position, 'anytimeTd');
     if (!dr || dr.rank > 10) return;                       // production: bottom-10 TD defence only
-    var od = bestPriceFor(key, nm, 'anytimeTd');
+    // the anytimeTd ladder carries 0.5 / 1.5 / 2.5 (1+, 2+, 3+ TDs). "Best price" across the
+    // whole ladder returns the 3+ rung at $151 - anytime means the 0.5 line and nothing else.
+    var od = bestPriceFor(key, nm, 'anytimeTd', 0.5);
     if (!od) return;                                       // a TD tile with no TD price is not a tip
     out.push({ name:nm, p:e.p, opp:opp, chips:e.chips.slice(0, 3), dvp:dr,
                price:od.price, book:od.book, rz:e.r,
@@ -3191,8 +3198,8 @@ function nflTuddy(key, g){
   });
   out.sort(function(a,b){ return b.score - a.score; });
   return { rows:out.slice(0, SIG_MAX_ROWS),
-           why:'No red-zone regular with a posted anytime-TD price draws a bottom-10 TD defence '
-             + 'for their position.' };
+           why:'No top-10 league red-zone player on this fixture has an anytime-TD price and a '
+             + 'bottom-10 TD defence for their position.' };
 }
 /* Chunk Plays: explosive-play streaks against a defence that does not suppress them */
 function nflChunk(key, g){
@@ -3556,17 +3563,19 @@ function signalsSection(key, g){
               rows.map(function(r){ return streakRow(key, r); }), why)
     + sigTile('ti-trophy', 'Elite Matchups', 'League\u2019s best against the softest defences',
               elite.map(function(r){ return eliteRow(key, r); }), eliteWhy)
+    + sigTile('ti-carrot', 'Bunnies', 'Cleared this line in every meeting with them',
+              h2hSignals(key, g, 'bunny').map(function(r){ return h2hSigRow(key, r); }),
+              'No player with a posted price has cleared a line in every one of '+H2H_MIN_BUNNY
+              + '+ meetings with this opponent.')
+    + sigTile('ti-ghost-2', 'Bogey', 'Never cleared this line against them',
+              h2hSignals(key, g, 'bogey').map(function(r){ return h2hSigRow(key, r); }),
+              'No player has a posted under they have never cleared in '+H2H_MIN_BOGEY
+              + '+ meetings with this opponent.')
     + '<div class="dayband"><span>Form &amp; Matchups</span></div>'
     + sigTile('ti-trending-up', 'Form Alerts', 'Running hot or cold against their own season',
               formAlerts(key, g).map(function(r){ return formRow(key, r); }),
               'No player is '+Math.round(ALERT_THRESHOLD*100)+'%+ above or below their season average '
               + 'on a market that carries enough volume to mean anything.')
-    + sigTile('ti-carrot', 'Bunnies', 'Players who feast on this opponent',
-              h2hSignals(key, g, 'bunny').map(function(r){ return h2hSigRow(key, r); }),
-              'No player has '+H2H_MIN_BUNNY+'+ meetings with this opponent that beat their other matchups.')
-    + sigTile('ti-ghost-2', 'Bogey', 'Players this opponent shuts down',
-              h2hSignals(key, g, 'bogey').map(function(r){ return h2hSigRow(key, r); }),
-              'No player has '+H2H_MIN_BOGEY+'+ meetings with this opponent below their other matchups.')
     + nflSignals(key, g);
 }
 
