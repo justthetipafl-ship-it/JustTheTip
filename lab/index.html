@@ -1061,7 +1061,7 @@ function buildIndexes(key){
   players.forEach(function(p){ if (p && p.name) ix.byName[p.name] = p; });
 
   ix.lgAvg = {}; ix.winAvg = {}; ix.matchOpp = null; ix.fs = null;
-  ix.pricedSet = null; ix.oddsName = null;
+  ix.pricedSet = null; ix.oddsName = null; ix.vac = null;
   var logs = asArray(d.gamelogs) || [];
   ix.logsByName = {};
   logs.forEach(function(r){
@@ -2869,6 +2869,51 @@ function h2hSigRow(key, r){
     + '</div></div>';
 }
 
+
+/* VACATED USAGE ---------------------------------------------------------------
+   Zay Flowers doubtful takes 29% of Baltimore's targets out of the game. Those targets do not
+   evaporate - they go to whoever is left. So an UNDER on a remaining receiver is being priced
+   against the old depth chart, and a tile that fires a stack of Death Riders on that team has
+   the sign backwards.
+
+   Vacated share is the summed usage of everyone on the team listed Out or Doubtful. Questionable
+   is left alone: in the NFL they usually play, which is production's read too.                */
+var VACATE_MIN = 8;              // percentage points of usage before it changes a read
+function vacatedUsage(key, team){
+  var S = state.sports[key];
+  S.idx.vac = S.idx.vac || {};
+  var ck = normTeam(team);
+  if (S.idx.vac[ck]) return S.idx.vac[ck];
+  var inj = asArray(S.data.injury) || [];
+  var out = { tgt:0, snap:0, rush:0, names:[] };
+  inj.forEach(function(r){
+    if (!r || normTeam(r.Team || r.team) !== ck) return;
+    var status = String(r.Status || r.status || r.Returning || '');
+    if (!/^out$|doubtful|season/i.test(status)) return;          // Questionable usually plays
+    var p = (S.idx.byName || {})[r.Player || r.player];
+    if (!p) return;
+    var tgt = +p.tgtShare || 0, snap = +p.snapPct || 0;
+    var rush = 0;
+    var ra = leagueAvg(key, 'rushAtt')[p.name];
+    if (ra) rush = ra.avg;
+    if (tgt <= 0 && rush <= 0) return;                            // a lineman out is not vacated usage
+    out.tgt += tgt; out.rush += rush; out.snap += snap;
+    out.names.push({ name:p.name, pos:p.position, tgt:tgt, rush:rush, status:status });
+  });
+  out.names.sort(function(a,b){ return (b.tgt + b.rush) - (a.tgt + a.rush); });
+  return (S.idx.vac[ck] = out);
+}
+function vacatedNote(key, team){
+  var v = vacatedUsage(key, team);
+  if (!v.names.length) return null;
+  var bits = [];
+  if (v.tgt >= 1) bits.push(v.tgt.toFixed(0)+'% of targets');
+  if (v.rush >= 1) bits.push(v.rush.toFixed(0)+' carries/gm');
+  if (!bits.length) return null;
+  return { text: v.names.slice(0, 2).map(function(x){ return x.name; }).join(', ')
+             + (v.names.length > 2 ? ' +'+(v.names.length-2) : '')+' out \u00b7 '+bits.join(' + ')+' vacated',
+           tgt:v.tgt, rush:v.rush, names:v.names };
+}
 /* GREEN LIGHTS / DEATH RIDERS ------------------------------------------------
    Each sport scores through its OWN module (all four expose scoreCMP), so the
    tuning stays where it was built. AFL and NFL score heuristically; EPL and MLB
@@ -2971,8 +3016,13 @@ function ouSignals(key, g, kind){
   var over = kind === 'over', out = [];
   [g.away, g.home].forEach(function(team){
     var opp = (team === g.home) ? g.away : g.home;
+    var vac = vacatedNote(key, team);
+    // Usage left behind by an absent starter has to land somewhere. Against an under that is a
+    // straight contradiction, so the tile stops claiming it; against an over it is support.
+    var vacBlocksUnder = !!vac && (vac.tgt >= VACATE_MIN || vac.rush >= 4);
     playersOnTeam(key, team).forEach(function(p){
       if (!p || !p.name || !isPlayingP(key, p.name, team)) return;
+      if (!over && vacBlocksUnder) return;
       mkts.forEach(function(m){
         var k = m[0];
         if (key === 'mlb'){
@@ -3010,7 +3060,7 @@ function ouSignals(key, g, kind){
           var row = { name:p.name, team:team, opp:opp, pos:posShortP(p), mkt:k, label:m[1],
                       line:c.line, price:c.price, book:c.book, score:score, prob:prob, ev:ev,
                       edge:(fair != null ? prob - fair : null), avg:lg.avg, games:lg.games,
-                      dvpPct:dvpPct, over:over };
+                      dvpPct:dvpPct, over:over, vac:vac };
           // Where the model can't separate winners from losers, EV is noise dressed as maths -
           // so it neither filters nor ranks; the score does, and EV shows as information.
           if (evTrusted(key) && row.ev <= 0) return;     // the model likes it but the price doesn't pay
@@ -3053,6 +3103,7 @@ function ouRow(key, r){
         + (r.edge > 0 ? '+' : '')+Math.round(r.edge*100)+' pts vs fair</span>' : '')
     + '<span class="gl-chip">score '+r.score.toFixed(1)+'</span>'
     + (evTrusted(key) ? '' : '<span class="gl-chip bad">unranked model</span>')
+    + (r.vac ? '<span class="gl-chip '+(r.over ? 'good' : 'bad')+'">'+esc(r.vac.text)+'</span>' : '')
     + (r.dvpPct != null ? '<span class="gl-chip '+(r.over ? 'good' : 'bad')+'">'
         + (r.dvpPct > 0 ? '+' : '')+r.dvpPct.toFixed(0)+'% DVP</span>' : '')
     + ctxChips(key, (state.sports[key].idx.byName||{})[r.name], r.mkt, r.line, r.opp)
@@ -3082,7 +3133,9 @@ function ouTile(key, g, kind){
     why = over
       ? 'No player scored '+GL_SCORE+'+ into a soft matchup at a price that pays. Rows need a positive '
         + 'edge, so a strong read at a short price is filtered out rather than listed.'
-      : 'No player scored '+DR_SCORE+' or worse into a tough matchup at a positive-edge under'
+      : 'No player scored '+DR_SCORE+' or worse into a tough matchup at a positive-edge under. '
+        + 'Teams missing a starter are skipped here: the usage they leave behind lands on whoever '
+        + 'is left, which is the opposite of an under'
         + (underCandidates(key, (playersOnTeam(key, g.home)[0]||{}).name || '', 'x').length ? '.' : ' \u2014 this sport posts no under markets.');
   }
   return sigTile(over ? 'ti-traffic-lights' : 'ti-skull',
