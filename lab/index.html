@@ -681,7 +681,7 @@ function ensureTier2(){
 // the player/log/odds indexes and the sport's scoring + signals modules - is built here.
 var TIER3 = { gamelogs:'data/gamelogs.json', dvp:'data/dvp.json', teams_form:'data/teams_form.json',
               injury:'data/injury.json', lineups:'data/lineups.json', results:'data/results.json',
-              weather:'data/weather.json' };
+              weather:'data/weather.json', calib:'data/calib.json' };
 function loadTier3(key){
   var S = state.sports[key];
   if (S.t3 === 'ready' || S.t3 === 'loading') return Promise.resolve();
@@ -2521,32 +2521,38 @@ function h2hSigRow(key, r){
      3. where a two-way market exists the vig is stripped from the pair, giving the
         book's own fair probability to price the model against.                     */
 var GL_SCORE = 5.5, DR_SCORE = -3.5, GL_MIN_GAMES = 3, GL_RUNGS = 6;
-// Platt scaling fitted by walk-forward backtest (calibrate.js, 19 Sep 2026): the model is
-// configured with games BEFORE each match-day, then scored against what happened. `a` below 1
-// means overconfident - EPL predicted 46.9% on events that landed 27.9%. `spread` is how far
-// the top quartile of picks outperformed the bottom: that is whether the model ranks at all.
-//   sport  n       bias      spread   verdict
-//   afl    1044    +1.0pt     1.1pt   ranks nothing - probability is noise, do not rank on EV
-//   nfl     195    +9.9pt    20.8pt   real signal, overconfident (ONE match-day - re-fit after wk2)
-//   epl    1175   +11.9pt    38.2pt   REBUILT 19 Sep: unconditional expected minutes, negative
-//                                       binomial, window 14, blend 0.8. Brier 0.2356 -> 0.1972 raw
-//                                       (now beats the base rate), 0.1905 -> 0.1799 calibrated,
-//                                       discrimination 26.6 -> 38.2pt. Needs EPL/scoring.js deployed.
-//   mlb   11555    +1.5pt    28.0pt   calibrated and discriminating
+// Platt scaling fitted by walk-forward backtest (tools/calibrate.js, 20 Sep 2026). The model is
+// configured with games BEFORE each match-day, then scored against what happened. Where the
+// current season is too short the window reaches back into the previous one, so these are fitted
+// on 2,500-21,000 predictions rather than a single round. `a` below 1 means overconfident.
+// `spread` is how far the top quartile of picks outperformed the bottom - i.e. whether the model
+// ranks at all. Live values come from <sport>/data/calib.json; these are the fallback.
+//   sport  n        bias     spread   verdict
+//   afl    2548    -0.9pt    -0.8pt   ranks WORSE than random - score-only, never EV
+//   nfl    2817    +6.8pt   +10.5pt   modest but real signal (a one-week fit had flattered it at 20.8)
+//   epl    2090    +7.0pt   +35.8pt   rebuilt 19 Sep: unconditional minutes, negative binomial,
+//                                      window 14, blend 0.8. Raw Brier now beats the base rate.
+//   mlb   21755    +1.7pt   +27.4pt   calibrated and discriminating - the reference model
 var CALIB = {
-  afl: { a:0.408, b: 0.080, spread:0.011, n:1044 },
-  nfl: { a:0.915, b:-0.397, spread:0.208, n:195 },
-  epl: { a:0.849, b:-0.651, spread:0.382, n:1175 },
-  mlb: { a:0.692, b:-0.363, spread:0.280, n:11555 }
+  afl: { a:0.141, b: 0.217, spread:-0.008, n:2548 },
+  nfl: { a:0.244, b:-0.136, spread: 0.105, n:2817 },
+  epl: { a:0.727, b:-0.399, spread: 0.358, n:2090 },
+  mlb: { a:0.677, b:-0.391, spread: 0.274, n:21755 }
 };
 var EV_MIN_SPREAD = 0.05;          // below this the model can't rank, so EV is not a ranking key
+function calibFor(key){
+  // The weekly backtest (tools/calibrate.js) writes data/calib.json per sport; the constants
+  // above are the last known-good fit and stand in when that file is missing or too thin.
+  var live = state.sports[key].data.calib;
+  return (live && live.a != null && live.n >= 300) ? live : CALIB[key];
+}
 function calibrate(key, prob){
-  var c = CALIB[key];
+  var c = calibFor(key);
   if (!c || prob == null) return prob;
   var lg = Math.log(Math.max(1e-6, prob) / Math.max(1e-6, 1 - prob));
   return 1 / (1 + Math.exp(-(c.a * lg + c.b)));
 }
-function evTrusted(key){ return (CALIB[key] || {}).spread >= EV_MIN_SPREAD; }
+function evTrusted(key){ return (calibFor(key) || {}).spread >= EV_MIN_SPREAD; }
 function glProb(key, p, mkt, line, score){
   var sc = state.sports[key].scoring;
   // EPL and MLB define score as (prob - 0.5) * 20, so it inverts exactly.
