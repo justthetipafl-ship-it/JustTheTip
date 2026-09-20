@@ -109,8 +109,15 @@ function run(key, dir){
         try { score = scoring.scoreCMP(p, k, line, opp); } catch (e) { return; }
         if (score == null || !isFinite(score)) return;
         let prob;
-        if (key === 'epl' || key === 'mlb') prob = Math.max(.01, Math.min(.99, score / 20 + .5));
-        else {
+        // Prefer a real probability model wherever the module exposes one; fall back to the
+        // score inversion, then to the empirical hit rate.
+        if (scoring.prob){
+          let pv = null;
+          try { pv = scoring.prob(p, k, line, opp); } catch (e) {}
+          if (pv != null && isFinite(pv)) prob = Math.max(.01, Math.min(.99, pv));
+        }
+        if (prob == null && (key === 'epl' || key === 'mlb')) prob = Math.max(.01, Math.min(.99, score / 20 + .5));
+        if (prob == null) {
           let hr = null;
           try { hr = scoring.getHitRate ? scoring.getHitRate(nm, k, line, false) : null; } catch (e) {}
           const rate = hr == null ? null : (hr.rate != null ? hr.rate : (isFinite(+hr) ? +hr : null));
