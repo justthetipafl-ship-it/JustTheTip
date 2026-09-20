@@ -2528,13 +2528,17 @@ var GL_SCORE = 5.5, DR_SCORE = -3.5, GL_MIN_GAMES = 3, GL_RUNGS = 6;
 // `spread` is how far the top quartile of picks outperformed the bottom - i.e. whether the model
 // ranks at all. Live values come from <sport>/data/calib.json; these are the fallback.
 //   sport  n        bias     spread   verdict
-//   afl    2548    -0.9pt    -0.8pt   ranks WORSE than random - score-only, never EV
-//   nfl    2817    +6.8pt   +10.5pt   modest but real signal (a one-week fit had flattered it at 20.8)
+//   afl    2548    -1.3pt   +15.2pt   REBUILT 20 Sep: prob() added to AFL/scoring.js - EWMA
+//                                      form shrunk to season baseline, DVP-adjusted, negative
+//                                      binomial. Was -0.8pt (worse than random) on hit-rate-as-
+//                                      probability. Needs AFL/scoring.js deployed.
+//   nfl    2817    +6.8pt   +10.5pt   modest but real signal (a one-week fit had flattered it at
+//                                      20.8). Still hit-rate-as-probability - next for rebuild.
 //   epl    2090    +7.0pt   +35.8pt   rebuilt 19 Sep: unconditional minutes, negative binomial,
 //                                      window 14, blend 0.8. Raw Brier now beats the base rate.
 //   mlb   21755    +1.7pt   +27.4pt   calibrated and discriminating - the reference model
 var CALIB = {
-  afl: { a:0.141, b: 0.217, spread:-0.008, n:2548 },
+  afl: { a:0.358, b: 0.172, spread: 0.152, n:2548 },
   nfl: { a:0.244, b:-0.136, spread: 0.105, n:2817 },
   epl: { a:0.727, b:-0.399, spread: 0.358, n:2090 },
   mlb: { a:0.677, b:-0.391, spread: 0.274, n:21755 }
@@ -2555,9 +2559,18 @@ function calibrate(key, prob){
 function evTrusted(key){ return (calibFor(key) || {}).spread >= EV_MIN_SPREAD; }
 function glProb(key, p, mkt, line, score){
   var sc = state.sports[key].scoring;
+  // Prefer a real probability model wherever the module exposes one (AFL, EPL, MLB).
+  if (sc && sc.prob){
+    try {
+      var g = state.view.focus, opp = null;
+      if (g && g.g) opp = normTeam(p.team) === normTeam(g.g.home) ? g.g.away : g.g.home;
+      var pv = sc.prob(p, mkt, line, opp);
+      if (pv != null && isFinite(pv)) return Math.max(0.01, Math.min(0.99, pv));
+    } catch(e){}
+  }
   // EPL and MLB define score as (prob - 0.5) * 20, so it inverts exactly.
   if (key === 'epl' || key === 'mlb') return Math.max(0.01, Math.min(0.99, score / 20 + 0.5));
-  // AFL and NFL score heuristically - take the empirical rate their module already blends.
+  // NFL still scores heuristically - take the empirical rate its module already blends.
   try {
     var hr = sc && sc.getHitRate ? sc.getHitRate(p.name, mkt, line, false) : null;
     var rate = hr == null ? null : (hr.rate != null ? hr.rate : (isFinite(+hr) ? +hr : null));
