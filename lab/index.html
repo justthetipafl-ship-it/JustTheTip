@@ -614,6 +614,24 @@
   .st-bar-in{flex:1;height:4px;border-radius:2px;background:var(--surface-3,var(--border));overflow:hidden;min-width:40px;}
   .st-bar-in i{display:block;height:100%;background:var(--accent);}
   .st-bar-in i.tough{background:#f97316;}
+  .sc-filter{display:flex;gap:7px;align-items:center;margin-bottom:8px;}
+  .sc-filter input{flex:1;min-width:0;background:var(--surface-2);border:1px solid var(--border);
+    border-radius:9px;padding:9px 12px;color:var(--text);font-size:13px;font-family:inherit;outline:none;}
+  .sc-filter input:focus{border-color:var(--accent);}
+  .st-wrap{background:var(--surface-2);border:1px solid var(--border);border-radius:10px;overflow:auto;
+    -webkit-overflow-scrolling:touch;}
+  table.st-t{width:100%;border-collapse:collapse;font-size:11px;white-space:nowrap;}
+  table.st-t th{position:sticky;top:0;background:var(--surface-2);font-size:8px;font-weight:800;
+    letter-spacing:.05em;text-transform:uppercase;color:var(--text-3);padding:8px 7px;text-align:right;
+    border-bottom:1px solid var(--border);cursor:pointer;}
+  table.st-t th:first-child,table.st-t td:first-child{text-align:left;position:sticky;left:0;
+    background:var(--surface-2);z-index:1;}
+  table.st-t th.on{color:var(--accent);}
+  table.st-t td{padding:7px;text-align:right;border-top:1px solid var(--border);font-variant-numeric:tabular-nums;}
+  table.st-t tbody tr{cursor:pointer;}
+  table.st-t td.nm{font-weight:700;max-width:140px;overflow:hidden;text-overflow:ellipsis;}
+  table.st-t td.sub{color:var(--text-3);font-family:var(--font-mono);font-size:9px;}
+  table.st-t td.hi{color:var(--accent);font-weight:700;} table.st-t td.lo{color:#f97316;font-weight:700;}
   .cmb-leg-x{background:none;border:0;color:var(--text-3);font-size:17px;cursor:pointer;flex:none;line-height:1;}
   .cmb-sum{background:var(--surface-2);border:1px solid var(--border);border-radius:10px;padding:11px 13px;margin-top:8px;}
   .cmb-sum-row{display:flex;justify-content:space-between;align-items:baseline;padding:4px 0;font-size:11px;}
@@ -794,7 +812,9 @@ var state = {
              cmbQ: '', cmbSel: null, cmbRecent: [],
              cmbOpen: false, cmbMode: 'single', cmbLegs: [], cmbResult: null, cmbSugOff: false,
              cmbLadOpen: false, mbFix: 0, mbMode: 'value',
-             stSport: null, stMode: 'players', stMkt: {}, stPos: {} }   // filter + current page + market per sport
+             stSport: null, stMode: 'scanner', stMkt: {}, stPos: {},
+             stQ: '', stPosF: '', stSort: null, stDir: -1, stAllowed: false,
+             stTeamSort: null, stDvpSort: null }   // filter + current page + market per sport
 };
 Object.keys(SPORTS).forEach(function(k){
   state.sports[k] = { data:{}, idx:{teamMap:{}}, status:'idle' };
@@ -4291,112 +4311,185 @@ function cmbFab(){
     + (n ? '<span class="cmb-badge">'+n+'</span>' : '')+'</button>';
 }
 
-/* STATS / DVP -------------------------------------------------------------------
-   The standalone board production has: every player ranked on a market, and every defence
-   ranked on what it concedes by position. Scoped to one sport at a time because the markets
-   differ; everything reads through the same statOf / leagueAvg / dvpBoard the signals use,
-   so a number here and a number in a tile are the same number.                              */
+/* STATS: Scanner / Teams / DVP -------------------------------------------------
+   The three boards the old tool had, minus Compare. Scanner is the sortable player table
+   with a search box and position pills; Teams is the for/allowed grid; DVP is a position's
+   full column set per team. All read through statOf / leagueAvg / dvpBoard, so the numbers
+   agree with every tile and the player card.                                                 */
+var STATS_SUBS = [['scanner','Scanner','ti-table'],['teams','Teams','ti-shield'],['dvp','DVP','ti-shield-half']];
+function stCols(key){
+  var cfg = state.sports[key].config || {};
+  return (cfg.pcStats || cfg.oddsMkts || cfg.dvpStats || []).slice(0, 8);
+}
+function stSortRows(rows, sortKey, dir){
+  return rows.sort(function(a,b){
+    var x = a.vals[sortKey], y = b.vals[sortKey];
+    if (x == null) return 1;
+    if (y == null) return -1;
+    return (x - y) * dir;
+  });
+}
+function scannerView(key){
+  var S = state.sports[key], v = state.view;
+  var cols = stCols(key);
+  if (!cols.length) return secNote('Scanner', SPORTS[key].name+' config.js lists no stat columns.');
+  var positions = [''].concat(((S.config || {}).posOrder || []));
+  var posF = v.stPosF || '';
+  var q = String(v.stQ || '').trim().toLowerCase();
+  var rows = (S.idx.players || []).map(function(p){
+    var vals = {}, any = false;
+    cols.forEach(function(c){
+      var e = leagueAvg(key, c[0])[p.name];
+      vals[c[0]] = e && e.games >= 2 ? e.avg : null;
+      if (vals[c[0]] != null) any = true;
+    });
+    if (!any) return null;
+    var games = 0;
+    cols.forEach(function(c){ var e = leagueAvg(key, c[0])[p.name]; if (e && e.games > games) games = e.games; });
+    return { p:p, vals:vals, games:games };
+  }).filter(Boolean);
+  if (posF) rows = rows.filter(function(r){ return (r.p.position || r.p.pos) === posF; });
+  if (q) rows = rows.filter(function(r){
+    return r.p.name.toLowerCase().indexOf(q) >= 0 || String(r.p.team||'').toLowerCase().indexOf(q) >= 0; });
+  var sortKey = v.stSort || cols[0][0], dir = v.stDir === 1 ? 1 : -1;
+  rows = stSortRows(rows, sortKey, dir).slice(0, 200);
+  var th = function(k, l){
+    return '<th class="'+(sortKey===k?'on':'')+'" onclick="LAB.stSort(\''+k+'\')">'+esc(l)
+      + (sortKey===k ? (dir < 0 ? ' \u25be' : ' \u25b4') : '')+'</th>'; };
+  var h = '<div class="sc-filter"><input id="stSearch" placeholder="Search player or team\u2026" '
+    + 'value="'+esc(v.stQ||'')+'" oninput="LAB.stQ(this.value)" autocomplete="off"></div>'
+    + '<div class="sl-bar">'+positions.map(function(p2){
+        return '<button class="sl-chip'+(posF===p2?' on':'')+'" onclick="LAB.stPosF(\''+esc(p2)+'\')">'
+          + esc(p2 || 'All')+'</button>'; }).join('')+'</div>';
+  if (!rows.length) return h + '<div class="empty"><i class="ti ti-search-off"></i>No players match.</div>';
+  h += '<div class="st-wrap" id="stTbl"><table class="st-t"><thead><tr><th>Player</th>'
+    + '<th class="'+(sortKey==='games'?'on':'')+'" onclick="LAB.stSort(\'games\')">GP</th>'
+    + cols.map(function(c){ return th(c[0], c[1]); }).join('')+'</tr></thead><tbody>'
+    + rows.map(function(r){
+        return '<tr onclick="LAB.player(\''+key+'\',\''+esc(r.p.name).replace(/'/g,"\\'")+'\')">'
+          + '<td class="nm">'+esc(r.p.name)+'<br><span class="sub">'
+          + esc([posShortP(r.p), abbrOf(key, r.p.team)].filter(Boolean).join(' \u00b7 '))+'</span></td>'
+          + '<td>'+r.games+'</td>'
+          + cols.map(function(c){
+              var val = r.vals[c[0]];
+              return '<td>'+(val == null ? '\u2014' : (val < 3 ? val.toFixed(2) : val.toFixed(1)))+'</td>';
+            }).join('')+'</tr>';
+      }).join('')+'</tbody></table></div>'
+    + '<div class="cmb-corr">'+rows.length+' shown \u00b7 per-game from gamelogs. Tap a row for the full read.</div>';
+  return h;
+}
+function teamsView(key){
+  var S = state.sports[key], v = state.view;
+  var teams = asArray(S.data.teams_form) || asArray(S.data.teams) || [];
+  if (!teams.length) return secNote('Teams', 'teams.json returned nothing for '+SPORTS[key].name+'.');
+  var cols = ((S.config || {}).teamCols || stCols(key)).slice(0, 10);
+  var allowed = !!v.stAllowed, suf = allowed ? '_a' : '';
+  // does this file even carry the allowed side?
+  var hasAllowed = teams.some(function(t){ return cols.some(function(c){ return t[c[0]+'_a'] != null; }); });
+  var sortKey = (v.stTeamSort && cols.some(function(c){ return c[0] === v.stTeamSort; })) ? v.stTeamSort : cols[0][0];
+  var rows = teams.slice().sort(function(a,b){ return (+b[sortKey+suf]||0) - (+a[sortKey+suf]||0); });
+  var avg = {};
+  cols.forEach(function(c){
+    avg[c[0]] = rows.reduce(function(a,t){ return a + (+t[c[0]+suf]||0); }, 0) / rows.length;
+  });
+  var h = '<div class="st-bar"><span class="st-seg">'
+    + '<button class="'+(!allowed?'on':'')+'" onclick="LAB.stAllowed(false)">For</button>'
+    + '<button class="'+(allowed?'on':'')+'" onclick="LAB.stAllowed(true)">Allowed</button></span></div>';
+  if (allowed && !hasAllowed)
+    return h + secNote('Teams', SPORTS[key].name+'\u2019s team file carries no \u201callowed\u201d columns, '
+      + 'so only the team\u2019s own output can be shown.');
+  h += '<div class="cmb-corr" style="margin:0 0 7px">'
+    + (allowed ? 'Average conceded to opponents \u2014 higher is a softer defence.'
+               : 'The team\u2019s own per-game output.')+'</div>'
+    + '<div class="st-wrap"><table class="st-t"><thead><tr><th>Team</th><th>GP</th>'
+    + cols.map(function(c){
+        return '<th class="'+(sortKey===c[0]?'on':'')+'" onclick="LAB.stTeamSort(\''+c[0]+'\')">'
+          + esc(c[1])+(sortKey===c[0]?' \u25be':'')+'</th>'; }).join('')+'</tr></thead><tbody>'
+    + rows.map(function(t){
+        return '<tr><td class="nm">'+esc(abbrOf(key, t.team))+'<br><span class="sub">'+esc(t.team)+'</span></td>'
+          + '<td>'+(t.matches || 0)+'</td>'
+          + cols.map(function(c){
+              var val = +t[c[0]+suf] || 0, a = avg[c[0]];
+              var d = a ? (val - a) / a * 100 : 0;
+              var cls = Math.abs(d) < 4 ? '' : (d > 0 ? 'hi' : 'lo');
+              return '<td class="'+cls+'">'+(val < 3 ? val.toFixed(2) : val.toFixed(1))+'</td>';
+            }).join('')+'</tr>';
+      }).join('')+'</tbody></table></div>';
+  return h;
+}
+function dvpView(key){
+  var S = state.sports[key], v = state.view;
+  var stats = ((S.config || {}).dvpStats || (S.config || {}).oddsMkts || []).slice(0, 8);
+  var raw = asArray(S.data.dvp) || [];
+  if (!stats.length || !raw.length)
+    return secNote('DVP', 'dvp.json returned nothing for '+SPORTS[key].name+'.');
+  var positions = [];
+  ((S.config || {}).posOrder || []).forEach(function(p2){
+    if (raw.some(function(r){ return r.pos === p2; })) positions.push(p2); });
+  raw.forEach(function(r){ if (r.pos && positions.indexOf(r.pos) < 0) positions.push(r.pos); });
+  // default to the position with the most teams carrying data, not posOrder[0]
+  var count = {};
+  positions.forEach(function(p2){
+    count[p2] = raw.filter(function(r){ return r.pos === p2 && stats.some(function(c){ return r[c[0]] != null; }); }).length; });
+  var fullest = positions.slice().sort(function(a,b){ return count[b] - count[a]; })[0];
+  var pos = (v.stPos && v.stPos[key] && positions.indexOf(v.stPos[key]) >= 0) ? v.stPos[key] : fullest;
+  var sortKey = (v.stDvpSort && stats.some(function(c){ return c[0] === v.stDvpSort; })) ? v.stDvpSort : stats[0][0];
+  // one row per club, collapsed on the normalised name
+  var seen = {}, rows = [];
+  raw.filter(function(r){ return r.pos === pos; }).forEach(function(r){
+    var k2 = normTeam(r.team);
+    if (seen[k2]){
+      stats.forEach(function(c){ if (r[c[0]] != null && (seen[k2][c[0]] == null || +r[c[0]] > +seen[k2][c[0]])) seen[k2][c[0]] = r[c[0]]; });
+      return;
+    }
+    seen[k2] = Object.assign({}, r);
+    rows.push(seen[k2]);
+  });
+  rows.sort(function(a,b){ return (+b[sortKey]||0) - (+a[sortKey]||0); });
+  var avg = {};
+  stats.forEach(function(c){ avg[c[0]] = rows.reduce(function(a,t){ return a + (+t[c[0]]||0); }, 0) / Math.max(1, rows.length); });
+  var h = '<div class="sl-bar">'+positions.map(function(p2){
+      return '<button class="sl-chip'+(p2===pos?' on':'')+'" onclick="LAB.stPos(\''+key+'\',\''+esc(p2)+'\')">'
+        + esc(p2 === 'ALL' ? 'All' : p2)+'</button>'; }).join('')+'</div>'
+    + '<div class="cmb-corr" style="margin:0 0 7px">Per game, conceded to '
+    + esc(pos === 'ALL' ? 'all players' : pos)+'. Green concedes more than the league \u2014 the softer draw.</div>'
+    + '<div class="st-wrap"><table class="st-t"><thead><tr><th>Team</th>'
+    + stats.map(function(c){
+        return '<th class="'+(sortKey===c[0]?'on':'')+'" onclick="LAB.stDvpSort(\''+c[0]+'\')">'
+          + esc(c[1])+(sortKey===c[0]?' \u25be':'')+'</th>'; }).join('')+'</tr></thead><tbody>'
+    + rows.map(function(t){
+        return '<tr><td class="nm">'+esc(abbrOf(key, t.team))+'</td>'
+          + stats.map(function(c){
+              var val = t[c[0]];
+              if (val == null) return '<td>\u2014</td>';
+              var a = avg[c[0]], d = a ? (+val - a) / a * 100 : 0;
+              var cls = Math.abs(d) < 4 ? '' : (d > 0 ? 'hi' : 'lo');
+              return '<td class="'+cls+'">'+(+val < 3 ? (+val).toFixed(2) : (+val).toFixed(1))+'</td>';
+            }).join('')+'</tr>';
+      }).join('')+'</tbody></table></div>';
+  return h;
+}
 function statsPage(){
   var v = state.view;
   var keys = Object.keys(SPORTS).filter(function(k){ return v.active[k]; });
   if (!keys.length) return '<div class="empty"><i class="ti ti-ban"></i>No sports switched on.</div>';
   var key = keys.indexOf(v.stSport) >= 0 ? v.stSport : keys[0];
   var S = state.sports[key];
-  var mode = v.stMode || 'players';
-  var h = '<div class="st-bar">'
-    + keys.map(function(k){
-        return '<button class="sl-chip'+(k===key?' on':'')+'" onclick="LAB.stSport(\''+k+'\')">'
-          + esc(SPORTS[k].name)+'</button>'; }).join('')
-    + '<span class="st-seg">'
-      + '<button class="'+(mode==='players'?'on':'')+'" onclick="LAB.stMode(\'players\')">Players</button>'
-      + '<button class="'+(mode==='dvp'?'on':'')+'" onclick="LAB.stMode(\'dvp\')">DVP</button>'
-    + '</span></div>';
+  var sub = v.stMode || 'scanner';
+  var h = '<div class="st-bar">'+keys.map(function(k){
+      return '<button class="sl-chip'+(k===key?' on':'')+'" onclick="LAB.stSport(\''+k+'\')">'
+        + esc(SPORTS[k].name)+'</button>'; }).join('')+'</div>'
+    + '<div class="st-seg" style="margin:0 0 9px">'+STATS_SUBS.map(function(t){
+        return '<button class="'+(sub===t[0]?'on':'')+'" onclick="LAB.stMode(\''+t[0]+'\')">'
+          + '<i class="ti '+t[2]+'"></i> '+t[1]+'</button>'; }).join('')+'</div>';
   if (S.status !== 'ready') return h + '<div class="empty"><i class="ti ti-loader"></i>Loading\u2026</div>';
   if (S.t3 !== 'ready'){
     ensureSport(key);
     return h + '<div class="empty"><i class="ti ti-loader"></i>Loading '+esc(SPORTS[key].name)+' history\u2026</div>';
   }
-  var mkts = (mode === 'dvp')
-    ? ((S.config || {}).dvpStats || (S.config || {}).oddsMkts || [])
-    : ((S.config || {}).oddsMkts || (S.config || {}).multiMkts || []);
-  if (!mkts.length) return h + secNote('Stats', SPORTS[key].name+' config.js lists no markets.');
-  var mkt = (v.stMkt && v.stMkt[key]) || mkts[0][0];
-  if (!mkts.some(function(m){ return m[0] === mkt; })) mkt = mkts[0][0];
-  h += '<div class="sl-bar">'+mkts.slice(0, 10).map(function(m){
-    return '<button class="sl-chip'+(m[0]===mkt?' on':'')+'" onclick="LAB.stMkt(\''+key+'\',\''+m[0]+'\')">'
-      + esc(m[1])+'</button>'; }).join('')+'</div>';
-  var label = mktLabel(key, mkt);
-
-  if (mode === 'dvp'){
-    var board = dvpBoard(key, mkt);
-    var positions = ((S.config || {}).posOrder || []).filter(function(p){ return board[p]; });
-    Object.keys(board).forEach(function(p){ if (positions.indexOf(p) < 0) positions.push(p); });
-    if (!positions.length)
-      return h + secNote('DVP', 'No team records '+esc(label)+' allowed by position in '+SPORTS[key].name+'.');
-    // default to the position with the fullest board: posOrder starts at GK for EPL, where
-    // barely any club records shots conceded to keepers, and a 3-team board looks broken
-    var fullest = positions.slice().sort(function(a,b){ return board[b].length - board[a].length; })[0];
-    var pos = (v.stPos && v.stPos[key]) || fullest;
-    if (positions.indexOf(pos) < 0) pos = fullest;
-    h += '<div class="sl-bar">'+positions.map(function(p2){
-      return '<button class="sl-chip'+(p2===pos?' on':'')+'" onclick="LAB.stPos(\''+key+'\',\''+esc(p2)+'\')">'
-        + esc(p2 === 'ALL' ? 'All' : p2)+'</button>'; }).join('')+'</div>';
-    var list = board[pos] || [];
-    var mx = list.length ? list[0].val : 1;
-    var avg = list.reduce(function(a,b){ return a + b.val; }, 0) / Math.max(1, list.length);
-    h += '<div class="st-tbl"><div class="st-hd"><span class="st-rk">#</span>'
-      + '<span class="st-who">Team</span><span class="st-bar-in" style="background:none"></span>'
-      + '<span class="st-n">'+esc(label)+'</span><span class="st-px">vs avg</span></div>'
-      + list.map(function(e, i){
-          var third = Math.max(1, Math.round(list.length/3));
-          var tough = i >= list.length - third;
-          var pct = avg ? (e.val - avg) / avg * 100 : 0;
-          return '<div class="st-row"><span class="st-rk">'+(i+1)+'</span>'
-            + '<span class="st-who"><b>'+esc(abbrOf(key, e.team))+'</b>'
-            + '<span>'+esc(e.team)+'</span></span>'
-            + '<span class="st-bar-in"><i class="'+(tough?'tough':'')+'" style="width:'
-            + Math.max(4, Math.round(e.val/mx*100))+'%"></i></span>'
-            + '<span class="st-n">'+(e.val < 3 ? e.val.toFixed(2) : e.val.toFixed(1))+'</span>'
-            + '<span class="st-px" style="color:'+(pct > 0 ? 'var(--accent)' : '#f97316')+'">'
-            + (pct > 0 ? '+' : '')+pct.toFixed(0)+'%</span></div>';
-        }).join('')+'</div>'
-      + '<div class="cmb-corr">Per game, conceded to '+esc(pos === 'ALL' ? 'all players' : pos)
-      + '. Rank 1 concedes the most \u2014 the softest draw.</div>';
-    return h;
-  }
-
-  // players board
-  var lg = leagueAvg(key, mkt);
-  var rows = (S.idx.players || []).map(function(p){
-    var e = lg[p.name];
-    if (!e || e.games < 3) return null;
-    var logs = sortLogsDesc(((S.idx.logsByName || {})[p.name] || []).slice());
-    var l5 = [];
-    logs.forEach(function(r){ if (l5.length < 5){ var val = statOf(key, r, mkt); if (val != null) l5.push(val); } });
-    var od = oddsForP(key, p.name, mkt);
-    return { p:p, avg:e.avg, games:e.games,
-             l5:(l5.length ? l5.reduce(function(a,b){ return a+b; },0)/l5.length : null),
-             line:(od && od.line != null ? od.line : null), price:(od && od.over != null ? +od.over : null) };
-  }).filter(Boolean).sort(function(a,b){ return b.avg - a.avg; }).slice(0, 60);
-  if (!rows.length) return h + secNote('Stats', 'No player has 3+ games with '+esc(label)+' recorded.');
-  var top = rows[0].avg || 1;
-  h += '<div class="st-tbl"><div class="st-hd"><span class="st-rk">#</span>'
-    + '<span class="st-who">Player</span><span class="st-bar-in" style="background:none"></span>'
-    + '<span class="st-n">Avg</span><span class="st-n dim">L5</span><span class="st-px">Line</span></div>'
-    + rows.map(function(r, i){
-        return '<div class="st-row" onclick="LAB.player(\''+key+'\',\''
-          + esc(r.p.name).replace(/'/g,"\\'")+'\')"><span class="st-rk">'+(i+1)+'</span>'
-          + '<span class="st-who"><b>'+esc(r.p.name)+'</b><span>'
-          + esc([posShortP(r.p), abbrOf(key, r.p.team), r.games+'g'].filter(Boolean).join(' \u00b7 '))+'</span></span>'
-          + '<span class="st-bar-in"><i style="width:'+Math.max(4, Math.round(r.avg/top*100))+'%"></i></span>'
-          + '<span class="st-n">'+(r.avg < 3 ? r.avg.toFixed(2) : r.avg.toFixed(1))+'</span>'
-          + '<span class="st-n dim">'+(r.l5 == null ? '\u2014' : (r.l5 < 3 ? r.l5.toFixed(2) : r.l5.toFixed(1)))+'</span>'
-          + '<span class="st-px">'+(r.line != null ? Math.ceil(r.line)+'+ '+(r.price != null ? '$'+r.price.toFixed(2) : '') : '\u2014')+'</span>'
-          + '</div>';
-      }).join('')+'</div>'
-    + '<div class="cmb-corr">Per-game average from gamelogs, 3+ games. Posted line is the main market '
-    + 'where one exists. Tap a player for the full read.</div>';
-  return h;
+  if (sub === 'teams') return h + teamsView(key);
+  if (sub === 'dvp') return h + dvpView(key);
+  return h + scannerView(key);
 }
 function playerPanel(){
   var sel = state.view.player;
@@ -4707,6 +4800,27 @@ window.LAB = {
   cmbLad: function(open){ state.view.cmbLadOpen = !!open; },
   stSport: function(k){ state.view.stSport = k; ensureSport(k); render(); },
   stMode: function(m){ state.view.stMode = m; render(); },
+  stSort: function(k){
+    var v = state.view;
+    if (v.stSort === k) v.stDir = (v.stDir === 1 ? -1 : 1); else { v.stSort = k; v.stDir = -1; }
+    render();
+  },
+  stTeamSort: function(k){ state.view.stTeamSort = k; render(); },
+  stDvpSort: function(k){ state.view.stDvpSort = k; render(); },
+  stAllowed: function(a){ state.view.stAllowed = !!a; render(); },
+  stPosF: function(p){ state.view.stPosF = p; render(); },
+  stQ: function(q){
+    // same rule as the bet search: patch the table, never the focused input
+    state.view.stQ = q;
+    var host = $('stTbl');
+    var keys = Object.keys(SPORTS).filter(function(k){ return state.view.active[k]; });
+    var key = keys.indexOf(state.view.stSport) >= 0 ? state.view.stSport : keys[0];
+    if (!host || !key){ render(); return; }
+    var frag = document.createElement('div');
+    frag.innerHTML = scannerView(key);
+    var fresh = frag.querySelector('#stTbl');
+    host.innerHTML = fresh ? fresh.innerHTML : '';
+  },
   stMkt: function(k, m){ state.view.stMkt = state.view.stMkt || {}; state.view.stMkt[k] = m; render(); },
   stPos: function(k, p){ state.view.stPos = state.view.stPos || {}; state.view.stPos[k] = p; render(); },
   mbFix: function(i){ state.view.mbFix = +i; render(); },
