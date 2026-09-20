@@ -485,7 +485,28 @@
   .fa-pc{font-family:var(--font-display);font-size:17px;line-height:1;}
   .fa-pc.up{color:var(--accent);} .fa-pc.down{color:#f97316;}
   .fa-pcl{font-family:var(--font-mono);font-size:7px;color:var(--text-3);letter-spacing:.06em;margin-top:3px;}
-  .pp-tabs{display:flex;gap:4px;padding:0 12px 9px;}
+  .pc-wrap{background:var(--surface-2);border:1px solid var(--border);border-radius:10px;padding:11px 12px;}
+  .pc-row{display:flex;align-items:center;gap:8px;margin:9px 0;}
+  .pc-step{display:flex;align-items:center;gap:6px;background:var(--surface);border:1px solid var(--border);
+    border-radius:9px;padding:5px 7px;}
+  .pc-step button{background:var(--surface-2);border:1px solid var(--border);color:var(--text);width:28px;
+    height:28px;border-radius:7px;font-size:15px;line-height:1;cursor:pointer;}
+  .pc-line{min-width:52px;text-align:center;font-family:var(--font-display);font-size:17px;font-weight:800;}
+  .pc-hr{flex:1;text-align:right;}
+  .pc-hr b{display:block;font-family:var(--font-display);font-size:20px;}
+  .pc-hr span{font-family:var(--font-mono);font-size:9px;color:var(--text-3);}
+  .pc-odds{display:flex;gap:6px;margin-top:8px;}
+  .pc-odds span{flex:1;background:var(--surface);border:1px solid var(--border);border-radius:7px;
+    padding:6px;text-align:center;font-size:8px;letter-spacing:.05em;text-transform:uppercase;color:var(--text-3);}
+  .pc-odds b{display:block;font-family:var(--font-display);font-size:14px;color:var(--text);}
+  .pc-odds b.pos{color:var(--accent);} .pc-odds b.neg{color:#f97316;}
+  .pc-add{width:100%;margin-top:9px;background:var(--accent);color:#08140c;border:0;border-radius:9px;
+    padding:10px;font-family:var(--font-display);font-weight:800;font-size:12px;cursor:pointer;}
+  .pc-bars{display:flex;gap:3px;align-items:flex-end;height:54px;margin-top:10px;}
+  .pc-bars span{flex:1;border-radius:2px 2px 0 0;background:var(--accent);opacity:.85;}
+  .pc-bars span.miss{background:#ef4444;opacity:.5;}
+  .pc-bars span.opp{background:#f59e0b;}
+  .pp-tabs{display:flex;gap:4px;padding:0 12px 9px;flex-wrap:wrap;}
   .pp-tab{font-size:9px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;padding:5px 11px;
     border-radius:999px;border:1px solid var(--border);background:var(--surface-2);color:var(--text-3);cursor:pointer;}
   .pp-tab.on{border-color:var(--accent);color:var(--accent);background:color-mix(in srgb,var(--accent) 12%,transparent);}
@@ -882,7 +903,7 @@ var state = {
              slMkt: {}, slWin: 'season', dvpMkt: {}, ppTab: 'form',
              cmbQ: '', cmbSel: null, cmbRecent: [],
              cmbOpen: false, cmbMode: 'single', cmbLegs: [], cmbResult: null, cmbSugOff: false,
-             cmbLadOpen: false, mbFix: 0, mbMode: 'value',
+             cmbLadOpen: false, mbFix: 0, mbMode: 'value', pc: null,
              rdrPick: null, ulMk: 'snapPct', ulWin: 'l5',
              stSport: null, stMode: 'scanner', stMkt: {}, stPos: {},
              stQ: '', stPosF: '', stWin: 'season', stSort: null, stDir: -1, stAllowed: false,
@@ -4150,6 +4171,168 @@ function ppOpponent(key, name){
   }
   return team ? (S.idx.nextOpp || {})[team] : null;
 }
+
+/* Player modal: prop calculator, ported from the AFL tool. Dial any line on any market, see the
+   hit rate over a chosen window, the posted price at that exact line where one exists, and the
+   edge the calibrated model makes of it. Adds straight to the multi slip.                     */
+function pcDefaultLine(key, name, mkt){
+  var od = bestPriceFor(key, name, mkt);
+  if (od && od.line != null) return Math.max(1, Math.ceil(od.line));
+  var e = leagueAvg(key, mkt)[name];
+  return e ? Math.max(1, Math.round(e.avg)) : 1;
+}
+function pcGames(key, name, scope, opp){
+  var all = sortLogsDesc((((state.sports[key].idx.logsByName) || {})[name] || []).slice());
+  if (scope === 'h2h' && opp) return all.filter(function(r){
+    var o = oppOf(key, r); return o && normTeam(o) === normTeam(opp); });
+  if (scope === 'l5') return all.slice(0, 5);
+  if (scope === 'l10') return all.slice(0, 10);
+  var cur = all.filter(function(r){ return (+(r.Year||r.year)||0) === curSeason(key); });
+  return cur.length ? cur : all.slice(0, 15);
+}
+function ppCalc(key, name){
+  var S = state.sports[key], p = (S.idx.byName || {})[name];
+  if (!p) return '<div class="empty" style="padding:20px">No player record.</div>';
+  var mkts = ((S.config || {}).oddsMkts || (S.config || {}).multiMkts || []).slice(0, 10);
+  if (!mkts.length) return '<div class="empty" style="padding:20px">No markets configured.</div>';
+  var st = state.view.pc || {};
+  if (st.name !== name){
+    st = { name:name, mkt:mkts[0][0], line:pcDefaultLine(key, name, mkts[0][0]), scope:'season', side:'over' };
+    state.view.pc = st;
+  }
+  var opp = ppOpponent(key, name);
+  var games = pcGames(key, name, st.scope, opp);
+  var vals = [];
+  games.forEach(function(r){ var v = statOf(key, r, st.mkt); if (v != null) vals.push(v); });
+  var over = st.side !== 'under';
+  var thr = st.line - 0.5;                                  // "20+" means over 19.5
+  var hits = vals.filter(function(v){ return over ? v >= st.line : v < st.line; }).length;
+  var rate = vals.length ? hits / vals.length : null;
+  var od = bestPriceFor(key, name, st.mkt, thr);
+  var twoWay = cmbPosted(key, name, st.mkt);
+  var price = over ? (od ? od.price : null)
+                   : (twoWay && Math.ceil(+twoWay.line) === st.line && twoWay.under != null ? +twoWay.under : null);
+  var raw = null;
+  try { raw = S.scoring && S.scoring.prob ? S.scoring.prob(p, st.mkt, thr, opp) : null; } catch(e){}
+  if (raw == null && (key === 'epl' || key === 'mlb')){
+    try { var sc = S.scoring.scoreCMP(p, st.mkt, thr, opp);
+      if (sc != null && isFinite(sc)) raw = Math.max(0.01, Math.min(0.99, sc/20 + 0.5)); } catch(e){}
+  }
+  var prob = raw != null ? calibrate(key, raw) : rate;
+  if (prob != null && !over) prob = 1 - prob;
+  var ev = (price != null && prob != null) ? prob * (price - 1) - (1 - prob) : null;
+  var mx = Math.max.apply(null, vals.concat([st.line])) || 1;
+  return '<div class="pc-wrap">'
+    + '<div class="sl-bar">'+mkts.map(function(m){
+        return '<button class="sl-chip'+(m[0] === st.mkt ? ' on' : '')+'" onclick="LAB.pcMkt(\'' + m[0] + '\')">'
+          + esc(m[1])+'</button>'; }).join('')+'</div>'
+    + '<div class="pc-row"><span class="pc-step">'
+      + '<button onclick="LAB.pcLine(-1)">\u2212</button>'
+      + '<span class="pc-line">'+(over ? st.line+'+' : 'U'+st.line)+'</span>'
+      + '<button onclick="LAB.pcLine(1)">+</button></span>'
+      + '<span class="pc-hr"><b>'+(rate == null ? '\u2014' : Math.round(rate*100)+'%')+'</b>'
+      + '<span>'+hits+'/'+vals.length+' '+esc(st.scope === 'h2h' ? 'v '+(opp ? abbrOf(key, opp) : 'opp')
+          : (st.scope === 'season' ? 'this season' : st.scope.toUpperCase()))+'</span></span></div>'
+    + '<div class="sl-bar">'
+      + [['over','Over'],['under','Under']].map(function(x){
+          return '<button class="sl-chip'+(st.side === x[0] ? ' on' : '')+'" onclick="LAB.pcSide(\''+x[0]+'\')">'
+            + x[1]+'</button>'; }).join('')
+      + '<span class="sl-win">'+[['season','Season'],['l10','L10'],['l5','L5'],['h2h','H2H']].map(function(x){
+          return '<button class="sl-chip'+(st.scope === x[0] ? ' on' : '')+'" onclick="LAB.pcScope(\''+x[0]+'\')">'
+            + x[1]+'</button>'; }).join('')+'</span></div>'
+    + '<div class="pc-odds">'
+      + '<span><b>'+(price != null ? '$'+price.toFixed(2) : '\u2014')+'</b>posted</span>'
+      + '<span><b>'+(prob != null ? Math.round(prob*100)+'%' : '\u2014')+'</b>model</span>'
+      + '<span><b class="'+(ev != null && ev > 0 ? 'pos' : (ev != null ? 'neg' : ''))+'">'
+        + (ev != null ? (ev > 0 ? '+' : '')+Math.round(ev*100)+'%' : '\u2014')+'</b>edge</span></div>'
+    + '<div class="pc-bars">'+vals.slice(0, 14).reverse().map(function(v){
+        var hit = over ? v >= st.line : v < st.line;
+        return '<span class="'+(hit ? '' : 'miss')+'" style="height:'+Math.max(6, Math.round(v/mx*100))+'%"></span>';
+      }).join('')+'</div>'
+    + (price != null && over
+        ? '<button class="pc-add" onclick="LAB.pcAdd()">Add to multi</button>'
+        : '<div class="cmb-corr" style="margin-top:9px">'
+          + (over ? 'No posted price at that exact line.' : 'Unders need a two-way market at this line.')+'</div>')
+    + '</div>';
+}
+/* Radar and coverage, reused from the fixture sections but scoped to one player */
+function ppRadar(key, name){
+  var S = state.sports[key], p = (S.idx.byName || {})[name];
+  var opp = ppOpponent(key, name);
+  if (!p || !opp) return '<div class="empty" style="padding:20px">No fixture for this player.</div>';
+  var rows = radarBuild(key, p, opp);
+  if (!rows) return '<div class="empty" style="padding:20px">Not enough positional data for a radar.</div>';
+  return '<div class="rdr-wrap"><div class="rdr-hd">'+playerImgP(key, p, 26)
+    + '<span class="rdr-nm">'+esc(name)+'</span><span class="rdr-vs">v '+esc(abbrOf(key, opp))+'</span></div>'
+    + radarSVG(rows)
+    + '<div class="rdr-key"><span><i style="background:#7dd3fc"></i>Player vs peers</span>'
+    + '<span><i style="background:var(--text-3)"></i>Defence softness</span>'
+    + '<span>#N = DVP rank (1 = softest)</span></div>'
+    + radarMarkets(key, p, opp)+'</div>';
+}
+function ppCoverage(key, name){
+  var S = state.sports[key], p = (S.idx.byName || {})[name];
+  var opp = ppOpponent(key, name);
+  if (!p || !opp) return '<div class="empty" style="padding:20px">No fixture for this player.</div>';
+  if (!p.cov || !(p.cov.man || p.cov.zone))
+    return '<div class="empty" style="padding:20px">No man/zone split on file for this player.</div>';
+  var od = (teamRec(key, opp) || {}).cov;
+  var m = p.cov.man || { tgt:0, yds:0, td:0 }, z = p.cov.zone || { tgt:0, yds:0, td:0 };
+  var mypt = m.tgt ? m.yds/m.tgt : 0, zypt = z.tgt ? z.yds/z.tgt : 0;
+  var lean = mypt - zypt;
+  var shells = od ? Object.keys(od.cover || {}).map(function(c){
+      return [String(c).replace('COVER_','Cover-').replace('2_MAN','2-Man').replace(/_/g,' '), +od.cover[c]];
+    }).sort(function(a,b){ return b[1]-a[1]; }).slice(0, 4) : [];
+  var verdict = !od ? 'No coverage profile for '+abbrOf(key, opp)
+    : (lean > 1.5 && od.manRate >= 45 ? 'Man beater into a man-heavy defence'
+      : (lean < -1.5 && od.zoneRate >= 60 ? 'Zone beater into a zone-heavy defence'
+        : 'No strong scheme edge here'));
+  return '<div class="rdr-wrap">'
+    + (od ? '<span class="cov-bar"><i style="width:'+Math.round(od.manRate)+'%"></i></span>'
+      + '<div class="cov-rates">'+esc(abbrOf(key, opp))+': '+Math.round(od.manRate)+'% man / '
+      + Math.round(od.zoneRate)+'% zone \u00b7 '+od.plays+' plays</div>'
+      + (shells.length ? '<div class="gl-why" style="margin:6px 0">'+shells.map(function(sh){
+          return '<span class="gl-chip">'+esc(sh[0])+' '+sh[1].toFixed(0)+'%</span>'; }).join('')+'</div>' : '')
+      : '')
+    + '<div class="pf-cells" style="margin-top:8px">'
+      + '<div class="pf-cell"><b>'+mypt.toFixed(1)+'</b><span>yd/tgt vs man</span></div>'
+      + '<div class="pf-cell"><b>'+zypt.toFixed(1)+'</b><span>yd/tgt vs zone</span></div>'
+      + '<div class="pf-cell"><b>'+m.tgt+'/'+z.tgt+'</b><span>man/zone tgts</span></div>'
+      + '<div class="pf-cell"><b>'+(m.td||0)+'/'+(z.td||0)+'</b><span>man/zone TDs</span></div></div>'
+    + '<div class="ca-note '+(/beater/.test(verdict) ? 'good' : 'info')+'" style="margin-top:9px">'
+      + '<i class="ti ti-shield-half"></i><span>'+esc(verdict)+'</span></div></div>';
+}
+/* DVP & averages: how the opponent defends every market this player bets into */
+function ppDvp(key, name){
+  var S = state.sports[key], p = (S.idx.byName || {})[name];
+  var opp = ppOpponent(key, name);
+  if (!p) return '<div class="empty" style="padding:20px">No player record.</div>';
+  var mkts = ((S.config || {}).oddsMkts || (S.config || {}).multiMkts || []).slice(0, 10);
+  var rows = mkts.map(function(m){
+    var lg = leagueAvg(key, m[0])[name];
+    if (!lg) return null;
+    var l5 = [];
+    sortLogsDesc(((S.idx.logsByName || {})[name] || []).slice()).forEach(function(r){
+      if (l5.length < 5){ var v = statOf(key, r, m[0]); if (v != null) l5.push(v); } });
+    var h2h = [];
+    if (opp) sortLogsDesc(((S.idx.logsByName || {})[name] || []).slice()).forEach(function(r){
+      var o = oppOf(key, r);
+      if (o && normTeam(o) === normTeam(opp)){ var v = statOf(key, r, m[0]); if (v != null) h2h.push(v); } });
+    var avg = function(a){ return a.length ? a.reduce(function(x,y){ return x+y; }, 0)/a.length : null; };
+    return { label:m[1], season:lg.avg, l5:avg(l5), h2h:avg(h2h), h2hN:h2h.length,
+             dvp:(opp ? dvpRankFor(key, opp, p.position || p.pos, m[0]) : null) };
+  }).filter(Boolean);
+  if (!rows.length) return '<div class="empty" style="padding:20px">No market history for this player.</div>';
+  var dec = function(v){ return v == null ? '\u2014' : (v < 3 ? v.toFixed(2) : v.toFixed(1)); };
+  return '<div class="st-wrap"><table class="st-t"><thead><tr><th>Market</th><th>Season</th><th>L5</th>'
+    + '<th>v '+esc(opp ? abbrOf(key, opp) : 'opp')+'</th><th>DVP</th></tr></thead><tbody>'
+    + rows.map(function(r){
+        var cls = r.dvp ? (r.dvp.pct > 5 ? 'hi' : (r.dvp.pct < -5 ? 'lo' : '')) : '';
+        return '<tr><td class="nm">'+esc(r.label)+'</td><td>'+dec(r.season)+'</td><td>'+dec(r.l5)+'</td>'
+          + '<td>'+dec(r.h2h)+(r.h2hN ? ' <span class="sub">('+r.h2hN+')</span>' : '')+'</td>'
+          + '<td class="'+cls+'">'+(r.dvp ? '#'+r.dvp.rank+'/'+r.dvp.total : '\u2014')+'</td></tr>';
+      }).join('')+'</tbody></table></div>';
+}
 function ppFormTab(key, name){
   var S = state.sports[key], p = (S.idx.byName || {})[name];
   if (!p) return '<div class="empty" style="padding:20px">No player record on file.</div>';
@@ -5639,7 +5822,14 @@ function playerPanel(){
   var keys = Object.keys(mkts);
   var team = (state.sports[key].idx.playerTeam || {})[name] || '';
   var tab = state.view.ppTab || 'form';
-  var body = tab === 'form' ? ppFormTab(key, name) : (keys.length ? keys.sort().map(function(mk){
+  var body = tab === 'form' ? ppFormTab(key, name)
+    : tab === 'calc' ? ppCalc(key, name)
+    : tab === 'profile' ? (tuddyProfile(key, { name:name, opp:ppOpponent(key, name) })
+        || '<div class="empty" style="padding:20px">No usage profile for this player.</div>')
+    : tab === 'radar' ? ppRadar(key, name)
+    : tab === 'cover' ? ppCoverage(key, name)
+    : tab === 'dvp' ? ppDvp(key, name)
+    : (keys.length ? keys.sort().map(function(mk){
     var best = {};
     mkts[mk].forEach(function(r){
       var k = String(r.line);
@@ -5666,8 +5856,18 @@ function playerPanel(){
     + ' \u00b7 '+keys.length+' market'+(keys.length===1?'':'s')+'</div></div>'
     + '<button class="pp-x" onclick="LAB.player(null)">&times;</button></div>'
     + '<div class="pp-tabs">'
-      + '<button class="pp-tab'+(tab==='form'?' on':'')+'" onclick="LAB.ppTab(\'form\')">Form</button>'
-      + '<button class="pp-tab'+(tab==='mkts'?' on':'')+'" onclick="LAB.ppTab(\'mkts\')">All markets</button>'
+      + [['form','Form'],['calc','Calculator'],['dvp','Matchup'],['profile','Profile'],
+         ['radar','Radar'],['cover','Coverage'],['mkts','All markets']]
+        .filter(function(t){
+          // profile/radar/coverage only exist where the sport has the data behind them
+          if (t[0] === 'profile') return key === 'nfl';
+          if (t[0] === 'radar') return key === 'nfl';
+          if (t[0] === 'cover') return key === 'nfl' && !!((state.sports[key].idx.byName || {})[name] || {}).cov;
+          return true;
+        })
+        .map(function(t){
+          return '<button class="pp-tab'+(tab===t[0]?' on':'')+'" onclick="LAB.ppTab(\''+t[0]+'\')">'
+            + t[1]+'</button>'; }).join('')
     + '</div>'
     + '<div class="pp-body">'+body+'</div></div>';
 }
@@ -5874,6 +6074,25 @@ window.LAB = {
   slWin: function(w){ state.view.slWin = w; render(); },
   dvpMkt: function(k, m){ state.view.dvpMkt[k] = m; render(); },
   ppTab: function(t){ state.view.ppTab = t; render(); },
+  pcMkt: function(m){
+    var st = state.view.pc; if (!st) return;
+    st.mkt = m; st.line = pcDefaultLine(state.view.player.sport, st.name, m); render();
+  },
+  pcLine: function(d){ var st = state.view.pc; if (!st) return; st.line = Math.max(1, st.line + d); render(); },
+  pcSide: function(sd){ var st = state.view.pc; if (!st) return; st.side = sd; render(); },
+  pcScope: function(sc){ var st = state.view.pc; if (!st) return; st.scope = sc; render(); },
+  pcAdd: function(){
+    var st = state.view.pc, pv = state.view.player;
+    if (!st || !pv) return;
+    var p = (state.sports[pv.sport].idx.byName || {})[st.name];
+    var mk = ((state.sports[pv.sport].config || {}).oddsMkts || []).filter(function(m){ return m[0] === st.mkt; })[0];
+    if (!p || !mk) return;
+    var leg = cmbLeg(pv.sport, p, mk, st.line - 0.5, st.side);
+    if (!leg) return;
+    state.view.cmbLegs = (state.view.cmbLegs || []).concat([leg]);
+    state.view.player = null; state.view.cmbOpen = true; state.view.cmbMode = 'multi';
+    render();
+  },
   cmbOpen: function(){
     state.view.cmbOpen = true;
     ensureTier2();                              // players.json is tier 2 - without it nothing is searchable
