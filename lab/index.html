@@ -681,6 +681,10 @@
   .kk-stats b{display:block;font-family:var(--font-display);font-size:15px;color:var(--text);}
   .kk-cond{display:flex;gap:6px;align-items:center;margin-bottom:8px;font-family:var(--font-mono);font-size:10px;}
   .kk-ctag{border:1px solid var(--border);border-radius:999px;padding:3px 9px;}
+  .ul-hd{display:flex;align-items:center;gap:8px;padding:7px 12px;border-bottom:1px solid var(--border);
+    font-size:8px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:var(--text-3);}
+  .ul-hnm{flex:1;} .ul-hv{width:46px;text-align:right;} .ul-hl{width:52px;text-align:right;}
+  .ul-last{width:52px;flex:none;text-align:right;font-family:var(--font-mono);font-size:10px;}
   .sc-filter{display:flex;gap:7px;align-items:center;margin-bottom:8px;}
   .sc-filter input{flex:1;min-width:0;background:var(--surface-2);border:1px solid var(--border);
     border-radius:9px;padding:9px 12px;color:var(--text);font-size:13px;font-family:inherit;outline:none;}
@@ -3787,18 +3791,25 @@ function radarSection(key, g){
     return r ? (+r.depth || 99) : 99;
   };
   var cands = [];
+  var depthRank = function(p){ return depthOf(p); };
   teams.forEach(function(t){
     playersOnTeam(key, t).forEach(function(p){
       if (!RADAR_AXES[p.position]) return;
-      if (!isPlayingP(key, p.name, t) || !hasAnyOddsFor(key, p.name)) return;
-      var lim = RADAR_DEPTH[p.position];
-      if (lu.some(function(x){ return x.team === t; }) && depthOf(p) > lim) return;
+      // A posted market is the real filter: the depth-chart gate was dropping priced players
+      // who are plainly in the game plan (WR4s, pass-catching backs, the second tight end).
+      if (!hasAnyOddsFor(key, p.name)) return;
       var inj = injuryFor(key, t, p.name);
       if (inj && /out|doubtful/i.test(inj.label)) return;
       cands.push(p);
     });
   });
   if (cands.length < 2) return '';
+  var posRank = { QB:1, RB:2, WR:3, TE:4 };
+  cands.sort(function(a,b){
+    return (teams.indexOf(a.team) - teams.indexOf(b.team))
+        || ((posRank[a.position]||9) - (posRank[b.position]||9))
+        || (depthRank(a) - depthRank(b));
+  });
   var sel = (state.view.rdrPick && cands.some(function(c){ return c.name === state.view.rdrPick; }))
     ? state.view.rdrPick : cands[0].name;
   var p = cands.filter(function(c){ return c.name === sel; })[0];
@@ -3840,7 +3851,11 @@ function coverageSection(key, g){
     }).filter(function(x){ return x.tgt >= 10; })
       .sort(function(a,b){ return (manHeavy ? b.lean - a.lean : a.lean - b.lean); }).slice(0, 5);
     if (!recs.length) return;
-    out.push({ team:team, opp:opp, od:od, manHeavy:manHeavy, zoneHeavy:zoneHeavy, recs:recs });
+    // the shell breakdown the data carries: Cover-3, Cover-2, Cover-1, 2-Man and the rest
+    var shells = Object.keys(od.cover || {}).map(function(c){
+      return [String(c).replace('COVER_','Cover-').replace('2_MAN','2-Man').replace(/_/g,' '), +od.cover[c]];
+    }).sort(function(a,b){ return b[1] - a[1]; }).slice(0, 4);
+    out.push({ team:team, opp:opp, od:od, manHeavy:manHeavy, zoneHeavy:zoneHeavy, recs:recs, shells:shells });
   });
   if (!out.length) return '';
   return '<div class="dayband"><span>Coverage Matchup</span></div>'
@@ -3850,13 +3865,17 @@ function coverageSection(key, g){
           + '<span class="rdr-vs">v '+esc(abbrOf(key, b.opp))+'</span></div>'
           + '<span class="cov-bar"><i style="width:'+Math.round(b.od.manRate)+'%"></i></span>'
           + '<div class="cov-rates">'+Math.round(b.od.manRate)+'% man / '+Math.round(b.od.zoneRate)+'% zone'
-          + (b.manHeavy ? ' \u00b7 man-heavy' : (b.zoneHeavy ? ' \u00b7 zone-heavy' : ''))+'</div>'
+          + (b.manHeavy ? ' \u00b7 man-heavy' : (b.zoneHeavy ? ' \u00b7 zone-heavy' : ''))
+          + ' \u00b7 '+b.od.plays+' plays</div>'
+          + (b.shells.length ? '<div class="gl-why" style="margin:5px 0 3px">'+b.shells.map(function(sh){
+              return '<span class="gl-chip">'+esc(sh[0])+' '+sh[1].toFixed(0)+'%</span>'; }).join('')+'</div>' : '')
           + b.recs.map(function(r){
               var tag = r.lean > 0 ? 'man' : 'zone';
               return '<div class="cov-row" onclick="LAB.player(\''+key+'\',\''
                 + esc(r.p.name).replace(/'/g,"\\'")+'\')">'+playerImgP(key, r.p, 22)
                 + '<span class="cov-nm">'+esc(r.p.name)+'<br><span class="cov-split">'
-                + r.mypt.toFixed(1)+' yd/tgt vs man \u00b7 '+r.zypt.toFixed(1)+' vs zone</span></span>'
+                + r.mypt.toFixed(1)+' yd/tgt vs man ('+r.m.tgt+' tgt, '+(r.m.td||0)+' TD) \u00b7 '
+                + r.zypt.toFixed(1)+' vs zone ('+r.z.tgt+' tgt, '+(r.z.td||0)+' TD)</span></span>'
                 + '<span class="cov-tag '+tag+'">'+(r.lean > 0 ? 'beats man' : 'beats zone')+'</span></div>';
             }).join('')
           + '</div>';
@@ -3864,20 +3883,22 @@ function coverageSection(key, g){
 }
 /* Usage Leaders: who is actually getting the ball, with a window and a metric selector */
 var USAGE_METRICS = [
-  ['snapPct','Snap %', function(r){ return +r.snapPct; }, 100],
-  ['tgtShare','Target share', function(r){ return +r.tgtShare; }, 40],
-  ['touches','Touches', function(r){ return (+r.rushAtt||0) + (+r.receptions||0); }, 22],
-  ['rzTouch','RZ touches', function(r){ return (+r.rzAtt_g||0) + (+r.rzTgt_g||0); }, 6],
-  ['glCarry','Goal line', function(r){ return +r.i5Att_g||0; }, 2.5],
-  ['airYds','Air yards', function(r){ return +r.airYds||0; }, 120]
+  ['snapPct','Snap %', function(r){ return +r.snapPct; }, function(v){ return Math.round(v)+'%'; }],
+  ['tgtShare','Target share', function(r){ return +r.tgtShare; }, function(v){ return v.toFixed(1)+'%'; }],
+  ['touches','Touches', function(r){ return (+r.rushAtt||0) + (+r.receptions||0); }, function(v){ return v.toFixed(1); }],
+  ['rzTouch','RZ touches', function(r){ return (+r.rzAtt_g||0) + (+r.rzTgt_g||0); }, function(v){ return v.toFixed(1); }],
+  ['glCarry','Goal line', function(r){ return +r.i5Att_g||0; }, function(v){ return v.toFixed(2); }],
+  ['airYds','Air yards', function(r){ return +r.airYds||0; }, function(v){ return Math.round(v); }]
 ];
 function usageSection(key, g){
   if (key !== 'nfl') return '';
   var S = state.sports[key], v = state.view;
   var mk = USAGE_METRICS.filter(function(m){ return m[0] === (v.ulMk || 'snapPct'); })[0] || USAGE_METRICS[0];
   var win = v.ulWin || 'l5', n = win === 'l5' ? 5 : (win === 'l10' ? 10 : null);
+  var tf = v.ulTeam || '';
   var rows = [];
   [g.away, g.home].forEach(function(team){
+    if (tf && team !== tf) return;
     playersOnTeam(key, team).forEach(function(p){
       if (!isPlayingP(key, p.name, team) || !hasAnyOddsFor(key, p.name)) return;
       var logs = sortLogsDesc(((S.idx.logsByName || {})[p.name] || []).slice());
@@ -3886,75 +3907,118 @@ function usageSection(key, g){
       if (!vals.length) return;
       var avg = vals.reduce(function(a,b){ return a+b; }, 0) / vals.length;
       if (!(avg > 0)) return;
-      rows.push({ p:p, team:team, avg:avg, n:vals.length });
+      // production shows the most recent game beside the average, with an arrow when it is a
+      // real move - a 20% swing off his own baseline
+      var last = null;
+      for (var i=0;i<logs.length;i++){ var lv = mk[2](logs[i]); if (lv != null && isFinite(lv)){ last = lv; break; } }
+      rows.push({ p:p, team:team, avg:avg, last:last, n:vals.length });
     });
   });
   if (!rows.length) return '';
   rows.sort(function(a,b){ return b.avg - a.avg; });
-  rows = rows.slice(0, 12);
-  var mx = rows[0].avg || mk[3];
+  rows = rows.slice(0, 14);
+  var mx = rows[0].avg || 1;
+  var fmtv = mk[3];
   return '<div class="dayband"><span>Usage Leaders</span></div>'
     + '<div class="sl-bar">'+USAGE_METRICS.map(function(m){
-        return '<button class="sl-chip'+(m[0] === mk[0] ? ' on' : '')+'" onclick="LAB.ulMk(\''+m[0]+'\')">'
-          + m[1]+'</button>'; }).join('')
-      + '<span class="sl-win">'+[['l5','L5'],['l10','L10'],['all','All']].map(function(w){
+        return '<button class="sl-chip'+(m[0] === mk[0] ? ' on' : '')+'" onclick="LAB.ulMk(\'' + m[0] + '\')">'
+          + m[1]+'</button>'; }).join('')+'</div>'
+    + '<div class="sl-bar">'
+      + '<button class="sl-chip'+(!tf ? ' on' : '')+'" onclick="LAB.ulTeam(\'\')">Both</button>'
+      + [g.away, g.home].map(function(t){
+          return '<button class="sl-chip'+(tf === t ? ' on' : '')+'" onclick="LAB.ulTeam(\''
+            + esc(t).replace(/'/g,"\\'")+'\')">'+esc(abbrOf(key, t))+'</button>'; }).join('')
+      + '<span class="sl-win">'+[['l5','L5'],['l10','L10'],['all','Season']].map(function(w){
           return '<button class="sl-chip'+(win === w[0] ? ' on' : '')+'" onclick="LAB.ulWin(\''+w[0]+'\')">'
             + w[1]+'</button>'; }).join('')+'</span></div>'
-    + '<div class="sl-card ul-card">'+rows.map(function(r, i){
-        return '<div class="sl-row ul-row" onclick="LAB.player(\''+key+'\',\''+esc(r.p.name).replace(/'/g,"\\'")+'\')">'
+    + '<div class="sl-card ul-card">'
+      + '<div class="ul-hd"><span class="ul-hnm">Player</span>'
+      + '<span class="ul-hv">'+(win === 'l5' ? 'L5' : win === 'l10' ? 'L10' : 'Season')+'</span>'
+      + '<span class="ul-hl">Last</span></div>'
+      + rows.map(function(r, i){
+        var d = r.last != null ? r.last - r.avg : null;
+        var big = d != null && Math.abs(d) > r.avg * 0.2;
+        var col = !big ? 'var(--text-3)' : (d > 0 ? 'var(--accent)' : '#f97316');
+        var ar = !big ? '' : (d > 0 ? '\u25b2' : '\u25bc');
+        return '<div class="sl-row ul-row" onclick="LAB.player(\'' + key + '\',\'' + esc(r.p.name).replace(/'/g,"\\'") + '\')">'
           + '<span class="sl-rk">'+(i+1)+'</span>'+playerImgP(key, r.p, 22)
           + '<span class="sl-who"><b>'+esc(r.p.name)+'</b><span>'
           + esc([posShortP(r.p), abbrOf(key, r.team), r.n+'g'].filter(Boolean).join(' \u00b7 '))+'</span></span>'
           + '<span class="sl-bars"><span class="sl-bar-t"><i style="width:'
           + Math.max(4, Math.round(r.avg/mx*100))+'%"></i></span></span>'
-          + '<span class="sl-val">'+(r.avg < 3 ? r.avg.toFixed(2) : r.avg.toFixed(1))+'</span></div>';
+          + '<span class="sl-val">'+fmtv(r.avg)+'</span>'
+          + '<span class="ul-last" style="color:'+col+'">'+ar+(r.last != null ? fmtv(r.last) : '\u2014')+'</span></div>';
       }).join('')+'</div>';
 }
-/* Kicker Matchup: volume, range and the conditions they have to kick in */
-function kickerSection(key, g){
-  if (key !== 'nfl') return '';
-  var S = state.sports[key], cards = [];
+/* Kicker Matchup: a pick, not a read - projection against the posted line, with the range
+   profile and the conditions that decide whether the long ones are live.                     */
+function kickerRows(key, g){
+  var S = state.sports[key], out = [];
+  var w = conditionsFor(key, g);
+  var indoor = w && w.roof && w.roof !== 'outdoors' && w.roof !== 'open';
+  var wind = w ? +w.wind || 0 : 0;
+  // production's read: indoors is a free kick, 25 km/h+ kills the long ones
+  var windMult = indoor ? 1.05 : (wind > 25 ? 0.88 : (wind > 15 ? 0.95 : 1));
   [g.away, g.home].forEach(function(team){
     var opp = (team === g.home) ? g.away : g.home;
     playersOnTeam(key, team).filter(function(p){ return p.position === 'K'; }).forEach(function(p){
       var inj = injuryFor(key, team, p.name);
       if (inj && /out|doubtful/i.test(inj.label)) return;
+      if (!hasAnyOddsFor(key, p.name)) return;
       var kp = (leagueAvg(key, 'kickingPts')[p.name] || {}).avg;
       var fga = (leagueAvg(key, 'fgAtt')[p.name] || {}).avg;
       var lng = (leagueAvg(key, 'fgLong')[p.name] || {}).avg;
       if (kp == null && fga == null) return;
-      if (!hasAnyOddsFor(key, p.name)) return;             // every roster's third kicker otherwise
-      var oKP = bestPriceFor(key, p.name, 'kickingPts'), oFG = bestPriceFor(key, p.name, 'fgMade');
-      cards.push({ p:p, team:team, opp:opp, kp:kp, fga:fga, lng:lng, oKP:oKP, oFG:oFG });
+      // range profile: how much of his work is from distance, which is what wind punishes
+      var logs = sortLogsDesc(((S.idx.logsByName || {})[p.name] || []).slice()).slice(0, 10);
+      var band = function(f){
+        var t = 0; logs.forEach(function(r){ t += +r[f] || 0; });
+        return logs.length ? t / logs.length : 0;
+      };
+      var short = band('fg0_39'), mid = band('fg40_49'), long = band('fg50p');
+      // opponent context: how many points kickers have taken off them
+      var dr = dvpRankFor(key, opp, 'K', 'kickingPts');
+      var oppMult = dr ? Math.max(0.85, Math.min(1.2, 1 + dr.pct/200)) : 1;
+      var proj = kp != null ? kp * windMult * oppMult : null;
+      var picks = [];
+      [['kickingPts', kp, 'Kicking pts'], ['fgMade', fga, 'FG made']].forEach(function(m){
+        var od = bestPriceFor(key, p.name, m[0]);
+        if (!od || m[1] == null) return;
+        var projm = m[0] === 'kickingPts' ? proj : m[1] * windMult * oppMult;
+        picks.push({ mkt:m[0], label:m[2], od:od, proj:projm, own:m[1],
+                     good:(projm != null && od.line != null && projm > od.line + 0.3) });
+      });
+      out.push({ p:p, team:team, opp:opp, kp:kp, fga:fga, lng:lng, short:short, mid:mid, long:long,
+                 dr:dr, proj:proj, picks:picks, indoor:indoor, wind:wind, windMult:windMult,
+                 score:(picks.filter(function(x){ return x.good; }).length ? 1 : 0) * 100 + (proj || 0) });
     });
   });
-  if (!cards.length) return '';
-  var w = conditionsFor(key, g);
-  var indoor = w && w.roof && w.roof !== 'outdoors' && w.roof !== 'open';
-  var wind = w ? +w.wind || 0 : 0;
-  var wcol = indoor ? 'var(--accent)' : (wind > 25 ? '#ef4444' : (wind > 15 ? '#eab308' : 'var(--accent)'));
-  var cond = w ? '<div class="kk-cond"><span class="kk-ctag" style="color:'+wcol+';border-color:'+wcol+'">'
-      + (indoor ? 'Indoors' : Math.round(wind)+' km/h wind')+'</span>'
-      + (w.temp != null && !indoor ? '<span>'+Math.round(w.temp)+'\u00b0C</span>' : '')
-      + (w.rainProb != null && !indoor ? '<span>'+Math.round(w.rainProb)+'% rain</span>' : '')+'</div>' : '';
-  return '<div class="dayband"><span>Kicker Matchup</span></div>'+cond
-    + cards.map(function(c){
-        var mkt = function(lab, od, avg){
-          if (!od) return '';
-          return '<div class="rdr-mk"><span class="rdr-mk-l">'+lab+'</span>'
-            + '<span class="rdr-mk-v">'+Math.ceil(od.line)+'+ $'+od.price.toFixed(2)+'</span>'
-            + '<span class="rdr-mk-e" style="color:'+(avg != null && avg > od.line ? 'var(--accent)' : 'var(--text-3)')
-            + '">'+(avg != null ? avg.toFixed(1)+'/gm' : '\u2014')+'</span></div>';
-        };
-        return '<div class="kk-card"><div class="kk-hd">'+playerImgP(key, c.p, 26)
-          + '<span class="kk-nm">'+esc(c.p.name)+'</span>'
-          + '<span class="kk-tm">'+esc(abbrOf(key, c.team))+' v '+esc(abbrOf(key, c.opp))+'</span></div>'
-          + '<div class="kk-stats"><span><b>'+(c.kp != null ? c.kp.toFixed(1) : '\u2014')+'</b>pts/gm</span>'
-          + '<span><b>'+(c.fga != null ? c.fga.toFixed(1) : '\u2014')+'</b>FGA/gm</span>'
-          + '<span><b>'+(c.lng != null ? Math.round(c.lng) : '\u2014')+'</b>avg long</span></div>'
-          + mkt('Kicking pts', c.oKP, c.kp) + mkt('FG made', c.oFG, c.fga)
-          + '</div>';
-      }).join('');
+  out.sort(function(a,b){ return b.score - a.score; });
+  return out;
+}
+function kickerRow(key, r){
+  var pct = function(v){ return v.toFixed(1); };
+  return '<div class="gl-row nfl-row" onclick="LAB.player(\'' + key + '\',\'' + esc(r.p.name).replace(/'/g,"\\'") + '\')">'
+    + playerImgP(key, r.p, 28)
+    + '<div class="gl-left"><div class="gl-nm"><b>'+esc(r.p.name)+'</b><span class="gl-tag">'
+      + esc('K \u00b7 '+abbrOf(key, r.team)+' v '+abbrOf(key, r.opp))+'</span></div>'
+    + '<div class="gl-bet">'+(r.picks.length
+        ? r.picks.map(function(x){
+            return '<b>'+Math.ceil(x.od.line)+'+ '+esc(x.label)+'</b> $'+x.od.price.toFixed(2)
+              + ' \u00b7 proj '+(x.proj != null ? x.proj.toFixed(1) : '\u2014')
+              + (x.good ? ' \u2713' : ''); }).join(' \u00b7 ')
+        : 'no posted kicking market')+'</div>'
+    + '<div class="gl-why">'
+      + '<span class="gl-chip">'+(r.kp != null ? r.kp.toFixed(1) : '\u2014')+' pts/gm</span>'
+      + '<span class="gl-chip">'+(r.fga != null ? r.fga.toFixed(1) : '\u2014')+' FGA/gm</span>'
+      + '<span class="gl-chip">range '+pct(r.short)+'/'+pct(r.mid)+'/'+pct(r.long)+' by 40/50+</span>'
+      + '<span class="gl-chip'+(r.windMult > 1 ? ' good' : (r.windMult < 1 ? ' bad' : ''))+'">'
+        + (r.indoor ? 'indoors' : Math.round(r.wind)+' km/h')+'</span>'
+      + (r.dr ? '<span class="gl-chip'+(r.dr.pct > 0 ? ' good' : '')+'">'+esc(abbrOf(key, r.opp))
+          + ' #'+r.dr.rank+'/'+r.dr.total+' to kickers</span>' : '')
+    + '</div></div>'
+    + '<div class="gl-right"><div class="gl-ev '+(r.picks.some(function(x){ return x.good; }) ? 'pos' : 'neg')+'">'
+      + (r.proj != null ? r.proj.toFixed(1) : '\u2014')+'</div><div class="gl-evl">PROJ PTS</div></div></div>';
 }
 function nflSignals(key, g){
   if (key !== 'nfl') return '';
@@ -3968,7 +4032,10 @@ function nflSignals(key, g){
     + sigTile('ti-bolt-off', 'Sack Artists', 'Rushers into a leaky offensive line',
               sck.rows.map(function(r){ return nflAngleRow(key, r, 'sacks'); }), sck.why)
     + sigTile('ti-hand-stop', 'Pick Watch', 'Interception risk into a ball-hawk defence',
-              pck.rows.map(function(r){ return nflAngleRow(key, r, 'picks'); }), pck.why);
+              pck.rows.map(function(r){ return nflAngleRow(key, r, 'picks'); }), pck.why)
+    + sigTile('ti-target-arrow', 'Kicker Matchup', 'Projected points against the posted line',
+              kickerRows(key, g).map(function(r){ return kickerRow(key, r); }),
+              'No kicker on this fixture has a posted kicking market.');
 }
 function signalsSection(key, g){
   var S = state.sports[key], cfg = S.config || {};
@@ -4006,7 +4073,11 @@ function signalsSection(key, g){
               h2hSignals(key, g, 'bogey').map(function(r){ return h2hSigRow(key, r); }),
               'No player has a posted under they have never cleared in '+H2H_MIN_BOGEY
               + '+ meetings with this opponent.')
+    + nflSignals(key, g)
     + '<div class="dayband"><span>Form &amp; Matchups</span></div>'
+    + radarSection(key, g)
+    + coverageSection(key, g)
+    + usageSection(key, g)
     + sigTile('ti-trending-up', 'Form Alerts', 'Running hot or cold against their own season',
               formAlerts(key, g).map(function(r){ return formRow(key, r); }),
               'No priced player is '+Math.round(ALERT_THRESHOLD*100)+'%+ above or below their season '
@@ -4063,10 +4134,6 @@ function focusPage(){
     + (S.t3==='ready' ? halvesSection(key, g) : '')
     + (S.t3==='ready' ? subsSection(key, g) : '')
     + (S.t3==='ready' ? firstLastSection(key, g) : '')
-    + (S.t3==='ready' ? radarSection(key, g) : '')
-    + (S.t3==='ready' ? coverageSection(key, g) : '')
-    + (S.t3==='ready' ? usageSection(key, g) : '')
-    + (S.t3==='ready' ? kickerSection(key, g) : '')
     + (S.t3==='ready' ? signalsSection(key, g) : '')
     + '<div class="dayband"><span>Players \u00b7 '+ps.length+'</span></div><div class="gp-list">'+list+'</div>';
 }
@@ -5882,6 +5949,7 @@ window.LAB = {
   rdrPick: function(n){ state.view.rdrPick = n; render(); },
   ulMk: function(m){ state.view.ulMk = m; render(); },
   ulWin: function(w){ state.view.ulWin = w; render(); },
+  ulTeam: function(t){ state.view.ulTeam = t; render(); },
   stQ: function(q){
     // same rule as the bet search: patch the table, never the focused input
     state.view.stQ = q;
