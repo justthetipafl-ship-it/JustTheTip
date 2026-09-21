@@ -55,8 +55,9 @@ window.SPORT_CONFIG = {
   h2hKeys: [["points","Points"],["rebounds","Rebounds"],["assists","Assists"],["threes","Threes"]],
 
   // ---- market menus (Scanner / CMB / Multi / Nerd / Settings / FXP / DV) ----
+  // every player market the odds feed posts for basketball, keyed to the gamelog field
   oddsMkts: [["points","Points"],["rebounds","Rebounds"],["assists","Assists"],["threes","Threes"],
-             ["pra","PRA"],["steals","Steals"],["blocks","Blocks"]],
+             ["pra","PRA"],["pr","P+R"],["pa","P+A"],["ra","R+A"],["steals","Steals"],["blocks","Blocks"]],
   multiMkts: [["points","Points"],["rebounds","Rebounds"],["assists","Assists"],["threes","Threes"],["pra","PRA"]],
   nerdMkts: [["points","Points"],["rebounds","Rebounds"],["assists","Assists"],["threes","Threes"],["pra","PRA"]],
   settingsMkts: [["points","Points"],["rebounds","Rebounds"],["assists","Assists"],["threes","Threes"],
