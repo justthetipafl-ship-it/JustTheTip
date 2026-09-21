@@ -935,7 +935,8 @@ var SPORTS = {
   afl: { key:'afl', dir:'AFL', name:'AFL' },
   nfl: { key:'nfl', dir:'nfl', name:'NFL' },
   epl: { key:'epl', dir:'EPL', name:'EPL' },
-  mlb: { key:'mlb', dir:'mlb', name:'MLB' }
+  mlb: { key:'mlb', dir:'mlb', name:'MLB' },
+  nbl: { key:'nbl', dir:'nbl', name:'NBL' }
 };
 
 var TIER1 = { fixture:'data/fixture.json', teams:'data/teams.json', meta:'data/meta.json' };
@@ -1094,6 +1095,21 @@ function loadTier3(key){
       .then(function(j){ if (j) S.data[k] = j; })
       .catch(function(){});
   }))
+  .then(function(){
+    // NBL ships one gamelog file per season (meta.gamelogFiles) rather than one gamelogs.json.
+    // Merge them in listed order; anything that fails to load is reported, not silently skipped.
+    var files = (S.data.meta && S.data.meta.gamelogFiles) || [];
+    if (S.data.gamelogs || !files.length) return;
+    return Promise.all(files.map(function(f){
+      return fetch(sportPath(key, 'data/'+f)+q, {cache:'reload'})
+        .then(function(r){ return r.ok ? r.json() : null; })
+        .catch(function(){ return null; });
+    })).then(function(parts){
+      var ok = parts.filter(Array.isArray);
+      if (ok.length) S.data.gamelogs = [].concat.apply([], ok);
+      if (ok.length < files.length) S.gamelogGap = (files.length - ok.length)+' of '+files.length+' season files failed to load';
+    });
+  })
   .then(function(){ return loadModules(key); })
   .then(function(){
     buildIndexes(key);
@@ -1164,7 +1180,7 @@ function buildIndexes(key){
   players.forEach(function(p){ if (p && p.name) ix.byName[p.name] = p; });
 
   ix.lgAvg = {}; ix.winAvg = {}; ix.matchOpp = null; ix.fs = null;
-  ix.pricedSet = null; ix.oddsName = null; ix.vac = null; ix.bookList = null; ix.resIdx = null;
+  ix.pricedSet = null; ix.oddsName = null; ix.oddsIni = null; ix.vac = null; ix.bookList = null; ix.resIdx = null;
   var logs = asArray(d.gamelogs) || [];
   ix.logsByName = {};
   logs.forEach(function(r){
@@ -1909,12 +1925,42 @@ function statLeaders(key, team, mkt, win, limit){
   var need = Math.min(3, maxN);
   pool = pool.filter(function(r){ return r.n >= need; });
   pool.sort(function(a,b){ return b.avg - a.avg; });
+  // A side that hasn't played yet this season (every NBL club in week one) would show a blank
+  // card. Fall back to the previous season rather than show nothing - and say so on the card.
+  if (!pool.length && win !== 'l5' && !statLeaders._fallback){
+    statLeaders._fallback = true;
+    try {
+      var prev = statLeadersSeason(key, team, mkt, season - 1, limit);
+      if (prev.length){ prev._fellBack = season - 1; return prev; }
+    } finally { statLeaders._fallback = false; }
+  }
+  return pool.slice(0, limit || 5);
+}
+function statLeadersSeason(key, team, mkt, yr, limit){
+  var logs = asArray(state.sports[key].data.gamelogs) || [], want = normTeam(team), byP = {};
+  logs.forEach(function(r){
+    if (!r || normTeam(r.Team || r.team) !== want || (+(r.Year||r.year)||0) !== yr) return;
+    var n = r.Player || r.player; if (n) (byP[n] = byP[n] || []).push(r);
+  });
+  var pool = [], maxN = 0;
+  Object.keys(byP).forEach(function(n){
+    var rows = sortLogsDesc(byP[n]).filter(function(r){ return statOf(key, r, mkt) != null; });
+    if (!rows.length || !isPlayingP(key, n, team)) return;
+    var sum = 0; rows.forEach(function(r){ sum += statOf(key, r, mkt); });
+    if (rows.length > maxN) maxN = rows.length;
+    var pr = state.sports[key].idx.byName[n] || {};
+    pool.push({ name:n, pos:posShortP(pr), avg:sum/rows.length, n:rows.length, lastMs:logMs(rows[0]) });
+  });
+  pool = pool.filter(function(r){ return r.n >= Math.min(3, maxN); });
+  pool.sort(function(a,b){ return b.avg - a.avg; });
   return pool.slice(0, limit || 5);
 }
 function slCard(key, team, mkt, win, max){
   var rows = statLeaders(key, team, mkt, win, 5);
   var head = '<div class="sl-head">'+teamLogo(key,team)+'<span class="sl-nm">'+esc(abbrOf(key,team))+'</span>'
-    + '<span class="sl-mk">'+esc(mktLabel(key, mkt))+'</span></div>';
+    + '<span class="sl-mk">'+esc(mktLabel(key, mkt))+'</span>'
+    + (rows._fellBack ? '<span class="sl-mk" style="margin-left:6px;color:#f59e0b">'+rows._fellBack
+        + ' \u00b7 no games yet this season</span>' : '')+'</div>';
   if (!rows.length) return '<div class="sl-card">'+head
     + '<div class="sl-none">No '+esc(mktLabel(key, mkt))+' recorded in this window.</div></div>';
   var dec = max < 3 ? 2 : 1;
@@ -2058,6 +2104,30 @@ function buildLineup(key, team, g){
     if (arms.length) out.groups.push({ name:'Arms', players:arms });
     var sp = (normTeam(team) === normTeam(g.home)) ? g.homePitcher : g.awayPitcher;
     if (sp) out.groups.unshift({ name:'Starting pitcher', players:[{ name:sp, tag:'SP', flag:flag(sp) }] });
+    return out.groups.length ? out : null;
+  }
+
+  // NBL: no lineup feed either, but the box scores carry a starter flag - so the last game's
+  // starting five is a real record, and the rotation behind them is everyone else who played.
+  if (key === 'nbl'){
+    var nlogs = (asArray(S.data.gamelogs) || []).filter(function(r){
+      return r && normTeam(r.Team || r.team) === normTeam(team) && (+r.minutes || 0) > 0; });
+    if (!nlogs.length) return null;
+    sortLogsDesc(nlogs);
+    var nd = String(nlogs[0].Date || nlogs[0].date || '').slice(0, 10);
+    var game = nlogs.filter(function(r){ return String(r.Date || r.date || '').slice(0, 10) === nd; });
+    var tagOf = function(r){ var pr = (S.idx.byName || {})[r.Player] || {}; return pr.position || r.pos || ''; };
+    var five = game.filter(function(r){ return +r.starter === 1; })
+      .sort(function(a,b){ return (+b.minutes||0) - (+a.minutes||0); });
+    var bench = game.filter(function(r){ return +r.starter !== 1; })
+      .sort(function(a,b){ return (+b.minutes||0) - (+a.minutes||0); });
+    var mins = function(r){ return Math.round(+r.minutes || 0)+' min'; };
+    out.status = 'Derived'; out.statusCls = 'soft';
+    out.sub = 'Starting five from the last game \u00b7 ' + nd + ' \u00b7 no lineup feed';
+    if (five.length) out.groups.push({ name:'Starting five', players: five.map(function(r){
+      return { name:r.Player, tag:tagOf(r), flag:{ label:mins(r), out:false } }; }) });
+    if (bench.length) out.groups.push({ name:'Rotation', players: bench.slice(0, 5).map(function(r){
+      return { name:r.Player, tag:tagOf(r), flag:{ label:mins(r), out:false } }; }) });
     return out.groups.length ? out : null;
   }
 
@@ -3082,7 +3152,9 @@ var CALIB = {
   afl: { a:0.358, b: 0.172, spread: 0.152, n:2548 },
   nfl: { a:0.589, b:-0.139, spread: 0.328, n:2651 },
   epl: { a:0.727, b:-0.399, spread: 0.358, n:2090 },
-  mlb: { a:0.677, b:-0.391, spread: 0.274, n:21755 }
+  mlb: { a:0.677, b:-0.391, spread: 0.274, n:21755 },
+  // NBL, walk-forward over 9,697 predictions on the minutes-unfloored prob()
+  nbl: { a:0.598, b:-0.051, spread: 0.304, n:9697 }
 };
 var EV_MIN_SPREAD = 0.05;          // below this the model can't rank, so EV is not a ranking key
 function calibFor(key){
@@ -5387,14 +5459,38 @@ function oddsRowsAll(key){
   var d = state.sports[key].data.odds || {};
   return (d.books && d.books.length ? d.books : (d.lines || [])).concat(d.alt || []);
 }
+// Books abbreviate and expand names differently from the box score: "M Deng" for Majok Deng,
+// "Mitchell Norton" for Mitch Norton, "Dakota Daniel Mathias" for Dakota Mathias. After the exact
+// (accent-folded) match, fall back to first initial + surname - but only when that pair is
+// unique on BOTH sides, so two Williamses can never be crossed.
+function nameInitialKey(n){
+  var parts = String(n || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^A-Za-z' -]/g, ' ').trim().split(/\s+/).filter(Boolean);
+  if (parts.length < 2) return null;
+  var last = parts[parts.length - 1].toLowerCase().replace(/[^a-z]/g, '');
+  if (/^(jr|sr|ii|iii|iv)$/.test(last) && parts.length > 2) last = parts[parts.length - 2].toLowerCase().replace(/[^a-z]/g, '');
+  return parts[0][0].toLowerCase() + '|' + last;
+}
 function oddsPlayer(key, name){
   var S = state.sports[key];
   if (!S.idx.oddsName){
-    var m = {};
-    oddsRowsAll(key).forEach(function(r){ if (r && r.player) m[foldName(r.player)] = r.player; });
-    S.idx.oddsName = m;
+    var m = {}, ini = {}, iniCount = {};
+    oddsRowsAll(key).forEach(function(r){
+      if (!r || !r.player) return;
+      m[foldName(r.player)] = r.player;
+      var k = nameInitialKey(r.player);
+      if (k && ini[k] !== r.player){ iniCount[k] = (iniCount[k] || 0) + 1; ini[k] = r.player; }
+    });
+    // the roster side must be unambiguous too
+    var rosterCount = {};
+    cmbPool(key).forEach(function(p){ var k = nameInitialKey(p.name); if (k) rosterCount[k] = (rosterCount[k] || 0) + 1; });
+    Object.keys(ini).forEach(function(k){ if (iniCount[k] > 1 || rosterCount[k] > 1) delete ini[k]; });
+    S.idx.oddsName = m; S.idx.oddsIni = ini;
   }
-  return S.idx.oddsName[foldName(name)] || name;
+  var hit = S.idx.oddsName[foldName(name)];
+  if (hit) return hit;
+  var k2 = nameInitialKey(name);
+  return (k2 && S.idx.oddsIni[k2]) || name;
 }
 function hasAnyOddsFor(key, name){
   var S = state.sports[key];
@@ -5405,7 +5501,7 @@ function hasAnyOddsFor(key, name){
     });
     S.idx.pricedSet = set;
   }
-  return !!S.idx.pricedSet[oddsPlayer(key, name)];
+  return !!S.idx.pricedSet[oddsPlayer(key, name)];   // resolves "M Deng" -> Majok Deng
 }
 // Every book that prices anything in this sport, for the single-book filters.
 function booksFor(key){
