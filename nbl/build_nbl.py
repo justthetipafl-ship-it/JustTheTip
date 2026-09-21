@@ -149,13 +149,16 @@ def main():
     cur_season = seasons[-1] if seasons else None
     for yr in recent:
         for r in sorted(by_season[yr], key=lambda x: x["Date"]):
-            k = r["PlayerId"] or r["Player"]
+            # Keyed by NAME, not PlayerId: the source issues the same player a new id each
+            # season (137 players carry two ids across 2026-27), so keying by id split every
+            # one of them in half - Fabijan Krslovic became a 27-game and a 9-game Melbourne player.
+            k = fold(r["Player"])
             d = pacc.setdefault(k, {"name": r["Player"], "team": r["Team"], "pid": r["PlayerId"],
                                     "pos": [], "g": 0, "st": 0, "sum": defaultdict(float),
                                     "last": "", "cur": 0})
             d["g"] += 1; d["st"] += r["starter"]; d["pos"].append(r["pos"])
             if r["Date"] >= d["last"]:
-                d["last"] = r["Date"]; d["team"] = r["Team"]; d["name"] = r["Player"]
+                d["last"] = r["Date"]; d["team"] = r["Team"]; d["name"] = r["Player"]; d["pid"] = r["PlayerId"]
             if yr == cur_season:
                 d["cur"] += 1
             for s_ in ("points", "rebounds", "assists", "threes", "threesAtt", "fgm", "fga", "ftm", "fta",
