@@ -4793,6 +4793,253 @@ function jupiterSection(key, g){
       + '<button class="pc-add" onclick="LAB.jAdd()">Send to Check My Multi</button></div>' : '')
     + '</div>';
 }
+
+/* AFL-SPECIFIC SIGNALS + LET'S CLIMB -----------------------------------------------------
+   Ported from the production AFL tool, each with the reasoning kept and one improvement where
+   the data supports it. All are priced: a signal that names no bet is not a tip.              */
+function modelProbAt(key, p, mkt, line, opp){
+  var S = state.sports[key], raw = null;
+  try { if (S.scoring && S.scoring.prob) raw = S.scoring.prob(p, mkt, line, opp); } catch(e){}
+  if (raw == null){
+    try { var sc = S.scoring && S.scoring.scoreCMP ? S.scoring.scoreCMP(p, mkt, line, opp) : null;
+      if (sc != null && isFinite(sc)) raw = Math.max(0.01, Math.min(0.99, sc/20 + 0.5)); } catch(e){}
+  }
+  return (raw != null && isFinite(raw)) ? calibrate(key, raw) : null;
+}
+function statVals(key, name, mkt, rows){
+  var out = [];
+  (rows || sortLogsDesc(((state.sports[key].idx.logsByName || {})[name] || []).slice()))
+    .forEach(function(r){ var v = statOf(key, r, mkt); if (v != null) out.push(v); });
+  return out;
+}
+var mean = function(a){ return a.length ? a.reduce(function(x,y){ return x+y; }, 0) / a.length : null; };
+
+/* SNAGS - league top-10 goal kickers (not top-10 of the slate) into a bottom-5 goals defence
+   for their position. Priced on 1+ goals, or 2+ where the 1+ is too short to be worth a row.
+   Added: shot volume and recent goal form, because a top-10 average built in March can hide a
+   forward whose shots have dried up.                                                           */
+function aflSnags(key, g){
+  var S = state.sports[key], lg = leagueAvg(key, 'goals');
+  var pool = (S.idx.players || []).filter(function(p){ return lg[p.name] && lg[p.name].games >= 4; })
+    .sort(function(a,b){ return lg[b.name].avg - lg[a.name].avg; }).slice(0, 10);
+  var inGame = {}; inGame[normTeam(g.home)] = g.away; inGame[normTeam(g.away)] = g.home;
+  var out = [];
+  pool.forEach(function(p, i){
+    var opp = inGame[normTeam(p.team)];
+    if (!opp || !isPlayingP(key, p.name, p.team)) return;
+    var dr = dvpRankFor(key, opp, p.position, 'goals');
+    if (!dr || dr.rank > 5) return;
+    var one = bestPriceFor(key, p.name, 'goals', 0.5);
+    var two = bestPriceFor(key, p.name, 'goals', 1.5);
+    var bet = (one && one.price >= 1.2) ? { n:1, od:one } : (two ? { n:2, od:two } : (one ? { n:1, od:one } : null));
+    if (!bet) return;
+    var vals = statVals(key, p.name, 'goals');
+    var shots = mean(statVals(key, p.name, 'shotsAtGoal').slice(0, 5));
+    out.push({ name:p.name, p:p, opp:opp, rank:i+1, avg:lg[p.name].avg, l5:mean(vals.slice(0, 5)),
+               shots:shots, dr:dr, bet:bet });
+  });
+  out.sort(function(a,b){ return a.dr.rank - b.dr.rank || a.rank - b.rank; });
+  return { rows:out, why:'No league top-10 goal kicker on this fixture meets a bottom-5 goals defence for his position.' };
+}
+/* HUNTING GROUNDS - AFL is the one code where clubs share grounds (the MCG and Marvel host half
+   the league), so "at this venue" is a genuinely different split from "at home". Production
+   compared the raw venue average with the season average; four games is a small sample, so here
+   the venue average is SHRUNK toward the player's overall average first (4 pseudo-games) and the
+   edge has to survive that. Priced on the line his season average implies.                     */
+var HG_STATS = [['disposals',15,3],['goals',1,0.7],['marks',4,1.5],['tackles',3,1.5]];
+var HG_SHRINK = 4;
+function aflHunting(key, g){
+  var S = state.sports[key], out = [], venue = g.venue;
+  if (!venue) return { rows:[], why:'This fixture has no venue on file.' };
+  var vkey = String(venue).toLowerCase();
+  [g.away, g.home].forEach(function(team){
+    var opp = (team === g.home) ? g.away : g.home;
+    playersOnTeam(key, team).forEach(function(p){
+      if (!isPlayingP(key, p.name, team) || !hasAnyOddsFor(key, p.name)) return;
+      var logs = sortLogsDesc(((S.idx.logsByName || {})[p.name] || []).slice());
+      if (logs.length < 6) return;
+      var here = logs.filter(function(r){ var v = rowVenue(key, r).venue; return v && String(v).toLowerCase() === vkey; });
+      if (here.length < 4) return;
+      HG_STATS.forEach(function(st){
+        var k = st[0], lgE = leagueAvg(key, k)[p.name];
+        if (!lgE || lgE.avg < st[1]) return;
+        var all = statVals(key, p.name, k, logs), at = statVals(key, p.name, k, here);
+        if (at.length < 4) return;
+        var overall = mean(all), vRaw = mean(at);
+        var vShr = (vRaw*at.length + overall*HG_SHRINK) / (at.length + HG_SHRINK);
+        var edge = vShr - lgE.avg;
+        if (edge < st[2]) return;
+        var ask = Math.max(1, Math.round(lgE.avg));
+        var od = bestPriceFor(key, p.name, k, ask - 0.5);
+        if (!od) return;
+        var hitHere = at.filter(function(v){ return v >= ask; }).length;
+        out.push({ name:p.name, p:p, opp:opp, venue:venue, mkt:k, season:lgE.avg, vRaw:vRaw, vShr:vShr,
+                   edge:edge, n:at.length, ask:ask, od:od, hitHere:hitHere });
+      });
+    });
+  });
+  out.sort(function(a,b){ return (b.edge/b.season) - (a.edge/a.season); });
+  return { rows:out.slice(0, SIG_MAX_ROWS),
+           why:'No priced player has 4+ games at '+venue+' with an edge over his season line that survives shrinking toward his overall average.' };
+}
+/* KICK IN MERCHANTS - every behind the opponent kicks is a kick-in for this side, and a
+   designated kick-in taker (2.5+ a game) takes most of them. Production projected kick-ins; a
+   kick-in IS a kick, so here the projection becomes projected KICKS and is priced against the
+   posted kicks line. The opponent's behinds are blended with this side's behinds conceded, so a
+   leaky defence against an inaccurate attack reads as the double it is.                          */
+var KI_MIN = 2.5;
+function aflKickIns(key, g){
+  var S = state.sports[key], KI = S.data.kickins || {}, out = [];
+  if (!Object.keys(KI).length) return { rows:[], why:'kickins.json returned nothing.' };
+  var teamsRows = asArray(S.data.teams) || [];
+  var tRow = function(t){ var r = null; teamsRows.forEach(function(x){ if (normTeam(x.team) === normTeam(t)) r = x; }); return r; };
+  var lgBeh = mean(teamsRows.map(function(t){ return +t.behinds || 0; }).filter(function(v){ return v > 0; })) || 0;
+  [g.away, g.home].forEach(function(team){
+    var opp = (team === g.home) ? g.away : g.home;
+    var oR = tRow(opp), mR = tRow(team);
+    if (!oR || !mR) return;
+    var expBeh = mean([+oR.behinds || 0, +mR.behinds_a || +oR.behinds || 0]);
+    Object.keys(KI).forEach(function(nm){
+      var k = KI[nm];
+      if (!k || normTeam(k.team) !== normTeam(team) || k.ki < KI_MIN) return;
+      var p = (S.idx.byName || {})[nm];
+      if (!p || !isPlayingP(key, nm, team)) return;
+      var projKi = (k.kiPct / 100) * expBeh;
+      var usualKi = (k.kiPct / 100) * lgBeh;
+      var kicksAvg = (leagueAvg(key, 'kicks')[nm] || {}).avg;
+      if (kicksAvg == null) return;
+      var projKicks = kicksAvg + (projKi - usualKi);
+      var ask = Math.max(1, Math.floor(projKicks));
+      var od = bestPriceFor(key, nm, 'kicks', ask - 0.5) || bestPriceFor(key, nm, 'kicks');
+      if (!od) return;
+      out.push({ name:nm, p:p, opp:opp, ki:k.ki, kiPct:k.kiPct, playOn:k.playOn, expBeh:expBeh, lgBeh:lgBeh,
+                 projKi:projKi, kicksAvg:kicksAvg, projKicks:projKicks, od:od,
+                 clears:projKicks > od.line + 0.5 });
+    });
+  });
+  out.sort(function(a,b){ return (b.projKicks - b.od.line) - (a.projKicks - a.od.line); });
+  return { rows:out, why:'No designated kick-in taker (2.5+ a game) on this fixture has a posted kicks price.' };
+}
+/* LET'S CLIMB - every sport. Production's rule: start at the lowest rung paying $1.70+, and the
+   player must still hit 70% one rung up and 40% two rungs up this season. That is kept as a
+   CONSISTENCY gate, but the pick is now chosen differently: every rung on the ladder is scored
+   with the calibrated model at its own price, and the row points at the rung with the best EV.
+   The question on a ladder is not "does he still hit two up" but "which rung is mispriced most". */
+var CLIMB_START = 1.70, CLIMB_HIT = 0.70, CLIMB_FLOOR = 0.40, CLIMB_MIN_G = 8;
+function letsClimb(key, g){
+  var S = state.sports[key], out = [];
+  var season = curSeason(key);
+  [g.away, g.home].forEach(function(team){
+    var opp = (team === g.home) ? g.away : g.home;
+    playersOnTeam(key, team).forEach(function(p){
+      if (!isPlayingP(key, p.name, team) || !hasAnyOddsFor(key, p.name)) return;
+      var logs = sortLogsDesc(((S.idx.logsByName || {})[p.name] || []).slice());
+      var cur = logs.filter(function(r){ return (+(r.Year||r.year)||0) === season; });
+      var sample = cur.length >= CLIMB_MIN_G ? cur : logs.slice(0, 15);   // early season: last 15
+      if (sample.length < CLIMB_MIN_G) return;
+      var best = null;
+      posMarkets(key, p).forEach(function(m){
+        var k = m[0];
+        var rungs = streakCandidates(key, p.name, k).slice().sort(function(a,b){ return a.line - b.line; });
+        if (rungs.length < 3) return;
+        var si = -1;
+        for (var i=0;i<rungs.length;i++) if (rungs[i].price >= CLIMB_START){ si = i; break; }
+        if (si < 0 || si + 2 >= rungs.length) return;
+        var vals = statVals(key, p.name, k, sample);
+        var hr = function(line){ return vals.length ? vals.filter(function(v){ return v > line; }).length / vals.length : 0; };
+        var r1 = rungs[si+1], r2 = rungs[si+2];
+        if (hr(r1.line) < CLIMB_HIT || hr(r2.line) < CLIMB_FLOOR) return;     // production's gate
+        // Calibration was fitted on lines near each player's own average. Out on the tail of a
+        // ladder it extrapolates - AFL's Platt slope (0.358) pulls everything to the middle, so a
+        // 13% event reads as ~50% and the "best rung" is always the longest one. Use whichever is
+        // more conservative: the model, or what he has actually done (smoothed) plus 10 points.
+        var hitN = vals.length;
+        var ladder = rungs.slice(si, si + 6).map(function(r){
+          var pr = modelProbAt(key, p, k, r.line, opp);
+          var h = hr(r.line);
+          var emp = (h * hitN + 1) / (hitN + 2);
+          // On the tail (he clears it under 30% of the time) the model has left the range it was
+          // calibrated on, so his own smoothed record is the only evidence worth pricing. Inside
+          // the range, take the more conservative of the two with a small margin for the model.
+          var use = pr == null ? null : (h < 0.30 ? emp : Math.min(pr, emp + 0.05));
+          var ev = use != null ? use * (r.price - 1) - (1 - use) : null;
+          if (use != null && use > Math.min(0.97, (1/r.price) * 4)) ev = null;  // tail guard
+          return { line:r.line, price:r.price, book:r.book, hit:h, prob:use, model:pr, ev:ev };
+        });
+        var top = ladder.filter(function(r){ return r.ev != null; })
+          .sort(function(a,b){ return b.ev - a.ev; })[0];
+        if (!top || top.ev <= 0) return;
+        var cand = { name:p.name, p:p, opp:opp, mkt:k, label:m[1], ladder:ladder, top:top, n:vals.length };
+        if (!best || top.ev > best.top.ev) best = cand;                       // one market per player
+      });
+      if (best) out.push(best);
+    });
+  });
+  out.sort(function(a,b){ return b.top.ev - a.top.ev; });
+  return { rows:out.slice(0, SIG_MAX_ROWS),
+           why:'No priced ladder on this fixture holds 70% a rung above its $1.70 start with a positive-EV rung on it.' };
+}
+/* ---- rows ---- */
+function aflRowHead(key, r, tag){
+  return '<div class="gl-row sig-extra" onclick="LAB.player(\'' + key + '\',\'' + esc(r.name).replace(/'/g,"\\'") + '\')">'
+    + playerImgP(key, r.name, 28)
+    + '<div class="gl-left"><div class="gl-nm"><b>'+esc(r.name)+'</b><span class="gl-tag">'
+    + esc(tag)+'</span></div>';
+}
+function snagRow(key, r){
+  return aflRowHead(key, r, (posShortP(r.p) ? posShortP(r.p)+' \u00b7 ' : '')+abbrOf(key, r.p.team)+' v '+abbrOf(key, r.opp))
+    + '<div class="gl-bet"><b>'+r.bet.n+'+ Goals</b> \u00b7 $'+r.bet.od.price.toFixed(2)+' '+esc(r.bet.od.book||'')+'</div>'
+    + '<div class="gl-why"><span class="gl-chip good">#'+r.rank+' in the league \u00b7 '+r.avg.toFixed(2)+'/gm</span>'
+    + '<span class="gl-chip good">'+esc(abbrOf(key, r.opp))+' #'+r.dr.rank+'/'+r.dr.total+' softest goals D ('+(r.dr.pct>0?'+':'')+r.dr.pct.toFixed(0)+'%)</span>'
+    + (r.l5 != null ? '<span class="gl-chip">L5 '+r.l5.toFixed(1)+'</span>' : '')
+    + (r.shots != null ? '<span class="gl-chip">'+r.shots.toFixed(1)+' shots/gm L5</span>' : '')+'</div></div>'
+    + '<div class="gl-right"><div class="gl-ev pos">'+r.dr.rank+'</div><div class="gl-evl">GOALS D RANK</div></div></div>';
+}
+function huntRow(key, r){
+  return aflRowHead(key, r, (posShortP(r.p) ? posShortP(r.p)+' \u00b7 ' : '')+abbrOf(key, r.p.team)+' v '+abbrOf(key, r.opp))
+    + '<div class="gl-bet"><b>'+r.ask+'+ '+esc(mktLabel(key, r.mkt))+'</b> \u00b7 $'+r.od.price.toFixed(2)+' '+esc(r.od.book||'')+'</div>'
+    + '<div class="gl-why"><span class="gl-chip good">'+esc(r.venue)+': '+r.vRaw.toFixed(1)+' over '+r.n+' games</span>'
+    + '<span class="gl-chip">season '+r.season.toFixed(1)+'</span>'
+    + '<span class="gl-chip">shrunk edge +'+r.edge.toFixed(1)+'</span>'
+    + '<span class="gl-chip'+(r.hitHere/r.n >= 0.7 ? ' good' : '')+'">'+r.hitHere+'/'+r.n+' here at '+r.ask+'+</span></div></div>'
+    + '<div class="gl-right"><div class="gl-ev pos">+'+Math.round(r.edge/r.season*100)+'%</div><div class="gl-evl">AT THIS GROUND</div></div></div>';
+}
+function kickInRow(key, r){
+  return aflRowHead(key, r, (posShortP(r.p) ? posShortP(r.p)+' \u00b7 ' : '')+abbrOf(key, r.p.team)+' v '+abbrOf(key, r.opp))
+    + '<div class="gl-bet"><b>'+Math.ceil(r.od.line)+'+ Kicks</b> \u00b7 $'+r.od.price.toFixed(2)+' '+esc(r.od.book||'')
+    + ' \u00b7 proj '+r.projKicks.toFixed(1)+(r.clears ? ' \u2713' : '')+'</div>'
+    + '<div class="gl-why"><span class="gl-chip good">'+r.ki.toFixed(1)+' kick-ins/gm \u00b7 '+Math.round(r.kiPct)+'% of the side\u2019s</span>'
+    + '<span class="gl-chip">'+Math.round(r.playOn)+'% played on</span>'
+    + '<span class="gl-chip'+(r.expBeh > r.lgBeh ? ' good' : '')+'">'+r.expBeh.toFixed(1)+' behinds expected v '+r.lgBeh.toFixed(1)+' league</span>'
+    + '<span class="gl-chip">'+r.projKi.toFixed(1)+' kick-ins projected</span></div></div>'
+    + '<div class="gl-right"><div class="gl-ev '+(r.clears ? 'pos' : 'neg')+'">'+r.projKicks.toFixed(1)+'</div><div class="gl-evl">PROJ KICKS</div></div></div>';
+}
+function climbRow(key, r){
+  var lad = r.ladder.map(function(x){
+    var on = x === r.top;
+    return '<span class="gl-chip'+(on ? ' good' : '')+'" title="model '+(x.model != null ? Math.round(x.model*100)+'%' : '\u2014')
+      +' \u00b7 used '+(x.prob != null ? Math.round(x.prob*100)+'%' : '\u2014')+'">'
+      + Math.ceil(x.line)+'+ $'+x.price.toFixed(2)+' \u00b7 '+Math.round(x.hit*100)+'%'
+      + (x.ev != null ? ' \u00b7 '+(x.ev > 0 ? '+' : '')+Math.round(x.ev*100)+'%' : '')+'</span>';
+  }).join('');
+  return aflRowHead(key, r, (posShortP(r.p) ? posShortP(r.p)+' \u00b7 ' : '')+abbrOf(key, r.p.team)+' v '+abbrOf(key, r.opp))
+    + '<div class="gl-bet"><b>'+Math.ceil(r.top.line)+'+ '+esc(r.label)+'</b> \u00b7 $'+r.top.price.toFixed(2)+' '+esc(r.top.book||'')
+    + ' \u00b7 model '+Math.round(r.top.prob*100)+'%</div>'
+    + '<div class="gl-why">'+lad+'</div>'
+    + '<div class="cmb-corr" style="margin:3px 0 0">Rungs: line \u00b7 price \u00b7 hit rate over '+r.n+' games \u00b7 edge. Highlighted rung is the best-priced.</div></div>'
+    + '<div class="gl-right"><div class="gl-ev pos">+'+Math.round(r.top.ev*100)+'%</div><div class="gl-evl">BEST RUNG EDGE</div></div></div>';
+}
+function aflSignals(key, g){
+  if (key !== 'afl') return '';
+  var sn = aflSnags(key, g), hg = aflHunting(key, g), ki = aflKickIns(key, g);
+  return sigBand('AFL Signals',
+    sigTile('ti-target', 'Snags', 'League\u2019s top goal kickers into a soft goals defence',
+            sn.rows.map(function(r){ return snagRow(key, r); }), sn.why)
+    + sigTile('ti-target-arrow', 'Hunting Grounds', 'Players who feast at this ground',
+            hg.rows.map(function(r){ return huntRow(key, r); }), hg.why)
+    + sigTile('ti-arrow-back-up', 'Kick In Merchants', 'Kick-in takers against an inaccurate attack',
+            ki.rows.map(function(r){ return kickInRow(key, r); }), ki.why));
+}
 function nflSignals(key, g){
   if (key !== 'nfl') return '';
   var tud = nflTuddy(key, g), chk = nflChunk(key, g);
@@ -4850,8 +5097,11 @@ function signalsSection(key, g){
     + sigTile('ti-ghost-2', 'Bogey', 'Never cleared this line against them',
               h2hSignals(key, g, 'bogey').map(function(r){ return h2hSigRow(key, r); }),
               'No player has a posted under they have never cleared in '+H2H_MIN_BOGEY
-              + '+ meetings with this opponent.');
-  var nfl = nflSignals(key, g);
+              + '+ meetings with this opponent.')
+    + (function(){ var lc = letsClimb(key, g);
+        return sigTile('ti-stairs-up', 'Let\u2019s Climb', 'The best-priced rung on a ladder that holds',
+          lc.rows.map(function(r){ return climbRow(key, r); }), lc.why); })();
+  var nfl = nflSignals(key, g) + aflSignals(key, g);
   var reads = radarSection(key, g) + coverageSection(key, g) + usageSection(key, g);
   var form = sigTile('ti-trending-up', 'Form Alerts', 'Running hot or cold against their own season',
               formAlerts(key, g).map(function(r){ return formRow(key, r); }),
