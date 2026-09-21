@@ -20,6 +20,29 @@ from collections import defaultdict
 
 DATA = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
 
+# The source renames clubs between seasons and even between feeds: the Breakers are "Breakers" in
+# the 2024-25 results, "NZL" in 2025-26, and "NZ Breakers" in the 2026-27 box scores. Left alone
+# that splits one club into three, so teams.json lists 11 clubs for a 10-team league and every
+# rank and DVP average is computed against a phantom opponent.
+CODE_ALIAS = {
+    "nzbreakers": "NZL", "breakers": "NZL", "newzealandbreakers": "NZL",
+    "southeastmelbournephoenix": "SEM", "phoenix": "SEM",
+    "tasmaniajackjumpers": "TAS", "jackjumpers": "TAS",
+}
+def canon(code):
+    if not code:
+        return code
+    k = "".join(ch for ch in str(code).lower() if ch.isalnum())
+    return CODE_ALIAS.get(k, code)
+
+
+def fold(name):
+    # books and box scores disagree on accents and punctuation (Dell'Orso, accented imports)
+    import unicodedata
+    n = unicodedata.normalize("NFD", str(name or ""))
+    return "".join(ch for ch in n if unicodedata.category(ch) != "Mn" and ch.isalnum()).lower()
+
+
 def norm(s):
     s = unicodedata.normalize("NFKD", str(s or "")).encode("ascii", "ignore").decode("ascii")
     return "".join(c for c in s.lower() if c.isalnum())
@@ -67,9 +90,10 @@ def main():
             full = r.get(side + "_team_name"); nick = r.get(side + "_team_nickname")
             logo = r.get(side + "_team_team_logo") or r.get(side + "_team_external_team_logo")
             if full and nick:
-                tmap[norm(full)] = {"code": nick, "full": full, "logo": logo or None}
+                tmap[norm(full)] = {"code": canon(nick), "full": full, "logo": logo or None}
     def team_of(full, short):
-        return tmap.get(norm(full)) or tmap.get(norm(short)) or {"code": (short or full or "?"), "full": full or short, "logo": None}
+        t = tmap.get(norm(full)) or tmap.get(norm(short)) or {"code": (short or full or "?"), "full": full or short, "logo": None}
+        return dict(t, code=canon(t["code"]))
 
     # match_id -> date + status
     mmeta = {}
@@ -117,16 +141,26 @@ def main():
     GL_N, AGG_N = 3, 2
     gl_seasons = seasons[-GL_N:] if len(seasons) >= GL_N else seasons   # gamelog history (>= 2 seasons)
     recent = seasons[-AGG_N:] if len(seasons) >= AGG_N else seasons     # player/team aggregates = current form
+    # Keyed by player, not player+club. Keying by both meant anyone who changed clubs - or is back
+    # from overseas with one game so far - had fewer than 3 games under each key and vanished,
+    # which is how 7 players with posted odds (Taran Armstrong, Skylar Mays, Jacob Rigoni...)
+    # were missing from players.json. His club is wherever he played most recently.
     pacc = {}
+    cur_season = seasons[-1] if seasons else None
     for yr in recent:
-        for r in by_season[yr]:
-            k = r["Player"] + "|" + r["Team"]
+        for r in sorted(by_season[yr], key=lambda x: x["Date"]):
+            k = r["PlayerId"] or r["Player"]
             d = pacc.setdefault(k, {"name": r["Player"], "team": r["Team"], "pid": r["PlayerId"],
-                                    "pos": [], "g": 0, "st": 0, "sum": defaultdict(float)})
+                                    "pos": [], "g": 0, "st": 0, "sum": defaultdict(float),
+                                    "last": "", "cur": 0})
             d["g"] += 1; d["st"] += r["starter"]; d["pos"].append(r["pos"])
-            for s in ("points", "rebounds", "assists", "threes", "threesAtt", "fgm", "fga", "ftm", "fta",
-                      "oreb", "dreb", "steals", "blocks", "turnovers", "minutes"):
-                if r.get(s) is not None: d["sum"][s] += r[s]
+            if r["Date"] >= d["last"]:
+                d["last"] = r["Date"]; d["team"] = r["Team"]; d["name"] = r["Player"]
+            if yr == cur_season:
+                d["cur"] += 1
+            for s_ in ("points", "rebounds", "assists", "threes", "threesAtt", "fgm", "fga", "ftm", "fta",
+                       "oreb", "dreb", "steals", "blocks", "turnovers", "minutes"):
+                if r.get(s_) is not None: d["sum"][s_] += r[s_]
     tfull = {v["code"]: v["full"] for v in tmap.values()}
     players = []
     for d in pacc.values():
@@ -135,10 +169,50 @@ def main():
         row = {"playerId": d["pid"], "name": d["name"], "team": d["team"], "teamFull": tfull.get(d["team"], d["team"]),
                "position": pos5, "pos5": pos5, "games": d["g"], "starterPct": round(d["st"] / g, 2),
                "role": "starter" if d["st"] / g >= 0.5 else "bench"}
-        for s in ("points", "rebounds", "assists", "threes", "threesAtt", "fgm", "fga", "ftm", "fta", "oreb", "dreb", "steals", "blocks", "turnovers", "minutes"):
-            row[s] = round(d["sum"][s] / g, 2)
-        if row["games"] >= 3:
+        for s_ in ("points", "rebounds", "assists", "threes", "threesAtt", "fgm", "fga", "ftm", "fta", "oreb", "dreb", "steals", "blocks", "turnovers", "minutes"):
+            row[s_] = round(d["sum"][s_] / g, 2)
+        # 3+ games across the window, OR on a roster this season - a player who has taken the
+        # court this year is on a team sheet and the books will price him
+        if row["games"] >= 3 or d["cur"] >= 1:
             players.append(row)
+
+    # Anyone the books are pricing is, by definition, expected to play. A player back from
+    # overseas (Taran Armstrong: 20 games for Cairns in 2024-25, none since) has no rows in the
+    # two-season window, so without this he is priced but unknown to every signal. Keep him on
+    # his full history, flagged, with his last known club.
+    try:
+        odds = json.load(open(os.path.join(DATA, "odds.json")))
+        priced = set()
+        for arr in (odds.get("books") or odds.get("lines") or [], odds.get("alt") or []):
+            for o in arr:
+                if o.get("player") and o.get("over") is not None:
+                    priced.add(fold(o["player"]))
+    except Exception:
+        priced = set()
+    have = {fold(p["name"]) for p in players}
+    back = {}
+    for yr in gl_seasons:
+        for r in sorted(by_season[yr], key=lambda x: x["Date"]):
+            f = fold(r["Player"])
+            if f not in priced or f in have:
+                continue
+            d = back.setdefault(f, {"name": r["Player"], "team": r["Team"], "pid": r["PlayerId"],
+                                    "pos": [], "g": 0, "st": 0, "sum": defaultdict(float), "yr": yr})
+            d["g"] += 1; d["st"] += r["starter"]; d["pos"].append(r["pos"]); d["team"] = r["Team"]; d["yr"] = yr
+            for s_ in ("points", "rebounds", "assists", "threes", "threesAtt", "fgm", "fga", "ftm", "fta",
+                       "oreb", "dreb", "steals", "blocks", "turnovers", "minutes"):
+                if r.get(s_) is not None: d["sum"][s_] += r[s_]
+    for d in back.values():
+        if d["g"] < 3:
+            continue
+        g = d["g"]
+        pos5 = max(set(d["pos"]), key=d["pos"].count) if d["pos"] else "F"
+        row = {"playerId": d["pid"], "name": d["name"], "team": d["team"], "teamFull": tfull.get(d["team"], d["team"]),
+               "position": pos5, "pos5": pos5, "games": g, "starterPct": round(d["st"] / g, 2),
+               "role": "starter" if d["st"] / g >= 0.5 else "bench", "lastSeason": d["yr"], "returning": True}
+        for s_ in ("points", "rebounds", "assists", "threes", "threesAtt", "fgm", "fga", "ftm", "fta", "oreb", "dreb", "steals", "blocks", "turnovers", "minutes"):
+            row[s_] = round(d["sum"][s_] / g, 2)
+        players.append(row)
 
     # ---- teams aggregate (for/against) ----
     tacc = {}
@@ -167,22 +241,37 @@ def main():
         row["logo"] = (tmap.get(norm(tfull.get(tm, tm))) or {}).get("logo")
         teams.append(row)
 
-    # ---- DVP: per (defending team, position) avg stat allowed per game, from the current season ----
+    # ---- DVP: each defence's most recent DVP_GAMES games, across seasons ----
+    # Built from the current season alone this was ONE game per team at the start of a season -
+    # 20 rows of noise that made the model measurably worse (Brier 0.2436 -> 0.2573 when added).
+    # A rolling window of the defence's last 22 games (roughly a season) keeps it current without
+    # collapsing to a single result every October.
     DVP_STATS = ("points", "rebounds", "assists", "threes", "steals", "blocks", "turnovers", "pra", "pr", "pa", "ra", "stocks")
-    cur_yr = gl_seasons[-1] if gl_seasons else None
-    dvp_acc = {}          # (team, pos) -> {sum, }
-    team_matches = {}     # team -> set of match ids it defended in
-    for r in by_season.get(cur_yr, []):
+    DVP_GAMES = 22
+    all_rows = [r for yr in gl_seasons for r in by_season.get(yr, [])]
+    match_date = {}
+    for r in all_rows:
+        match_date[r["MatchId"]] = r["Date"]
+    defended = defaultdict(set)                # defending team -> match ids
+    for r in all_rows:
+        defended[r["Opp"]].add(r["MatchId"])
+    keep = {}
+    for T, mids in defended.items():
+        recent_mids = sorted(mids, key=lambda m: match_date.get(m, ""), reverse=True)[:DVP_GAMES]
+        keep[T] = set(recent_mids)
+    dvp_acc = {}
+    for r in all_rows:
         T, pos, mid = r["Opp"], r["pos"], r["MatchId"]
+        if mid not in keep.get(T, ()):
+            continue
         d = dvp_acc.setdefault((T, pos), defaultdict(float))
         for st in DVP_STATS:
             if r.get(st) is not None:
                 d[st] += r[st]
-        team_matches.setdefault(T, set()).add(mid)
     dvp = []
     for (T, pos), d in dvp_acc.items():
-        g = max(1, len(team_matches.get(T, set())))
-        row = {"team": T, "pos": pos, "games": len(team_matches.get(T, set()))}
+        g = max(1, len(keep.get(T, ())))
+        row = {"team": T, "pos": pos, "games": len(keep.get(T, ()))}
         for st in DVP_STATS:
             row[st] = round(d[st] / g, 2)
         dvp.append(row)
@@ -197,12 +286,12 @@ def main():
                 continue
             results.append({"season": r.get("season"), "gameId": r.get("match_id"),
                             "date": (r.get("match_time_utc") or "")[:10],
-                            "home": r.get("home_team_nickname"), "away": r.get("away_team_nickname"),
+                            "home": canon(r.get("home_team_nickname")), "away": canon(r.get("away_team_nickname")),
                             "hs": num(r.get("home_score_string")), "as": num(r.get("away_score_string"))})
         elif r.get("match_status") == "SCHEDULED":   # upcoming fixtures — exclude stale games stuck in SCHEDULED (nblR quirk)
             _fd = (r.get("match_time_utc") or "")[:10]
             if _fd and _fd >= fx_cutoff:
-                fixtures.append({"gameId": r.get("match_id"), "home": r.get("home_team_nickname"), "away": r.get("away_team_nickname"),
+                fixtures.append({"gameId": r.get("match_id"), "home": canon(r.get("home_team_nickname")), "away": canon(r.get("away_team_nickname")),
                                  "utc": r.get("match_time_utc"), "date": _fd,
                                  "venue": r.get("venue_name"), "gw": r.get("round_number")})
     fixtures.sort(key=lambda x: x["date"] or "")
