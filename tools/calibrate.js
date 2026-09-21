@@ -13,7 +13,7 @@ const fs = require('fs'), vm = require('vm'), path = require('path');
 const ROOT = process.env.JTT_ROOT || path.resolve(__dirname, '..');
 const SERVE = ROOT;
 const WRITE = process.env.CALIB_WRITE !== '0';      // set CALIB_WRITE=0 to report without committing
-const SPORTS = [['afl','AFL'], ['nfl','nfl'], ['epl','EPL'], ['mlb','mlb'], ['nbl','nbl']];
+const SPORTS = [['afl','AFL'], ['nfl','nfl'], ['epl','EPL'], ['mlb','mlb'], ['nbl','nbl'], ['nhl','nhl']];
 const TEST_DAYS = 8, MAX_MARKETS = 5, MIN_PREDS = 1000;
 
 const COVER = { epl: 'passes' };
