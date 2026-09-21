@@ -936,7 +936,8 @@ var SPORTS = {
   nfl: { key:'nfl', dir:'nfl', name:'NFL' },
   epl: { key:'epl', dir:'EPL', name:'EPL' },
   mlb: { key:'mlb', dir:'mlb', name:'MLB' },
-  nbl: { key:'nbl', dir:'nbl', name:'NBL' }
+  nbl: { key:'nbl', dir:'nbl', name:'NBL' },
+  nhl: { key:'nhl', dir:'nhl', name:'NHL' }
 };
 
 var TIER1 = { fixture:'data/fixture.json', teams:'data/teams.json', meta:'data/meta.json' };
@@ -1073,11 +1074,22 @@ function loadTier2(key){
   var q = S.version ? ('?v='+encodeURIComponent(S.version)) : '';
   return Promise.all(Object.keys(TIER2).map(function(k){
     return fetch(sportPath(key, TIER2[k])+q, {cache:'reload'})
-      .then(function(r){ return r.ok ? r.json() : null; })
+      .then(function(r){ if (k === 'odds') S.oddsStatus = r.status; return r.ok ? r.json() : null; })
       .then(function(j){ if (j) S.data[k] = j; })
-      .catch(function(){});
+      .catch(function(){ if (k === 'odds') S.oddsStatus = 0; });
   })).then(function(){
-    if (!S.data.odds){ S.t2 = null; render(); return; }    // fetch failed - allow a retry
+    if (!S.data.odds){
+      // A missing odds.json (404) is not "still loading": NHL has none until its odds workflow
+      // exists, and the whole fixture page used to sit on "Loading odds..." forever while the
+      // loader re-fetched on every render. Treat a 404, or a second failure, as "no prices" and
+      // let everything that doesn't need a price render.
+      S.t2Tries = (S.t2Tries || 0) + 1;
+      if (S.oddsStatus === 404 || S.t2Tries >= 2){
+        S.data.odds = { books:[], lines:[], alt:[], matchOdds:[] };
+        S.noOdds = S.oddsStatus === 404 ? 'no odds.json has been published for this sport yet'
+                                        : 'odds.json failed to load twice';
+      } else { S.t2 = null; render(); return; }   // one transient failure: allow a retry
+    }
     // player -> team, so odds rows can be filtered by match
     S.idx.playerTeam = {};
     var pl = S.data.players;
@@ -2134,6 +2146,29 @@ function buildLineup(key, team, g){
     return out.groups.length ? out : null;
   }
 
+  // NHL: no lineup feed. The last game's dressed roster is in the gamelogs with ice time, which
+  // orders the lines well enough: the goalie who played, then forwards and defence by TOI.
+  if (key === 'nhl'){
+    var hl = (asArray(S.data.gamelogs) || []).filter(function(r){
+      return r && normTeam(r.Team || r.team) === normTeam(team) && (+r.toiMin || 0) > 0; });
+    if (!hl.length) return null;
+    sortLogsDesc(hl);
+    var hd = String(hl[0].Date || hl[0].date || '').slice(0, 10);
+    var hg = hl.filter(function(r){ return String(r.Date || r.date || '').slice(0, 10) === hd; })
+      .sort(function(a,b){ return (+b.toiMin||0) - (+a.toiMin||0); });
+    var toi = function(r){ var m = +r.toiMin || 0; return Math.floor(m)+':'+String(Math.round((m % 1)*60)).padStart(2,'0'); };
+    var row = function(r){ return { name:r.Player, tag:r.pos || '', flag:{ label:toi(r), out:false } }; };
+    var gk = hg.filter(function(r){ return r.pos === 'G'; }).slice(0, 1);
+    var fw = hg.filter(function(r){ return r.pos === 'C' || r.pos === 'L' || r.pos === 'R'; }).slice(0, 12);
+    var df = hg.filter(function(r){ return r.pos === 'D'; }).slice(0, 6);
+    out.status = 'Derived'; out.statusCls = 'soft';
+    out.sub = 'Dressed roster from the last game \u00b7 ' + hd + ' \u00b7 by ice time \u00b7 no lineup feed';
+    if (gk.length) out.groups.push({ name:'Goalie', players: gk.map(row) });
+    if (fw.length) out.groups.push({ name:'Forwards', players: fw.map(row) });
+    if (df.length) out.groups.push({ name:'Defence', players: df.map(row) });
+    return out.groups.length ? out : null;
+  }
+
   // NBL: no lineup feed either, but the box scores carry a starter flag - so the last game's
   // starting five is a real record, and the rotation behind them is everyone else who played.
   if (key === 'nbl'){
@@ -3181,7 +3216,9 @@ var CALIB = {
   epl: { a:0.727, b:-0.399, spread: 0.358, n:2090 },
   mlb: { a:0.677, b:-0.391, spread: 0.274, n:21755 },
   // NBL, walk-forward over 9,697 predictions on the minutes-unfloored prob()
-  nbl: { a:0.598, b:-0.051, spread: 0.304, n:9697 }
+  nbl: { a:0.598, b:-0.051, spread: 0.304, n:9697 },
+  // NHL, walk-forward over 12,774 predictions on the TOI-unfloored prob() with 0.5 lines
+  nhl: { a:0.649, b:-0.133, spread: 0.450, n:12774 }
 };
 var EV_MIN_SPREAD = 0.05;          // below this the model can't rank, so EV is not a ranking key
 function calibFor(key){
@@ -4819,6 +4856,9 @@ function focusPage(){
     + '<div class="fxr-team">'+teamLogo(key,g.home)+'<div class="fxr-name">'+esc(teamName(key,g.home))+'</div></div>'
     + '</div>';
   if (S.t2 !== 'ready') return head + '<div class="empty"><i class="ti ti-loader"></i>Loading '+esc(SPORTS[key].name)+' odds…</div>';
+  if (S.noOdds) head += secNote('Odds', 'No prices for '+SPORTS[key].name+' \u2014 '+S.noOdds
+    + '. Form, matchups, stats and player cards all work; the signals, value bets, D\u00e9j\u00e0 Vu and '
+    + 'Jupiter need a posted price and stay empty until odds arrive.');
   var t3 = S.t3 === 'ready'
     ? '<div class="t3-ok"><i class="ti ti-database-check"></i>'+esc(SPORTS[key].name)+' research data ready \u00b7 '
       + ((S.idx.logsByName ? Object.keys(S.idx.logsByName).length : 0))+' players indexed</div>'
@@ -5047,6 +5087,13 @@ var POS_MKTS = {
     TE: ['receptions','recYds','longRec','anytimeTd'],
     K:  ['kickingPts','fgMade'],
     LB: ['tackles','sacks'], DL: ['tackles','sacks'], DB: ['tackles','sacks']
+  },
+  nhl: {
+    G: ['saves'],
+    C: ['goals','assists','points','shots','ppPoints','blocks','hits'],
+    L: ['goals','assists','points','shots','ppPoints','blocks','hits'],
+    R: ['goals','assists','points','shots','ppPoints','blocks','hits'],
+    D: ['goals','assists','points','shots','ppPoints','blocks','hits']
   },
   epl: {
     GK: ['saves','cards'],
