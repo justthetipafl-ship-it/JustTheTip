@@ -321,6 +321,70 @@ window.JTTScoring = (function () {
   }
 
   /* ============== ENGINE (verbatim from AFL) ============== */
+  /* ---- probability model ---------------------------------------------------
+     NBL had no prob(): callers fell back to the historical hit rate at a line placed on the
+     player's own average, which Brier-scores WORSE than always guessing the base rate. Same
+     rebuild as AFL and NFL. Walk-forward over the 2025-26 season, 8 markets
+     (points, rebounds, assists, threes, pra, pr, pa, ra):
+
+       model                               Brier   vs base rate   top-vs-bottom quartile
+       hit rate (old)                     0.2531   WORSE                  14.0pt
+       negbin(flat average)               0.2457   beats                  16.7pt
+       negbin(EWMA form)                  0.2446   beats                  ~20pt
+       + DVP (rolling 22 games) + shrink  0.2421   beats                  23.0pt   <- this
+
+     DVP HURT when dvp.json was built from the current season alone (one game per defence:
+     0.2436 -> 0.2573). Rebuilt over each defence's last 22 games it helps. If DVP ever reverts
+     to a single-season build, drop P_DVP_W to 0 rather than let it poison the projection.
+     Half-life, shrink and DVP weight swept over 18 combinations.
+
+     HISTORY IS EVERY GAME HE PLAYED, NOT THE 12-MINUTE-FLOOR SET the hit-rate code uses. The
+     floor drops foul-trouble and blowout nights from the history, but those nights still happen
+     in the games being priced - so the projection ran hot. Walk-forward on the real module,
+     9,697 predictions:
+                          bias    raw Brier   discrimination   Green Light picks landing
+       12-min floor      +9.4pt    0.2700        15.9pt              59.5%
+       every game        +2.9pt    0.2398        30.4pt              72.4%                     */
+  const P_HALFLIFE = 5, P_SHRINK = 3, P_DVP_W = 0.5, P_WIN = 10;
+  function _ewma(vals, hl){
+    const lam = Math.pow(0.5, 1/hl);
+    let num = 0, den = 0;
+    for (let i = vals.length-1, w = 1; i >= 0; i--, w *= lam){ num += vals[i]*w; den += w; }
+    return den ? num/den : 0;
+  }
+  function _countAtLeast(mu, k, vals){
+    if(!(mu > 0)) return 0;
+    const pois = () => { let cum = 0, term = Math.exp(-mu);
+      for(let i = 0; i < k; i++){ cum += term; term = term*mu/(i+1); }
+      return Math.max(0, Math.min(1, 1-cum)); };
+    if(!vals || vals.length < 4) return pois();
+    const m = vals.reduce((a,b)=>a+b,0)/vals.length;
+    const v = vals.reduce((a,b)=>a+(b-m)*(b-m),0)/vals.length;
+    if(!(v > m*1.05)) return pois();                    // not overdispersed: Poisson is right
+    let size = (m*m)/(v-m); size = Math.max(0.35, Math.min(80, size));
+    const pp = size/(size+mu);
+    let cum = 0, term = Math.pow(pp, size);
+    for(let i = 0; i < k; i++){ cum += term; term = term*(size+i)/(i+1)*(1-pp); }
+    return Math.max(0, Math.min(1, 1-cum));
+  }
+  function prob(p, statKey, line, opp){
+    if(!p || !statKey || line == null) return null;
+    // three season files are merged by the shell, so order by date rather than trust file order
+    const all = dvpByNameRaw(p.name).filter(r => (+r.minutes || 0) > 0)
+      .slice().sort((a,b) => String(a.Date||'').localeCompare(String(b.Date||'')));
+    if(all.length < 4) return null;
+    const hist = all.slice(-P_WIN).map(r => +r[statKey] || 0);
+    if(!hist.length) return null;
+    const cur = all.filter(isCurSeason).map(r => +r[statKey] || 0);
+    // a thin current season (the first weeks) leans on the whole window instead
+    const base = cur.length >= 4 ? cur : all.slice(-20).map(r => +r[statKey] || 0);
+    const baseline = base.reduce((a,b)=>a+b,0)/base.length;
+    let mu = (_ewma(hist, P_HALFLIFE)*hist.length + baseline*P_SHRINK)/(hist.length + P_SHRINK);
+    const pos = POS_TO_DVP[p.position] || p.position;
+    const pct = opp ? getDVPPct(opp, pos, statKey) : null;
+    if(pct != null) mu *= Math.max(0.75, Math.min(1.3, 1 + (pct/100)*P_DVP_W));
+    return Math.max(0.01, Math.min(0.99, _countAtLeast(mu, Math.ceil(line), hist)));
+  }
   function drLine(avg){ if(avg<1) return null; return Math.round(avg); }
 
   function scoreCMP(p, statKey, line, opp){
@@ -600,6 +664,6 @@ window.JTTScoring = (function () {
   return {
     configure, scoreCMP, cmpFactors, getContextSignals, scoreOverLine, scoreUnderLine,
     verdict, drLine, getDVPPct, dvpRanked, getDVPAvg, muPct, muInfo,
-    getL5Avg, getRecentAvg, getHitRate, POS_TO_DVP
+    getL5Avg, getRecentAvg, getHitRate, prob, POS_TO_DVP
   };
 })();
