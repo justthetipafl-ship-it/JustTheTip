@@ -946,10 +946,10 @@ var state = {
              slMkt: {}, slWin: 'season', dvpMkt: {}, ppTab: 'form',
              cmbQ: '', cmbSel: null, cmbRecent: [],
              cmbOpen: false, cmbMode: 'single', cmbLegs: [], cmbResult: null, cmbSugOff: false,
-             cmbLadOpen: false, mbFix: 0, mbMode: 'value', pc: null, ttWin: 10,
+             cmbLadOpen: false, mbFix: 0, mbMode: 'signals', pc: null, ttWin: 10, smDrop: {},
              rdrPick: null, ulMk: 'snapPct', ulWin: 'l5',
              dvMeets: 3, dvLegs: 3, jMkt: null, jLine: 'auto', jSel: {},
-             jHide: {}, jMin: null, jMax: null, jFocus: null,
+             jHide: {}, jMin: null, jMax: null, jFocus: null, jVenue: 'venue',
              dvMkts: null, dvHail: false, dvDrop: {}, dvMin: null, dvMax: null, dvBook: null,
              stSport: null, stMode: 'scanner', stMkt: {}, stPos: {},
              stQ: '', stPosF: '', stWin: 'season', stSort: null, stDir: -1, stAllowed: false,
@@ -1164,7 +1164,7 @@ function buildIndexes(key){
   players.forEach(function(p){ if (p && p.name) ix.byName[p.name] = p; });
 
   ix.lgAvg = {}; ix.winAvg = {}; ix.matchOpp = null; ix.fs = null;
-  ix.pricedSet = null; ix.oddsName = null; ix.vac = null; ix.bookList = null;
+  ix.pricedSet = null; ix.oddsName = null; ix.vac = null; ix.bookList = null; ix.resIdx = null;
   var logs = asArray(d.gamelogs) || [];
   ix.logsByName = {};
   logs.forEach(function(r){
@@ -4424,6 +4424,70 @@ function dejaVuSection(key, g){
    The orb: every priced player in the fixture placed by how hot they are for one market.
    Radius is the calibrated model probability at their line - outer rim is hotter - and colour
    is the edge against the posted price. Tap a dot to add it to the slip.                       */
+
+/* Jupiter's fourth axis needs to know where a past game was played and whether the player was
+   at home. Each sport stores that differently:
+     MLB  venue and home on the row
+     NFL / EPL  a home flag only - the ground is the home side's, so a venue is its home team
+     AFL  neither on the row; joined to results.json by year + round + club (98% of rows)      */
+function rowVenue(key, r){
+  var S = state.sports[key];
+  if (key === 'mlb') return { venue:r.venue || null, home:(r.home == null ? null : !!r.home) };
+  if (key === 'afl'){
+    if (!S.idx.resIdx){
+      var ix = {};
+      (asArray(S.data.results) || []).forEach(function(m){
+        [m.home, m.away].forEach(function(t){ ix[m.year+'|'+m.round+'|'+normTeam(t)] = m; });
+      });
+      S.idx.resIdx = ix;
+    }
+    var rd = +(String(r.RoundName || '').match(/\d+/) || [0])[0];
+    var m = S.idx.resIdx[(r.Year||r.year)+'|'+rd+'|'+normTeam(r.Team || r.team)];
+    return m ? { venue:m.venue, home:normTeam(m.home) === normTeam(r.Team || r.team) } : { venue:null, home:null };
+  }
+  var h = r.home == null ? null : !!(+r.home || r.home === true);
+  var mine = r.Team || r.team, opp = oppOf(key, r);
+  return { venue:(h == null ? null : 'home:'+normTeam(h ? mine : opp)), home:h };
+}
+var J_AXES = [['h2h','H2H',-Math.PI/2],['season','Season',0],['l10','L10',Math.PI/2],['venue','Venue',Math.PI]];
+function jRates(key, p, mkt, line, opp, g){
+  var S = state.sports[key];
+  var logs = sortLogsDesc(((S.idx.logsByName || {})[p.name] || []).slice());
+  var season = curSeason(key);
+  var isHome = normTeam(p.team) === normTeam(g.home);
+  var venueKey = key === 'afl' || key === 'mlb' ? (g.venue || (g.park || {}).name) : 'home:'+normTeam(g.home);
+  var mode = state.view.jVenue || 'venue';
+  var acc = { season:[0,0], h2h:[0,0], l10:[0,0], venue:[0,0] };
+  logs.forEach(function(r, i){
+    var v = statOf(key, r, mkt);
+    if (v == null) return;
+    var hit = v > line ? 1 : 0;
+    if ((+(r.Year||r.year)||0) === season){ acc.season[0] += hit; acc.season[1]++; }
+    if (i < 10){ acc.l10[0] += hit; acc.l10[1]++; }
+    var o = oppOf(key, r);
+    if (o && opp && normTeam(o) === normTeam(opp)){ acc.h2h[0] += hit; acc.h2h[1]++; }
+    var vi = rowVenue(key, r);
+    var matchV = mode === 'venue'
+      ? (vi.venue != null && venueKey != null && String(vi.venue).toLowerCase() === String(venueKey).toLowerCase())
+      : (vi.home != null && vi.home === isHome);
+    if (matchV){ acc.venue[0] += hit; acc.venue[1]++; }
+  });
+  var out = {};
+  Object.keys(acc).forEach(function(k){ out[k] = acc[k][1] ? acc[k][0] / acc[k][1] : null; out[k+'N'] = acc[k][1]; });
+  return out;
+}
+// Production's geometry: radius is overall strength (mean hit rate across the axes that have a
+// sample), angle is the hit-rate-weighted vector - so a dot drifts toward the windows where the
+// player actually delivers. A dot sitting left means "venue player", top means "owns this opponent".
+function jPos(rates){
+  var avail = J_AXES.map(function(a){ return rates[a[0]]; }).filter(function(v){ return v != null; });
+  if (!avail.length) return null;
+  var strength = avail.reduce(function(a,b){ return a+b; }, 0) / avail.length;
+  var vx = 0, vy = 0;
+  J_AXES.forEach(function(a){ var r = rates[a[0]]; if (r != null){ vx += r*Math.cos(a[2]); vy += r*Math.sin(a[2]); } });
+  var angle = (Math.abs(vx) < 1e-6 && Math.abs(vy) < 1e-6) ? -Math.PI/2 : Math.atan2(vy, vx);
+  return { strength:strength, angle:angle };
+}
 function jupiterData(key, g){
   var S = state.sports[key], mkt = state.view.jMkt;
   var mkts = (S.config || {}).oddsMkts || [];
@@ -4458,34 +4522,47 @@ function jupiterData(key, g){
       if (!selKeep && oMin != null && od.price < oMin) return;
       if (!selKeep && oMax != null && od.price > oMax) return;
       var dr = dvpRankFor(key, opp, p.position || p.pos, mkt);
+      var rates = jRates(key, p, mkt, od.line, opp, g);
+      var pos = jPos(rates);
+      if (!pos) return;
       out.push({ p:p, name:p.name, team:team, opp:opp, mkt:mkt, line:od.line, price:od.price,
-                 book:od.book, prob:prob, ev:ev, avg:lg.avg, dvp:dr, home:(team === g.home) });
+                 book:od.book, prob:prob, ev:ev, avg:lg.avg, dvp:dr, home:(team === g.home),
+                 rates:rates, pos:pos });
     });
   });
-  out.sort(function(a,b){ return b.prob - a.prob; });
-  return { rows:out.slice(0, 26), mkt:mkt };
+  out.sort(function(a,b){ return b.pos.strength - a.pos.strength; });
+  return { rows:out.slice(0, 30), mkt:mkt };
 }
 function jupiterOrb(rows, g, key){
-  var W = 320, C = 160, R = 138, IN = 26;
-  var map = function(pr){ var t = Math.max(0, Math.min(1, (pr - 0.2) / 0.65)); return R - t*(R-IN); };
+  var W = 320, C = 160, R = 132;
   var col = function(ev){ return ev > 0.05 ? 'var(--accent)' : (ev > -0.05 ? '#eab308' : '#6b7280'); };
-  var dots = rows.map(function(d, i){
-    var a = -Math.PI/2 + i * 2*Math.PI/Math.max(1, rows.length);
-    var r = map(d.prob);
-    var x = C + Math.cos(a)*r, y = C + Math.sin(a)*r;
+  var mode = state.view.jVenue || 'venue';
+  var spokes = J_AXES.map(function(a){
+    var x = C + R*Math.cos(a[2]), y = C + R*Math.sin(a[2]);
+    var lx = C + (R+16)*Math.cos(a[2]), ly = C + (R+16)*Math.sin(a[2]);
+    var lab = a[0] === 'venue' ? (mode === 'venue' ? 'Venue' : 'H/A') : a[1];
+    return '<line x1="'+C+'" y1="'+C+'" x2="'+x.toFixed(1)+'" y2="'+y.toFixed(1)+'" stroke="var(--border)"/>'
+      + '<text x="'+lx.toFixed(1)+'" y="'+(ly+3).toFixed(1)+'" text-anchor="middle" font-size="9" '
+      + 'font-weight="700" fill="var(--text-3)">'+lab+'</text>';
+  }).join('');
+  var rings = [0.25, 0.5, 0.75, 1].map(function(f){
+    return '<circle cx="'+C+'" cy="'+C+'" r="'+(R*f).toFixed(1)+'" fill="none" stroke="var(--border)"'
+      + (f === 1 ? '' : ' stroke-dasharray="2 3"')+'/>'
+      + '<text x="'+(C+3)+'" y="'+(C - R*f + 9).toFixed(1)+'" font-size="7" fill="var(--text-3)">'
+      + Math.round(f*100)+'%</text>'; }).join('');
+  var dots = rows.map(function(d){
+    var r = Math.max(0.04, d.pos.strength) * R;
+    var x = C + Math.cos(d.pos.angle)*r, y = C + Math.sin(d.pos.angle)*r;
     var on = state.view.jSel && state.view.jSel[d.name];
+    var t = function(k){ return d.rates[k] == null ? '\u2014' : Math.round(d.rates[k]*100)+'% ('+d.rates[k+'N']+')'; };
     return '<g class="j-dot" onclick="LAB.jPick(\'' + esc(d.name).replace(/'/g,"\\'") + '\')">'
       + '<circle cx="'+x.toFixed(1)+'" cy="'+y.toFixed(1)+'" r="'+(on ? 9 : 6)+'" fill="'+col(d.ev)+'" '
       + 'stroke="'+(d.home ? '#38bdf8' : '#fb7185')+'" stroke-width="'+(on ? 3 : 1.5)+'"/>'
-      + '<title>'+esc(d.name)+' \u00b7 '+Math.ceil(d.line)+'+ \u00b7 '+Math.round(d.prob*100)+'% \u00b7 $'
-      + d.price.toFixed(2)+'</title></g>';
+      + '<title>'+esc(d.name)+' \u00b7 '+Math.ceil(d.line)+'+ \u00b7 $'+d.price.toFixed(2)
+      + ' \u00b7 H2H '+t('h2h')+' \u00b7 Season '+t('season')+' \u00b7 L10 '+t('l10')
+      + ' \u00b7 '+(mode === 'venue' ? 'Venue ' : 'H/A ')+t('venue')+'</title></g>';
   }).join('');
-  var rings = [0.33, 0.66, 1].map(function(f){
-    return '<circle cx="'+C+'" cy="'+C+'" r="'+(IN + (R-IN)*f).toFixed(1)
-      + '" fill="none" stroke="var(--border)"/>'; }).join('');
-  return '<svg class="j-orb" viewBox="0 0 '+W+' '+W+'">'+rings
-    + '<text x="'+C+'" y="'+(C+4)+'" text-anchor="middle" font-size="9" fill="var(--text-3)">hotter</text>'
-    + dots+'</svg>';
+  return '<svg class="j-orb" viewBox="-14 -14 348 348">'+rings+spokes+dots+'</svg>';
 }
 function jupiterSection(key, g){
   var S = state.sports[key];
@@ -4520,10 +4597,20 @@ function jupiterSection(key, g){
         + '" placeholder="min" style="width:52px" onchange="LAB.jOdds(\'min\',this.value)">'
         + '<input type="number" step="0.05" min="1" value="'+(state.view.jMax != null ? state.view.jMax : '')
         + '" placeholder="max" style="width:52px" onchange="LAB.jOdds(\'max\',this.value)"></span>'
+      + '<span class="deja-step">4th axis'
+        + '<button class="sl-chip'+((state.view.jVenue || 'venue') === 'venue' ? ' on' : '')
+        + '" onclick="LAB.jVenue(\'venue\')">Venue</button>'
+        + '<button class="sl-chip'+(state.view.jVenue === 'ha' ? ' on' : '')
+        + '" onclick="LAB.jVenue(\'ha\')">Home/Away</button></span>'
       + '<span class="cmb-corr" style="margin:0">'+data.rows.length+' plotted</span></div>'
     + jupiterOrb(data.rows, g, key)
     + (focus ? '<div class="j-detail"><b>'+esc(focus.name)+'</b> '+Math.ceil(focus.line)+'+ '
         + esc(mktLabel(key, focus.mkt))+' \u00b7 $'+focus.price.toFixed(2)+' '+esc(focus.book||'')
+        + ' \u00b7 H2H '+(focus.rates.h2h != null ? Math.round(focus.rates.h2h*100)+'%' : '\u2014')
+        + ' \u00b7 Season '+(focus.rates.season != null ? Math.round(focus.rates.season*100)+'%' : '\u2014')
+        + ' \u00b7 L10 '+(focus.rates.l10 != null ? Math.round(focus.rates.l10*100)+'%' : '\u2014')
+        + ' \u00b7 '+((state.view.jVenue || 'venue') === 'venue' ? 'Venue ' : 'H/A ')
+        + (focus.rates.venue != null ? Math.round(focus.rates.venue*100)+'% ('+focus.rates.venueN+')' : '\u2014')
         + ' \u00b7 model '+Math.round(focus.prob*100)+'% \u00b7 '+(focus.ev > 0 ? '+' : '')
         + Math.round(focus.ev*100)+'% edge \u00b7 avg '+focus.avg.toFixed(1)
         + (focus.dvp ? ' \u00b7 DVP #'+focus.dvp.rank+'/'+focus.dvp.total : '')+'</div>' : '')
@@ -4532,7 +4619,7 @@ function jupiterSection(key, g){
       + '<span><i style="background:#6b7280"></i>priced against</span>'
       + '<span><i style="background:none;border:2px solid #38bdf8"></i>'+esc(abbrOf(key, g.home))+'</span>'
       + '<span><i style="background:none;border:2px solid #fb7185"></i>'+esc(abbrOf(key, g.away))+'</span>'
-      + '<span>outer rim = hotter</span></div>'
+      + '<span>distance = overall hit rate \u00b7 direction = where he hits most</span></div>'
     + (picks.length ? '<div class="j-slip">'+picks.map(function(d){
         return '<div class="j-slip-row">'+playerImgP(key, d.p, 20)
           + '<span style="flex:1">'+esc(d.name)+' '+Math.ceil(d.line)+'+ '+esc(mktLabel(key, d.mkt))+'</span>'
@@ -5856,7 +5943,7 @@ function cmbSugRefresh(){
        you three legs from the same team that all die together;
      - whatever it builds drops into the same slip, so the history backtest and copula in the
        Multi tab apply to a built multi exactly as to a typed one.                            */
-var MB_MODES = [['safe','Safest'],['value','Value'],['lotto','Longshot'],['hist','History'],['match','Matchup']];
+var MB_MODES = [['signals','Signals'],['safe','Safest'],['value','Value'],['lotto','Longshot'],['hist','History'],['match','Matchup']];
 var MB_MIN_GAMES = 4, MB_MAX_CARDS = 14;
 function mbFixtures(){
   var out = [];
@@ -5970,6 +6057,98 @@ function mbAuto(cands, want){
   }
   return picked;
 }
+
+/* SIGNALS MULTI ------------------------------------------------------------------
+   Every Degen Signal that fired on the fixture, each WATERED DOWN: the signal says a player is
+   live, so take a safer rung of the same market rather than the line the signal flagged. That
+   trades price for strike rate, which is what a multi needs - a four-leg multi at 90% per leg
+   lands two times in three; at 65% per leg, fewer than one in five.
+
+   The watered rung is the highest line his last ten still clear at 90%+, never below $1.15 and
+   never HIGHER than the line the signal fired on. One leg per player; the source signal rides
+   along so you can see why each leg is there.                                                 */
+var SM_STRIKE = 0.9, SM_FLOOR = 1.15;
+function smWater(key, name, mkt, sigLine){
+  var S = state.sports[key];
+  var logs = sortLogsDesc(((S.idx.logsByName || {})[name] || []).slice());
+  var vals = [];
+  logs.forEach(function(r){ var v = statOf(key, r, mkt); if (v != null) vals.push(v); });
+  var l10 = vals.slice(0, 10);
+  if (l10.length < 5) return null;
+  var cands = streakCandidates(key, name, mkt)
+    .filter(function(c){ return c.price >= SM_FLOOR && (sigLine == null || c.line <= sigLine + 1e-9); });
+  for (var i=0;i<cands.length;i++){                      // hardest first
+    var c = cands[i];
+    var hits = l10.filter(function(v){ return v > c.line; }).length;
+    if (hits / l10.length >= SM_STRIKE)
+      return { line:c.line, price:c.price, book:c.book, hits:hits, n:l10.length };
+  }
+  return null;
+}
+function signalLegs(key, g){
+  var S = state.sports[key], raw = [];
+  var add = function(src, name, mkt, label, line){
+    var p = (S.idx.byName || {})[name];
+    if (p) raw.push({ src:src, name:name, p:p, mkt:mkt, label:label, sigLine:line });
+  };
+  try { (ouSignals(key, g, 'over') || []).forEach(function(r){ add('Green Light', r.name, r.mkt, r.label, r.line); }); } catch(e){}
+  try { streakers(key, g).forEach(function(r){ add('Streaker', r.name, r.mkt, r.label, r.line); }); } catch(e){}
+  try { eliteMatchups(key, g).forEach(function(r){
+      if (r.entry) add('Elite Matchup', r.name, r.mkt, r.label, r.entry.line); }); } catch(e){}
+  try { h2hSignals(key, g, 'bunny').forEach(function(r){ add('Bunny', r.name, r.mkt, r.label, r.line); }); } catch(e){}
+  if (WRAP_CFG[key]){
+    try { tackleMachines(key, g).rows.forEach(function(r){ add('Tackle Machine', r.name, 'tackles', 'Tackles', r.line); }); } catch(e){}
+  }
+  if (key === 'nfl'){
+    try { nflChunk(key, g).rows.forEach(function(r){ add('Chunk Play', r.name, r.def.k, r.def.l, r.line - 0.5); }); } catch(e){}
+  }
+  var out = [], seen = {};
+  raw.forEach(function(x){
+    if (seen[x.name]) return;                             // one leg per player
+    var w = smWater(key, x.name, x.mkt, x.sigLine);
+    if (!w) return;
+    seen[x.name] = 1;
+    out.push({ src:x.src, name:x.name, p:x.p, mkt:x.mkt, label:x.label, sigLine:x.sigLine,
+               line:w.line, price:w.price, book:w.book, hits:w.hits, n:w.n,
+               team:x.p.team });
+  });
+  out.sort(function(a,b){ return (b.hits/b.n) - (a.hits/a.n) || b.price - a.price; });
+  return out;
+}
+function signalsMultiPanel(key, g){
+  var legs = signalLegs(key, g);
+  if (!legs.length)
+    return '<div class="empty" style="padding:18px">No Degen Signal on this fixture waters down to a '
+      + Math.round(SM_STRIKE*100)+'%-strike rung at $'+SM_FLOOR.toFixed(2)+'+.</div>';
+  var drop = state.view.smDrop || {};
+  var kept = legs.filter(function(l){ return !drop[l.name]; });
+  var built = kept.map(function(l){ return cmbLeg(key, l.p, [l.mkt, l.label], l.line, 'over'); })
+    .filter(function(l){ return l && l.prob != null; });
+  var comb = kept.reduce(function(a,l){ return a * l.price; }, 1);
+  var joint = (kept.length > 1 && built.length === kept.length) ? cmbJoint(built) : null;
+  if (joint != null && (!isFinite(joint) || joint <= 0)) joint = null;
+  return '<div class="cmb-corr" style="margin:0 0 8px">Every signal that fired on this game, stepped down to '
+    + 'the highest rung its last ten clear '+Math.round(SM_STRIKE*100)+'%+ of the time. Tap \u00d7 to drop a leg.</div>'
+    + legs.map(function(l){
+        var off = !!drop[l.name];
+        return '<div class="deja-card"'+(off ? ' style="opacity:.4"' : '')+'>'+playerImgP(key, l.p, 26)
+          + '<div class="deja-m"><b>'+esc(l.name)+'</b><span>'
+          + Math.ceil(l.line)+'+ '+esc(l.label)
+          + (l.sigLine != null && Math.ceil(l.sigLine) !== Math.ceil(l.line)
+              ? ' <span class="deja-vals">(signal '+Math.ceil(l.sigLine)+'+)</span>' : '')
+          + ' \u00b7 '+l.hits+'/'+l.n+' \u00b7 '+esc(l.src)+'</span></div>'
+          + '<span class="deja-px">$'+l.price.toFixed(2)+'</span>'
+          + '<button class="cmb-leg-x" onclick="LAB.smDrop(\'' + esc(l.name).replace(/'/g,"\\'") + '\')">'
+          + (off ? '+' : '&times;')+'</button></div>';
+      }).join('')
+    + '<div class="deja-sum">'
+      + '<div class="cmb-sum-row"><span>'+kept.length+' legs at the book</span><b>$'+comb.toFixed(2)+'</b></div>'
+      + (joint != null ? '<div class="cmb-sum-row"><span>Correlated model</span><b>'+cmbOdds(joint)+'</b></div>'
+        + '<div class="cmb-sum-row tot"><span>Edge</span><b class="'+(comb*joint - 1 > 0 ? 'cmb-vscore good' : 'cmb-vscore bad')
+        + '" style="font-size:14px">'+((comb*joint - 1) > 0 ? '+' : '')+Math.round((comb*joint - 1)*100)+'%</b></div>' : '')
+      + (kept.length ? '<button class="pc-add" onclick="LAB.smAdd()">Send to Check My Multi</button>' : '')
+    + '</div>';
+}
 function mbPanel(){
   var v = state.view;
   var fixes = mbFixtures();
@@ -5989,6 +6168,7 @@ function mbPanel(){
     ensureSport(f.key);
     return h + '<div class="empty" style="padding:18px">Loading '+esc(SPORTS[f.key].name)+' history\u2026</div>';
   }
+  if (mode === 'signals') return h + signalsMultiPanel(f.key, f.g);
   var cands = mbCandidates(f.key, f.g, mode);
   if (!cands.length) return h + '<div class="empty" style="padding:18px">No legs qualify for '
     + esc((MB_MODES.filter(function(m){ return m[0]===mode; })[0]||['',''])[1])+' on this game.</div>';
@@ -6792,6 +6972,7 @@ window.LAB = {
     render();
   },
   jMkt: function(m){ state.view.jMkt = m; state.view.jSel = {}; state.view.jFocus = null; render(); },
+  jVenue: function(m){ state.view.jVenue = m; render(); },
   jTeam: function(t){
     state.view.jHide = state.view.jHide || {};
     state.view.jHide[t] = !state.view.jHide[t];
@@ -6842,7 +7023,22 @@ window.LAB = {
   },
   stMkt: function(k, m){ state.view.stMkt = state.view.stMkt || {}; state.view.stMkt[k] = m; render(); },
   stPos: function(k, p){ state.view.stPos = state.view.stPos || {}; state.view.stPos[k] = p; render(); },
-  mbFix: function(i){ state.view.mbFix = +i; render(); },
+  mbFix: function(i){ state.view.mbFix = +i; state.view.smDrop = {}; render(); },
+  smDrop: function(n){
+    state.view.smDrop = state.view.smDrop || {};
+    if (state.view.smDrop[n]) delete state.view.smDrop[n]; else state.view.smDrop[n] = 1;
+    render();
+  },
+  smAdd: function(){
+    var fixes = mbFixtures(), f = fixes[Math.min(state.view.mbFix || 0, fixes.length - 1)];
+    if (!f) return;
+    var drop = state.view.smDrop || {};
+    var legs = signalLegs(f.key, f.g).filter(function(l){ return !drop[l.name]; })
+      .map(function(l){ return cmbLeg(f.key, l.p, [l.mkt, l.label], l.line, 'over'); }).filter(Boolean);
+    if (!legs.length) return;
+    state.view.cmbLegs = legs; state.view.cmbMode = 'multi';
+    render();
+  },
   mbMode: function(m){ state.view.mbMode = m; render(); },
   mbAdd: function(id){
     var fixes = mbFixtures(), f = fixes[Math.min(state.view.mbFix || 0, fixes.length - 1)];
