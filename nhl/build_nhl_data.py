@@ -164,6 +164,16 @@ def fetch_schedule(seasons):
                 if gid in seen:
                     continue
                 seen.add(gid)
+                # Preseason out, regular season and playoffs in. The club schedule endpoint mixes
+                # all three; preseason is split squads full of AHL call-ups, so as results it
+                # turned every club's opening-night "Last 5" into exhibition games, and as fixtures
+                # it fired the odds window daily for games books never post props for.
+                # gameType is 1/2/3; the id's 5th-6th digits say the same (2026010016 = preseason).
+                gtype = g.get("gameType")
+                if gtype is None:
+                    gtype = int(str(gid)[4:6]) if str(gid)[4:6].isdigit() else 2
+                if int(gtype) == 1:
+                    continue
                 home = (g.get("homeTeam") or {}).get("abbrev")
                 away = (g.get("awayTeam") or {}).get("abbrev")
                 for side in ("homeTeam", "awayTeam"):
