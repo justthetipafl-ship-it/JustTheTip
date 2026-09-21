@@ -1090,6 +1090,14 @@ function loadTier2(key){
                                         : 'odds.json failed to load twice';
       } else { S.t2 = null; render(); return; }   // one transient failure: allow a retry
     }
+    // Published but empty is the normal state before books post props (NHL in preseason): the
+    // file exists, so it isn't "missing", but there is still nothing to price. Say so the same way.
+    if (!S.noOdds){
+      var od0 = S.data.odds || {};
+      var nRows = ((od0.books && od0.books.length ? od0.books : (od0.lines || [])).length) + ((od0.alt || []).length);
+      if (!nRows) S.noOdds = 'books haven\u2019t posted player prices yet'
+        + (od0.updated ? ' (last checked '+String(od0.updated).replace('T',' ').replace('Z',' UTC')+')' : '');
+    }
     // player -> team, so odds rows can be filtered by match
     S.idx.playerTeam = {};
     var pl = S.data.players;
@@ -1295,9 +1303,27 @@ function teamFullName(key, t){
   var rec = teamRec(key, t);
   return rec.name || rec.fullName || rec.team || t;
 }
+// The NHL's own SVGs carry padding around the crest, so they drew visibly smaller than every
+// other sport's in the same box. ESPN hosts NHL logos in the same full-frame format as the NFL
+// ones; the league SVG stays as the fallback if ESPN ever misses one.
+var NHL_ESPN = { ANA:'ana', BOS:'bos', BUF:'buf', CGY:'cgy', CAR:'car', CHI:'chi', COL:'col',
+  CBJ:'cbj', DAL:'dal', DET:'det', EDM:'edm', FLA:'fla', LAK:'la', MIN:'min', MTL:'mtl', NSH:'nsh',
+  NJD:'nj', NYI:'nyi', NYR:'nyr', OTT:'ott', PHI:'phi', PIT:'pit', SJS:'sj', SEA:'sea', STL:'stl',
+  TBL:'tb', TOR:'tor', UTA:'utah', VAN:'van', VGK:'vgk', WSH:'wsh', WPG:'wpg' };
 function teamLogo(key, t){
   var S = state.sports[key], cfg = S.config || {};
   var rec = teamRec(key, t);
+  if (key === 'nhl'){
+    var code = rec.team || t, espn = NHL_ESPN[String(code).toUpperCase()];
+    if (espn){
+      var fb = rec.logo || '';
+      var ph0 = '<div class=&quot;fxr-logo-ph&quot;>'+esc(String(t).slice(0,3).toUpperCase())+'</div>';
+      // first failure swaps to the league SVG, a second to the text placeholder
+      return '<img class="fxr-logo" src="https://a.espncdn.com/i/teamlogos/nhl/500/'+espn+'.png" alt="" loading="lazy" '
+        + 'onerror="if(this.dataset.fb!==\'1\'&&\''+esc(fb)+'\'){this.dataset.fb=\'1\';this.src=\''+esc(fb)+'\';}'
+        + 'else{this.outerHTML=\''+ph0+'\';}">';
+    }
+  }
   var url = rec.logo || '';                                   // EPL: baked into teams.json
   if (!url && cfg.logoCdn){                                   // AFL / NFL / MLB: CDN + id
     var canon = rec.team || t;                                // resolve aliases before hitting the CDN
@@ -6119,8 +6145,10 @@ function mbFixtures(){
   var out = [];
   Object.keys(SPORTS).forEach(function(key){
     if (!state.view.active[key]) return;
+    var hz = fixtureHorizon(key);
     (asArray(state.sports[key].data.fixture) || []).forEach(function(g, i){
       if (gameStart(g).ms && gameStart(g).ms < Date.now() - 3*36e5) return;   // done and dusted
+      if (!inFixtureWindow(key, g, hz)) return;
       out.push({ key:key, i:i, g:g });
     });
   });
@@ -6896,16 +6924,38 @@ function doneCount(){
   });
   return n;
 }
+// A rolling week. AFL/NFL/EPL/MLB builds only ever write the coming round, so the page never
+// needed a window - NBL and NHL write the whole season (161 and 1,344 games) and flooded it.
+// The window is per sport: the next 7 days, or - if that sport's next game is further out, as
+// NHL's opener is in preseason - just its next game day, so a sport never disappears entirely.
+var FIX_DAYS = 7;
+function fixtureHorizon(k){
+  var now = Date.now(), first = null;
+  (asArray(state.sports[k].data.fixture) || []).forEach(function(g){
+    if (!g || !g.home || !g.away) return;
+    var ms = gameStart(g).ms;
+    if (ms == null || gameDone(k, g, ms)) return;
+    if (first == null || ms < first) first = ms;
+  });
+  var week = now + FIX_DAYS * 864e5;
+  return first != null && first > week ? first + 864e5 : week;
+}
+function inFixtureWindow(k, g, horizon){
+  var ms = gameStart(g).ms;
+  return ms == null || ms <= horizon;                 // undated rows stay: better shown than lost
+}
 function allGames(){
   var out = [];
   Object.keys(SPORTS).forEach(function(k){
     if (!state.view.active[k]) return;
     var fx = asArray(state.sports[k].data.fixture) || [];
+    var horizon = fixtureHorizon(k);
     fx.forEach(function(g, idx){
       if (!g || !g.home || !g.away) return;
       var st = gameStart(g);
       var done = gameDone(k, g, st.ms);
       if (done && !state.view.showDone) return;        // yesterday's games drop off by default
+      if (!done && !inFixtureWindow(k, g, horizon)) return;
       out.push({ sport:k, g:g, ms:st.ms, hasTime:st.hasTime, done:done, i:idx });
     });
   });
