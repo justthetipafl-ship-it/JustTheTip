@@ -978,17 +978,44 @@ function loadConfig(key){
   _cfgQueue = _cfgQueue.then(function(){
     return new Promise(function(done){
       var prev = window.SPORT_CONFIG;
+      var prevScoring = window.JTTScoring;
+      window.SPORT_CONFIG = undefined;              // so a file that never sets it can be caught
       var el = document.createElement('script');
       el.src = sportPath(key, 'config.js') + '?v=' + (S.version || Date.now());
-      el.onload = el.onerror = function(){
-        S.config = window.SPORT_CONFIG || {};
+      var finish = function(failed){
+        var got = window.SPORT_CONFIG;
+        // A config.js that doesn't set SPORT_CONFIG used to fall through to {} silently, and
+        // every section then reported "no markets" as if the sport simply had none. Say what
+        // actually happened - including the case where a scoring file was uploaded over it.
+        if (failed) S.configError = 'config.js failed to load';
+        else if (!got || typeof got !== 'object'){
+          S.configError = (window.JTTScoring && window.JTTScoring !== prevScoring)
+            ? 'config.js contains a scoring engine, not a config - the file was replaced by mistake'
+            : 'config.js loaded but never set SPORT_CONFIG';
+        }
+        S.config = (got && typeof got === 'object') ? got : {};
         window.SPORT_CONFIG = prev;                 // restore so nothing leaks between sports
+        if (window.JTTScoring !== prevScoring) window.JTTScoring = prevScoring;
         done(S.config);
       };
+      el.onload = function(){ finish(false); };
+      el.onerror = function(){ finish(true); };
       document.head.appendChild(el);
     });
   });
   return _cfgQueue;
+}
+function configBanner(){
+  var bad = Object.keys(SPORTS).filter(function(k){
+    return state.view.active[k] && state.sports[k] && state.sports[k].configError; });
+  if (!bad.length) return '';
+  return bad.map(function(k){
+    return '<div class="sec-note" style="border-color:#ef4444;margin:8px 0">'
+      + '<i class="ti ti-alert-triangle" style="color:#ef4444"></i><span><b>'+esc(SPORTS[k].name)
+      + ' is running without its config.</b> '+esc(state.sports[k].configError)
+      + '. Every market list, DVP split and position filter for '+esc(SPORTS[k].name)
+      + ' is empty until '+esc(SPORTS[k].dir)+'/config.js is restored.</span></div>';
+  }).join('');
 }
 function loadTier1(key){
   var S = state.sports[key];
@@ -6874,7 +6901,7 @@ function render(){
 
   if (state.view.focus){
     h = '' + focusPage();                       // focused fixture replaces the page
-    $('app').innerHTML = h + playerPanel() + booksPanel() + cmbFab() + cmbPanel();
+    $('app').innerHTML = configBanner() + h + playerPanel() + booksPanel() + cmbFab() + cmbPanel();
     return;
   }
   if (state.view.tab === 'stats'){
@@ -6901,7 +6928,7 @@ function render(){
       });
     }
   }
-  $('app').innerHTML = h + playerPanel() + booksPanel() + cmbFab() + cmbPanel();
+  $('app').innerHTML = configBanner() + h + playerPanel() + booksPanel() + cmbFab() + cmbPanel();
 }
 
 /* ---- public ------------------------------------------------------------- */
