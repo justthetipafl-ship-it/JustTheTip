@@ -75,6 +75,12 @@ BOOKMAKERS = ['Sportsbet', 'TAB', 'Pointsbet', 'Ladbrokes', 'Unibet', 'BetRight'
 # per-sport: rapidoddsapi main market key -> JTT market key (config.js uses the JTT keys).
 # milestone (X+) ladders are the same base key + '_milestones'; they feed the `alt` array.
 SPORTS = {
+    # NHL: keys are the gamelog fields in nhl/data/gamelogs_*.json. Only four player props exist
+    # for hockey - no saves, blocks, hits or PP points - so those config markets stay unpriced.
+    'NHL': {
+        'player_goals': 'goals', 'player_points': 'points',
+        'player_shots_on_goal': 'shots', 'player_assists': 'assists',
+    },
     # Keys are the gamelog field names in nbl/data/gamelogs_*.json, so every market joins to its
     # stat with no mapping in the shell. pr/pa/ra/pra are pre-summed on each gamelog row.
     'NBL': {
@@ -131,11 +137,14 @@ GAME_MARKETS = {
     'NFL': ['head_to_head', 'alternate_lines', 'alternate_total_points', 'alternate_total_touchdowns',
             'alternate_team_total_points', 'head_to_head_1st_half', 'alternate_lines_1st_half',
             'alternate_total_points_1st_half', 'alternate_team_total_points_1st_half'],
+    # period splits exist too, but transform() only knows full-game and first-half keys, so
+    # requesting them would spend credits on rows that get thrown away
+    'NHL': ['head_to_head', 'alternate_lines', 'alternate_total_goals', 'alternate_team_total_goals'],
     'NBL': ['head_to_head', 'alternate_lines', 'alternate_total_points', 'alternate_team_total_points',
             'head_to_head_1st_half', 'alternate_lines_1st_half', 'alternate_total_points_1st_half',
             'alternate_team_total_points_1st_half'],
 }
-H2H_2WAY = {'NFL', 'NBL'}   # 2-way moneyline (no draw) vs soccer's 3-way
+H2H_2WAY = {'NFL', 'NBL', 'NHL'}   # 2-way moneyline (no draw) vs soccer's 3-way
 
 # matchOdds must use the same team codes as fixture.json / teams.json, or the shell can't
 # join them (it keys on [home,away]). ROA returns full names for NFL, so map them here.
@@ -159,11 +168,28 @@ NBL_ABBR = {
     'sydney kings':'SYD','tasmania jackjumpers':'TAS','tasmania jack jumpers':'TAS',
 }
 
+# NHL fixture.json / teams.json use tricodes; books use full names. Utah has had two names.
+NHL_ABBR = {
+    'anaheim ducks':'ANA','boston bruins':'BOS','buffalo sabres':'BUF','calgary flames':'CGY',
+    'carolina hurricanes':'CAR','chicago blackhawks':'CHI','colorado avalanche':'COL',
+    'columbus blue jackets':'CBJ','dallas stars':'DAL','detroit red wings':'DET',
+    'edmonton oilers':'EDM','florida panthers':'FLA','los angeles kings':'LAK','minnesota wild':'MIN',
+    'montreal canadiens':'MTL','montréal canadiens':'MTL','nashville predators':'NSH',
+    'new jersey devils':'NJD','new york islanders':'NYI','new york rangers':'NYR',
+    'ottawa senators':'OTT','philadelphia flyers':'PHI','pittsburgh penguins':'PIT',
+    'san jose sharks':'SJS','seattle kraken':'SEA','st louis blues':'STL','st. louis blues':'STL',
+    'tampa bay lightning':'TBL','toronto maple leafs':'TOR','utah mammoth':'UTA',
+    'utah hockey club':'UTA','vancouver canucks':'VAN','vegas golden knights':'VGK',
+    'washington capitals':'WSH','winnipeg jets':'WPG',
+}
+
 def team_code(name, sport):
     if sport == 'NFL':
         return NFL_ABBR.get((name or '').strip().lower(), name)
     if sport == 'NBL':
         return NBL_ABBR.get((name or '').strip().lower(), name)
+    if sport == 'NHL':
+        return NHL_ABBR.get((name or '').strip().lower(), name)
     return name
 
 # NOTE on the markets below `alternate_total_points` in NFL's list: team totals and the
