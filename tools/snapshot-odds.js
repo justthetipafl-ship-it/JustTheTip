@@ -13,7 +13,7 @@
  */
 const fs = require('fs'), path = require('path'), zlib = require('zlib');
 const ROOT = process.env.JTT_ROOT || path.resolve(__dirname, '..');
-const SPORTS = ['AFL', 'nfl', 'EPL', 'mlb'];
+const SPORTS = ['AFL', 'nfl', 'EPL', 'mlb', 'nbl', 'nhl'];
 const today = new Date().toISOString().slice(0, 10);
 
 let wrote = 0;
@@ -50,11 +50,16 @@ for (const dir of SPORTS){
   let fixture = [];
   try {
     fixture = JSON.parse(fs.readFileSync(`${ROOT}/${dir}/data/fixture.json`, 'utf8'))
-      .map(g => ({ home:g.home, away:g.away, utc:g.utc || g.date || null,
+      // date (local), week/season and abbreviations are what the grader needs to find the
+      // gamelog row each price was for - AFL/NFL gamelogs have no dates, MLB uses full names here
+      .map(g => ({ home:g.home, away:g.away, utc:g.utc || g.gameTimeUTC || g.date || null,
+                   date:g.date || null, season:g.season != null ? g.season : null,
+                   homeAbbr:g.homeAbbr || null, awayAbbr:g.awayAbbr || null,
                    week:g.week != null ? g.week : null, gamePk:g.gamePk != null ? g.gamePk : null }));
   } catch (e) {}
 
   const body = { sport:dir, captured:new Date().toISOString().slice(0, 19) + 'Z',
+                 oddsUpdated: odds.updated || null,     // when the prices were pulled, not saved
                  rows:out.length, sourceRows:rows.length, fixture, odds:out };
 
   const outDir = `${ROOT}/${dir}/odds-history`;
