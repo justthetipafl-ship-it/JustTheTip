@@ -4948,7 +4948,18 @@ function letsClimb(key, g){
         var vals = statVals(key, p.name, k, sample);
         var hr = function(line){ return vals.length ? vals.filter(function(v){ return v > line; }).length / vals.length : 0; };
         var r1 = rungs[si+1], r2 = rungs[si+2];
-        if (hr(r1.line) < CLIMB_HIT || hr(r2.line) < CLIMB_FLOOR) return;     // production's gate
+        // Two ways to qualify. Production's rule (70% one rung up, 40% two up) is an AFL rule:
+        // on NBL and NFL ladders the first $1.70 rung already sits at or above most players'
+        // median, so it almost never fires - even on one-step markets like receptions or assists.
+        // The principle travels as a price-relative test: on BOTH rungs above the start, his
+        // smoothed hit rate beats the rung's implied probability by 5 points, and he genuinely
+        // clears them (40%+). Tail rungs can't sneak in - a lucky game or two isn't 40%.
+        var nG = vals.length;
+        var beats = function(r){ var h = hr(r.line), emp = (h*nG + 1)/(nG + 2);
+                                 return h >= 0.40 && emp > 1/r.price + 0.05; };
+        var gateAbs = hr(r1.line) >= CLIMB_HIT && hr(r2.line) >= CLIMB_FLOOR;
+        var gateRel = beats(r1) && beats(r2);
+        if (!gateAbs && !gateRel) return;
         // Calibration was fitted on lines near each player's own average. Out on the tail of a
         // ladder it extrapolates - AFL's Platt slope (0.358) pulls everything to the middle, so a
         // 13% event reads as ~50% and the "best rung" is always the longest one. Use whichever is
@@ -4969,7 +4980,8 @@ function letsClimb(key, g){
         var top = ladder.filter(function(r){ return r.ev != null; })
           .sort(function(a,b){ return b.ev - a.ev; })[0];
         if (!top || top.ev <= 0) return;
-        var cand = { name:p.name, p:p, opp:opp, mkt:k, label:m[1], ladder:ladder, top:top, n:vals.length };
+        var cand = { name:p.name, p:p, opp:opp, mkt:k, label:m[1], ladder:ladder, top:top, n:vals.length,
+                     why: gateAbs ? 'holds 70% a rung up' : 'beats the price two rungs up' };
         if (!best || top.ev > best.top.ev) best = cand;                       // one market per player
       });
       if (best) out.push(best);
@@ -4977,7 +4989,8 @@ function letsClimb(key, g){
   });
   out.sort(function(a,b){ return b.top.ev - a.top.ev; });
   return { rows:out.slice(0, SIG_MAX_ROWS),
-           why:'No priced ladder on this fixture holds 70% a rung above its $1.70 start with a positive-EV rung on it.' };
+           why:'No priced ladder on this fixture holds 70% a rung above its $1.70 start, or beats its price on both '
+             + 'rungs above it, with a positive-edge rung to take.' };
 }
 /* ---- rows ---- */
 function aflRowHead(key, r, tag){
@@ -5026,7 +5039,8 @@ function climbRow(key, r){
     + '<div class="gl-bet"><b>'+Math.ceil(r.top.line)+'+ '+esc(r.label)+'</b> \u00b7 $'+r.top.price.toFixed(2)+' '+esc(r.top.book||'')
     + ' \u00b7 model '+Math.round(r.top.prob*100)+'%</div>'
     + '<div class="gl-why">'+lad+'</div>'
-    + '<div class="cmb-corr" style="margin:3px 0 0">Rungs: line \u00b7 price \u00b7 hit rate over '+r.n+' games \u00b7 edge. Highlighted rung is the best-priced.</div></div>'
+    + '<div class="cmb-corr" style="margin:3px 0 0">Qualified: '+esc(r.why)+'. Rungs: line \u00b7 price \u00b7 hit rate over '
+    + r.n+' games \u00b7 edge. Highlighted rung is the best-priced.</div></div>'
     + '<div class="gl-right"><div class="gl-ev pos">+'+Math.round(r.top.ev*100)+'%</div><div class="gl-evl">BEST RUNG EDGE</div></div></div>';
 }
 function aflSignals(key, g){
