@@ -13,7 +13,7 @@ const fs = require('fs'), vm = require('vm'), path = require('path');
 const ROOT = process.env.JTT_ROOT || path.resolve(__dirname, '..');
 const SERVE = ROOT;
 const WRITE = process.env.CALIB_WRITE !== '0';      // set CALIB_WRITE=0 to report without committing
-const SPORTS = [['afl','AFL'], ['nfl','nfl'], ['epl','EPL'], ['mlb','mlb']];
+const SPORTS = [['afl','AFL'], ['nfl','nfl'], ['epl','EPL'], ['mlb','mlb'], ['nbl','nbl']];
 const TEST_DAYS = 8, MAX_MARKETS = 5, MIN_PREDS = 1000;
 
 const COVER = { epl: 'passes' };
@@ -48,7 +48,16 @@ const dayOf = r => {
 function run(key, dir){
   const { scoring, cfg } = loadModule(dir);
   if (!scoring || !scoring.configure || !scoring.scoreCMP) return console.log(`${key}: no usable module`);
-  const players = J(dir, 'players'), logs = J(dir, 'gamelogs');
+  const players = J(dir, 'players');
+  // NBL publishes one gamelog file per season (listed in meta.gamelogFiles) instead of a single
+  // gamelogs.json - merge them, in the order meta lists them
+  let logs;
+  try { logs = J(dir, 'gamelogs'); }
+  catch (e){
+    const files = ((() => { try { return J(dir, 'meta'); } catch (e2){ return {}; } })().gamelogFiles) || [];
+    logs = [].concat(...files.map(f => J(dir, f.replace(/\.json$/, ''))));
+    if (!logs.length) throw e;
+  }
   const teams = J(dir, 'teams'), dvp = J(dir, 'dvp');
   let teamsForm = teams; try { teamsForm = J(dir, 'teams_form'); } catch (e) {}
   let fixture = []; try { fixture = J(dir, 'fixture'); } catch (e) {}
@@ -64,7 +73,11 @@ function run(key, dir){
   // seasons until there is enough to fit on. Training is unaffected either way: at every test
   // day the model still sees every game that came before it, across all seasons.
   const allDays = Object.keys(perDay).sort();
-  const curDays = allDays.filter(d => +String(d).slice(0, 4) === season);
+  // "current season" is read off the ROWS, not the date: NBL's 2027 season is played in
+  // late-2026 dates, so a calendar-year test would find no current season at all
+  const curDaySet = {};
+  logs.forEach(r => { if (+(r.Year || r.year) === season) curDaySet[dayOf(r)] = 1; });
+  const curDays = allDays.filter(d => curDaySet[d]);
   let testDays = curDays.slice(-TEST_DAYS);
   let reach = TEST_DAYS;
   const roughPerDay = testDays.length ? 0 : 0;
