@@ -254,24 +254,36 @@ def build(by_season, results, current):
         row["logo"] = "https://assets.nhle.com/logos/nhl/svg/%s_light.svg" % tm   # official tricode CDN
         teams.append(row)
 
-    # DVP: per (defending team, position) stat allowed per game, current season
-    DVP_STATS = ("goals", "assists", "points", "shots", "ppPoints")
-    dvp_acc = {}; team_matches = defaultdict(set)
-    for r in by_season.get(current if current in by_season else (gl_seasons[-1] if gl_seasons else None), []):
-        if r["pos"] == "G":
-            continue
+    # DVP: each defence's most recent DVP_GAMES games, across seasons.
+    # This used the CURRENT season only - fine mid-season, but the moment the build rolls to a new
+    # season it collapses to zero or one game per team. NBL hit exactly that and it made the model
+    # measurably worse (Brier 0.2436 -> 0.2573). 82 games is one full regular season.
+    # blocks and hits added: config.js posts both as markets, and without them in DVP those
+    # markets had no matchup read at all.
+    DVP_STATS = ("goals", "assists", "points", "shots", "ppPoints", "blocks", "hits")
+    DVP_GAMES = 82
+    sk_rows = [r for yr in gl_seasons for r in by_season.get(yr, []) if r["pos"] != "G"]
+    match_date = {r["MatchId"]: r.get("Date", "") for r in sk_rows}
+    defended = defaultdict(set)
+    for r in sk_rows:
+        defended[r["Opp"]].add(r["MatchId"])
+    keep = {T: set(sorted(mids, key=lambda m: match_date.get(m, ""), reverse=True)[:DVP_GAMES])
+            for T, mids in defended.items()}
+    dvp_acc = {}
+    for r in sk_rows:
         T, pos, mid = r["Opp"], r["pos"], r["MatchId"]
+        if mid not in keep.get(T, ()):
+            continue
         d = dvp_acc.setdefault((T, pos), defaultdict(float))
-        for s in DVP_STATS:
-            if r.get(s) is not None:
-                d[s] += r[s]
-        team_matches[T].add(mid)
+        for s_ in DVP_STATS:
+            if r.get(s_) is not None:
+                d[s_] += r[s_]
     dvp = []
     for (T, pos), d in dvp_acc.items():
-        g = max(1, len(team_matches.get(T, set())))
-        row = {"team": T, "pos": pos, "games": len(team_matches.get(T, set()))}
-        for s in DVP_STATS:
-            row[s] = round(d[s] / g, 2)
+        g = max(1, len(keep.get(T, ())))
+        row = {"team": T, "pos": pos, "games": len(keep.get(T, ()))}
+        for s_ in DVP_STATS:
+            row[s_] = round(d[s_] / g, 2)
         dvp.append(row)
 
     return gl_seasons, players, teams, dvp
