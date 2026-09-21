@@ -28,7 +28,7 @@ window.JTTScoring = (function () {
 
   // ---- module data (set by configure) ----
   let PD = [], TD = [], TF = [], DVP = [], _dvpIdx = {}, CUR = "2026";
-  let BA = {}, MIN_FLOOR = 15, LEAGUE = "nba";
+  let BA = {}, MIN_FLOOR = 15, LEAGUE = "nhl";
   const _ctxSigCache = {}, _l5Cache = {}, _pdPoolAvgs = {};
 
   // ---- constants ----
@@ -321,7 +321,65 @@ window.JTTScoring = (function () {
   }
 
   /* ============== ENGINE (verbatim from AFL) ============== */
-  function drLine(avg){ if(avg<1) return null; return Math.round(avg); }
+  /* ---- probability model ---------------------------------------------------
+     No prob() existed: callers fell back to the historical hit rate, which Brier-scores WORSE
+     than always guessing the base rate. Same rebuild as AFL, NFL and NBL. Walk-forward over the
+     2025-26 season, 134,820 player-games (shots, points, assists, goals, blocks, saves):
+
+       model                                  Brier    vs base   top-vs-bottom quartile
+       hit rate (old)                        0.2544    WORSE           19.1pt
+       negbin(EWMA form)                     0.2399    beats           26.6pt
+       + DVP (82-game dvp.json) + shrink     0.2356    beats           31.1pt   <- this
+
+     History is every game he dressed for (TOI > 0), NOT the 15-minute MIN_FLOOR set: in NBL that
+     floor dropped the short nights from history while they still happened in the games being
+     priced, and the projection ran 9 points hot. Same trap here - fourth-liners and
+     sheltered-minute defencemen have plenty of sub-15-minute games.                            */
+  const P_HALFLIFE = 5, P_SHRINK = 3, P_DVP_W = 0.5, P_WIN = 10;
+  function _ewma(vals, hl){
+    const lam = Math.pow(0.5, 1/hl);
+    let num = 0, den = 0;
+    for (let i = vals.length-1, w = 1; i >= 0; i--, w *= lam){ num += vals[i]*w; den += w; }
+    return den ? num/den : 0;
+  }
+  function _countAtLeast(mu, k, vals){
+    if(!(mu > 0)) return 0;
+    const pois = () => { let cum = 0, term = Math.exp(-mu);
+      for(let i = 0; i < k; i++){ cum += term; term = term*mu/(i+1); }
+      return Math.max(0, Math.min(1, 1-cum)); };
+    if(!vals || vals.length < 4) return pois();
+    const m = vals.reduce((a,b)=>a+b,0)/vals.length;
+    const v = vals.reduce((a,b)=>a+(b-m)*(b-m),0)/vals.length;
+    if(!(v > m*1.05)) return pois();                    // goals are near-Poisson; saves are not
+    let size = (m*m)/(v-m); size = Math.max(0.35, Math.min(80, size));
+    const pp = size/(size+mu);
+    let cum = 0, term = Math.pow(pp, size);
+    for(let i = 0; i < k; i++){ cum += term; term = term*(size+i)/(i+1)*(1-pp); }
+    return Math.max(0, Math.min(1, 1-cum));
+  }
+  function prob(p, statKey, line, opp){
+    if(!p || !statKey || line == null) return null;
+    const all = dvpByNameRaw(p.name).filter(r => (+r.toiMin || 0) > 0)
+      .slice().sort((a,b) => String(a.Date||'').localeCompare(String(b.Date||'')));
+    if(all.length < 4) return null;
+    const hist = all.slice(-P_WIN).map(r => +r[statKey] || 0);
+    const cur = all.filter(isCurSeason).map(r => +r[statKey] || 0);
+    const base = cur.length >= 4 ? cur : all.slice(-20).map(r => +r[statKey] || 0);
+    const baseline = base.reduce((a,b)=>a+b,0)/base.length;
+    let mu = (_ewma(hist, P_HALFLIFE)*hist.length + baseline*P_SHRINK)/(hist.length + P_SHRINK);
+    const pos = POS_TO_DVP[p.position] || p.position;
+    const pct = opp ? getDVPPct(opp, pos, statKey) : null;
+    if(pct != null) mu *= Math.max(0.75, Math.min(1.3, 1 + (pct/100)*P_DVP_W));
+    return Math.max(0.01, Math.min(0.99, _countAtLeast(mu, Math.ceil(line), hist)));
+  }
+  // Copied from the basketball engine, this returned null for any average under 1 - which in
+  // hockey is goals, assists and points, the most-bet props there are. Hockey's low-count props
+  // are posted at 0.5 ("1 or more"), so that is the line for anything averaging under one.
+  function drLine(avg){
+    if(!(avg > 0.05)) return null;
+    if(avg < 1) return 0.5;
+    return Math.round(avg);
+  }
 
   function scoreCMP(p, statKey, line, opp){
     const logKey=pdToLogKey(statKey);
@@ -600,6 +658,6 @@ window.JTTScoring = (function () {
   return {
     configure, scoreCMP, cmpFactors, getContextSignals, scoreOverLine, scoreUnderLine,
     verdict, drLine, getDVPPct, dvpRanked, getDVPAvg, muPct, muInfo,
-    getL5Avg, getRecentAvg, getHitRate, POS_TO_DVP
+    getL5Avg, getRecentAvg, getHitRate, prob, POS_TO_DVP
   };
 })();
