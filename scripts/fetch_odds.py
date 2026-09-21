@@ -75,6 +75,14 @@ BOOKMAKERS = ['Sportsbet', 'TAB', 'Pointsbet', 'Ladbrokes', 'Unibet', 'BetRight'
 # per-sport: rapidoddsapi main market key -> JTT market key (config.js uses the JTT keys).
 # milestone (X+) ladders are the same base key + '_milestones'; they feed the `alt` array.
 SPORTS = {
+    # Keys are the gamelog field names in nbl/data/gamelogs_*.json, so every market joins to its
+    # stat with no mapping in the shell. pr/pa/ra/pra are pre-summed on each gamelog row.
+    'NBL': {
+        'player_points': 'points', 'player_rebounds': 'rebounds', 'player_assists': 'assists',
+        'player_made_threes': 'threes', 'player_steals': 'steals', 'player_blocks': 'blocks',
+        'player_points_rebounds_assists': 'pra', 'player_points_rebounds': 'pr',
+        'player_points_assists': 'pa', 'player_rebounds_assists': 'ra',
+    },
     'WNBA': {
         'player_points': 'points', 'player_rebounds': 'rebounds', 'player_assists': 'assists',
         'player_made_threes': 'threes', 'player_points_rebounds_assists': 'pra',
@@ -123,8 +131,11 @@ GAME_MARKETS = {
     'NFL': ['head_to_head', 'alternate_lines', 'alternate_total_points', 'alternate_total_touchdowns',
             'alternate_team_total_points', 'head_to_head_1st_half', 'alternate_lines_1st_half',
             'alternate_total_points_1st_half', 'alternate_team_total_points_1st_half'],
+    'NBL': ['head_to_head', 'alternate_lines', 'alternate_total_points', 'alternate_team_total_points',
+            'head_to_head_1st_half', 'alternate_lines_1st_half', 'alternate_total_points_1st_half',
+            'alternate_team_total_points_1st_half'],
 }
-H2H_2WAY = {'NFL'}   # 2-way moneyline (no draw) vs soccer's 3-way
+H2H_2WAY = {'NFL', 'NBL'}   # 2-way moneyline (no draw) vs soccer's 3-way
 
 # matchOdds must use the same team codes as fixture.json / teams.json, or the shell can't
 # join them (it keys on [home,away]). ROA returns full names for NFL, so map them here.
@@ -139,9 +150,20 @@ NFL_ABBR = {
     'seattle seahawks':'SEA','tampa bay buccaneers':'TB','tennessee titans':'TEN','washington commanders':'WAS',
 }
 
+# NBL fixture.json / teams.json use three-letter codes; books use full names, and the Breakers
+# appear as both "New Zealand Breakers" and "NZ Breakers" - both have to land on NZL.
+NBL_ABBR = {
+    'adelaide 36ers':'ADL','brisbane bullets':'BRI','cairns taipans':'CNS','illawarra hawks':'ILL',
+    'melbourne united':'MEL','new zealand breakers':'NZL','nz breakers':'NZL','perth wildcats':'PER',
+    'south east melbourne phoenix':'SEM','s.e. melbourne phoenix':'SEM','se melbourne phoenix':'SEM',
+    'sydney kings':'SYD','tasmania jackjumpers':'TAS','tasmania jack jumpers':'TAS',
+}
+
 def team_code(name, sport):
     if sport == 'NFL':
         return NFL_ABBR.get((name or '').strip().lower(), name)
+    if sport == 'NBL':
+        return NBL_ABBR.get((name or '').strip().lower(), name)
     return name
 
 # NOTE on the markets below `alternate_total_points` in NFL's list: team totals and the
