@@ -1237,7 +1237,7 @@ function buildIndexes(key){
   players.forEach(function(p){ if (p && p.name) ix.byName[p.name] = p; });
 
   ix.lgAvg = {}; ix.winAvg = {}; ix.matchOpp = null; ix.fs = null;
-  ix.pricedSet = null; ix.oddsName = null; ix.oddsIni = null; ix.vac = null; ix.bookList = null; ix.resIdx = null;
+  ix.pricedSet = null; ix.oddsName = null; ix.oddsIni = null; ix.vac = null; ix.bookList = null; ix.resIdx = null; ix.mlbLg = null; ix.lgRate = null; ix.scState = null;
   var logs = asArray(d.gamelogs) || [];
   ix.logsByName = {};
   logs.forEach(function(r){
@@ -3304,6 +3304,40 @@ function novigFair(key, name, mkt, line, side){
   }
   return null;
 }
+/* RECORD CAP - no signal may claim more than the player has actually done at that line.
+   Calibration pulls every probability toward the middle, which overrates the weak on low-rate
+   yes/no markets: Christian Watson's anytime TD was priced by the model at 47% on a record of 25%
+   (20 games) against 40% implied. The ceiling is his record at this line, shrunk toward the
+   LEAGUE rate at this line over 10 pseudo-games (not toward 50%, which manufactures edges on
+   rare events), plus 5 points - or none at all on markets that land under 30% of the time.
+   Audit before this cap: 21 of 22 Green Lights / Death Riders rows were already backed by the
+   record, so it only bites where the model was out on its own.                                */
+function leagueRateAt(key, mkt, line, side){
+  var S = state.sports[key], ck = mkt + '|' + line + '|' + side;
+  S.idx.lgRate = S.idx.lgRate || {};
+  if (S.idx.lgRate[ck] != null) return S.idx.lgRate[ck];
+  var season = curSeason(key), n = 0, h = 0;
+  (asArray(S.data.gamelogs) || []).forEach(function(r){
+    if (!r || (+(r.Year||r.year)||0) !== season) return;
+    var v = statOf(key, r, mkt); if (v == null) return;
+    n++; if (side === 'under' ? v <= line : v > line) h++;
+  });
+  return (S.idx.lgRate[ck] = n >= 50 ? h / n : null);
+}
+function recordCap(key, p, mkt, line, side, prob){
+  if (prob == null) return null;
+  var S = state.sports[key], season = curSeason(key);
+  var logs = sortLogsDesc(((S.idx.logsByName || {})[p.name] || []).slice());
+  var cur = logs.filter(function(r){ return (+(r.Year||r.year)||0) === season; });
+  var pool = cur.length >= 10 ? cur : logs.slice(0, 20);
+  var vals = statVals(key, p.name, mkt, pool);
+  if (vals.length < 8) return prob;                         // too little record to overrule the model
+  var hits = vals.filter(function(v){ return side === 'under' ? v <= line : v > line; }).length;
+  var lg = leagueRateAt(key, mkt, line, side);
+  var emp = lg != null ? (hits + 10 * lg) / (vals.length + 10) : (hits + 1) / (vals.length + 2);
+  var margin = (lg != null && lg < 0.30) ? 0 : 0.05;
+  return Math.min(prob, emp + margin);
+}
 function ouSignals(key, g, kind){
   var S = state.sports[key], sc = S.scoring;
   if (!sc || !sc.scoreCMP) return null;                // caller reports the missing module
@@ -3350,6 +3384,8 @@ function ouSignals(key, g, kind){
           if (pOver == null) return;
           pOver = calibrate(key, pOver);                 // raw model -> backtested probability
           var prob = over ? pOver : 1 - pOver;
+          prob = recordCap(key, p, k, c.line, over ? 'over' : 'under', prob);
+          if (prob == null) return;
           var ev = prob * (c.price - 1) - (1 - prob);
           var fair = novigFair(key, p.name, k, c.line, over ? 'over' : 'under');
           var row = { name:p.name, team:team, opp:opp, pos:posShortP(p), mkt:k, label:m[1],
@@ -5393,6 +5429,292 @@ function eplSignals(key, g){
     + sigTile('ti-hand-stop', 'Fouled Again', 'Foul volume, whistle and opponent', fa.rows, fa.why)
     + sigTile('ti-bolt', 'Mismatch Alert', 'Shooters into a defence that leaks shots', mm.rows, mm.why));
 }
+
+/* MLB-SPECIFIC SIGNALS ------------------------------------------------------------
+   Production's reasoning picks WHO to look at; the calibrated MLB model (walk-forward quartile
+   spread 27.4pt, the best-behaved of the six) decides whether the PRICE is value. Every row needs
+   +5% at a posted price.
+
+   Tested and left out:
+     Hot Bats     - hot streaks don't carry: batters on a 72%+ week landed 1.3pt BELOW their own
+                    rolling rate (3,946 games). Backing the hot bat is backing regression.
+     (Due / Running Hot are built below, guarded against the Statcast column misalignment that
+                    fetch_mlb.py's header repair fixes.)
+     Whiff Risk, Innings Eaters, Sneaky Buggers - no batter-K, outs or steals market is posted. */
+// share of regular batter-games this season that clear (or stay under) a line - the prior
+function mlbLeagueRate(key, mkt, line, side){
+  var S = state.sports[key], ck = mkt + '|' + line + '|' + (side || 'over');
+  S.idx.mlbLg = S.idx.mlbLg || {};
+  if (S.idx.mlbLg[ck] != null) return S.idx.mlbLg[ck];
+  var season = curSeason(key), n = 0, h = 0;
+  (asArray(S.data.gamelogs) || []).forEach(function(r){
+    if (!r || (+(r.Year||r.year)||0) !== season) return;
+    var v = statOf(key, r, mkt);
+    if (v == null) return;
+    if (mkt !== 'K' && r.role !== 'bat') return;
+    if (mkt === 'K' && r.role !== 'pitch') return;
+    n++; if (side === 'under' ? v <= line : v > line) h++;
+  });
+  return (S.idx.mlbLg[ck] = n ? h / n : 0.5);
+}
+function mlbSp(key, p){ try { return state.sports[key].scoring.starterFacing(p); } catch(e){ return null; } }
+function mlbBats(key, g, fn){
+  [g.away, g.home].forEach(function(team){
+    var opp = (team === g.home) ? g.away : g.home;
+    playersOnTeam(key, team).forEach(function(p){
+      if (!p || p.role !== 'bat' || (p.matches || 0) < 15) return;
+      if (!isPlayingP(key, p.name, team) || !hasAnyOddsFor(key, p.name)) return;
+      fn(p, team, opp, mlbSp(key, p));
+    });
+  });
+}
+// the bet: an over at the posted main line (or 1+ where that's the market), or an under where
+// the book posts one - priced, and backed by the calibrated model by 5% or more
+function mlbPriced(key, p, mkt, opp, side, fixedLine){
+  var od = null;
+  if (side === 'under'){
+    var u = underCandidates(key, p.name, mkt).sort(function(a,b){ return Math.abs(a.price - 1.9) - Math.abs(b.price - 1.9); })[0];
+    if (u) od = { line:u.line, price:u.price, book:u.book };
+  } else {
+    od = fixedLine != null ? bestPriceFor(key, p.name, mkt, fixedLine) : (cmbPosted(key, p.name, mkt) ?
+      { line:+cmbPosted(key, p.name, mkt).line, price:+cmbPosted(key, p.name, mkt).over, book:cmbPosted(key, p.name, mkt).book } : null);
+  }
+  if (!od || !(od.price > 1)) return null;
+  var pr = modelProbAt(key, p, mkt, od.line, opp);
+  if (pr == null) return null;
+  if (side === 'under') pr = 1 - pr;
+  // Cap the model at what he has actually done. Calibration pulls every probability toward the
+  // league middle, so on long-priced markets it overrates the weak: the model gave Christian Koss
+  // (4 HR all season, ~4% a game) a 14% HR chance, and all six "Homers" were low-power bats at
+  // $9-10. His own smoothed season rate plus a small margin (2pt on HR, 5pt elsewhere) is the ceiling.
+  var S0 = state.sports[key], season0 = curSeason(key);
+  var logs0 = sortLogsDesc(((S0.idx.logsByName || {})[p.name] || []).slice());
+  // a starter is judged on his STARTS: Blade Tidwell's 16 appearances include 7 short relief
+  // outings where few strikeouts are near-certain, which inflated his K under from 44% to 60%
+  if (p.role === 'pitch') logs0 = logs0.filter(function(r){ return (+r.outs || 0) >= 9; });
+  var cur0 = logs0.filter(function(r){ return (+(r.Year||r.year)||0) === season0; });
+  var pool0 = cur0.length >= 30 ? cur0 : logs0.slice(0, 60);
+  var v0 = statVals(key, p.name, mkt, pool0);
+  // 40 games of record or no price (a rookie's 3 homers in 20 games is a coin toss); starters
+  // make ~30 starts a season, so pitchers need 10 starts
+  if (v0.length < (p.role === 'pitch' ? 10 : 40)) return null;
+  if (mkt === 'H' && p.role === 'bat' && p.AB > 0){
+    // Hits per GAME misleads for part-timers: Drew Cavanaugh went hitless in 63% of games at 2.9
+    // PA a game, but batting 4th today he gets ~4 trips. Build it per at-bat instead - his AVG
+    // (shrunk toward the league's over 50 AB) across the at-bats his lineup slot usually gets.
+    var avgS = ((p.H || 0) + 50 * 0.245) / (p.AB + 50);
+    var abExp = (p.order && p.order <= 5) ? 4.1 : 3.8;
+    var pHit = 1 - Math.pow(1 - avgS, abExp);
+    pr = Math.min(pr, (side === 'under' ? 1 - pHit : pHit) + 0.03);
+  } else {
+    var hits0 = v0.filter(function(v){ return side === 'under' ? v <= od.line : v > od.line; }).length;
+    // Shrink toward the LEAGUE rate at this line, not toward 50%: +1/+2 smoothing lifted Kreidler
+    // (8 HR in 101 games, 7.9%) to 8.7%, a 2pt margin took him past the 10% the book implies, and
+    // the "edge" was made of smoothing. 10 pseudo-games at the league rate, and no margin on HR.
+    var lgR = mlbLeagueRate(key, mkt, od.line, side);
+    var emp0 = (hits0 + 10 * lgR) / (v0.length + 10);
+    pr = Math.min(pr, emp0 + (mkt === 'HR' ? 0 : 0.03));
+  }
+  if (pr > Math.min(0.97, (1/od.price) * 4)) return null;          // tail guard
+  var ev = pr * od.price - 1;
+  return ev >= 0.05 ? { od:od, pr:pr, ev:ev, side:side || 'over' } : null;
+}
+function mlbRow(key, r, betLbl, chips){
+  var b = r.b;
+  return eplRow(key, r, '<b>'+(b.side === 'under' ? 'Under '+b.od.line : Math.ceil(b.od.line)+'+')+' '+betLbl+'</b> \u00b7 '+fmtP(b.od),
+    chips.concat([['model '+Math.round(b.pr*100)+'% v '+Math.round(100/b.od.price)+'% implied', true]]),
+    '+'+Math.round(b.ev*100)+'%', 'EDGE');
+}
+var d3m = function(v){ return v == null ? '\u2014' : v.toFixed(3).replace(/^0/, ''); };
+/* SLUGGERS - a platoon edge: SLG against today's starter's hand 15%+ above his season SLG, on
+   25+ PA. Production priced it on HITS; SLG is extra-base power, so it's priced on TOTAL BASES. */
+function mlbSluggers(key, g){
+  var out = [];
+  mlbBats(key, g, function(p, team, opp, sp){
+    if (!sp || !sp.throws) return;
+    var split = sp.throws === 'L' ? p.splitVsL : p.splitVsR;
+    if (!split || !p.SLG || !split.SLG || (split.PA || 0) < 25) return;
+    var ratio = split.SLG / p.SLG;
+    if (ratio < 1.15) return;
+    var b = mlbPriced(key, p, 'TB', opp);
+    if (b) out.push({ name:p.name, p:p, opp:opp, sp:sp, split:split, ratio:ratio, b:b });
+  });
+  out.sort(function(a,b){ return b.b.ev - a.b.ev; });
+  return { rows:out.slice(0, SIG_MAX_ROWS).map(function(r){
+      return mlbRow(key, r, 'Total bases', [['SLG '+d3m(r.split.SLG)+' v '+r.sp.throws+'HP (season '+d3m(r.p.SLG)+')', true],
+        ['+'+Math.round((r.ratio-1)*100)+'% platoon edge \u00b7 '+r.split.PA+' PA', true], ['v '+esc(r.sp.name), false]]); }),
+    why:'No priced batter has a 15%+ platoon power edge against today\u2019s starter that the model backs.' };
+}
+/* RUNNERS - top-of-order bats (1-3) against a walk-prone starter (WHIP 1.25+ or BB/9 3.3+):
+   more traffic ahead of the heart of the order. Priced on 1+ run. */
+function mlbRunners(key, g){
+  var out = [];
+  mlbBats(key, g, function(p, team, opp, sp){
+    if ((p.order || 9) > 3 || !sp) return;
+    if (!((sp.WHIP || 0) >= 1.25 || (sp.BB9 || 0) >= 3.3)) return;
+    var b = mlbPriced(key, p, 'R', opp, 'over', 0.5);
+    if (b) out.push({ name:p.name, p:p, opp:opp, sp:sp, b:b });
+  });
+  out.sort(function(a,b){ return b.b.ev - a.b.ev; });
+  return { rows:out.slice(0, SIG_MAX_ROWS).map(function(r){
+      return mlbRow(key, r, 'Runs', [['bats '+r.p.order+' in the order', true],
+        [esc(r.sp.name)+' WHIP '+(r.sp.WHIP||0).toFixed(2)+' \u00b7 BB/9 '+(r.sp.BB9||0).toFixed(1), true]]); }),
+    why:'No top-of-order bat faces a walk-prone starter at a run price the model backs.' };
+}
+/* RBI MEN - the heart of the order (3-5) against a hittable starter (opp AVG .260+ or WHIP 1.30+).
+   Priced on 1+ RBI. */
+function mlbRbi(key, g){
+  var out = [];
+  mlbBats(key, g, function(p, team, opp, sp){
+    var o = p.order || 9;
+    if (o < 3 || o > 5 || !sp) return;
+    if (!((sp.oppAVG || 0) >= 0.260 || (sp.WHIP || 0) >= 1.30)) return;
+    var b = mlbPriced(key, p, 'RBI', opp, 'over', 0.5);
+    if (b) out.push({ name:p.name, p:p, opp:opp, sp:sp, b:b });
+  });
+  out.sort(function(a,b){ return b.b.ev - a.b.ev; });
+  return { rows:out.slice(0, SIG_MAX_ROWS).map(function(r){
+      return mlbRow(key, r, 'RBIs', [['bats '+r.p.order+' in the order', true],
+        [esc(r.sp.name)+' opp AVG '+d3m(r.sp.oppAVG)+' \u00b7 WHIP '+(r.sp.WHIP||0).toFixed(2), true]]); }),
+    why:'No middle-order bat faces a hittable starter at an RBI price the model backs.' };
+}
+/* FREE PASSES - patient hitters (walk rate 10%+ of PA) against a wild starter (BB/9 3.3+).
+   Priced on 1+ walk. */
+function mlbWalks(key, g){
+  var out = [];
+  mlbBats(key, g, function(p, team, opp, sp){
+    if (!sp || (sp.BB9 || 0) < 3.3 || !(p.PA > 0)) return;
+    var bbRate = (p.BB || 0) / p.PA;
+    if (bbRate < 0.10) return;
+    var b = mlbPriced(key, p, 'BB', opp, 'over', 0.5);
+    if (b) out.push({ name:p.name, p:p, opp:opp, sp:sp, bbRate:bbRate, b:b });
+  });
+  out.sort(function(a,b){ return b.b.ev - a.b.ev; });
+  return { rows:out.slice(0, SIG_MAX_ROWS).map(function(r){
+      return mlbRow(key, r, 'Walks', [['walks '+Math.round(r.bbRate*100)+'% of PA', true],
+        [esc(r.sp.name)+' BB/9 '+(r.sp.BB9||0).toFixed(1), true]]); }),
+    why:'No patient hitter faces a wild starter at a walk price the model backs.' };
+}
+/* HOMERS - home run spots: the model's HR probability with park and the starter's HR/9 shown.
+   Tail guard applies: HR is a long-priced market where an extrapolating model looks generous. */
+function mlbHomers(key, g){
+  var out = [];
+  mlbBats(key, g, function(p, team, opp, sp){
+    var b = mlbPriced(key, p, 'HR', opp, 'over', 0.5);
+    if (!b) return;
+    var pk = {}; try { pk = state.sports[key].scoring.parkFor(p.team) || {}; } catch(e){}
+    out.push({ name:p.name, p:p, opp:opp, sp:sp, pk:pk, b:b });
+  });
+  out.sort(function(a,b){ return b.b.ev - a.b.ev; });
+  return { rows:out.slice(0, SIG_MAX_ROWS).map(function(r){
+      return mlbRow(key, r, 'Home run', [[(r.p.HR||0)+' HR this season', (r.p.HR||0) >= 20],
+        ['park HR '+(r.pk.hrFactor || 1).toFixed(2)+'x', (r.pk.hrFactor || 1) > 1.03],
+        (r.sp ? [esc(r.sp.name)+' HR/9 '+(r.sp.HR9||0).toFixed(2), (r.sp.HR9||0) >= 1.3] : ['starter TBC', false])]); }),
+    why:'No home-run price on this fixture is 5% generous against the model.' };
+}
+/* STRIKE TIME / GRINDERS - the starters. Strike Time backs strikeouts where the K projection
+   beats the posted line; Grinders fades a starter in a tough spot - the UNDER on his Ks. Both are
+   priced on the posted K line, not the projection's own line as production did. */
+function mlbStarters(key, g, dir){
+  var out = [], S = state.sports[key];
+  [g.away, g.home].forEach(function(team){
+    var opp = (team === g.home) ? g.away : g.home;
+    var nm = team === g.home ? g.homePitcher : g.awayPitcher;
+    var p = nm && (S.idx.byName || {})[nm];
+    if (!p || p.role !== 'pitch' || !hasAnyOddsFor(key, p.name)) return;
+    var kp = null; try { kp = S.scoring.pitcherKProj(p); } catch(e){}
+    var posted = cmbPosted(key, p.name, 'K');
+    if (!kp || !posted) return;
+    var line = +posted.line;
+    if (dir === 'over' && kp.proj < line + 0.3) return;
+    if (dir === 'under' && kp.proj > line - 0.5) return;
+    var b = mlbPriced(key, p, 'K', opp, dir === 'under' ? 'under' : 'over');
+    if (b) out.push({ name:p.name, p:p, opp:opp, kp:kp, line:line, b:b });
+  });
+  out.sort(function(a,b){ return b.b.ev - a.b.ev; });
+  return { rows:out.map(function(r){
+      return mlbRow(key, r, 'Strikeouts', [['proj '+r.kp.proj.toFixed(1)+' K v line '+r.line, true],
+        ['K/9 '+(r.kp.k9||0).toFixed(1), (dir === 'over') === ((r.kp.k9||0) >= 9)],
+        ['ERA '+(r.p.ERA||0).toFixed(2)+' \u00b7 WHIP '+(r.p.WHIP||0).toFixed(2), false]]); }),
+    why: dir === 'over' ? 'No starter projects 0.3+ strikeouts over his posted line at a price the model backs.'
+                        : 'No starter projects 0.5+ strikeouts under his posted line at an under the model backs.' };
+}
+/* COLD BATS - a 4+ game hitless skid. Tested: skids carry a small real drop (1-2pt below the
+   batter's own rate, 1,373 games) - too small to fade on its own, so the skid is the filter and
+   the calibrated model must also make the UNDER on hits value. */
+function mlbCold(key, g){
+  var out = [];
+  mlbBats(key, g, function(p, team, opp){
+    var logs = sortLogsDesc(((state.sports[key].idx.logsByName || {})[p.name] || []).slice());
+    var n = 0; for (var i=0;i<logs.length;i++){ if ((+logs[i].H || 0) < 1) n++; else break; }
+    if (n < 4) return;
+    var b = mlbPriced(key, p, 'H', opp, 'under');
+    if (b) out.push({ name:p.name, p:p, opp:opp, skid:n, b:b });
+  });
+  out.sort(function(a,b){ return b.b.ev - a.b.ev; });
+  return { rows:out.map(function(r){
+      return mlbRow(key, r, 'Hits', [[r.skid+'-game hitless skid', true],
+        ['season AVG '+d3m(r.p.AVG), false]]); }),
+    why:'No batter on a 4+ game hitless skid has a hits under the model backs.' };
+}
+
+/* DUE / UNLUCKY and RUNNING HOT - the gap between the quality of his contact (xwOBA) and his
+   results (wOBA). Contact quality is the steadier number, so a big gap tends to close: back the
+   unlucky, fade the lucky. Selection only - the calibrated model and his own record still decide
+   whether the price is value.
+
+   Guarded: until fetch_mlb.py's header repair ships, the stored "xwoba" is Savant's DIFFERENCE
+   column (median .004), which would make every regular look like he's running hot. If the league
+   median xwOBA isn't somewhere believable, both tiles stay quiet and say so.                    */
+function mlbStatcastState(key){
+  var S = state.sports[key];
+  if (S.idx.scState) return S.idx.scState;
+  var xs = (S.idx.players || []).filter(function(p){ return p.role === 'bat' && (p.AB || 0) >= 150 &&
+    p.statcast && p.statcast.xwoba != null && p.statcast.woba != null; }).map(function(p){ return +p.statcast.xwoba; })
+    .sort(function(a,b){ return a - b; });
+  var med = xs.length ? xs[Math.floor(xs.length/2)] : null;
+  return (S.idx.scState = { n:xs.length, median:med, ok:(med != null && med >= 0.25 && med <= 0.40) });
+}
+function mlbLuck(key, g, dir){
+  var st = mlbStatcastState(key);
+  if (!st.n) return { rows:[], why:'No Statcast expected stats in players.json yet.' };
+  if (!st.ok) return { rows:[], why:'Statcast looks misaligned (league median xwOBA '+(st.median != null ? st.median.toFixed(3) : '\u2014')
+    +', should be ~.315) - the fetch_mlb.py header repair needs to run before this tile can trust it.' };
+  var out = [];
+  mlbBats(key, g, function(p, team, opp){
+    var sc = p.statcast;
+    if (!sc || sc.xwoba == null || sc.woba == null || (p.AB || 0) < 150) return;
+    var gap = sc.xwoba - sc.woba;
+    if (dir === 'due' && (gap < 0.028 || sc.xwoba < 0.330)) return;
+    if (dir === 'hot' && gap > -0.032) return;
+    var b = dir === 'due' ? mlbPriced(key, p, 'TB', opp) : (mlbPriced(key, p, 'TB', opp, 'under') || mlbPriced(key, p, 'H', opp, 'under'));
+    if (b) out.push({ name:p.name, p:p, opp:opp, sc:sc, gap:gap, b:b, mkt:(b.od && b.side === 'under' && !mlbPriced(key, p, 'TB', opp, 'under')) ? 'Hits' : 'Total bases' });
+  });
+  out.sort(function(a,b){ return b.b.ev - a.b.ev; });
+  return { rows:out.slice(0, SIG_MAX_ROWS).map(function(r){
+      return mlbRow(key, r, r.mkt, [['xwOBA '+d3m(r.sc.xwoba)+' v wOBA '+d3m(r.sc.woba), true],
+        [(r.gap > 0 ? '+' : '')+Math.round(r.gap*1000)+' pts '+(r.gap > 0 ? 'unlucky' : 'lucky'), true],
+        (r.sc.barrelPct != null ? [r.sc.barrelPct+'% barrels', r.sc.barrelPct >= 10] : null)].filter(Boolean)); }),
+    why: dir === 'due' ? 'No priced batter\u2019s contact quality runs 28+ points ahead of his results with a total-bases price the model backs.'
+                       : 'No priced batter is running 32+ points ahead of his contact quality with an under the model backs.' };
+}
+function mlbSignals(key, g){
+  if (key !== 'mlb') return '';
+  var sl = mlbSluggers(key, g), ru = mlbRunners(key, g), rb = mlbRbi(key, g), fp = mlbWalks(key, g),
+      hr = mlbHomers(key, g), kt = mlbStarters(key, g, 'over'), gr = mlbStarters(key, g, 'under'), cb = mlbCold(key, g),
+      du = mlbLuck(key, g, 'due'), rh = mlbLuck(key, g, 'hot');
+  return sigBand('MLB Signals',
+    sigTile('ti-arrows-left-right', 'Sluggers', 'Platoon power edges, priced on total bases', sl.rows, sl.why)
+    + sigTile('ti-arrow-up-right', 'Runners', 'Top of the order against a walk-prone arm', ru.rows, ru.why)
+    + sigTile('ti-target', 'RBI Men', 'The heart of the order against a hittable arm', rb.rows, rb.why)
+    + sigTile('ti-walk', 'Free Passes', 'Patient hitters against a wild arm', fp.rows, fp.why)
+    + sigTile('ti-bolt', 'Homers', 'Home-run spots the model backs', hr.rows, hr.why)
+    + sigTile('ti-ball-baseball', 'Strike Time', 'Starters projected over their K line', kt.rows, kt.why)
+    + sigTile('ti-flame', 'Grinders', 'Starters in a tough spot: under their K line', gr.rows, gr.why)
+    + sigTile('ti-snowflake', 'Cold Bats', 'Hitless skids where the under is value', cb.rows, cb.why)
+    + sigTile('ti-trending-up', 'Due / Unlucky', 'Contact quality running ahead of results', du.rows, du.why)
+    + sigTile('ti-trending-down', 'Running Hot', 'Results running ahead of contact quality', rh.rows, rh.why));
+}
 function nflSignals(key, g){
   if (key !== 'nfl') return '';
   var tud = nflTuddy(key, g), chk = nflChunk(key, g);
@@ -5454,7 +5776,7 @@ function signalsSection(key, g){
     + (function(){ var lc = letsClimb(key, g);
         return sigTile('ti-stairs-up', 'Let\u2019s Climb', 'One staked ladder: main line, then value rungs up',
           lc.rows.map(function(r){ return climbRow(key, r); }), lc.why); })();
-  var nfl = nflSignals(key, g) + aflSignals(key, g) + eplSignals(key, g);
+  var nfl = nflSignals(key, g) + aflSignals(key, g) + eplSignals(key, g) + mlbSignals(key, g);
   var reads = radarSection(key, g) + coverageSection(key, g) + usageSection(key, g);
   var form = sigTile('ti-trending-up', 'Form Alerts', 'Running hot or cold against their own season',
               formAlerts(key, g).map(function(r){ return formRow(key, r); }),
