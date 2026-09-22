@@ -84,7 +84,7 @@ function gradeSport(key, dir){
   const cal = calibFor(dir);
   const markets = new Set((cfg.oddsMkts || []).map(m => m[0]));
 
-  const picks = [];
+  let picks = [];
   let snapRows = 0, ungraded = 0;
 
   /* Which game was each price for?  The first cut matched the snapshot's calendar date to the
@@ -125,7 +125,11 @@ function gradeSport(key, dir){
     const ref = Date.parse(snap.oddsUpdated || snap.captured) - 2 * 3600e3;
     const next = {};
     (snap.fixture || []).forEach(f => {
-      const t = Date.parse(f.utc || f.date);
+      // Snapshots from before the fixture-date fix store a bare date ("2026-09-20") as utc. Parsed
+      // as midnight, every same-day game looked already started and whole snapshots went ungraded
+      // (EPL 20 Sep: 4,263 prices). A bare date means "some time that day": use the day's end.
+      const u = String(f.utc || f.date || '');
+      const t = Date.parse(/^\d{4}-\d{2}-\d{2}$/.test(u) ? u + 'T23:59:59Z' : u);
       if (!isFinite(t) || t < ref) return;
       [f.home, f.away, f.homeAbbr, f.awayAbbr].forEach(tm => {
         if (!tm) return;
@@ -153,6 +157,26 @@ function gradeSport(key, dir){
       if (!(rowKey(r) < minKey)) return;
       const n = r.Player || r.player; if (n) (prior[n] = prior[n] || []).push(r);
     });
+    const lgCache = {};
+    const lgRate = (mkt, line, side) => {
+      const ck = mkt + '|' + line + '|' + side;
+      if (lgCache[ck] != null) return lgCache[ck];
+      let n = 0, h = 0;
+      Object.keys(prior).forEach(nm => prior[nm].slice(-30).forEach(r => {
+        const v = statOf(key, r, mkt); if (v == null) return;
+        n++; if (side === 'under' ? v <= line : v > line) h++;
+      }));
+      return (lgCache[ck] = n >= 50 ? h / n : null);
+    };
+    const capProb = (name, mkt, line, side, prob) => {
+      const rows = (prior[name] || []).slice().sort((a, b) => (rowKey(a) < rowKey(b) ? 1 : -1)).slice(0, 20);
+      const vals = rows.map(r => statOf(key, r, mkt)).filter(v => v != null);
+      if (vals.length < 8) return prob;
+      const hits = vals.filter(v => side === 'under' ? v <= line : v > line).length;
+      const lg = lgRate(mkt, line, side);
+      const emp = lg != null ? (hits + 10 * lg) / (vals.length + 10) : (hits + 1) / (vals.length + 2);
+      return Math.min(prob, emp + ((lg != null && lg < 0.30) ? 0 : 0.05));
+    };
 
     try {
       scoring.configure({ players, teams, teamsForm, dvp, logsByName: prior,
@@ -184,12 +208,18 @@ function gradeSport(key, dir){
         const pOver = calibrate(cal, raw);
         const prob = side === 'over' ? pOver : 1 - pOver;
         const ev = prob * (price - 1) - (1 - prob);
-        if (ev < argEV) return;
-        if (prob > Math.min(0.97, (1/price) * 4)) return;      // same tail guard the builder uses
+        // RECORD CAP, as the shell applies it to every signal: no more than his own record at
+        // this line (shrunk toward the league rate over 10 pseudo-games) plus 5pt, or none on
+        // markets that land under 30%. Graded side by side with the raw model, because what the
+        // signals SHOW is the capped number - the raw model is only what they start from.
+        const pCap = capProb(row.player, row.market, row.line, side, prob);
+        const evCap = pCap * (price - 1) - (1 - pCap);
+        if (ev < argEV && evCap < argEV) return;
+        if (prob > Math.min(0.97, (1/price) * 4) && pCap > Math.min(0.97, (1/price) * 4)) return;
         const won = side === 'over' ? actual > row.line : actual <= row.line;
         picks.push({ day:file.replace('.json.gz', ''), game:target[row.player], key, player:row.player,
                      market:row.market, line:row.line, side,
-                     price:+price, prob, ev, won, actual });
+                     price:+price, prob, ev, pCap, evCap, won, actual });
       });
     });
   }
@@ -200,16 +230,24 @@ function gradeSport(key, dir){
     console.log(`  no gradable picks yet` + (ungraded ? ` (${ungraded} prices captured for games not yet played)` : ''));
     return;
   }
-  const report = (label, rows) => {
+  const report = (label, rows, evKey) => {
     if (!rows.length) return;
+    evKey = evKey || 'ev';
     const n = rows.length, wins = rows.filter(r => r.won).length;
     const ret = rows.reduce((a, r) => a + (r.won ? r.price - 1 : -1), 0);
-    const exp = rows.reduce((a, r) => a + r.ev, 0);
+    const exp = rows.reduce((a, r) => a + r[evKey], 0);
     console.log(`  ${label.padEnd(22)} ${String(n).padStart(5)} picks  ${(wins/n*100).toFixed(1).padStart(5)}% strike  `
       + `${(ret/n*100 >= 0 ? '+' : '')}${(ret/n*100).toFixed(1).padStart(6)}% ROI   (model expected ${(exp/n*100 >= 0 ? '+' : '')}${(exp/n*100).toFixed(1)}%)`);
   };
-  report('ALL', picks);
-  console.log('  by price:');
+  const rawPicks = picks.filter(r => r.ev >= argEV), capPicks = picks.filter(r => r.evCap >= argEV);
+  console.log('  RAW MODEL (what the signals start from):');
+  report('ALL', rawPicks);
+  console.log('  RECORD-CAPPED (what the signals show):');
+  report('ALL', capPicks, 'evCap');
+  [[1.2,2],[2,3],[3,6],[6,999]].forEach(b =>
+    report(`   $${b[0]}-${b[1] === 999 ? '+' : b[1]}`, capPicks.filter(r => r.price >= b[0] && r.price < b[1]), 'evCap'));
+  picks = rawPicks;
+  console.log('  raw model by price:');
   [[1.2,2],[2,3],[3,6],[6,999]].forEach(b =>
     report(`   $${b[0]}-${b[1] === 999 ? '+' : b[1]}`, picks.filter(r => r.price >= b[0] && r.price < b[1])));
   console.log('  by modelled edge:');
