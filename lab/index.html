@@ -3238,13 +3238,24 @@ function vacatedUsage(key, team){
   var ck = normTeam(team);
   if (S.idx.vac[ck]) return S.idx.vac[ck];
   var inj = asArray(S.data.injury) || [];
-  var out = { tgt:0, snap:0, rush:0, names:[] };
+  var out = { tgt:0, snap:0, rush:0, min:0, pts:0, names:[] };
   inj.forEach(function(r){
     if (!r || normTeam(r.Team || r.team) !== ck) return;
     var status = String(r.Status || r.status || r.Returning || '');
-    if (!/^out$|doubtful|season/i.test(status)) return;          // Questionable usually plays
+    if (!/^out$|doubtful|season|missed|injured reserve|suspen/i.test(status)) return;   // Questionable usually plays
     var p = (S.idx.byName || {})[r.Player || r.player];
     if (!p) return;
+    if (key === 'nbl'){
+      // NBL: an absent regular's MINUTES go to a short rotation. Tested: teammates beat their form
+      // projection 52.9% of the time when a regular sat (+1.09 pts), 57.3% when a 26+ minute one did
+      // (+1.49 pts), against 44.2% otherwise. (Hockey was tested too and shows nothing: four lines
+      // spread the ice time thinly - so NHL gets no vacated-usage rule.)
+      var mn = +p.minutes || 0, pt = +p.points || 0;
+      if (mn < 12) return;
+      out.min += mn; out.pts += pt;
+      out.names.push({ name:p.name, pos:p.position, min:mn, pts:pt, status:status });
+      return;
+    }
     var tgt = +p.tgtShare || 0, snap = +p.snapPct || 0;
     var rush = 0;
     var ra = leagueAvg(key, 'rushAtt')[p.name];
@@ -3253,7 +3264,7 @@ function vacatedUsage(key, team){
     out.tgt += tgt; out.rush += rush; out.snap += snap;
     out.names.push({ name:p.name, pos:p.position, tgt:tgt, rush:rush, status:status });
   });
-  out.names.sort(function(a,b){ return (b.tgt + b.rush) - (a.tgt + a.rush); });
+  out.names.sort(function(a,b){ return (b.tgt + b.rush + (b.min || 0)) - (a.tgt + a.rush + (a.min || 0)); });
   return (S.idx.vac[ck] = out);
 }
 function vacatedNote(key, team){
@@ -3262,10 +3273,11 @@ function vacatedNote(key, team){
   var bits = [];
   if (v.tgt >= 1) bits.push(v.tgt.toFixed(0)+'% of targets');
   if (v.rush >= 1) bits.push(v.rush.toFixed(0)+' carries/gm');
+  if (v.min >= 1) bits.push(v.min.toFixed(0)+' min + '+v.pts.toFixed(1)+' pts/gm');
   if (!bits.length) return null;
   return { text: v.names.slice(0, 2).map(function(x){ return x.name; }).join(', ')
              + (v.names.length > 2 ? ' +'+(v.names.length-2) : '')+' out \u00b7 '+bits.join(' + ')+' vacated',
-           tgt:v.tgt, rush:v.rush, names:v.names };
+           tgt:v.tgt, rush:v.rush, min:v.min, pts:v.pts, names:v.names };
 }
 /* GREEN LIGHTS / DEATH RIDERS ------------------------------------------------
    Each sport scores through its OWN module (all four expose scoreCMP), so the
@@ -3410,7 +3422,7 @@ function ouSignals(key, g, kind){
     var vac = vacatedNote(key, team);
     // Usage left behind by an absent starter has to land somewhere. Against an under that is a
     // straight contradiction, so the tile stops claiming it; against an over it is support.
-    var vacBlocksUnder = !!vac && (vac.tgt >= VACATE_MIN || vac.rush >= 4);
+    var vacBlocksUnder = !!vac && (vac.tgt >= VACATE_MIN || vac.rush >= 4 || (vac.min || 0) >= 20);
     playersOnTeam(key, team).forEach(function(p){
       if (!p || !p.name || !isPlayingP(key, p.name, team)) return;
       if (!over && vacBlocksUnder) return;
@@ -5863,10 +5875,47 @@ function nblDoubleTrouble(key, g){
   out.sort(function(a,b){ return b.b.ev - a.b.ev; });
   return out;
 }
+
+/* NEXT MAN UP (NBL) - teammates of an absent regular. The measured effect is priced in rather than
+   waved at: the model AND his record are both tested at the line minus the historical gain
+   (+1.1 pts when a regular sits, +1.5 when he played 26+ minutes). Shifting only the model would
+   let the record cap - which knows nothing about the absence - cancel the evidence out.        */
+function nblNextManUp(key, g){
+  var S = state.sports[key], out = [];
+  [g.away, g.home].forEach(function(team){
+    var opp = (team === g.home) ? g.away : g.home;
+    var v = vacatedUsage(key, team);
+    if (!v || (v.min || 0) < 20) return;
+    var heavy = v.names.some(function(x){ return x.min >= 26; });
+    var boost = heavy ? 1.5 : 1.1;
+    var outSet = {}; v.names.forEach(function(x){ outSet[x.name] = 1; });
+    playersOnTeam(key, team).forEach(function(p){
+      if (!p || outSet[p.name] || (+p.minutes || 0) < 15) return;
+      if (!isPlayingP(key, p.name, team) || !hasAnyOddsFor(key, p.name)) return;
+      var c = cmbPosted(key, p.name, 'points'), od = c ? { line:+c.line, price:+c.over, book:c.book } : null;
+      if (!od){
+        var avg = (leagueAvg(key, 'points')[p.name] || {}).avg;
+        var near = avg != null ? streakCandidates(key, p.name, 'points').slice()
+          .sort(function(a,b){ return Math.abs(a.line - (avg - 0.5)) - Math.abs(b.line - (avg - 0.5)); })[0] : null;
+        if (near) od = { line:near.line, price:near.price, book:near.book };
+      }
+      if (!od) return;
+      var shifted = od.line - boost;
+      var pr = recordCap(key, p, 'points', shifted, 'over', modelProbAt(key, p, 'points', shifted, opp));
+      if (pr == null || pr > Math.min(0.97, (1/od.price) * 4)) return;
+      var ev = pr * od.price - 1;
+      if (ev < 0.05) return;
+      out.push({ name:p.name, p:p, opp:opp, v:v, boost:boost, heavy:heavy, b:{ od:od, pr:pr, ev:ev, side:'over' } });
+    });
+  });
+  out.sort(function(a,b){ return b.b.ev - a.b.ev; });
+  return out;
+}
 function nblSignals(key, g){
   if (key !== 'nbl') return '';
   var sl = nblSpecialist(key, g, 'points'), sp = nblSpecialist(key, g, 'threes'),
-      di = nblSpecialist(key, g, 'assists'), bo = nblSpecialist(key, g, 'rebounds'), dd = nblDoubleTrouble(key, g);
+      di = nblSpecialist(key, g, 'assists'), bo = nblSpecialist(key, g, 'rebounds'), dd = nblDoubleTrouble(key, g),
+      nm = nblNextManUp(key, g);
   var why = function(st){ return 'None of the league\u2019s top 15 at '+st+' faces a defence conceding 4%+ above average to his position at a price the model and his record back.'; };
   return sigBand('NBL Signals',
     sigTile('ti-sword', 'Slashers', 'Top scorers into a soft defence', sl.map(function(r){ return nblSpecRow(key, r, 'Points'); }), why('points'))
@@ -5876,7 +5925,12 @@ function nblSignals(key, g){
     + sigTile('ti-stack-3', 'Double Trouble', 'Double-double threats, priced on the leg that decides it',
         dd.map(function(r){ return mlbRow(key, r, esc(mktLabel(key, r.hard.k)), [['double-double in '+r.ddN+' of last '+r.n, true],
           ['10+ '+esc(mktLabel(key, r.easy.k).toLowerCase())+' in '+Math.round(r.easy.r*100)+'% \u00b7 10+ '+esc(mktLabel(key, r.hard.k).toLowerCase())+' in '+Math.round(r.hard.r*100)+'%', true]]); }),
-        'No double-double threat (40%+ of his last 10) has a 10+ price on his harder leg that the model and his record back.'));
+        'No double-double threat (40%+ of his last 10) has a 10+ price on his harder leg that the model and his record back.')
+    + sigTile('ti-user-plus', 'Next Man Up', 'Teammates of an absent regular, with the measured gain priced in',
+        nm.map(function(r){ return mlbRow(key, r, 'Points', [[r.v.names.slice(0,2).map(function(x){ return x.name; }).join(', ')+' out \u00b7 '
+            + r.v.min.toFixed(0)+' min vacated', true],
+          ['+'+r.boost.toFixed(1)+' pts historically ('+(r.heavy ? '57%' : '53%')+' beat projection)', true]]); }),
+        'No team on this fixture is missing a regular (20+ minutes vacated) with a teammate the adjusted model and his record back.'));
 }
 
 /* NHL-SPECIFIC SIGNALS -------------------------------------------------------------
