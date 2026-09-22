@@ -5104,6 +5104,295 @@ function aflSignals(key, g){
     + sigTile('ti-arrow-back-up', 'Kick In Merchants', 'Kick-in takers against an inaccurate attack',
             ki.rows.map(function(r){ return kickInRow(key, r); }), ki.why));
 }
+
+/* EPL-SPECIFIC SIGNALS -----------------------------------------------------------
+   Production's core reasoning for each, kept, with the data it was waiting on now wired in
+   (API-Football shots/fouls, referee strictness, team corner and card rates) and every row
+   priced. Rates that bench cameos would dilute (cards, fouls) use only games of 45+ minutes. */
+function eplTeam(key, t){
+  var r = null;
+  (asArray(state.sports[key].data.teams) || []).forEach(function(x){ if (normTeam(x.team) === normTeam(t)) r = x; });
+  return r;
+}
+function eplLeagueMean(key, f){
+  var v = (asArray(state.sports[key].data.teams) || []).map(function(t){ return +t[f]; }).filter(function(x){ return x > 0; });
+  return v.length ? v.reduce(function(a,b){ return a+b; }, 0) / v.length : null;
+}
+function eplRef(key, g){
+  var rs = (state.sports[key].data.referees || {}).refStats || {};
+  var name = g.referee;
+  if (!name || !rs[name]) return null;
+  var all = Object.keys(rs).map(function(k){ return rs[k]; }).filter(function(x){ return x.matches >= 10; });
+  var lgC = mean(all.map(function(x){ return x.cardsPG; })), lgF = mean(all.map(function(x){ return x.foulsPG; }));
+  return { name:name, cardsPG:rs[name].cardsPG, foulsPG:rs[name].foulsPG, matches:rs[name].matches,
+           cardMult: lgC ? rs[name].cardsPG / lgC : 1, foulMult: lgF ? rs[name].foulsPG / lgF : 1 };
+}
+function eplAvail(key, p, team){
+  if (p.status && p.status !== 'a') return false;               // FPL: injured / doubtful / suspended
+  return isPlayingP(key, p.name, team) && hasAnyOddsFor(key, p.name);
+}
+function eplLogs(key, name, minMin){
+  var rows = sortLogsDesc(((state.sports[key].idx.logsByName || {})[name] || []).slice());
+  return minMin ? rows.filter(function(r){ return (+r.min || 0) >= minMin; }) : rows;
+}
+function poisAtLeast(lam, k){ var c = 0, t = Math.exp(-lam); for (var i=0;i<k;i++){ c += t; t = t*lam/(i+1); } return Math.max(0, Math.min(1, 1-c)); }
+function eachSkater(key, g, fn){
+  [g.away, g.home].forEach(function(team){
+    var opp = (team === g.home) ? g.away : g.home;
+    playersOnTeam(key, team).forEach(function(p){ if (p && eplAvail(key, p, team)) fn(p, team, opp); });
+  });
+}
+function eplRow(key, r, bet, chips, big, bigL, good){
+  return '<div class="gl-row sig-extra" onclick="LAB.player(\'' + key + '\',\'' + esc(r.name).replace(/'/g,"\\'") + '\')">'
+    + playerImgP(key, r.name, 28)
+    + '<div class="gl-left"><div class="gl-nm"><b>'+esc(r.name)+'</b><span class="gl-tag">'
+    + esc((posShortP(r.p) ? posShortP(r.p)+' \u00b7 ' : '')+abbrOf(key, r.p.team)+' v '+abbrOf(key, r.opp))+'</span></div>'
+    + '<div class="gl-bet">'+bet+'</div>'
+    + '<div class="gl-why">'+chips.map(function(c){ return '<span class="gl-chip'+(c[1] ? ' good' : '')+'">'+c[0]+'</span>'; }).join('')+'</div></div>'
+    + '<div class="gl-right"><div class="gl-ev '+(good === false ? 'neg' : 'pos')+'">'+big+'</div><div class="gl-evl">'+bigL+'</div></div></div>';
+}
+var fmtP = function(od){ return '$'+od.price.toFixed(2)+' '+esc(od.book || ''); };
+var edgeOf = function(pr, price){ return pr * price - 1; };
+
+/* 1. LOCKED IN - cleared a posted line in 4+ of his last 5. Distinct from Streakers (which
+   needs an unbroken run): one miss allowed, but the line is the book's, the price is $1.50+ so
+   it isn't chalk, and the model has to agree. One market per player.                          */
+function eplLockedIn(key, g){
+  var out = [];
+  eachSkater(key, g, function(p, team, opp){
+    var best = null, l5all = eplLogs(key, p.name).slice(0, 5);
+    if (l5all.length < 5) return;
+    posMarkets(key, p).forEach(function(m){
+      var v5 = statVals(key, p.name, m[0], l5all);
+      if (v5.length < 5) return;
+      streakCandidates(key, p.name, m[0]).forEach(function(c){
+        if (c.price < 1.50) return;
+        var hits = v5.filter(function(v){ return v > c.line; }).length;
+        if (hits < 4) return;
+        var pr = modelProbAt(key, p, m[0], c.line, opp);
+        if (pr == null || edgeOf(pr, c.price) < 0) return;
+        var sc = hits * 10 + c.line;
+        if (!best || sc > best.sc) best = { sc:sc, m:m, c:c, hits:hits, pr:pr, v5:v5 };
+      });
+    });
+    if (best) out.push({ name:p.name, p:p, opp:opp, b:best });
+  });
+  out.sort(function(a,b){ return b.b.sc - a.b.sc; });
+  return { rows:out.slice(0, SIG_MAX_ROWS).map(function(r){
+      var b = r.b;
+      return eplRow(key, r, '<b>'+Math.ceil(b.c.line)+'+ '+esc(b.m[1])+'</b> \u00b7 '+fmtP(b.c),
+        [[b.hits+'/5 last five', true], ['last 5: '+b.v5.slice().reverse().join(' '), false],
+         ['model '+Math.round(b.pr*100)+'%', b.pr > 1/b.c.price]],
+        '+'+Math.round(edgeOf(b.pr, b.c.price)*100)+'%', 'EDGE');
+    }),
+    why:'No priced player has cleared a $1.50+ posted line in 4 of his last 5 with the model agreeing.' };
+}
+/* 2. FIRST GOAL - production ranked players by how often they score. The first-scorer market
+   is a different question: will HE score the FIRST goal. So: P(his side opens) x P(it's him),
+   from events.json, against the first-scorer price.                                          */
+function eplFirstGoal(key, g){
+  var out = [];
+  eachSkater(key, g, function(p, team, opp){
+    if ((p.pos || p.position) === 'GK') return;
+    var rd = firstScorerRead(key, p), od = fsPrice(key, p.name);
+    if (!rd || !od) return;
+    var ev = edgeOf(rd.prob, od.over);
+    // the one priced tile without a walk-forward (events.json only holds season aggregates),
+    // and first-scorer books carry big margins - so it needs a clear 10% before it fires
+    if (ev < 0.10 || rd.prob > Math.min(0.97, (1/od.over) * 4)) return;
+    out.push({ name:p.name, p:p, opp:opp, rd:rd, od:od, ev:ev });
+  });
+  out.sort(function(a,b){ return b.ev - a.ev; });
+  return { rows:out.slice(0, 6).map(function(r){
+      return eplRow(key, r, '<b>First goal</b> \u00b7 $'+r.od.over.toFixed(2)+' '+esc(r.od.book||''),
+        [[abbrOf(key, r.p.team)+' open '+Math.round(r.rd.teamRate*100)+'%', r.rd.teamRate > 0.5],
+         ['scores '+Math.round(r.rd.share*100)+'% of their goals', r.rd.share > 0.2],
+         (r.rd.onPitch != null ? ['plays '+Math.round(r.rd.onPitch*100)+'% of the match', r.rd.onPitch > 0.8] : null),
+         ['model '+(r.rd.prob*100).toFixed(1)+'% v '+(100/r.od.over).toFixed(1)+'% implied', true],
+         (r.p.pens_order === 1 ? ['on penalties', true] : null)].filter(Boolean),
+        '+'+Math.round(r.ev*100)+'%', 'EDGE');
+    }),
+    why:'No first-scorer price on this fixture is at least 10% generous against the opener model.' };
+}
+/* 3. TAP-INS - accurate shooters. Production: 50%+ on target over the last 5. Five games of a
+   ratio is noise, so: last 10, 1.5+ shots a game, 45%+ on target, priced on shots on target at
+   the rung his own rate supports.                                                             */
+function eplTapIns(key, g){
+  var out = [];
+  eachSkater(key, g, function(p, team, opp){
+    if ((p.pos || p.position) === 'GK') return;
+    var l10 = eplLogs(key, p.name, 30).slice(0, 10);
+    if (l10.length < 6) return;
+    var sh = mean(statVals(key, p.name, 'shots', l10)), sot = mean(statVals(key, p.name, 'shotsOn', l10));
+    if (!(sh >= 1.5) || !(sot > 0)) return;
+    var acc = sot / sh;
+    if (acc < 0.45) return;
+    var ask = Math.max(1, Math.floor(sot + 0.35));
+    var od = bestPriceFor(key, p.name, 'shotsOn', ask - 0.5);
+    if (!od) return;
+    var pr = modelProbAt(key, p, 'shotsOn', od.line, opp);
+    if (pr == null || edgeOf(pr, od.price) < 0) return;
+    var oT = eplTeam(key, opp), lgSA = eplLeagueMean(key, 'shotsOn_a');
+    out.push({ name:p.name, p:p, opp:opp, sh:sh, sot:sot, acc:acc, od:od, ask:ask, pr:pr,
+               oppSA:(oT ? +oT.shotsOn_a : null), lgSA:lgSA });
+  });
+  out.sort(function(a,b){ return (b.acc*b.sot) - (a.acc*a.sot); });
+  return { rows:out.slice(0, SIG_MAX_ROWS).map(function(r){
+      return eplRow(key, r, '<b>'+r.ask+'+ Shots on target</b> \u00b7 '+fmtP(r.od),
+        [[r.sh.toFixed(1)+' shots/gm L10', r.sh >= 2.5], [Math.round(r.acc*100)+'% on target', true],
+         (r.oppSA != null ? [abbrOf(key, r.opp)+' concede '+r.oppSA.toFixed(1)+' SOT/gm', r.oppSA > r.lgSA] : null),
+         ['model '+Math.round(r.pr*100)+'%', true]].filter(Boolean),
+        Math.round(r.acc*100)+'%', 'ON TARGET');
+    }),
+    why:'No priced shooter on this fixture hits the target 45%+ of the time on 1.5+ shots a game over his last 10.' };
+}
+/* 4. PENALTY KINGS - the first-choice taker gets a free shot at a goal most sides earn every
+   few games. Priced on anytime goal, and only where the model backs the price.                */
+function eplPenKings(key, g){
+  var out = [];
+  eachSkater(key, g, function(p, team, opp){
+    if (p.pens_order !== 1) return;
+    var od = bestPriceFor(key, p.name, 'goals', 0.5);
+    if (!od) return;
+    var pr = modelProbAt(key, p, 'goals', 0.5, opp);
+    if (pr == null || edgeOf(pr, od.price) < 0) return;
+    var l10 = statVals(key, p.name, 'goals', eplLogs(key, p.name, 45).slice(0, 10));
+    out.push({ name:p.name, p:p, opp:opp, od:od, pr:pr, g10:l10.reduce(function(a,b){ return a+b; }, 0), n10:l10.length });
+  });
+  out.sort(function(a,b){ return edgeOf(b.pr, b.od.price) - edgeOf(a.pr, a.od.price); });
+  return { rows:out.map(function(r){
+      return eplRow(key, r, '<b>Anytime goal</b> \u00b7 '+fmtP(r.od),
+        [['first-choice penalty taker', true], [r.g10+' goals in last '+r.n10, r.g10 >= 3],
+         ['model '+Math.round(r.pr*100)+'% v '+Math.round(100/r.od.price)+'% implied', true]],
+        '+'+Math.round(edgeOf(r.pr, r.od.price)*100)+'%', 'EDGE');
+    }),
+    why:'No first-choice penalty taker on this fixture has an anytime-goal price the model backs.' };
+}
+/* 5. SPAM SQUARE - REMOVED. Walk-forward over 4,093 player-games: a player's recent booking
+   rate barely predicts his next card. "Magnets" booked in 30%+ of recent games were predicted at
+   37% and carded 19.5% of the time - barely above the 18% for the quietest quarter. Any priced
+   version of this tile would have shown edges that do not exist.                               */
+/* 6. BRICK WALL - saves come from shots on target, so project them: the opponent's shots on
+   target blended with what this side concedes, times the keeper's own save rate, against the
+   saves ladder.                                                                                */
+function eplBrickWall(key, g){
+  var out = [];
+  eachSkater(key, g, function(p, team, opp){
+    if ((p.pos || p.position) !== 'GK') return;
+    var oT = eplTeam(key, opp), mT = eplTeam(key, team);
+    if (!oT || !mT) return;
+    var sotFaced = mean([+oT.shotsOn || 0, +mT.shotsOn_a || 0]);
+    var l10 = eplLogs(key, p.name, 60).slice(0, 10);
+    var sv = mean(statVals(key, p.name, 'saves', l10));
+    var faced = mT.shotsOn_a ? +mT.shotsOn_a : null;
+    var saveRate = (faced && sv != null) ? Math.max(0.5, Math.min(0.9, sv / faced)) : 0.7;
+    var proj = sotFaced * saveRate;
+    // The projection is shown, but the PRICE comes from the EPL scoring model: that has a
+    // walk-forward behind it (35.8pt quartile spread); this projection doesn't - historical team
+    // shots on target can't be rebuilt reliably from the API-Football coverage window.
+    var rungs = streakCandidates(key, p.name, 'saves').slice().sort(function(a,b){ return b.line - a.line; });
+    var pick = null;
+    rungs.forEach(function(c){
+      if (pick) return;
+      var pr = modelProbAt(key, p, 'saves', c.line, opp);
+      if (pr == null || pr > Math.min(0.97, (1/c.price) * 4)) return;
+      if (edgeOf(pr, c.price) >= 0.05) pick = { c:c, pr:pr };
+    });
+    if (!pick) return;
+    out.push({ name:p.name, p:p, opp:opp, proj:proj, sotFaced:sotFaced, saveRate:saveRate, pick:pick });
+  });
+  out.sort(function(a,b){ return edgeOf(b.pick.pr, b.pick.c.price) - edgeOf(a.pick.pr, a.pick.c.price); });
+  return { rows:out.map(function(r){
+      return eplRow(key, r, '<b>'+Math.ceil(r.pick.c.line)+'+ Saves</b> \u00b7 '+fmtP(r.pick.c),
+        [[r.sotFaced.toFixed(1)+' shots on target expected', r.sotFaced > 4.5],
+         [Math.round(r.saveRate*100)+'% save rate', r.saveRate > 0.7],
+         ['model '+Math.round(r.pick.pr*100)+'% v '+Math.round(100/r.pick.c.price)+'% implied', true]],
+        r.proj.toFixed(1), 'PROJ SAVES');
+    }),
+    why:'No keeper on this fixture has a saves rung the shots-on-target projection beats by 5%.' };
+}
+/* 7. FOULED AGAIN - production aimed at fouls DRAWN, but the market books post is fouls
+   COMMITTED, so that's what gets priced: his rate, scaled by the referee's whistle and by how
+   many fouls this opponent draws.                                                              */
+function eplFouls(key, g){
+  var out = [], ref = eplRef(key, g);
+  eachSkater(key, g, function(p, team, opp){
+    var l10 = eplLogs(key, p.name, 45).slice(0, 10);
+    if (l10.length < 6) return;
+    var fc = mean(statVals(key, p.name, 'foulsCommitted', l10));
+    if (!(fc >= 1)) return;
+    var oT = eplTeam(key, opp), lgD = eplLeagueMean(key, 'foulsCommitted_a');
+    var oppMult = (oT && lgD) ? Math.max(0.8, Math.min(1.3, (+oT.foulsCommitted_a) / lgD)) : 1;
+    var refMult = ref ? Math.max(0.85, Math.min(1.2, ref.foulMult)) : 1;
+    // Walk-forward: his rolling fouls rate (Poisson) predicted 22.0% for 2+ where 22.2% landed,
+    // top quartile 34% v bottom 10%. The referee and opponent factors are untested, so they are
+    // shown as context but kept OUT of the probability.
+    var proj = fc;
+    var rungs = streakCandidates(key, p.name, 'foulsCommitted').slice().sort(function(a,b){ return b.line - a.line; });
+    var pick = null;
+    rungs.forEach(function(c){
+      if (pick) return;
+      var pr = Math.min(0.9, poisAtLeast(proj, Math.ceil(c.line)));
+      if (edgeOf(pr, c.price) >= 0.05) pick = { c:c, pr:pr };
+    });
+    if (!pick) return;
+    out.push({ name:p.name, p:p, opp:opp, fc:fc, proj:proj, ref:ref, refMult:refMult, oppMult:oppMult, pick:pick });
+  });
+  out.sort(function(a,b){ return edgeOf(b.pick.pr, b.pick.c.price) - edgeOf(a.pick.pr, a.pick.c.price); });
+  return { rows:out.slice(0, SIG_MAX_ROWS).map(function(r){
+      return eplRow(key, r, '<b>'+Math.ceil(r.pick.c.line)+'+ Fouls committed</b> \u00b7 '+fmtP(r.pick.c),
+        [[r.fc.toFixed(1)+' fouls/gm L10', r.fc >= 1.5],
+         (r.ref ? [r.ref.name+' '+r.ref.foulsPG.toFixed(1)+' fouls/gm', r.refMult > 1] : ['referee not yet named', false]),
+         [abbrOf(key, r.opp)+' draw fouls x'+r.oppMult.toFixed(2), r.oppMult > 1],
+         ['model '+Math.round(r.pick.pr*100)+'%', true]],
+        r.proj.toFixed(1), 'PROJ FOULS');
+    }),
+    why:'No priced player on this fixture projects to beat a fouls-committed rung by 5%.' };
+}
+/* 8. MISMATCH ALERT - a shooter with real volume into a defence that leaks shots to his
+   position (+12% or worse). Unlike Elite Matchups, not limited to the league's top 10.        */
+function eplMismatch(key, g){
+  var out = [];
+  eachSkater(key, g, function(p, team, opp){
+    if ((p.pos || p.position) === 'GK') return;
+    var dr = dvpRankFor(key, opp, p.position || p.pos, 'shots');
+    if (!dr || dr.pct < 12) return;
+    var sh = mean(statVals(key, p.name, 'shots', eplLogs(key, p.name, 30).slice(0, 10)));
+    if (!(sh >= 1.5)) return;
+    var ask = Math.max(1, Math.round(sh));
+    var od = bestPriceFor(key, p.name, 'shots', ask - 0.5);
+    if (!od) return;
+    var pr = modelProbAt(key, p, 'shots', od.line, opp);
+    if (pr == null || edgeOf(pr, od.price) < 0) return;
+    out.push({ name:p.name, p:p, opp:opp, dr:dr, sh:sh, od:od, ask:ask, pr:pr });
+  });
+  out.sort(function(a,b){ return b.dr.pct - a.dr.pct; });
+  return { rows:out.slice(0, SIG_MAX_ROWS).map(function(r){
+      return eplRow(key, r, '<b>'+r.ask+'+ Shots</b> \u00b7 '+fmtP(r.od),
+        [[abbrOf(key, r.opp)+' concede +'+Math.round(r.dr.pct)+'% shots to '+esc(posShortP(r.p)), true],
+         [r.sh.toFixed(1)+' shots/gm L10', r.sh >= 2.5], ['model '+Math.round(r.pr*100)+'%', true]],
+        '+'+Math.round(r.dr.pct)+'%', 'SHOTS LEAK');
+    }),
+    why:'No priced shooter on this fixture faces a defence leaking 12%+ more shots to his position.' };
+}
+/* 9-10. GOALS GALORE / CORNER STORM - REMOVED. A team attack x opponent defence Poisson model,
+   walk-forward over 945 matches (goals) and 729 (corners), with and without shrinkage and
+   recency windows: every variant scored WORSE than always guessing the base rate (best: goals
+   0.2487 v 0.2470, corners 0.2478 v 0.2456). Match totals are among the sharpest markets posted;
+   a model that can't beat the base rate has no business claiming an edge against them.         */
+function eplSignals(key, g){
+  if (key !== 'epl') return '';
+  var li = eplLockedIn(key, g), fg = eplFirstGoal(key, g), ti = eplTapIns(key, g), pk = eplPenKings(key, g),
+      bw = eplBrickWall(key, g), fa = eplFouls(key, g), mm = eplMismatch(key, g);
+  return sigBand('EPL Signals',
+    sigTile('ti-lock-square-rounded', 'Locked In', 'Cleared the posted line in 4 of the last 5', li.rows, li.why)
+    + sigTile('ti-target-arrow', 'First Goal', 'Opener value: his side scores first, and it\u2019s him', fg.rows, fg.why)
+    + sigTile('ti-hand-finger', 'Tap-Ins', 'Accurate shooters, priced on shots on target', ti.rows, ti.why)
+    + sigTile('ti-crown', 'Penalty Kings', 'First-choice takers the model backs to score', pk.rows, pk.why)
+    + sigTile('ti-shield', 'Brick Wall', 'Keepers in line for saves', bw.rows, bw.why)
+    + sigTile('ti-hand-stop', 'Fouled Again', 'Foul volume, whistle and opponent', fa.rows, fa.why)
+    + sigTile('ti-bolt', 'Mismatch Alert', 'Shooters into a defence that leaks shots', mm.rows, mm.why));
+}
 function nflSignals(key, g){
   if (key !== 'nfl') return '';
   var tud = nflTuddy(key, g), chk = nflChunk(key, g);
@@ -5165,7 +5454,7 @@ function signalsSection(key, g){
     + (function(){ var lc = letsClimb(key, g);
         return sigTile('ti-stairs-up', 'Let\u2019s Climb', 'One staked ladder: main line, then value rungs up',
           lc.rows.map(function(r){ return climbRow(key, r); }), lc.why); })();
-  var nfl = nflSignals(key, g) + aflSignals(key, g);
+  var nfl = nflSignals(key, g) + aflSignals(key, g) + eplSignals(key, g);
   var reads = radarSection(key, g) + coverageSection(key, g) + usageSection(key, g);
   var form = sigTile('ti-trending-up', 'Form Alerts', 'Running hot or cold against their own season',
               formAlerts(key, g).map(function(r){ return formRow(key, r); }),
@@ -6065,7 +6354,38 @@ function fsIndex(key){
   }
   return (S.idx.fs = { teamGames:teamGames, teamFirst:teamFirst, byPlayer:byPlayer, teamScores:teamScores });
 }
+// EPL: first-scorer SHARE from his share of the team's goals, not from first-scorer counts.
+// events.json holds ~10 first-scorer events per club per season spread over a handful of names,
+// and shrinking those toward an even split handed every listed player ~20% - summed over a game
+// that was far more than one first goal. Goals per game against the team's goals per game has
+// ten times the data, and minutes on the pitch scale it for rotation players.
+function eplGoalShare(key, p){
+  var S = state.sports[key];
+  var rows = sortLogsDesc(((S.idx.logsByName || {})[p.name] || []).slice()).slice(0, 20);
+  if (rows.length < 5) return null;
+  var goals = 0, mins = 0;
+  rows.forEach(function(r){ goals += +(statOf(key, r, 'goals') || 0); mins += +r.min || 0; });
+  var t = eplTeam(key, p.team);
+  var teamG = t ? (+t.goals || +t.gf || 0) : 0;
+  if (!(teamG > 0)) return null;
+  var perGame = goals / rows.length;
+  var onPitch = Math.max(0.05, Math.min(1, mins / (rows.length * 90)));
+  // share of the team's goals while he plays, then scaled by how much of the match that is
+  var share = Math.max(0, Math.min(0.6, (perGame / onPitch) / teamG));
+  return { share:share, onPitch:onPitch, perGame:perGame, teamG:teamG };
+}
 function firstScorerRead(key, p){
+  if (key === 'epl'){
+    var ixE = fsIndex(key), tk = normTeam(p.team);
+    var tg = ixE.teamGames[tk] || 0, tf = ixE.teamFirst[tk] || 0;
+    var gs = eplGoalShare(key, p);
+    if (!tg || !gs) return null;
+    var teamRate = tf / tg;
+    var probE = teamRate * gs.share * gs.onPitch;
+    return { prob: Math.max(0.002, Math.min(0.6, probE)), teamRate:teamRate, share:gs.share,
+             onPitch:gs.onPitch, n:(ixE.byPlayer[tk + '|' + p.name] || {}).n || 0,
+             teamTot:ixE.teamScores[tk] || 0, teamGames:tg, scorers:0, goalShare:true };
+  }
   var ix = fsIndex(key);
   var team = normTeam(p.team);
   var tg = ix.teamGames[team] || 0, tf = ix.teamFirst[team] || 0;
@@ -7453,6 +7773,12 @@ window.LAB = {
     render();
   },
   cmbLad: function(open){ state.view.cmbLadOpen = !!open; },
+  // test hook: the first-scorer probability the shell would use for a player
+  fsProbe: function(name){
+    var key = (state.view.focus || {}).sport; if (!key) return null;
+    var p = (state.sports[key].idx.byName || {})[name]; if (!p) return null;
+    var r = firstScorerRead(key, p); return r ? r.prob : null;
+  },
   stSport: function(k){ state.view.stSport = k; ensureSport(k); render(); },
   stMode: function(m){ state.view.stMode = m; render(); },
   stSort: function(k){
