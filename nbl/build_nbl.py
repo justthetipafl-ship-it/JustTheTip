@@ -311,8 +311,37 @@ def main():
             "gamelogFiles": gl_files, "day": None,
             "summary": {"players": len(players), "teams": len(teams), "gamelogs": sum(len(by_season[y]) for y in gl_seasons),
                         "results": len(results), "fixtures": len(fixtures), "dvp": len(dvp)}}
+    # ---- availability (derived) ----
+    # The NBL publishes no injury feed. The box scores do show who played: a regular who took the
+    # court in 4+ of his club's previous 6 games but none of its last 2 is almost certainly
+    # unavailable - injured, or out of the rotation. Written in injury.json's usual shape so the lab
+    # keeps him out of every signal; Status says it's derived, not a medical report. A player who
+    # has since changed clubs is filtered by the lab's club check, so an old club can't flag him.
+    injury = []
+    team_games = defaultdict(list)
+    recent_rows = [r for yr in gl_seasons[-2:] for r in by_season.get(yr, [])]
+    for r in recent_rows:
+        team_games[r["Team"]].append((r["Date"], r["MatchId"]))
+    played = defaultdict(set)
+    for r in recent_rows:
+        if (r.get("minutes") or 0) > 0:
+            played[(r["Team"], r["Player"])].add(r["MatchId"])
+    for T, gl in team_games.items():
+        order = [m for _, m in sorted(set(gl))]
+        if len(order) < 8:
+            continue
+        last2, prior6 = set(order[-2:]), set(order[-8:-2])
+        for (tm, name), mids in played.items():
+            if tm != T:
+                continue
+            if len(mids & prior6) >= 4 and not (mids & last2):
+                injury.append({"Team": T, "Player": name, "Position": "", "Injury": "",
+                               "Status": "Missed last 2 games (derived from box scores)"})
+    print("NBL availability: %d regulars missed their club's last 2 games" % len(injury))
+
     for n, obj in [("players.json", players), ("teams.json", teams), ("dvp.json", dvp),
-                   ("results.json", results), ("fixture.json", fixtures), ("meta.json", meta)]:
+                   ("results.json", results), ("fixture.json", fixtures), ("meta.json", meta),
+                   ("injury.json", injury)]:
         json.dump(obj, open(os.path.join(DATA, n), "w"), separators=(",", ":"))
     print("NBL build: seasons %s | players %d | teams %d | gamelogs %s | results %d | fixtures %d"
           % (gl_seasons, len(players), len(teams), {y: len(by_season[y]) for y in gl_seasons}, len(results), len(fixtures)))
