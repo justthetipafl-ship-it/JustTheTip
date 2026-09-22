@@ -749,6 +749,16 @@
   .j-slip-row{display:flex;align-items:center;gap:8px;font-size:11px;padding:4px 0;}
   .j-key{display:flex;gap:10px;flex-wrap:wrap;font-size:8px;color:var(--text-3);margin-top:6px;}
   .j-key i{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:4px;}
+  .lad-legs{display:flex;flex-direction:column;gap:3px;margin:6px 0 2px;}
+  .lad-leg{display:flex;align-items:center;gap:8px;font-size:11px;padding:4px 7px;border-radius:6px;
+    background:var(--surface);border:1px solid var(--border);}
+  .lad-leg.base{border-color:color-mix(in srgb,var(--accent) 45%,var(--border));}
+  .lad-stake{width:34px;flex:none;font-family:var(--font-mono);font-size:10px;color:var(--text-3);}
+  .lad-bet{flex:1;min-width:0;} .lad-bet b{font-family:var(--font-display);}
+  .lad-tag{font-size:8px;font-weight:800;letter-spacing:.05em;text-transform:uppercase;color:var(--accent);}
+  .lad-hit{width:64px;flex:none;text-align:right;font-family:var(--font-mono);font-size:10px;color:var(--text-2);}
+  .lad-ev{width:44px;flex:none;text-align:right;font-family:var(--font-mono);font-size:10px;}
+  .lad-ev.pos{color:var(--accent);} .lad-ev.neg{color:#f97316;}
   .sc-filter{display:flex;gap:7px;align-items:center;margin-bottom:8px;}
   .sc-filter input{flex:1;min-width:0;background:var(--surface-2);border:1px solid var(--border);
     border-radius:9px;padding:9px 12px;color:var(--text);font-size:13px;font-family:inherit;outline:none;}
@@ -4920,77 +4930,112 @@ function aflKickIns(key, g){
   out.sort(function(a,b){ return (b.projKicks - b.od.line) - (a.projKicks - a.od.line); });
   return { rows:out, why:'No designated kick-in taker (2.5+ a game) on this fixture has a posted kicks price.' };
 }
-/* LET'S CLIMB - every sport. Production's rule: start at the lowest rung paying $1.70+, and the
-   player must still hit 70% one rung up and 40% two rungs up this season. That is kept as a
-   CONSISTENCY gate, but the pick is now chosen differently: every rung on the ladder is scored
-   with the calibrated model at its own price, and the row points at the rung with the best EV.
-   The question on a ladder is not "does he still hit two up" but "which rung is mispriced most". */
-var CLIMB_START = 1.70, CLIMB_HIT = 0.70, CLIMB_FLOOR = 0.40, CLIMB_MIN_G = 8;
+/* LET'S CLIMB - one staked ladder, not a list of rungs.
+   A ladder is a single bet with a staggered stake: the biggest slice on the MAIN line (or the
+   alt rung nearest $1.80 where there is no main line), then smaller slices on the next two or
+   three rungs up. The base should be at least fair; every step above it has to be genuine value.
+   It is meant to be rare: one ladder per fixture at most, and only when all of this holds
+   (on the season AND his last 10, so a player who has gone cold can't qualify on March):
+
+     - the base is the posted main line, or the alt rung closest to $1.80 (between $1.65-$2.05)
+     - the base is at least break-even, and each step up is worth +8% or better
+     - 10+ games of his own record behind it, and he clears the base line 50%+ of the time
+     - every step is a rung he reaches 30%+ of the time - value, not a long shot
+     - replayed against those games, the staggered package returned +10% or better
+
+   Every probability is the conservative one: the calibrated model, capped at his own smoothed
+   hit rate plus 5 points, and on tail rungs (he clears it under 30% of the time) his record alone -
+   out there the model is extrapolating past where it was calibrated.                            */
+var LADDER_W = [4, 2, 1, 1];                          // stake weights: base, then each step up
+var LADDER_STEP_EV = 0.08, LADDER_MIN_G = 10, LADDER_PKG_EV = 0.10, LADDER_HIST_ROI = 0.10;
+function ladderPlan(key, p, k, label, opp, sample){
+  var rungs = streakCandidates(key, p.name, k).slice().sort(function(a,b){ return a.line - b.line; });
+  if (rungs.length < 3) return null;
+  // base: the posted main line, or the alt rung nearest $1.80
+  var main = twoWayOverFor(key, p.name, k).filter(function(r){ return r.price >= 1.55 && r.price <= 2.30; })
+    .sort(function(a,b){ return Math.abs(a.price - 1.9) - Math.abs(b.price - 1.9); })[0];
+  var bi = -1;
+  if (main){
+    for (var i=0;i<rungs.length;i++) if (Math.abs(rungs[i].line - main.line) < 1e-9){ bi = i; break; }
+    if (bi >= 0 && main.price > rungs[bi].price) rungs[bi] = { line:main.line, price:main.price, book:main.book };
+  }
+  if (bi < 0){
+    var bd = 9;
+    rungs.forEach(function(r, i){
+      if (r.price < 1.65 || r.price > 2.05) return;
+      var d = Math.abs(r.price - 1.80);
+      if (d < bd){ bd = d; bi = i; }
+    });
+  }
+  if (bi < 0 || bi + 2 >= rungs.length) return null;
+  var vals = statVals(key, p.name, k, sample), n = vals.length;
+  if (n < LADDER_MIN_G) return null;
+  // his last 10 games too: a season rate can hide a player who has gone cold (Impey: 8+ marks in
+  // 10 of 22 this season, but 9/0/7/3/4 in his last five), and AFL's calibration is too flat to
+  // notice - so a rung only counts for what holds on BOTH windows
+  var recent = statVals(key, p.name, k, sortLogsDesc(((state.sports[key].idx.logsByName || {})[p.name] || []).slice()).slice(0, 10));
+  var nR = recent.length;
+  var hr = function(line){ return vals.filter(function(v){ return v > line; }).length / n; };
+  var hrR = function(line){ return nR ? recent.filter(function(v){ return v > line; }).length / nR : 0; };
+  var conservative = function(r){
+    var h = hr(r.line), hR = hrR(r.line);
+    var emp = (h*n + 1)/(n + 2), empR = (hR*nR + 1)/(nR + 2);
+    var pr = modelProbAt(key, p, k, r.line, opp);
+    if (pr == null) return null;
+    return Math.min(pr, emp + 0.05, empR + 0.05);
+  };
+  var base = rungs[bi], bh = hr(base.line), bp = conservative(base);
+  if (bp == null || bh < 0.50 || hrR(base.line) < 0.50) return null;
+  if (bp * base.price - 1 < 0) return null;                          // base at least fair
+  var steps = [];
+  for (var j = bi + 1; j < rungs.length && steps.length < 3; j++){
+    var r = rungs[j], q = conservative(r);
+    if (q == null) break;
+    // a step is a rung he genuinely reaches - 30%+ on both windows - not a long shot two lucky
+    // games make look cheap (Sobey 30+ and 35+ points: 13%, 2 games in 15)
+    if (hr(r.line) < 0.30 || hrR(r.line) < 0.30) break;
+    var ev = q * r.price - 1;
+    if (ev < LADDER_STEP_EV) break;                                  // the climb stops where value stops
+    steps.push({ line:r.line, price:r.price, book:r.book, hit:hr(r.line), hitR:hrR(r.line), prob:q, ev:ev });
+  }
+  if (steps.length < 2) return null;                                 // a ladder needs 2+ value steps
+  var legs = [{ line:base.line, price:base.price, book:base.book, hit:bh, hitR:hrR(base.line), prob:bp, ev:bp*base.price - 1, base:true }]
+    .concat(steps);
+  var wsum = 0; legs.forEach(function(l, i){ l.w = LADDER_W[i]; wsum += l.w; });
+  legs.forEach(function(l){ l.stake = l.w / wsum; });
+  // package EV: rungs are nested, but expectation is additive regardless
+  var pkgEv = legs.reduce(function(a, l){ return a + l.stake * l.prob * l.price; }, 0) - 1;
+  // replay the package against his own games: what would it actually have returned?
+  var ret = 0, wins = 0;
+  vals.forEach(function(v){
+    var pay = legs.reduce(function(a, l){ return a + (v > l.line ? l.stake * l.price : 0); }, 0);
+    ret += pay - 1; if (pay > 1) wins++;
+  });
+  return { name:p.name, p:p, opp:opp, mkt:k, label:label, legs:legs, pkgEv:pkgEv,
+           histRoi:ret / n, histWins:wins, n:n, fromMain:!!main && Math.abs(main.line - base.line) < 1e-9 };
+}
 function letsClimb(key, g){
-  var S = state.sports[key], out = [];
-  var season = curSeason(key);
+  var S = state.sports[key], season = curSeason(key), cands = [];
   [g.away, g.home].forEach(function(team){
     var opp = (team === g.home) ? g.away : g.home;
     playersOnTeam(key, team).forEach(function(p){
       if (!isPlayingP(key, p.name, team) || !hasAnyOddsFor(key, p.name)) return;
       var logs = sortLogsDesc(((S.idx.logsByName || {})[p.name] || []).slice());
       var cur = logs.filter(function(r){ return (+(r.Year||r.year)||0) === season; });
-      var sample = cur.length >= CLIMB_MIN_G ? cur : logs.slice(0, 15);   // early season: last 15
-      if (sample.length < CLIMB_MIN_G) return;
-      var best = null;
+      var sample = cur.length >= LADDER_MIN_G ? cur : logs.slice(0, 15);
       posMarkets(key, p).forEach(function(m){
-        var k = m[0];
-        var rungs = streakCandidates(key, p.name, k).slice().sort(function(a,b){ return a.line - b.line; });
-        if (rungs.length < 3) return;
-        var si = -1;
-        for (var i=0;i<rungs.length;i++) if (rungs[i].price >= CLIMB_START){ si = i; break; }
-        if (si < 0 || si + 2 >= rungs.length) return;
-        var vals = statVals(key, p.name, k, sample);
-        var hr = function(line){ return vals.length ? vals.filter(function(v){ return v > line; }).length / vals.length : 0; };
-        var r1 = rungs[si+1], r2 = rungs[si+2];
-        // Two ways to qualify. Production's rule (70% one rung up, 40% two up) is an AFL rule:
-        // on NBL and NFL ladders the first $1.70 rung already sits at or above most players'
-        // median, so it almost never fires - even on one-step markets like receptions or assists.
-        // The principle travels as a price-relative test: on BOTH rungs above the start, his
-        // smoothed hit rate beats the rung's implied probability by 5 points, and he genuinely
-        // clears them (40%+). Tail rungs can't sneak in - a lucky game or two isn't 40%.
-        var nG = vals.length;
-        var beats = function(r){ var h = hr(r.line), emp = (h*nG + 1)/(nG + 2);
-                                 return h >= 0.40 && emp > 1/r.price + 0.05; };
-        var gateAbs = hr(r1.line) >= CLIMB_HIT && hr(r2.line) >= CLIMB_FLOOR;
-        var gateRel = beats(r1) && beats(r2);
-        if (!gateAbs && !gateRel) return;
-        // Calibration was fitted on lines near each player's own average. Out on the tail of a
-        // ladder it extrapolates - AFL's Platt slope (0.358) pulls everything to the middle, so a
-        // 13% event reads as ~50% and the "best rung" is always the longest one. Use whichever is
-        // more conservative: the model, or what he has actually done (smoothed) plus 10 points.
-        var hitN = vals.length;
-        var ladder = rungs.slice(si, si + 6).map(function(r){
-          var pr = modelProbAt(key, p, k, r.line, opp);
-          var h = hr(r.line);
-          var emp = (h * hitN + 1) / (hitN + 2);
-          // On the tail (he clears it under 30% of the time) the model has left the range it was
-          // calibrated on, so his own smoothed record is the only evidence worth pricing. Inside
-          // the range, take the more conservative of the two with a small margin for the model.
-          var use = pr == null ? null : (h < 0.30 ? emp : Math.min(pr, emp + 0.05));
-          var ev = use != null ? use * (r.price - 1) - (1 - use) : null;
-          if (use != null && use > Math.min(0.97, (1/r.price) * 4)) ev = null;  // tail guard
-          return { line:r.line, price:r.price, book:r.book, hit:h, prob:use, model:pr, ev:ev };
-        });
-        var top = ladder.filter(function(r){ return r.ev != null; })
-          .sort(function(a,b){ return b.ev - a.ev; })[0];
-        if (!top || top.ev <= 0) return;
-        var cand = { name:p.name, p:p, opp:opp, mkt:k, label:m[1], ladder:ladder, top:top, n:vals.length,
-                     why: gateAbs ? 'holds 70% a rung up' : 'beats the price two rungs up' };
-        if (!best || top.ev > best.top.ev) best = cand;                       // one market per player
+        var plan = ladderPlan(key, p, m[0], m[1], opp, sample);
+        // the model has to like it AND his own games have to back it: a ladder that barely beat
+        // its history (+7%) is a coin flip with extra steps, not a pick
+        if (plan && plan.pkgEv >= LADDER_PKG_EV && plan.histRoi >= LADDER_HIST_ROI) cands.push(plan);
       });
-      if (best) out.push(best);
     });
   });
-  out.sort(function(a,b){ return b.top.ev - a.top.ev; });
-  return { rows:out.slice(0, SIG_MAX_ROWS),
-           why:'No priced ladder on this fixture holds 70% a rung above its $1.70 start, or beats its price on both '
-             + 'rungs above it, with a positive-edge rung to take.' };
+  // one ladder per fixture: the best package, judged on the model AND on what it actually did
+  cands.sort(function(a,b){ return (b.pkgEv + b.histRoi) - (a.pkgEv + a.histRoi); });
+  return { rows:cands.slice(0, 1), considered:cands.length,
+           why:'No ladder on this fixture starts at a fair main line, climbs 2+ rungs he reaches 30%+ of the '
+             + 'time that are each +8% value, and returned +10% replayed against his own games.' };
 }
 /* ---- rows ---- */
 function aflRowHead(key, r, tag){
@@ -5028,20 +5073,25 @@ function kickInRow(key, r){
     + '<div class="gl-right"><div class="gl-ev '+(r.clears ? 'pos' : 'neg')+'">'+r.projKicks.toFixed(1)+'</div><div class="gl-evl">PROJ KICKS</div></div></div>';
 }
 function climbRow(key, r){
-  var lad = r.ladder.map(function(x){
-    var on = x === r.top;
-    return '<span class="gl-chip'+(on ? ' good' : '')+'" title="model '+(x.model != null ? Math.round(x.model*100)+'%' : '\u2014')
-      +' \u00b7 used '+(x.prob != null ? Math.round(x.prob*100)+'%' : '\u2014')+'">'
-      + Math.ceil(x.line)+'+ $'+x.price.toFixed(2)+' \u00b7 '+Math.round(x.hit*100)+'%'
-      + (x.ev != null ? ' \u00b7 '+(x.ev > 0 ? '+' : '')+Math.round(x.ev*100)+'%' : '')+'</span>';
+  var pc = function(v){ return Math.round(v*100); };
+  var legs = r.legs.map(function(l, i){
+    return '<div class="lad-leg'+(l.base ? ' base' : '')+'">'
+      + '<span class="lad-stake">'+pc(l.stake)+'%</span>'
+      + '<span class="lad-bet"><b>'+Math.ceil(l.line)+'+</b> $'+l.price.toFixed(2)
+      + (l.base ? ' <span class="lad-tag">'+(r.fromMain ? 'main line' : '~$1.80 alt')+'</span>' : '')+'</span>'
+      + '<span class="lad-hit" title="season / last 10">'+pc(l.hit)+'% \u00b7 '+pc(l.hitR)+'%</span>'
+      + '<span class="lad-ev '+(l.ev >= 0 ? 'pos' : 'neg')+'">'+(l.ev >= 0 ? '+' : '')+pc(l.ev)+'%</span></div>';
   }).join('');
-  return aflRowHead(key, r, (posShortP(r.p) ? posShortP(r.p)+' \u00b7 ' : '')+abbrOf(key, r.p.team)+' v '+abbrOf(key, r.opp))
-    + '<div class="gl-bet"><b>'+Math.ceil(r.top.line)+'+ '+esc(r.label)+'</b> \u00b7 $'+r.top.price.toFixed(2)+' '+esc(r.top.book||'')
-    + ' \u00b7 model '+Math.round(r.top.prob*100)+'%</div>'
-    + '<div class="gl-why">'+lad+'</div>'
-    + '<div class="cmb-corr" style="margin:3px 0 0">Qualified: '+esc(r.why)+'. Rungs: line \u00b7 price \u00b7 hit rate over '
-    + r.n+' games \u00b7 edge. Highlighted rung is the best-priced.</div></div>'
-    + '<div class="gl-right"><div class="gl-ev pos">+'+Math.round(r.top.ev*100)+'%</div><div class="gl-evl">BEST RUNG EDGE</div></div></div>';
+  return '<div class="gl-row sig-extra lad-row" onclick="LAB.player(\'' + key + '\',\'' + esc(r.name).replace(/'/g,"\\'") + '\')">'
+    + playerImgP(key, r.name, 28)
+    + '<div class="gl-left"><div class="gl-nm"><b>'+esc(r.name)+'</b><span class="gl-tag">'
+    + esc((posShortP(r.p) ? posShortP(r.p)+' \u00b7 ' : '')+abbrOf(key, r.p.team)+' v '+abbrOf(key, r.opp))+'</span></div>'
+    + '<div class="gl-bet"><b>'+esc(r.label)+' ladder</b> \u00b7 '+r.legs.length+' rungs</div>'
+    + '<div class="lad-legs">'+legs+'</div>'
+    + '<div class="cmb-corr" style="margin:4px 0 0">Stake split across the rungs; hit rates are season \u00b7 last 10. Replayed on his last '+r.n
+    + ' games this package returned '+(r.histRoi >= 0 ? '+' : '')+pc(r.histRoi)+'% and made money in '
+    + r.histWins+' of '+r.n+'.</div></div>'
+    + '<div class="gl-right"><div class="gl-ev pos">+'+pc(r.pkgEv)+'%</div><div class="gl-evl">PACKAGE EDGE</div></div></div>';
 }
 function aflSignals(key, g){
   if (key !== 'afl') return '';
@@ -5113,7 +5163,7 @@ function signalsSection(key, g){
               'No player has a posted under they have never cleared in '+H2H_MIN_BOGEY
               + '+ meetings with this opponent.')
     + (function(){ var lc = letsClimb(key, g);
-        return sigTile('ti-stairs-up', 'Let\u2019s Climb', 'The best-priced rung on a ladder that holds',
+        return sigTile('ti-stairs-up', 'Let\u2019s Climb', 'One staked ladder: main line, then value rungs up',
           lc.rows.map(function(r){ return climbRow(key, r); }), lc.why); })();
   var nfl = nflSignals(key, g) + aflSignals(key, g);
   var reads = radarSection(key, g) + coverageSection(key, g) + usageSection(key, g);
