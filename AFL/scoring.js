@@ -635,13 +635,41 @@ window.JTTScoring = (function () {
     const baseline = cur.length ? cur.reduce((a,b)=>a+b,0)/cur.length
                                 : hist.reduce((a,b)=>a+b,0)/hist.length;
     // recent form, pulled toward season baseline so a hot fortnight can't run away with it
-    const mu0 = (_ewma(hist, P_HALFLIFE)*hist.length + baseline*P_SHRINK)/(hist.length + P_SHRINK);
+    let mu0 = (_ewma(hist, P_HALFLIFE)*hist.length + baseline*P_SHRINK)/(hist.length + P_SHRINK);
+    // GOALS: shot quality (xScore) predicts the next goal better than goals themselves - a forward
+    // who had six shots and kicked one is likelier to score than one who snagged a lucky major.
+    // Walk-forward over 16,975 player-games, xScore rescaled into goals on his own prior window:
+    //   goals form only   1+ Brier 0.19486 | 2+ 0.11400
+    //   75% xScore        1+ Brier 0.19384 | 2+ 0.11358   <- this
+    //   100% xScore       1+ Brier 0.19382 | 2+ 0.11358
+    // A paired bootstrap put the blend ahead of goals-only in 100% of 2,000 resamples. 75% rather
+    // than 100% keeps a quarter of the weight on what actually happened, so a broken or biased
+    // xScore feed can't run the projection on its own. Older rows have no xScore: they fall back.
+    if (statKey === 'goals'){
+      const xs = all.slice(-P_WIN).map(r => (r.xScore == null ? null : +r.xScore));
+      if (xs.length === hist.length && xs.every(v => v != null)){
+        const sumG = hist.reduce((a,b)=>a+b,0), sumX = xs.reduce((a,b)=>a+b,0);
+        if (sumG > 0 && sumX > 0){
+          const scaled = _ewma(xs, P_HALFLIFE) * (sumG / sumX);
+          const baseX = (scaled*hist.length + baseline*P_SHRINK)/(hist.length + P_SHRINK);
+          mu0 = 0.25*mu0 + 0.75*baseX;
+        }
+      }
+    }
     let f = 1;
     const pct = opp ? getDVPPct(opp, p.position, statKey) : null;
     if(pct != null) f *= Math.max(0.75, Math.min(1.3, 1 + (pct/100)*P_DVP_W));
     return Math.max(0.01, Math.min(0.99, _countAtLeast(mu0*f, Math.ceil(line), hist)));
   }
-  function drLine(avg){ if(avg<15) return null; return Math.round(avg); }
+  // Calibration and the grader both place their test line here. Returning null below 15 meant only
+  // disposals-type markets were ever calibrated: goals (~1 a game), marks (~4), tackles (~3) and
+  // clearances were excluded, and then the fit made on disposals was applied to them anyway.
+  // Low-count markets are posted at 0.5 / 1.5 ("1+", "2+"), so that is the line to test.
+  function drLine(avg){
+    if(!(avg > 0.05)) return null;
+    if(avg < 1) return 0.5;
+    return Math.round(avg);
+  }
 
   function scoreCMP(p, statKey, line, opp){
     const logKey=pdToLogKey(statKey);
