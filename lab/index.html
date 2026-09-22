@@ -1302,7 +1302,7 @@ function buildIndexes(key){
   players.forEach(function(p){ if (p && p.name) ix.byName[p.name] = p; });
 
   ix.lgAvg = {}; ix.winAvg = {}; ix.matchOpp = null; ix.fs = null;
-  ix.pricedSet = null; ix.oddsName = null; ix.oddsIni = null; ix.vac = null; ix.bookList = null; ix.resIdx = null; ix.mlbLg = null; ix.lgRate = null; ix.scState = null; ix.nhlPim = null; ix.injIdx = null;
+  ix.pricedSet = null; ix.oddsName = null; ix.oddsIni = null; ix.vac = null; ix.bookList = null; ix.resIdx = null; ix.mlbLg = null; ix.lgRate = null; ix.scState = null; ix.nhlPim = null; ix.injIdx = null; ix.luRows = null;
   var logs = asArray(d.gamelogs) || [];
   ix.logsByName = {};
   logs.forEach(function(r){
@@ -1593,8 +1593,32 @@ function injStatus(key, name, team){
   if (team && e.team && normTeam(e.team) !== normTeam(team)) return null;   // a different player's club
   return e;
 }
+// MLB publishes lineups as {gamePk, home:[playerId...], away:[playerId...]} - ids, not names - so
+// the shared {team, player} check silently ignored them and anyone left out of a posted lineup
+// still counted as available. Normalise that shape once, here.
+function lineupRows(key){
+  var S = state.sports[key];
+  if (S.idx.luRows) return S.idx.luRows;
+  var raw = asArray(S.data.lineups) || [], out = [];
+  if (raw.length && raw[0] && (raw[0].home || raw[0].away) && !raw[0].player){
+    var byId = {};
+    (S.idx.players || []).forEach(function(p){ if (p && p.id != null) byId[p.id] = p; });
+    var fx = asArray(S.data.fixture) || [];
+    raw.forEach(function(r){
+      var g = fx.filter(function(x){ return String(x.gamePk) === String(r.gamePk); })[0];
+      if (!g) return;
+      [['home', g.homeAbbr || g.home], ['away', g.awayAbbr || g.away]].forEach(function(sd){
+        (r[sd[0]] || []).forEach(function(id){
+          var p = byId[id];
+          if (p) out.push({ team:p.team || sd[1], player:p.name });
+        });
+      });
+    });
+  } else out = raw;
+  return (S.idx.luRows = out);
+}
 function isPlayingP(key, name, team){
-  var lu = asArray(state.sports[key].data.lineups) || [];
+  var lu = lineupRows(key);
   var any = lu.length && lu.some(function(r){ return r && r.team === team; });
   // a published lineup is the final word, either way
   if (any) return lu.some(function(r){ return r && r.team === team && r.player === name; });
@@ -3373,15 +3397,21 @@ var GL_SCORE = 5.5, DR_SCORE = -3.5, GL_MIN_GAMES = 3, GL_RUNGS = 6;
 //   epl    2090    +7.0pt   +35.8pt   rebuilt 19 Sep: unconditional minutes, negative binomial,
 //                                      window 14, blend 0.8. Raw Brier now beats the base rate.
 //   mlb   21755    +1.7pt   +27.4pt   calibrated and discriminating - the reference model
+// Refit 22 Sep after two fixes to how the test line is placed. AFL's drLine returned nothing below
+// an average of 15, so only disposals-type markets were ever calibrated and the fit made on them was
+// applied to goals, marks and tackles anyway; NBL's returned nothing below 1, excluding threes,
+// steals and blocks. Both now test the 0.5 line those markets are posted at:
+//   AFL  2,548 -> 24,340 predictions | bias -1.3 -> -0.2pt | spread 15.2 -> 18.8pt | slope 0.358 -> 0.491
+//   NBL  9,697 -> 13,277 predictions | spread 30.4 -> 34.5pt
+// AFL's 0.358 slope was the cause of its tail problem: a fit made on one market type compressed
+// everything toward the middle, which inflated every low-count market underneath it.
 var CALIB = {
-  afl: { a:0.358, b: 0.172, spread: 0.152, n:2548 },
+  afl: { a:0.491, b: 0.147, spread: 0.188, n:24340 },
   nfl: { a:0.589, b:-0.139, spread: 0.328, n:2651 },
-  epl: { a:0.727, b:-0.399, spread: 0.358, n:2090 },
-  mlb: { a:0.677, b:-0.391, spread: 0.274, n:21755 },
-  // NBL, walk-forward over 9,697 predictions on the minutes-unfloored prob()
-  nbl: { a:0.598, b:-0.051, spread: 0.304, n:9697 },
-  // NHL, walk-forward over 12,774 predictions on the TOI-unfloored prob() with 0.5 lines
-  nhl: { a:0.649, b:-0.133, spread: 0.450, n:12774 }
+  epl: { a:0.722, b:-0.345, spread: 0.368, n:2090 },
+  mlb: { a:0.668, b:-0.389, spread: 0.272, n:20885 },
+  nbl: { a:0.630, b:-0.116, spread: 0.345, n:13277 },
+  nhl: { a:0.557, b:-0.186, spread: 0.435, n:12865 }
 };
 var EV_MIN_SPREAD = 0.05;          // below this the model can't rank, so EV is not a ranking key
 function calibFor(key){
@@ -8880,6 +8910,7 @@ window.LAB = {
   cmbLad: function(open){ state.view.cmbLadOpen = !!open; },
   // test hook: the shell's own statOf, so tests check the real function rather than a copy
   statProbe: function(key, row, mkt){ return statOf(key, row, mkt); },
+  lineupProbe: function(key){ return lineupRows(key); },
   oddsNameProbe: function(key, name){ return oddsPlayer(key, name); },
   abbrProbe: function(key, t){ return abbrOf(key, t); },
   // test hook: the first-scorer probability the shell would use for a player
