@@ -759,6 +759,14 @@
   .lad-hit{width:64px;flex:none;text-align:right;font-family:var(--font-mono);font-size:10px;color:var(--text-2);}
   .lad-ev{width:44px;flex:none;text-align:right;font-family:var(--font-mono);font-size:10px;}
   .lad-ev.pos{color:var(--accent);} .lad-ev.neg{color:#f97316;}
+  .crew-head{display:flex;flex-direction:column;gap:6px;margin:6px 0 4px;}
+  .crew-ttl{font-family:var(--font-display);font-size:18px;display:flex;align-items:center;gap:6px;}
+  .crew-sub{font-size:10px;color:var(--text-3);margin:0 0 6px;}
+  .crew-row{display:block;}
+  .crew-sp{display:inline-block;margin:6px 0 2px 2px;font-size:8px;font-weight:800;letter-spacing:.05em;
+    padding:1px 6px;border-radius:999px;background:var(--surface);border:1px solid var(--border);color:var(--text-3);}
+  .crew-more{display:block;width:100%;margin:4px 0 2px;padding:6px;border-radius:8px;border:1px dashed var(--border);
+    background:none;color:var(--text-2);font-size:10px;font-weight:700;cursor:pointer;}
   .sc-filter{display:flex;gap:7px;align-items:center;margin-bottom:8px;}
   .sc-filter input{flex:1;min-width:0;background:var(--surface-2);border:1px solid var(--border);
     border-radius:9px;padding:9px 12px;color:var(--text);font-size:13px;font-family:inherit;outline:none;}
@@ -2834,7 +2842,14 @@ function streakCandidates(key, name, mkt){
 // tiles collapse into one line at the foot of the section that expands to show why each stayed
 // quiet. Genuine data failures still shout: those go through secNote, not here.
 var SIG_QUIET = [];
+// Degen Crew runs every fixture's signals in CAPTURE mode: sigTile records the tile instead of
+// drawing it, so the page reuses every tile builder rather than duplicating eighteen of them.
+var SIG_CAPTURE = null, SIG_PHASE = 'u';
 function sigTile(icon, title, desc, rows, emptyWhy){
+  if (SIG_CAPTURE){
+    SIG_CAPTURE.push({ phase:SIG_PHASE, icon:icon, title:title, desc:desc, rows:(rows || []).slice(), why:emptyWhy || '' });
+    return '';
+  }
   if (!rows || !rows.length){
     SIG_QUIET.push({ title:title, why:emptyWhy || 'Nothing cleared the gate for this fixture.' });
     return '';
@@ -2845,6 +2860,7 @@ function sigTile(icon, title, desc, rows, emptyWhy){
   return '<details class="sig-tile" open>'+head+rows.join('')+'</details>';
 }
 function sigQuietNote(){
+  if (SIG_CAPTURE) return '';
   if (!SIG_QUIET.length) return '';
   var list = SIG_QUIET.slice();
   return '<details class="sig-quiet"><summary>'+list.length+' signal'+(list.length === 1 ? '' : 's')
@@ -2855,6 +2871,7 @@ function sigQuietNote(){
 }
 // A band header with nothing under it is the same waste as an empty tile.
 function sigBand(title, body){
+  if (SIG_CAPTURE) return '';
   return body && body.replace(/\s+/g, '') ? '<div class="dayband"><span>'+title+'</span></div>'+body : '';
 }
 function streakers(key, g){
@@ -6077,8 +6094,12 @@ function signalsSection(key, g){
     + (function(){ var lc = letsClimb(key, g);
         return sigTile('ti-stairs-up', 'Let\u2019s Climb', 'One staked ladder: main line, then value rungs up',
           lc.rows.map(function(r){ return climbRow(key, r); }), lc.why); })();
+  SIG_PHASE = 'sp';                                   // tiles below belong to the sport's own band
   var nfl = nflSignals(key, g) + aflSignals(key, g) + eplSignals(key, g) + mlbSignals(key, g) + nblSignals(key, g) + nhlSignals(key, g);
-  var reads = radarSection(key, g) + coverageSection(key, g) + usageSection(key, g);
+  SIG_PHASE = 'u';
+  // radar / coverage / usage are reads, not signals - and the most expensive part - so skip them
+  // when Degen Crew is only capturing tiles
+  var reads = SIG_CAPTURE ? '' : (radarSection(key, g) + coverageSection(key, g) + usageSection(key, g));
   var form = sigTile('ti-trending-up', 'Form Alerts', 'Running hot or cold against their own season',
               formAlerts(key, g).map(function(r){ return formRow(key, r); }),
               'No priced player is '+Math.round(ALERT_THRESHOLD*100)+'%+ above or below their season '
@@ -8252,11 +8273,146 @@ function fixtureCard(item){
     + '</div>';
 }
 
+
+/* DEGEN CREW -----------------------------------------------------------------------
+   Every signal across the slate on one page: the universal tiles first (the shared engine every
+   sport runs), then each sport's own tiles. Built by running each upcoming fixture's signals in
+   capture mode and merging rows by tile. Each sport covers its next 36 hours of games (or its
+   next game day if that's further out), and results are cached until that sport's odds, data or
+   fixture list change.                                                                          */
+var CREW_HOURS = 36, CREW_SHOW = 8;
+var CREW_UNIVERSAL = ['Green Lights','Death Riders','Streakers','Elite Matchups','Let\u2019s Climb',
+                      'Tackle Machines','Bunnies','Bogey','Form Alerts'];
+function crewGames(k){
+  var S = state.sports[k], now = Date.now(), first = null, out = [];
+  (asArray(S.data.fixture) || []).forEach(function(g, i){
+    if (!g || !g.home || !g.away) return;
+    var ms = gameStart(g).ms;
+    if (ms == null || gameDone(k, g, ms)) return;
+    if (first == null || ms < first) first = ms;
+    out.push({ g:g, ms:ms, i:i });
+  });
+  var hz = first == null ? now : Math.max(now + CREW_HOURS * 36e5, first + 864e5);
+  // a signal is about a player's NEXT game: MLB clubs play daily, so a 36-hour window holds two
+  // games for most of them and every row appeared twice. Keep each club's first fixture only.
+  var seen = {};
+  return out.filter(function(x){ return x.ms <= hz; }).sort(function(a,b){ return a.ms - b.ms; })
+    .filter(function(x){
+      var h = normTeam(x.g.home), a = normTeam(x.g.away);
+      if (seen[h] || seen[a]) return false;
+      seen[h] = seen[a] = 1; return true;
+    });
+}
+function crewSig(k){
+  var S = state.sports[k], od = S.data.odds || {};
+  return [S.t3, S.t2, od.updated || '', (asArray(S.data.fixture) || []).length,
+          (asArray(S.data.lineups) || []).length, (asArray(S.data.injury) || []).length].join('|');
+}
+function crewCapture(k){
+  var S = state.sports[k];
+  state.crewCache = state.crewCache || {};
+  var sig = crewSig(k), c = state.crewCache[k];
+  if (c && c.sig === sig) return c;
+  var tiles = {}, order = [], games = crewGames(k);
+  games.forEach(function(x){
+    SIG_CAPTURE = []; SIG_PHASE = 'u';
+    try { signalsSection(k, x.g); } catch(e){ /* one bad fixture must not blank the page */ }
+    var got = SIG_CAPTURE; SIG_CAPTURE = null; SIG_PHASE = 'u';
+    got.forEach(function(t){
+      var id = t.phase + '|' + t.title;
+      if (!tiles[id]){ tiles[id] = { phase:t.phase, icon:t.icon, title:t.title, desc:t.desc, rows:[], why:t.why }; order.push(id); }
+      tiles[id].seen = tiles[id].seen || {};
+      t.rows.forEach(function(h){
+        if (tiles[id].seen[h]) return;
+        tiles[id].seen[h] = 1;
+        var m = String(h).match(/class="gl-ev[^"]*">\s*([+-]?\d+(?:\.\d+)?)%/);
+        tiles[id].rows.push({ k:k, html:h, edge:m ? +m[1] : null, ms:x.ms });
+      });
+    });
+  });
+  return (state.crewCache[k] = { sig:sig, games:games.length, tiles:order.map(function(id){ return tiles[id]; }) });
+}
+function crewRowsSorted(rows){
+  return rows.slice().sort(function(a,b){
+    if (a.edge != null && b.edge != null) return b.edge - a.edge;     // best edge first
+    if (a.edge != null) return -1; if (b.edge != null) return 1;
+    return a.ms - b.ms;                                               // otherwise soonest first
+  });
+}
+function crewTile(t, sportLabels){
+  var id = (t.sport || 'u') + '|' + t.title, open = (state.view.crewOpen || {})[id];
+  var rows = crewRowsSorted(t.rows), shown = open ? rows : rows.slice(0, CREW_SHOW);
+  var html = shown.map(function(r){
+    return '<div class="crew-row">'+(sportLabels ? '<span class="crew-sp">'+esc(SPORTS[r.k].name)+'</span>' : '')+r.html+'</div>';
+  });
+  if (rows.length > CREW_SHOW)
+    html.push('<button class="crew-more" onclick="LAB.crewMore(\'' + esc(id).replace(/'/g,"\\'") + '\')">'
+      + (open ? 'Show top '+CREW_SHOW : 'Show all '+rows.length)+'</button>');
+  // the badge counts rows passed in, which includes the Show-all button - put the real total back
+  return sigTile(t.icon, t.title, t.desc, html, t.why)
+    .replace(/<span class="sig-n">\d+<\/span>/, '<span class="sig-n">'+rows.length+'</span>');
+}
+function crewQuiet(list){
+  if (!list.length) return '';
+  return '<details class="sig-quiet"><summary>'+list.length+' signal'+(list.length === 1 ? '' : 's')
+    + ' quiet across these games</summary>'
+    + list.map(function(t){ return '<div class="sig-quiet-row"><b>'+esc(t.title)+'</b><span>'+esc(t.why)+'</span></div>'; }).join('')
+    + '</details>';
+}
+function crewPage(){
+  var active = Object.keys(SPORTS).filter(function(k){ return state.view.active[k]; });
+  var f = state.view.crewSport || 'all';
+  if (f !== 'all' && active.indexOf(f) < 0) f = 'all';
+  var show = f === 'all' ? active : [f];
+  var h = '<div class="crew-head"><div class="crew-ttl"><i class="ti ti-flame"></i> Degen Crew</div>'
+    + '<div class="sl-bar crew-filter">'
+    + '<button class="sl-chip'+(f === 'all' ? ' on' : '')+'" onclick="LAB.crewSport(\'all\')">All</button>'
+    + active.map(function(k){ return '<button class="sl-chip'+(f === k ? ' on' : '')+'" onclick="LAB.crewSport(\''+k+'\')">'
+        + esc(SPORTS[k].name)+'</button>'; }).join('')
+    + '</div></div>';
+  if (!active.length) return h + '<div class="empty">Switch on a sport to see its signals.</div>';
+  var waiting = [], caps = {};
+  show.forEach(function(k){
+    var S = state.sports[k];
+    if (S.t3 !== 'ready' || S.t2 !== 'ready'){ ensureSport(k); ensureTier2(); waiting.push(SPORTS[k].name); return; }
+    caps[k] = crewCapture(k);
+  });
+  var have = Object.keys(caps);
+  var gamesTxt = have.map(function(k){ return SPORTS[k].name+' '+caps[k].games; }).join(' \u00b7 ');
+  h += '<div class="crew-sub">'+(gamesTxt ? 'Games in view: '+esc(gamesTxt)+' \u00b7 next '+CREW_HOURS+' hours' : '')
+    + (waiting.length ? (gamesTxt ? ' \u00b7 ' : '')+'loading '+esc(waiting.join(', '))+'\u2026' : '')+'</div>';
+  // universal band: merge each shared tile across every sport in view
+  var uni = {}, uQuiet = [];
+  have.forEach(function(k){
+    caps[k].tiles.forEach(function(t){
+      if (t.phase !== 'u') return;
+      var u = uni[t.title] = uni[t.title] || { icon:t.icon, title:t.title, desc:t.desc, rows:[], why:t.why };
+      u.rows = u.rows.concat(t.rows);
+    });
+  });
+  var uniTiles = CREW_UNIVERSAL.map(function(tt){ return uni[tt]; }).filter(Boolean)
+    .concat(Object.keys(uni).filter(function(tt){ return CREW_UNIVERSAL.indexOf(tt) < 0; }).map(function(tt){ return uni[tt]; }));
+  var uHtml = '';
+  uniTiles.forEach(function(t){ if (t.rows.length) uHtml += crewTile(t, have.length > 1); else uQuiet.push(t); });
+  h += '<div class="dayband"><span>Universal Signals</span></div>' + (uHtml || '<div class="sig-empty">No universal signal fired across these games.</div>')
+    + crewQuiet(uQuiet);
+  // then each sport's own tiles
+  have.forEach(function(k){
+    var own = caps[k].tiles.filter(function(t){ return t.phase === 'sp'; });
+    if (!own.length) return;
+    var body = '', q = [];
+    own.forEach(function(t){ t.sport = k; if (t.rows.length) body += crewTile(t, false); else q.push(t); });
+    h += '<div class="dayband"><span>'+esc(SPORTS[k].name)+' Signals</span></div>'
+      + (body || '<div class="sig-empty">No '+esc(SPORTS[k].name)+' signal fired across these games.</div>') + crewQuiet(q);
+  });
+  return h;
+}
+
 function render(){
   var loading = Object.keys(SPORTS).filter(function(k){ return state.sports[k].status==='loading'; });
   $('status').textContent = loading.length ? ('loading '+loading.join(', ')+'…') : 'ready';
 
-  var tabs = [['fixture','ti-calendar','Fixture'],['odds','ti-coin','Odds'],['stats','ti-chart-bar','Stats']];
+  var tabs = [['fixture','ti-calendar','Fixture'],['crew','ti-flame','Degen Crew'],['odds','ti-coin','Odds'],['stats','ti-chart-bar','Stats']];
   var h = '<div class="tabs">'+tabs.map(function(t){
     return '<button class="tab'+(state.view.tab===t[0]?' on':'')+'" onclick="LAB.tab(\''+t[0]+'\')">'
       +'<i class="ti '+t[1]+'"></i>'+t[2]+'</button>'; }).join('')+'</div>';
@@ -8267,7 +8423,9 @@ function render(){
     $('app').innerHTML = configBanner() + h + playerPanel() + booksPanel() + cmbFab() + cmbPanel();
     return;
   }
-  if (state.view.tab === 'stats'){
+  if (state.view.tab === 'crew'){
+    h += crewPage();
+  } else if (state.view.tab === 'stats'){
     h += statsPage();
   } else if (state.view.tab === 'odds'){
     h += oddsPage();
@@ -8296,6 +8454,8 @@ function render(){
 
 /* ---- public ------------------------------------------------------------- */
 window.LAB = {
+  crewSport: function(k){ state.view.crewSport = k; render(); },
+  crewMore: function(id){ state.view.crewOpen = state.view.crewOpen || {}; state.view.crewOpen[id] = !state.view.crewOpen[id]; render(); },
   toggle: function(k){
     state.view.active[k] = !state.view.active[k];
     if (state.view.active[k] && state.sports[k].status === 'idle') loadTier1(k);
