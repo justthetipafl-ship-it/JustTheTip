@@ -2781,8 +2781,19 @@ var COVER_FIELD = { epl: { field:'passes' }, nfl: { field:'snapPct', min:0.1 } }
 // and every rusher invisible. `defSacks` is the right column.
 var MKT_FIELD = { nfl: { sacks:'defSacks' } };
 function mktField(key, mkt){ return ((MKT_FIELD[key] || {})[mkt]) || mkt; }
+/* A row whose minutes say he didn't play is not a game, whatever else it carries. FPL writes a row
+   for every squad player every gameweek - 0 minutes for the unused sub and the dropped - with every
+   stat set to an explicit 0, and it also wrote a full placeholder round (all 257 rows of 20 Sep at
+   0 minutes) before that round's stats landed. statOf returned any present value, so each of those
+   counted as a zero-output game: lower averages, broken streaks, a tighter record cap. 1,795 EPL
+   rows at 0 minutes, none with any production.
+   NOT applied to NFL: snapPct is OFFENSIVE snaps, and 3,457 zero-snap rows are defenders with real
+   tackles - NFL keeps its existing rule (0 snaps only means "didn't play" when the stat is blank). */
+var PLAY_GATE = { epl:'min', afl:'tog', nbl:'minutes', nhl:'toiMin' };
 function statOf(key, row, mkt){
   mkt = mktField(key, mkt);
+  var pg = PLAY_GATE[key];
+  if (pg && row && row[pg] != null && isFinite(+row[pg]) && +row[pg] <= 0) return null;
   var v = row ? row[mkt] : null;
   if (v != null && isFinite(+v)) return +v;
   var cf = COVER_FIELD[key];
@@ -8394,6 +8405,10 @@ window.LAB = {
     render();
   },
   cmbLad: function(open){ state.view.cmbLadOpen = !!open; },
+  // test hook: the shell's own statOf, so tests check the real function rather than a copy
+  statProbe: function(key, row, mkt){ return statOf(key, row, mkt); },
+  oddsNameProbe: function(key, name){ return oddsPlayer(key, name); },
+  abbrProbe: function(key, t){ return abbrOf(key, t); },
   // test hook: the first-scorer probability the shell would use for a player
   fsProbe: function(name){
     var key = (state.view.focus || {}).sport; if (!key) return null;
