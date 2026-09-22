@@ -1269,7 +1269,7 @@ function buildIndexes(key){
   players.forEach(function(p){ if (p && p.name) ix.byName[p.name] = p; });
 
   ix.lgAvg = {}; ix.winAvg = {}; ix.matchOpp = null; ix.fs = null;
-  ix.pricedSet = null; ix.oddsName = null; ix.oddsIni = null; ix.vac = null; ix.bookList = null; ix.resIdx = null; ix.mlbLg = null; ix.lgRate = null; ix.scState = null; ix.nhlPim = null;
+  ix.pricedSet = null; ix.oddsName = null; ix.oddsIni = null; ix.vac = null; ix.bookList = null; ix.resIdx = null; ix.mlbLg = null; ix.lgRate = null; ix.scState = null; ix.nhlPim = null; ix.injIdx = null;
   var logs = asArray(d.gamelogs) || [];
   ix.logsByName = {};
   logs.forEach(function(r){
@@ -1531,12 +1531,42 @@ function oddsForP(key, name, market){
   rows.forEach(function(r){ if (r.over != null && (!best || r.over > best.over)) best = r; });
   return best;
 }
+/* Injury status, one vocabulary for every feed:
+     NFL     Status      Out / Doubtful -> out; Questionable -> doubt
+     AFL     Returning   "Season", "3 weeks", "TBC" -> out; "Test" (fitness test) -> doubt
+     ESPN    Status      Out / Injured Reserve / Suspension -> out; Day-To-Day -> doubt   (NHL, MLB)
+     NBL     Status      derived by build_nbl.py from missed games -> out
+   Until now injury.json was only read to credit TEAMMATES with a player's vacated usage; nothing
+   stopped the injured player himself reaching Green Lights, Streakers or Let's Climb until his
+   team's lineup was published. The price gate usually covered it (books pull props), but a
+   morning odds pull can carry him after the news.                                              */
+function injStatus(key, name, team){
+  var S = state.sports[key];
+  if (!S.idx.injIdx){
+    var ix = {};
+    (asArray(S.data.injury) || []).forEach(function(r){
+      if (!r) return;
+      var nm = r.Player || r.player; if (!nm) return;
+      var raw = String(r.Status || r.status || r.Returning || r.returning || '').trim();
+      var st = null;
+      if (/^(out|doubtful)$|injured reserve|\bir\b|suspen|season|week|tbc|indefinite|missed/i.test(raw)) st = 'out';
+      else if (/questionable|day-to-day|day to day|test|probable|gtd/i.test(raw)) st = 'doubt';
+      if (st) ix[foldName(nm)] = { st:st, raw:raw, team:r.Team || r.team, injury:r.Injury || r.injury || '' };
+    });
+    S.idx.injIdx = ix;
+  }
+  var e = S.idx.injIdx[foldName(name)];      // accents differ between feeds (ESPN v league)
+  if (!e) return null;
+  if (team && e.team && normTeam(e.team) !== normTeam(team)) return null;   // a different player's club
+  return e;
+}
 function isPlayingP(key, name, team){
   var lu = asArray(state.sports[key].data.lineups) || [];
-  if (!lu.length) return true;                       // no lineup data for this sport
-  var any = lu.some(function(r){ return r && r.team === team; });
-  if (!any) return true;                             // team's lineup not out yet
-  return lu.some(function(r){ return r && r.team === team && r.player === name; });
+  var any = lu.length && lu.some(function(r){ return r && r.team === team; });
+  // a published lineup is the final word, either way
+  if (any) return lu.some(function(r){ return r && r.team === team && r.player === name; });
+  var inj = injStatus(key, name, team);
+  return !(inj && inj.st === 'out');
 }
 function posShortP(p){ return (p && p.position) ? String(p.position) : ''; }
 
