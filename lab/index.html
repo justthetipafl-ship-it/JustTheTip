@@ -1232,12 +1232,44 @@ function loadModules(key){
 function buildIndexes(key){
   var S = state.sports[key], d = S.data, ix = S.idx;
   var players = asArray(d.players) || [];
+  // One record per player. A build that keys by player+club writes a traded player once per club
+  // (NHL: 277 names, 2-4 records each - Mitch Marner under TOR and VGK), and whichever came last in
+  // the file won, so players turned up on their OLD club's roster. Keep the record whose club
+  // matches his most recent game; records with DIFFERENT ids are different people and both stay.
+  (function(){
+    var lastTeam = {};
+    (asArray(d.gamelogs) || []).forEach(function(r){
+      var n = r && (r.Player || r.player); if (!n) return;
+      var t = String(r.Date || r.date || '') || ((+(r.Year||r.year)||0)*1000 + (+(String(r.RoundName!=null?r.RoundName:r.Week).match(/\d+/)||[0])[0]));
+      if (!lastTeam[n] || t >= lastTeam[n].t) lastTeam[n] = { t:t, team:r.Team || r.team };
+    });
+    var groups = {}, order = [];
+    players.forEach(function(p){
+      if (!p || !p.name) return;
+      var id = p.playerId != null ? p.playerId : (p.id != null ? p.id : null);
+      var gk = p.name + '|' + (id != null ? id : '');
+      if (!groups[gk]){ groups[gk] = []; order.push(gk); }
+      groups[gk].push(p);
+    });
+    var dropped = 0;
+    players = order.map(function(gk){
+      var g = groups[gk];
+      if (g.length === 1) return g[0];
+      dropped += g.length - 1;
+      var lt = lastTeam[g[0].name];
+      var hit = lt && g.filter(function(p){ return normTeam(p.team) === normTeam(lt.team); })[0];
+      return hit || g.slice().sort(function(a,b){ return (+b.games || +b.matches || 0) - (+a.games || +a.matches || 0); })[0];
+    });
+    S.dupPlayers = dropped;
+    // everything downstream - including each sport's scoring.configure() - reads this list
+    if (dropped && Array.isArray(d.players)) d.players = players;
+  })();
   ix.players = players;
   ix.byName = {};
   players.forEach(function(p){ if (p && p.name) ix.byName[p.name] = p; });
 
   ix.lgAvg = {}; ix.winAvg = {}; ix.matchOpp = null; ix.fs = null;
-  ix.pricedSet = null; ix.oddsName = null; ix.oddsIni = null; ix.vac = null; ix.bookList = null; ix.resIdx = null; ix.mlbLg = null; ix.lgRate = null; ix.scState = null;
+  ix.pricedSet = null; ix.oddsName = null; ix.oddsIni = null; ix.vac = null; ix.bookList = null; ix.resIdx = null; ix.mlbLg = null; ix.lgRate = null; ix.scState = null; ix.nhlPim = null;
   var logs = asArray(d.gamelogs) || [];
   ix.logsByName = {};
   logs.forEach(function(r){
@@ -5816,6 +5848,79 @@ function nblSignals(key, g){
           ['10+ '+esc(mktLabel(key, r.easy.k).toLowerCase())+' in '+Math.round(r.easy.r*100)+'% \u00b7 10+ '+esc(mktLabel(key, r.hard.k).toLowerCase())+' in '+Math.round(r.hard.r*100)+'%', true]]); }),
         'No double-double threat (40%+ of his last 10) has a 10+ price on his harder leg that the model and his record back.'));
 }
+
+/* NHL-SPECIFIC SIGNALS -------------------------------------------------------------
+   The four specialists (same engine as NBL's: league top 15 at the stat into a defence conceding
+   4%+ above average to that position) and Power Play. Priced like everything else: the calibrated
+   model AND his record at that line (recordCap) must beat the price by 5%.
+
+   Tested and left out:
+     Ice Time Trend - TOI spikes revert slightly: skaters whose ice time rose 20%+ (last 5 v prior 20)
+                      landed about a point BELOW the control against their projection (3,524 games).
+     Goalie Watch, Shot Blockers, Enforcers - books post no saves, blocks or hits markets for hockey.
+
+   Power Play, tested: over 14,617 games, power-play regulars (0.15+ PP points a game) facing an
+   opponent that takes 15%+ more penalty minutes than average scored 1+ points 55.2% of the time
+   against a 52.0% projection; against a disciplined opponent, 51.2% against 51.8%. Four points of
+   hit rate at the same projection - modest, real, and not in the model.                          */
+function nhlPimIndex(key){
+  var S = state.sports[key];
+  if (S.idx.nhlPim) return S.idx.nhlPim;
+  var byMatch = {};
+  (asArray(S.data.gamelogs) || []).forEach(function(r){
+    if (!r || !r.MatchId || r.pos === 'G') return;
+    var m = byMatch[r.MatchId] = byMatch[r.MatchId] || { d:String(r.Date || ''), t:{} };
+    m.t[r.Team] = (m.t[r.Team] || 0) + (+r.pim || 0);
+  });
+  var per = {};
+  Object.keys(byMatch).sort(function(a,b){ return byMatch[a].d.localeCompare(byMatch[b].d); }).forEach(function(k){
+    Object.keys(byMatch[k].t).forEach(function(t){ (per[t] = per[t] || []).push(byMatch[k].t[t]); });
+  });
+  var recent = {}, all = [];
+  Object.keys(per).forEach(function(t){
+    var h = per[t].slice(-20);
+    if (h.length >= 8) recent[normTeam(t)] = h.reduce(function(a,b){ return a+b; }, 0) / h.length;
+    all = all.concat(per[t]);
+  });
+  var lg = all.length ? all.reduce(function(a,b){ return a+b; }, 0) / all.length : null;
+  return (S.idx.nhlPim = { team:recent, lg:lg });
+}
+function nhlPowerPlay(key, g){
+  var S = state.sports[key], pim = nhlPimIndex(key), out = [];
+  if (!pim.lg) return out;
+  [g.away, g.home].forEach(function(team){
+    var opp = (team === g.home) ? g.away : g.home;
+    var oPim = pim.team[normTeam(opp)];
+    if (oPim == null || oPim < pim.lg * 1.15) return;
+    playersOnTeam(key, team).forEach(function(p){
+      if (!p || p.position === 'G' || !isPlayingP(key, p.name, team) || !hasAnyOddsFor(key, p.name)) return;
+      var l20 = sortLogsDesc(((S.idx.logsByName || {})[p.name] || []).slice())
+        .filter(function(r){ return (+r.toiMin || 0) > 0; }).slice(0, 20);
+      if (l20.length < 10) return;
+      var ppPer = l20.reduce(function(a,r){ return a + (+r.ppPoints || 0); }, 0) / l20.length;
+      if (ppPer < 0.15) return;
+      var b = nblPriced(key, p, 'points', opp, 0.5);
+      if (b) out.push({ name:p.name, p:p, opp:opp, ppPer:ppPer, oPim:oPim, lg:pim.lg, b:b });
+    });
+  });
+  out.sort(function(a,b){ return b.b.ev - a.b.ev; });
+  return out;
+}
+function nhlSignals(key, g){
+  if (key !== 'nhl') return '';
+  var sn = nblSpecialist(key, g, 'shots'), pr = nblSpecialist(key, g, 'points'),
+      pm = nblSpecialist(key, g, 'assists'), fi = nblSpecialist(key, g, 'goals'), pp = nhlPowerPlay(key, g);
+  var why = function(st){ return 'None of the league\u2019s top 15 at '+st+' faces a defence conceding 4%+ above average to his position at a price the model and his record back.'; };
+  return sigBand('NHL Signals',
+    sigTile('ti-target-arrow', 'Snipers', 'Top shot volume into a soft defence', sn.map(function(r){ return nblSpecRow(key, r, 'Shots on goal'); }), why('shots'))
+    + sigTile('ti-chart-line', 'Producers', 'Top point-getters into a soft defence', pr.map(function(r){ return nblSpecRow(key, r, 'Points'); }), why('points'))
+    + sigTile('ti-hand-finger', 'Playmakers', 'Top passers into a soft defence', pm.map(function(r){ return nblSpecRow(key, r, 'Assists'); }), why('assists'))
+    + sigTile('ti-ball-hockey', 'Finishers', 'Top goal-scorers into a soft defence', fi.map(function(r){ return nblSpecRow(key, r, 'Goals'); }), why('goals'))
+    + sigTile('ti-bolt', 'Power Play', 'PP regulars against a penalty-prone opponent',
+        pp.map(function(r){ return mlbRow(key, r, 'Points', [[r.ppPer.toFixed(2)+' PP points/gm', r.ppPer >= 0.25],
+          [abbrOf(key, r.opp)+' '+r.oPim.toFixed(1)+' PIM/gm v '+r.lg.toFixed(1)+' league', true]]); }),
+        'No power-play regular faces an opponent taking 15%+ more penalties than average at a points price the model and his record back.'));
+}
 function nflSignals(key, g){
   if (key !== 'nfl') return '';
   var tud = nflTuddy(key, g), chk = nflChunk(key, g);
@@ -5877,7 +5982,7 @@ function signalsSection(key, g){
     + (function(){ var lc = letsClimb(key, g);
         return sigTile('ti-stairs-up', 'Let\u2019s Climb', 'One staked ladder: main line, then value rungs up',
           lc.rows.map(function(r){ return climbRow(key, r); }), lc.why); })();
-  var nfl = nflSignals(key, g) + aflSignals(key, g) + eplSignals(key, g) + mlbSignals(key, g) + nblSignals(key, g);
+  var nfl = nflSignals(key, g) + aflSignals(key, g) + eplSignals(key, g) + mlbSignals(key, g) + nblSignals(key, g) + nhlSignals(key, g);
   var reads = radarSection(key, g) + coverageSection(key, g) + usageSection(key, g);
   var form = sigTile('ti-trending-up', 'Form Alerts', 'Running hot or cold against their own season',
               formAlerts(key, g).map(function(r){ return formRow(key, r); }),
@@ -6352,6 +6457,8 @@ function cmbParse(key, q){
   // strip the number and every word that fed the market match; the rest is the name
   var nm = raw;
   if (num) nm = nm.replace(num[0], ' ');
+  // join initials before splitting: "A.J." / "A. J." -> "AJ", or the "A" is dropped as a stop word
+  nm = nm.replace(/\b([A-Za-z])\.\s?(?=[A-Za-z]\b\.?)/g, '$1').replace(/\b([A-Za-z]{2})\./g, '$1');
   // split on anything that isn't part of a name: "rush+rec" must become two tokens, or the
   // whole phrase survives into the name and the lookup fails
   var words = nm.split(/[^A-Za-z0-9\u00C0-\u024F'\-]+/).filter(Boolean), keep = [];
@@ -6377,17 +6484,24 @@ function cmbPool(key){
   var S = state.sports[key];
   return (S.idx.players && S.idx.players.length) ? S.idx.players : (asArray(S.data.players) || []);
 }
+// Names compared with punctuation, spaces and accents stripped: the query arrives tokenised
+// ("A.J. Greer" -> "a j greer") while the roster keeps "A.J. Greer", so an exact comparison never
+// matched initials - A.J. Greer, J.T. Miller, T.J. Brodie could only be found by surname.
+function cmbNameKey(x){
+  return String(x || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]/g, '');
+}
 function cmbFindPlayer(nameRaw){
-  var q = String(nameRaw || '').trim().toLowerCase();
+  var q = cmbNameKey(nameRaw);
   if (q.length < 2) return null;
   var hits = [];
   Object.keys(SPORTS).forEach(function(key){
     if (!state.view.active[key]) return;
     cmbPool(key).forEach(function(p){
       if (!p || !p.name) return;
-      var n = p.name.toLowerCase();
+      var n = cmbNameKey(p.name);
+      var sur = cmbNameKey(String(p.name).trim().split(/\s+/).pop());
       if (n === q) hits.push({ key:key, p:p, rank:0 });
-      else if (n.split(' ').pop() === q) hits.push({ key:key, p:p, rank:1 });   // surname
+      else if (sur === q) hits.push({ key:key, p:p, rank:1 });   // surname
       else if (n.indexOf(q) >= 0) hits.push({ key:key, p:p, rank:2 });
     });
   });
@@ -7076,11 +7190,11 @@ function cmbResolve(q){
     if (!state.view.active[key]) return;
     var parsed = cmbParse(key, q);
     if (!parsed || !parsed.name) return;
-    var nameQ = parsed.name.toLowerCase();
+    var nameQ = cmbNameKey(parsed.name);
     var best = null;
     cmbPool(key).forEach(function(p){
       if (!p || !p.name) return;
-      var n = p.name.toLowerCase(), last = n.split(' ').pop();
+      var n = cmbNameKey(p.name), last = cmbNameKey(String(p.name).trim().split(/\s+/).pop());
       var rank = n === nameQ ? 0 : (last === nameQ ? 1 : (n.indexOf(nameQ) >= 0 ? 2 : -1));
       if (rank < 0) return;
       if (!best || rank < best.rank) best = { p:p, rank:rank };
