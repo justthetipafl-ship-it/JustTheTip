@@ -511,12 +511,43 @@ def _savant_csv(url):
         if r.status_code != 200 or not r.text:
             print(f"[JTT MLB]   savant {r.status_code} ({len(r.text) if r.text else 0}B): {url}")
             return []
-        rows = list(csv.DictReader(io.StringIO(r.text)))
-        # normalise header keys (savant occasionally emits a BOM / stray spaces)
-        return [{(k.strip().lstrip("\ufeff") if k else k): v for k, v in row.items()} for row in rows]
+        return _savant_rows(r.text)
     except (requests.RequestException, csv.Error) as e:
         print(f"[JTT MLB]   savant fetch error: {e} :: {url}")
         return []
+
+def _savant_rows(text):
+    """Parse a Savant leaderboard CSV into dicts, repairing a misaligned header.
+
+    Savant's first column is "last_name, first_name". The data rows quote it ("Trout, Mike"), but
+    the header can arrive UNquoted - and then the header splits into two columns where every data
+    row has one. DictReader pairs keys to values by position, so every field silently took the
+    value one column to its RIGHT: est_woba held est_woba_minus_woba_diff, woba held est_woba, ba
+    held est_ba. Published players.json showed it - "xwoba" had a median of .004 (range -.096 to
+    +.079) and the stored "ba" missed the real batting average by a median .013. Every Statcast
+    number from this reader, including barrel% and exit velocity, was one column off.
+
+    Fix: read raw rows, and if the header is exactly one column longer than the data because its
+    first cell was split, re-join the first two header cells."""
+    rows = list(csv.reader(io.StringIO(text)))
+    if not rows:
+        return []
+    header = [(h or "").strip().lstrip("\ufeff") for h in rows[0]]
+    data = [r for r in rows[1:] if any((c or "").strip() for c in r)]
+    if data:
+        widths = [len(r) for r in data]
+        common = max(set(widths), key=widths.count)
+        if (len(header) == common + 1 and len(header) >= 2
+                and "last_name" in header[0].lower() and "first_name" in header[1].lower()):
+            print(f"[JTT MLB]   savant header misaligned ({len(header)} cols v {common} in data) - repaired")
+            header = [header[0] + ", " + header[1]] + header[2:]
+        elif len(header) != common:
+            print(f"[JTT MLB]   WARNING savant header {len(header)} cols v data {common} - values may be misread")
+    out = []
+    for r in data:
+        out.append({header[i]: (r[i] if i < len(r) else None) for i in range(len(header))})
+    return out
+
 
 def _pid_from(row):
     """Savant's id column name varies; identify the MLBAM id by value (6-digit range),
