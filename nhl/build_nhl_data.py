@@ -215,12 +215,18 @@ def build(by_season, results, current):
     agg_seasons = seasons[-2:] if len(seasons) >= 2 else seasons
 
     # players aggregate
+    # Keyed by PlayerId alone - NHL ids are stable across trades. Keyed by (PlayerId, Team), a
+    # traded player got one record per club: 277 names appeared 2-4 times (Robby Fabbri under ANA,
+    # MIN and STL; Mitch Marner under TOR and VGK), so the lab listed players on their OLD clubs'
+    # rosters. His club is wherever he played most recently.
     pacc = {}
     for yr in agg_seasons:
-        for r in by_season[yr]:
-            k = (r["PlayerId"], r["Team"])
+        for r in sorted(by_season[yr], key=lambda x: x.get("Date") or ""):
+            k = r["PlayerId"]
             d = pacc.setdefault(k, {"pid": r["PlayerId"], "name": r["Player"], "team": r["Team"],
-                                    "pos": r["pos"], "g": 0, "sum": defaultdict(float)})
+                                    "pos": r["pos"], "g": 0, "sum": defaultdict(float), "last": ""})
+            if (r.get("Date") or "") >= d["last"]:
+                d["last"] = r.get("Date") or ""; d["team"] = r["Team"]; d["name"] = r["Player"]
             d["g"] += 1
             for s in (GO_STATS if r["pos"] == "G" else SK_STATS):
                 if r.get(s) is not None:
