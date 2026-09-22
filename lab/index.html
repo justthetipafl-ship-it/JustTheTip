@@ -767,6 +767,30 @@
     padding:1px 6px;border-radius:999px;background:var(--surface);border:1px solid var(--border);color:var(--text-3);}
   .crew-more{display:block;width:100%;margin:4px 0 2px;padding:6px;border-radius:8px;border:1px dashed var(--border);
     background:none;color:var(--text-2);font-size:10px;font-weight:700;cursor:pointer;}
+  .deg-bar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:4px 0 10px;font-size:10px;color:var(--text-3);}
+  .deg-note{font-size:9px;}
+  .deg-sec{background:var(--surface-2);border:1px solid var(--border);border-radius:12px;padding:10px 12px;margin-bottom:10px;}
+  .deg-sec-h{font-family:var(--font-display);font-size:14px;display:flex;align-items:center;gap:6px;margin-bottom:8px;}
+  .deg-sec-sub{margin-left:auto;font-family:var(--font-mono);font-size:10px;color:var(--text-3);}
+  .deg-leg{display:flex;align-items:center;gap:8px;padding:6px 0;border-top:1px solid var(--border);}
+  .deg-lm{flex:1;min-width:0;} .deg-lm b{display:block;font-size:12px;} .deg-lm span{display:block;font-size:9px;color:var(--text-3);}
+  .deg-lp{flex:none;text-align:right;font-family:var(--font-display);font-size:13px;}
+  .deg-lp i{display:block;font-style:normal;font-family:var(--font-mono);font-size:9px;color:var(--text-3);}
+  .deg-sum{margin-top:6px;}
+  .deg-sgm{background:var(--surface);border:1px solid var(--border);border-radius:9px;padding:6px 9px;margin-bottom:6px;}
+  .deg-sgm-h{display:flex;align-items:center;gap:6px;font-size:11px;font-weight:700;}
+  .deg-sgm-h span:last-child{margin-left:auto;font-family:var(--font-mono);font-size:10px;color:var(--text-3);font-weight:400;}
+  .pyr{display:flex;flex-direction:column;align-items:center;gap:6px;margin:8px 0;}
+  .pyr-row{display:flex;gap:6px;justify-content:center;flex-wrap:wrap;}
+  .pyr-card{position:relative;width:92px;background:var(--surface);border:1px solid var(--border);border-radius:9px;padding:8px 6px;
+    text-align:center;display:flex;flex-direction:column;align-items:center;gap:2px;}
+  .pyr-nm{font-size:11px;font-weight:700;} .pyr-ln{font-family:var(--font-display);font-size:13px;} .pyr-od{font-family:var(--font-mono);font-size:10px;color:var(--accent);}
+  .pyr-swap{position:absolute;top:3px;right:3px;background:none;border:none;color:var(--text-3);cursor:pointer;font-size:12px;}
+  .deg-lad{background:var(--surface);border:1px solid var(--border);border-radius:9px;padding:8px 10px;margin-bottom:6px;}
+  .deg-lad-h{display:flex;gap:8px;align-items:baseline;font-size:11px;} .deg-lad-bank{margin-left:auto;font-family:var(--font-display);font-size:15px;}
+  .deg-lad-sub,.deg-lad-legs{font-size:9px;color:var(--text-3);margin-top:4px;}
+  .lad-bar{height:6px;border-radius:3px;background:var(--border);overflow:hidden;margin-top:5px;}
+  .lad-bar-fill{height:100%;background:var(--accent);}
   .sc-filter{display:flex;gap:7px;align-items:center;margin-bottom:8px;}
   .sc-filter input{flex:1;min-width:0;background:var(--surface-2);border:1px solid var(--border);
     border-radius:9px;padding:9px 12px;color:var(--text);font-size:13px;font-family:inherit;outline:none;}
@@ -1144,6 +1168,7 @@ function ensureTier2(){
 // the player/log/odds indexes and the sport's scoring + signals modules - is built here.
 var TIER3 = { gamelogs:'data/gamelogs.json', dvp:'data/dvp.json', teams_form:'data/teams_form.json',
               injury:'data/injury.json', lineups:'data/lineups.json', results:'data/results.json',
+              ladder:'data/ladder.json',
               weather:'data/weather.json', calib:'data/calib.json' };
 function loadTier3(key){
   var S = state.sports[key];
@@ -8408,11 +8433,275 @@ function crewPage(){
   return h;
 }
 
+
+/* DEGENERATES ------------------------------------------------------------------------
+   The old tool's high-variance page, per sport or MIXED across every sport switched on, priced at
+   one bookmaker so each build is a ticket you can actually place:
+     The Train    one short banker ($1.30-1.60) per game, combined
+     The Pyramid  one stat, 1 / 2 / 3 players on descending rungs (single sport: a stat is a sport's)
+     The Yankee   four ~$3 same-game multis from four games, staked as 6 doubles + 4 trebles + 1 four-fold
+     The Ladder   the running $10 -> $10k challenge from scripts/build_ladder.py (one per sport)
+   Rebuilt to this lab's standards: every leg is the calibrated model CAPPED at the player's own
+   record (recordCap), legs must be roughly fair (not just short), and same-game legs are priced
+   with correlation (cmbJoint) instead of multiplying the prices as if they were independent.    */
+var DEG_TRAIN = [1.30, 1.60], DEG_YANK = [1.40, 2.10], DEG_SGM = [2.5, 3.8], DEG_MIN_EV = -0.03, DEG_TRAIN_EV = -0.10;
+// Pyramid default stat per sport (production's): a stat with enough range to stack three rungs -
+// MLB hits run 0-2, so a hits pyramid can never form
+var DEG_PYR_DEFAULT = { afl:'disposals', nfl:'recYds', epl:'shots', mlb:'K', nbl:'points', nhl:'shots' };
+var DEG_PYR_RUNG = { disposals:5, kicks:3, handballs:3, marks:2, tackles:2, goals:1, clearances:2,
+  passYds:25, rushYds:15, recYds:15, receptions:1, rushRecYds:15, passAtt:5, rushAtt:3,
+  points:4, rebounds:2, assists:2, threes:1, pra:6, pr:5, pa:5, ra:3, shots:1, H:1, TB:1, K:1, shotsOn:1 };
+function degScope(){
+  var active = Object.keys(SPORTS).filter(function(k){ return state.view.active[k]; });
+  var sc = state.view.degSport || 'mixed';
+  if (sc !== 'mixed' && active.indexOf(sc) < 0) sc = 'mixed';
+  return { sc:sc, sports: sc === 'mixed' ? active : [sc], active:active };
+}
+function degPriceAt(k, name, mkt, line, book){
+  var od = book ? bookPriceFor(k, name, mkt, line, book) : bestPriceFor(k, name, mkt, line);
+  return od && od.price > 1 ? od : null;
+}
+// every priced leg in scope inside [lo, hi], with the capped probability
+function degPool(sports, book, lo, hi){
+  state.degCache = state.degCache || {};
+  var ck = sports.map(function(k){ return k + ':' + crewSig(k); }).join(',') + '|' + (book || '*') + '|' + lo + '-' + hi;
+  if (state.degCache[ck]) return state.degCache[ck];
+  var legs = [];
+  sports.forEach(function(k){
+    crewGames(k).forEach(function(x){
+      var g = x.g, gk = k + '|' + [normTeam(g.home), normTeam(g.away)].sort().join('|');
+      [g.away, g.home].forEach(function(team){
+        var opp = team === g.home ? g.away : g.home;
+        playersOnTeam(k, team).forEach(function(p){
+          if (!p || !p.name || !isPlayingP(k, p.name, team) || !hasAnyOddsFor(k, p.name)) return;
+          posMarkets(k, p).forEach(function(m){
+            streakCandidates(k, p.name, m[0]).forEach(function(c){
+              var od = book ? degPriceAt(k, p.name, m[0], c.line, book) : c;
+              if (!od || od.price < lo || od.price > hi) return;
+              var pr = recordCap(k, p, m[0], c.line, 'over', modelProbAt(k, p, m[0], c.line, opp));
+              if (pr == null) return;
+              legs.push({ key:k, p:p, opp:opp, team:team, g:g, gk:gk, ms:x.ms, mkt:m[0], label:m[1], line:c.line,
+                          side:'over', price:od.price, book:od.book, prob:pr, ev:pr * od.price - 1 });
+            });
+          });
+        });
+      });
+    });
+  });
+  return (state.degCache[ck] = legs);
+}
+function degBooks(sports){
+  var cnt = {};
+  sports.forEach(function(k){ booksFor(k).forEach(function(b){ cnt[b] = (cnt[b] || 0) + 1; }); });
+  // mixed: a book has to price every sport in play, or the multi can't be one ticket
+  return Object.keys(cnt).filter(function(b){ return cnt[b] === sports.length; }).sort();
+}
+function degLegRow(l, showSport){
+  return '<div class="deg-leg">'+playerImgP(l.key, l.p, 24)
+    + '<div class="deg-lm"><b>'+esc(l.p.name)+'</b><span>'+(showSport ? esc(SPORTS[l.key].name)+' \u00b7 ' : '')
+    + esc(abbrOf(l.key, l.team))+' v '+esc(abbrOf(l.key, l.opp))+' \u00b7 '+Math.ceil(l.line)+'+ '+esc(l.label)+'</span></div>'
+    + '<span class="deg-lp">$'+l.price.toFixed(2)+'<i>'+Math.round(l.prob*100)+'%</i></span></div>';
+}
+function degSummary(price, prob, note){
+  var ev = prob * price - 1;
+  return '<div class="deg-sum"><div class="cmb-sum-row"><span>Price</span><b>$'+price.toFixed(2)+'</b></div>'
+    + '<div class="cmb-sum-row"><span>Model</span><b>'+(prob*100).toFixed(prob < 0.1 ? 1 : 0)+'% \u00b7 fair $'+(1/prob).toFixed(2)+'</b></div>'
+    + '<div class="cmb-sum-row tot"><span>Edge</span><b class="'+(ev >= 0 ? 'cmb-vscore good' : 'cmb-vscore bad')+'">'
+    + (ev >= 0 ? '+' : '')+Math.round(ev*100)+'%</b></div>'+(note ? '<div class="cmb-corr">'+note+'</div>' : '')+'</div>';
+}
+function degSec(title, icon, sub, body){
+  return '<div class="deg-sec"><div class="deg-sec-h"><i class="ti '+icon+'"></i> '+title
+    + (sub ? '<span class="deg-sec-sub">'+sub+'</span>' : '')+'</div>'+body+'</div>';
+}
+/* THE TRAIN - one banker per game: the most likely leg priced $1.30-1.60 that's at least roughly
+   fair on the capped probability. Different games, so the legs multiply honestly. */
+function degTrain(sc, book){
+  // A banker train carries the book's margin on every leg by construction, so asking each leg to be
+  // near-fair left it empty across 17 games. Production had no value gate at all. Here: the most
+  // likely leg per game, anything clearly bad (worse than -10%) dropped, and the edge shown honestly.
+  var pool = degPool(sc.sports, book, DEG_TRAIN[0], DEG_TRAIN[1]).filter(function(l){ return l.ev >= DEG_TRAIN_EV; });
+  var best = {};
+  pool.forEach(function(l){ var c = best[l.gk]; if (!c || l.prob > c.prob) best[l.gk] = l; });
+  var legs = Object.keys(best).map(function(k){ return best[k]; }).sort(function(a,b){ return a.ms - b.ms; });
+  if (legs.length < 2) return degSec('The Train', 'ti-train', '', '<div class="sig-empty">Fewer than two games have a $1.30-1.60 banker within 10% of fair on the capped model'+(book ? ' at '+esc(book) : '')+'.</div>');
+  var price = legs.reduce(function(a,l){ return a * l.price; }, 1), prob = legs.reduce(function(a,l){ return a * l.prob; }, 1);
+  return degSec('The Train', 'ti-train', legs.length+' games', legs.map(function(l){ return degLegRow(l, sc.sc === 'mixed'); }).join('')
+    + degSummary(price, prob, 'One leg per game, so the legs are independent and the probabilities multiply. Each is the most likely $1.30-1.60 leg in its game; bankers carry the book\u2019s margin, so expect the edge to read negative - it\u2019s a fun bet, not a value one.')
+    + '<button class="pc-add" onclick="LAB.degSend(\'train\')">Send to Check My Multi</button>');
+}
+/* THE YANKEE - four same-game multis near $3, from four different games. Each SGM is the pair or
+   trio of $1.40-2.10 legs with the best CORRELATED probability whose prices multiply to $2.50-3.80;
+   the four with the best edge are staked as the 11-bet Yankee. Books price their own SGMs, usually
+   below the product of the legs - the price shown is that product, so treat it as a ceiling.   */
+function degYankeeSgms(sc, book){
+  var pool = degPool(sc.sports, book, DEG_YANK[0], DEG_YANK[1]).filter(function(l){ return l.ev >= DEG_MIN_EV; });
+  var byG = {};
+  pool.forEach(function(l){ (byG[l.gk] = byG[l.gk] || []).push(l); });
+  var sgms = [];
+  Object.keys(byG).forEach(function(gk){
+    var ls = byG[gk].sort(function(a,b){ return b.prob - a.prob; }).slice(0, 10), best = null;
+    var tryCombo = function(c){
+      var names = {}; for (var i=0;i<c.length;i++){ if (names[c[i].p.name]) return; names[c[i].p.name] = 1; }
+      var price = c.reduce(function(a,l){ return a * l.price; }, 1);
+      if (price < DEG_SGM[0] || price > DEG_SGM[1]) return;
+      var j = cmbJoint(c); if (j == null) return;
+      var ev = j * price - 1;
+      if (!best || ev > best.ev) best = { legs:c, price:price, prob:j, ev:ev, gk:gk };
+    };
+    for (var a=0;a<ls.length;a++) for (var b=a+1;b<ls.length;b++){
+      tryCombo([ls[a], ls[b]]);
+      for (var c=b+1;c<ls.length;c++) tryCombo([ls[a], ls[b], ls[c]]);
+    }
+    if (best) sgms.push(best);
+  });
+  sgms.sort(function(a,b){ return b.ev - a.ev; });
+  return sgms;
+}
+function degYankeeSystem(sgms){
+  // 6 doubles + 4 trebles + 1 four-fold = 11 unit stakes; SGMs are independent (different games)
+  var n = sgms.length, bets = [];
+  for (var i=0;i<n;i++) for (var j=i+1;j<n;j++){
+    bets.push([i,j]);
+    for (var k=j+1;k<n;k++){ bets.push([i,j,k]); for (var m=k+1;m<n;m++) bets.push([i,j,k,m]); }
+  }
+  var er = 0, pAny = 0;
+  for (var mask=0; mask < (1<<n); mask++){
+    var pr = 1; for (var t=0;t<n;t++) pr *= (mask & (1<<t)) ? sgms[t].prob : 1 - sgms[t].prob;
+    var ret = 0;
+    bets.forEach(function(bt){ if (bt.every(function(ix){ return mask & (1<<ix); })) ret += bt.reduce(function(a,ix){ return a * sgms[ix].price; }, 1); });
+    er += pr * ret; if (ret > 0) pAny += pr;
+  }
+  var all = sgms.reduce(function(a,x){ return a * x.price; }, 1);
+  var two = sgms.slice().sort(function(a,b){ return a.price - b.price; }).slice(0, 2).reduce(function(a,x){ return a * x.price; }, 1);
+  return { stakes:bets.length, ev:er / bets.length - 1, pAny:pAny, allReturn:all, minReturn:two };
+}
+function degYankee(sc, book){
+  var sgms = degYankeeSgms(sc, book).slice(0, 4);
+  if (sgms.length < 4) return degSec('The Yankee', 'ti-versions', '', '<div class="sig-empty">Only '+sgms.length
+    +' game'+(sgms.length === 1 ? '' : 's')+' can build a roughly fair ~$3 same-game multi'+(book ? ' at '+esc(book) : '')+' - a Yankee needs four.</div>');
+  var sys = degYankeeSystem(sgms);
+  var cards = sgms.map(function(x){
+    var l0 = x.legs[0];
+    return '<div class="deg-sgm"><div class="deg-sgm-h">'+(sc.sc === 'mixed' ? '<span class="crew-sp">'+esc(SPORTS[l0.key].name)+'</span> ' : '')
+      + esc(abbrOf(l0.key, l0.g.away))+' @ '+esc(abbrOf(l0.key, l0.g.home))
+      + '<span>$'+x.price.toFixed(2)+' \u00b7 '+Math.round(x.prob*100)+'% correlated</span></div>'
+      + x.legs.map(function(l){ return degLegRow(l, false); }).join('')+'</div>';
+  }).join('');
+  return degSec('The Yankee', 'ti-versions', '4 SGMs \u00b7 11 bets', cards
+    + '<div class="deg-sum"><div class="cmb-sum-row"><span>Stake</span><b>11 units (6 doubles, 4 trebles, 1 four-fold)</b></div>'
+    + '<div class="cmb-sum-row"><span>All four land</span><b>'+(sys.allReturn).toFixed(0)+'\u00d7 a unit on the four-fold alone</b></div>'
+    + '<div class="cmb-sum-row"><span>Any return (2+ land)</span><b>'+Math.round(sys.pAny*100)+'%</b></div>'
+    + '<div class="cmb-sum-row tot"><span>Expected return on the 11</span><b class="'+(sys.ev >= 0 ? 'cmb-vscore good' : 'cmb-vscore bad')+'">'
+    + (sys.ev >= 0 ? '+' : '')+Math.round(sys.ev*100)+'%</b></div>'
+    + '<div class="cmb-corr">Each SGM is priced here as the product of its legs; books price their own SGMs, usually lower, so treat these prices as a ceiling. Legs within a game are correlated and priced that way; the four games are independent.</div></div>');
+}
+/* THE PYRAMID - one stat: 1 player at the top rung, 2 a rung lower, 3 lower again, each leg $1.25+
+   and priced at the book. Swap any card for the next best. Legs can share a game, so the whole
+   pyramid is priced with correlation.                                                          */
+function degPyramid(sc, book){
+  if (sc.sc === 'mixed') return degSec('The Pyramid', 'ti-triangle', '', '<div class="sig-empty">A pyramid is one stat - pick a sport above to build one.</div>');
+  var k = sc.sc, mk = (state.sports[k].config || {}).oddsMkts || [];
+  var dflt = DEG_PYR_DEFAULT[k] && mk.some(function(m){ return m[0] === DEG_PYR_DEFAULT[k]; }) ? DEG_PYR_DEFAULT[k] : ((mk[0] || [])[0]);
+  var stat = state.view.degStat && mk.some(function(m){ return m[0] === state.view.degStat; }) ? state.view.degStat : dflt;
+  var label = (mk.filter(function(m){ return m[0] === stat; })[0] || [stat, stat])[1];
+  var skip = ((state.view.degSkip || {})[k + '|' + stat]) || [];
+  var sel = '<div class="deg-bar"><span>Stat</span><select class="ob-sel" onchange="LAB.degStat(this.value)">'
+    + mk.map(function(m){ return '<option value="'+m[0]+'"'+(m[0] === stat ? ' selected' : '')+'>'+esc(m[1])+'</option>'; }).join('')+'</select>'
+    + (skip.length ? '<button class="sl-chip" onclick="LAB.degSkipReset()">Reset '+skip.length+' swap'+(skip.length === 1 ? '' : 's')+'</button>' : '')+'</div>';
+  var players = [];
+  crewGames(k).forEach(function(x){
+    [x.g.away, x.g.home].forEach(function(team){
+      var opp = team === x.g.home ? x.g.away : x.g.home;
+      playersOnTeam(k, team).forEach(function(p){
+        if (!p || skip.indexOf(p.name) >= 0 || !isPlayingP(k, p.name, team) || !hasAnyOddsFor(k, p.name)) return;
+        if (!posMarkets(k, p).some(function(m){ return m[0] === stat; })) return;
+        var v = statVals(k, p.name, stat, sortLogsDesc(((state.sports[k].idx.logsByName || {})[p.name] || []).slice()).slice(0, 10));
+        if (v.length < 5) return;
+        players.push({ p:p, team:team, opp:opp, g:x.g, ms:x.ms, proj:mean(v) });
+      });
+    });
+  });
+  players.sort(function(a,b){ return b.proj - a.proj; });
+  if (players.length < 6) return degSec('The Pyramid', 'ti-triangle', '', sel+'<div class="sig-empty">Not enough priced '+esc(label)+' players to build a pyramid.</div>');
+  var rung = DEG_PYR_RUNG[stat] || Math.max(1, Math.round(players[0].proj / 6));
+  var legAt = function(pl, target){
+    var cands = streakCandidates(k, pl.p.name, stat).filter(function(c){ return Math.abs(c.line - (target - 0.5)) <= Math.max(0.6, rung * 0.6); })
+      .sort(function(a,b){ return Math.abs(a.line - (target - 0.5)) - Math.abs(b.line - (target - 0.5)); });
+    for (var i=0;i<cands.length;i++){
+      var od = book ? degPriceAt(k, pl.p.name, stat, cands[i].line, book) : cands[i];
+      if (!od || od.price < 1.25) continue;
+      var pr = recordCap(k, pl.p, stat, cands[i].line, 'over', modelProbAt(k, pl.p, stat, cands[i].line, pl.opp));
+      if (pr == null) continue;
+      return { key:k, p:pl.p, team:pl.team, opp:pl.opp, g:pl.g, mkt:stat, label:label, line:cands[i].line, side:'over', price:od.price, book:od.book, prob:pr };
+    }
+    return null;
+  };
+  var tiers = null;
+  for (var top = Math.max(rung, Math.floor(players[0].proj / rung) * rung), t = 0; t < 12 && top >= rung; t++, top -= rung){
+    var used = {}, rows = [[top,1],[top - rung,2],[Math.max(rung*0.5, top - 2*rung),3]].map(function(tr){
+      var picked = [];
+      players.forEach(function(pl){
+        if (picked.length >= tr[1] || used[pl.p.name] || pl.proj < tr[0] * 0.9) return;
+        var l = legAt(pl, tr[0]); if (l){ picked.push(l); used[pl.p.name] = 1; }
+      });
+      return picked;
+    });
+    if (rows[0].length === 1 && rows[1].length === 2 && rows[2].length === 3){ tiers = rows; break; }
+  }
+  if (!tiers) return degSec('The Pyramid', 'ti-triangle', '', sel+'<div class="sig-empty">Couldn\u2019t fill all six '+esc(label)+' spots at $1.25+'+(book ? ' at '+esc(book) : '')+'.</div>');
+  var all = tiers[0].concat(tiers[1], tiers[2]);
+  var price = all.reduce(function(a,l){ return a * l.price; }, 1), prob = cmbJoint(all);
+  var card = function(l){
+    return '<div class="pyr-card"><button class="pyr-swap" title="Swap for the next best" onclick="LAB.degSkip(\''+esc(l.p.name).replace(/'/g,"\\'")+'\')">'
+      + '<i class="ti ti-refresh"></i></button>'+playerImgP(k, l.p, 26)+'<div class="pyr-nm">'+esc(String(l.p.name).split(' ').pop())+'</div>'
+      + '<div class="pyr-ln">'+Math.ceil(l.line)+'+</div><div class="pyr-od">$'+l.price.toFixed(2)+'</div></div>';
+  };
+  return degSec('The Pyramid', 'ti-triangle', esc(label), sel+'<div class="pyr">'+tiers.map(function(r){ return '<div class="pyr-row">'+r.map(card).join('')+'</div>'; }).join('')+'</div>'
+    + degSummary(price, prob || 0.0001, 'Six legs; where they share a game the probability is correlated, not multiplied.')
+    + '<button class="pc-add" onclick="LAB.degSend(\'pyr\')">Send to Check My Multi</button>');
+}
+/* THE LADDER - read-only view of each sport's running challenge (scripts/build_ladder.py). */
+function degLadderCard(k){
+  var L = state.sports[k].data.ladder;
+  if (!L || !L.days || !L.days.length) return '';
+  var start = +L.start || 10, target = +L.target || 10000, bank = L.bank != null ? +L.bank : start;
+  var prog = Math.max(0, Math.min(1, Math.log(Math.max(bank, start) / start) / Math.log(target / start)));
+  var d = L.days[L.days.length - 1];
+  var st = d.result === 'win' ? 'won' : d.result === 'loss' ? 'lost' : 'pending';
+  var legs = (d.legs || []).map(function(l){ return esc(String(l.name || '').split(' ').pop())+' '+(l.line != null ? Math.ceil(l.line)+'+' : '')+' '+esc(mktLabel(k, l.market)); }).join(' \u00b7 ');
+  return '<div class="deg-lad"><div class="deg-lad-h"><b>'+esc(SPORTS[k].name)+'</b><span>$'+start+' \u2192 $'+(target >= 1000 ? (target/1000)+'k' : target)
+    + '</span><span class="deg-lad-bank">$'+bank.toFixed(2)+'</span></div>'
+    + '<div class="lad-bar"><div class="lad-bar-fill" style="width:'+(prog*100).toFixed(1)+'%"></div></div>'
+    + '<div class="deg-lad-sub">Rung '+(d.rung || '?')+(L.attempt ? ' \u00b7 attempt #'+L.attempt : '')+' \u00b7 '+esc(d.date || '')+' \u00b7 '
+    + (d.type === 'sgm' ? 'SGM' : 'multi')+(d.odds ? ' @ $'+(+d.odds).toFixed(2) : '')+' \u00b7 <b>'+st+'</b></div>'
+    + (legs ? '<div class="deg-lad-legs">'+legs+'</div>' : '')+'</div>';
+}
+function degLadder(sc){
+  var cards = sc.sports.map(degLadderCard).filter(Boolean);
+  return degSec('The Ladder', 'ti-stairs-up', '', cards.length ? cards.join('')
+    : '<div class="sig-empty">No ladder challenge is running for '+esc(sc.sc === 'mixed' ? 'these sports' : SPORTS[sc.sc].name)+'.</div>');
+}
+function degPage(){
+  var sc = degScope();
+  var h = '<div class="crew-head"><div class="crew-ttl"><i class="ti ti-flame"></i> Degenerates</div>'
+    + '<div class="sl-bar"><button class="sl-chip'+(sc.sc === 'mixed' ? ' on' : '')+'" onclick="LAB.degSport(\'mixed\')">Mixed</button>'
+    + sc.active.map(function(k){ return '<button class="sl-chip'+(sc.sc === k ? ' on' : '')+'" onclick="LAB.degSport(\''+k+'\')">'+esc(SPORTS[k].name)+'</button>'; }).join('')
+    + '</div></div>';
+  if (!sc.active.length) return h + '<div class="empty">Switch on a sport to build.</div>';
+  var waiting = sc.sports.filter(function(k){ var S = state.sports[k]; if (S.t3 !== 'ready' || S.t2 !== 'ready'){ ensureSport(k); ensureTier2(); return true; } return false; });
+  if (waiting.length) return h + '<div class="empty"><i class="ti ti-loader"></i>Loading '+esc(waiting.map(function(k){ return SPORTS[k].name; }).join(', '))+'\u2026</div>';
+  var books = degBooks(sc.sports), book = state.view.degBook && books.indexOf(state.view.degBook) >= 0 ? state.view.degBook : null;
+  h += '<div class="deg-bar"><span>Book</span><select class="ob-sel" onchange="LAB.degBook(this.value)"><option value="">Best price (per leg)</option>'
+    + books.map(function(b){ return '<option value="'+esc(b)+'"'+(b === book ? ' selected' : '')+'>'+esc(b)+'</option>'; }).join('')+'</select>'
+    + '<span class="deg-note">'+(book ? 'Every leg priced at '+esc(book)+' - one ticket.' : (sc.sc === 'mixed' ? 'Books listed price every sport in view.' : 'Pick a book to make each build one ticket.'))+'</span></div>';
+  return h + degTrain(sc, book) + degPyramid(sc, book) + degYankee(sc, book) + degLadder(sc);
+}
+
 function render(){
   var loading = Object.keys(SPORTS).filter(function(k){ return state.sports[k].status==='loading'; });
   $('status').textContent = loading.length ? ('loading '+loading.join(', ')+'…') : 'ready';
 
-  var tabs = [['fixture','ti-calendar','Fixture'],['crew','ti-flame','Degen Crew'],['odds','ti-coin','Odds'],['stats','ti-chart-bar','Stats']];
+  var tabs = [['fixture','ti-calendar','Fixture'],['crew','ti-flame','Degen Crew'],['degen','ti-dice-5','Degenerates'],['odds','ti-coin','Odds'],['stats','ti-chart-bar','Stats']];
   var h = '<div class="tabs">'+tabs.map(function(t){
     return '<button class="tab'+(state.view.tab===t[0]?' on':'')+'" onclick="LAB.tab(\''+t[0]+'\')">'
       +'<i class="ti '+t[1]+'"></i>'+t[2]+'</button>'; }).join('')+'</div>';
@@ -8425,6 +8714,8 @@ function render(){
   }
   if (state.view.tab === 'crew'){
     h += crewPage();
+  } else if (state.view.tab === 'degen'){
+    h += degPage();
   } else if (state.view.tab === 'stats'){
     h += statsPage();
   } else if (state.view.tab === 'odds'){
@@ -8455,6 +8746,28 @@ function render(){
 /* ---- public ------------------------------------------------------------- */
 window.LAB = {
   crewSport: function(k){ state.view.crewSport = k; render(); },
+  degSport: function(k){ state.view.degSport = k; state.view.degStat = null; render(); },
+  degBook: function(b){ state.view.degBook = b || null; render(); },
+  degStat: function(st){ state.view.degStat = st; render(); },
+  degSkip: function(name){
+    var sc = degScope(); if (sc.sc === 'mixed') return;
+    var mk = ((state.sports[sc.sc].config || {}).oddsMkts || []), stat = state.view.degStat || DEG_PYR_DEFAULT[sc.sc] || ((mk[0] || [])[0]);
+    state.view.degSkip = state.view.degSkip || {};
+    var id = sc.sc + '|' + stat; (state.view.degSkip[id] = state.view.degSkip[id] || []).push(name); render();
+  },
+  degSkipReset: function(){ var sc = degScope(); var mk = ((state.sports[sc.sc].config || {}).oddsMkts || []);
+    var stat = state.view.degStat || DEG_PYR_DEFAULT[sc.sc] || ((mk[0] || [])[0]); if (state.view.degSkip) delete state.view.degSkip[sc.sc + '|' + stat]; render(); },
+  degSend: function(which){
+    var sc = degScope(), book = state.view.degBook || null, legs = [];
+    if (which === 'train'){
+      var pool = degPool(sc.sports, book, DEG_TRAIN[0], DEG_TRAIN[1]).filter(function(l){ return l.ev >= DEG_TRAIN_EV; }), best = {};
+      pool.forEach(function(l){ var c = best[l.gk]; if (!c || l.prob > c.prob) best[l.gk] = l; });
+      legs = Object.keys(best).map(function(k){ return best[k]; });
+    }
+    var built = legs.map(function(l){ return cmbLeg(l.key, l.p, [l.mkt, l.label], l.line, 'over'); }).filter(Boolean);
+    if (!built.length) return;
+    state.view.cmbLegs = built; state.view.cmbOpen = true; state.view.cmbMode = 'multi'; render();
+  },
   crewMore: function(id){ state.view.crewOpen = state.view.crewOpen || {}; state.view.crewOpen[id] = !state.view.crewOpen[id]; render(); },
   toggle: function(k){
     state.view.active[k] = !state.view.active[k];
