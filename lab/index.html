@@ -5715,6 +5715,107 @@ function mlbSignals(key, g){
     + sigTile('ti-trending-up', 'Due / Unlucky', 'Contact quality running ahead of results', du.rows, du.why)
     + sigTile('ti-trending-down', 'Running Hot', 'Results running ahead of contact quality', rh.rows, rh.why));
 }
+
+/* NBL-SPECIFIC SIGNALS ------------------------------------------------------------
+   From the NBL tool's crew: the four stat specialists and Double Trouble, priced. Every row needs
+   the calibrated model AND the player's own record at that line (recordCap) to beat the price by 5%.
+
+   Tested and left out:
+     Usage Trend - minutes spikes REVERT. Over 2,071 player-games, players whose minutes rose 25%+
+                   (last 5 v prior 20) scored 1.14 points BELOW their form projection and beat it 37%
+                   of the time (control 45%). A points over on "rising usage" bets on the spike
+                   lasting; history says it fades - it's usually injury cover or a blowout.           */
+function nblPriced(key, p, mkt, opp, line){
+  var od = line != null ? bestPriceFor(key, p.name, mkt, line) : null;
+  if (!od && line == null){
+    var c = cmbPosted(key, p.name, mkt);
+    if (c) od = { line:+c.line, price:+c.over, book:c.book };
+  }
+  // no two-way main line: many NBL props are posted only as milestone ladders (Parker
+  // Jackson-Cartwright's assists v a +26% soft defence had no main line and was skipped), so take
+  // the ladder rung nearest his average
+  if (!od && line == null){
+    var avg = (leagueAvg(key, mkt)[p.name] || {}).avg;
+    // NBL ladders step unevenly (assists 4.5 / 6.5 / 9.5 / 12.5), so an exact lookup at his
+    // average usually falls between rungs - take the posted rung nearest it instead
+    if (avg != null && avg > 0.5){
+      var near = streakCandidates(key, p.name, mkt).slice()
+        .sort(function(a,b){ return Math.abs(a.line - (avg - 0.5)) - Math.abs(b.line - (avg - 0.5)); })[0];
+      if (near) od = { line:near.line, price:near.price, book:near.book };
+    }
+  }
+  if (!od || !(od.price > 1)) return null;
+  var pr = recordCap(key, p, mkt, od.line, 'over', modelProbAt(key, p, mkt, od.line, opp));
+  if (pr == null || pr > Math.min(0.97, (1/od.price) * 4)) return null;
+  var ev = pr * od.price - 1;
+  return ev >= 0.05 ? { od:od, pr:pr, ev:ev, side:'over' } : null;
+}
+/* SLASHERS / SPLASHERS / DISHERS / BOARDERS - the league's best at a stat into a defence that
+   gives it up to their position. Production took ANY player against a 4%+ soft defence; here it's
+   the league's top 15 at the stat, so the tile is about specialists, not everyone on the slate. */
+function nblSpecialist(key, g, stat){
+  var S = state.sports[key], lg = leagueAvg(key, stat);
+  var top = (S.idx.players || []).filter(function(p){ return lg[p.name] && lg[p.name].games >= 5; })
+    .sort(function(a,b){ return lg[b.name].avg - lg[a.name].avg; }).slice(0, 15);
+  var inGame = {}; inGame[normTeam(g.home)] = g.away; inGame[normTeam(g.away)] = g.home;
+  var out = [];
+  top.forEach(function(p, i){
+    var opp = inGame[normTeam(p.team)];
+    if (!opp || !isPlayingP(key, p.name, p.team) || !hasAnyOddsFor(key, p.name)) return;
+    var dr = dvpRankFor(key, opp, p.position || p.pos, stat);
+    if (!dr || dr.pct < 4) return;
+    var b = nblPriced(key, p, stat, opp);
+    if (b) out.push({ name:p.name, p:p, opp:opp, rank:i+1, avg:lg[p.name].avg, dr:dr, b:b });
+  });
+  out.sort(function(a,b){ return b.b.ev - a.b.ev; });
+  return out;
+}
+function nblSpecRow(key, r, label){
+  return mlbRow(key, r, label, [['#'+r.rank+' in the league \u00b7 '+r.avg.toFixed(1)+'/gm', true],
+    [abbrOf(key, r.opp)+' concede +'+Math.round(r.dr.pct)+'% to '+esc(posShortP(r.p) || r.p.position || ''), true]]);
+}
+/* DOUBLE TROUBLE - double-doubles in 40%+ of his last 10. No book posts a double-double market,
+   and production priced it on PRA, which is a different bet. The bet that DECIDES a double-double is
+   the harder of his two 10+ legs, so that is what's priced: 10+ on the stat he reaches least often. */
+function nblDoubleTrouble(key, g){
+  var S = state.sports[key], out = [];
+  [g.away, g.home].forEach(function(team){
+    var opp = (team === g.home) ? g.away : g.home;
+    playersOnTeam(key, team).forEach(function(p){
+      if (!isPlayingP(key, p.name, team) || !hasAnyOddsFor(key, p.name)) return;
+      var l10 = sortLogsDesc(((S.idx.logsByName || {})[p.name] || []).slice())
+        .filter(function(r){ return (+r.minutes || 0) > 0; }).slice(0, 10);
+      if (l10.length < 6) return;
+      var stats = ['points','rebounds','assists'];
+      var ddN = l10.filter(function(r){ return stats.filter(function(k){ return (+r[k] || 0) >= 10; }).length >= 2; }).length;
+      var rate = ddN / l10.length;
+      if (rate < 0.40) return;
+      // the two stats his double-doubles are built on, and the one he reaches 10 in least
+      var reach = stats.map(function(k){ return { k:k, r:l10.filter(function(r){ return (+r[k] || 0) >= 10; }).length / l10.length }; })
+        .sort(function(a,b){ return b.r - a.r; }).slice(0, 2);
+      var hard = reach[1];
+      var b = nblPriced(key, p, hard.k, opp, 9.5);
+      if (b) out.push({ name:p.name, p:p, opp:opp, rate:rate, ddN:ddN, n:l10.length, hard:hard, easy:reach[0], b:b });
+    });
+  });
+  out.sort(function(a,b){ return b.b.ev - a.b.ev; });
+  return out;
+}
+function nblSignals(key, g){
+  if (key !== 'nbl') return '';
+  var sl = nblSpecialist(key, g, 'points'), sp = nblSpecialist(key, g, 'threes'),
+      di = nblSpecialist(key, g, 'assists'), bo = nblSpecialist(key, g, 'rebounds'), dd = nblDoubleTrouble(key, g);
+  var why = function(st){ return 'None of the league\u2019s top 15 at '+st+' faces a defence conceding 4%+ above average to his position at a price the model and his record back.'; };
+  return sigBand('NBL Signals',
+    sigTile('ti-sword', 'Slashers', 'Top scorers into a soft defence', sl.map(function(r){ return nblSpecRow(key, r, 'Points'); }), why('points'))
+    + sigTile('ti-droplet', 'Splashers', 'Top shooters into a defence that concedes threes', sp.map(function(r){ return nblSpecRow(key, r, 'Threes'); }), why('threes'))
+    + sigTile('ti-hand-finger', 'Dishers', 'Top passers into a defence that concedes assists', di.map(function(r){ return nblSpecRow(key, r, 'Assists'); }), why('assists'))
+    + sigTile('ti-wall', 'Boarders', 'Top rebounders into a defence that concedes boards', bo.map(function(r){ return nblSpecRow(key, r, 'Rebounds'); }), why('rebounds'))
+    + sigTile('ti-stack-3', 'Double Trouble', 'Double-double threats, priced on the leg that decides it',
+        dd.map(function(r){ return mlbRow(key, r, esc(mktLabel(key, r.hard.k)), [['double-double in '+r.ddN+' of last '+r.n, true],
+          ['10+ '+esc(mktLabel(key, r.easy.k).toLowerCase())+' in '+Math.round(r.easy.r*100)+'% \u00b7 10+ '+esc(mktLabel(key, r.hard.k).toLowerCase())+' in '+Math.round(r.hard.r*100)+'%', true]]); }),
+        'No double-double threat (40%+ of his last 10) has a 10+ price on his harder leg that the model and his record back.'));
+}
 function nflSignals(key, g){
   if (key !== 'nfl') return '';
   var tud = nflTuddy(key, g), chk = nflChunk(key, g);
@@ -5776,7 +5877,7 @@ function signalsSection(key, g){
     + (function(){ var lc = letsClimb(key, g);
         return sigTile('ti-stairs-up', 'Let\u2019s Climb', 'One staked ladder: main line, then value rungs up',
           lc.rows.map(function(r){ return climbRow(key, r); }), lc.why); })();
-  var nfl = nflSignals(key, g) + aflSignals(key, g) + eplSignals(key, g) + mlbSignals(key, g);
+  var nfl = nflSignals(key, g) + aflSignals(key, g) + eplSignals(key, g) + mlbSignals(key, g) + nblSignals(key, g);
   var reads = radarSection(key, g) + coverageSection(key, g) + usageSection(key, g);
   var form = sigTile('ti-trending-up', 'Form Alerts', 'Running hot or cold against their own season',
               formAlerts(key, g).map(function(r){ return formRow(key, r); }),
