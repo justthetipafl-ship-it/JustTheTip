@@ -385,7 +385,14 @@ window.JTTScoring = (function () {
     if(pct != null) mu *= Math.max(0.75, Math.min(1.3, 1 + (pct/100)*P_DVP_W));
     return Math.max(0.01, Math.min(0.99, _countAtLeast(mu, Math.ceil(line), hist)));
   }
-  function drLine(avg){ if(avg<1) return null; return Math.round(avg); }
+  // Calibration places its test line here; returning null below 1 excluded threes, steals and
+  // blocks from the fit entirely, and the fit made on points/rebounds was then applied to them.
+  // Low-count markets are posted at 0.5 ("1+"), so that is the line to test.
+  function drLine(avg){
+    if(!(avg > 0.05)) return null;
+    if(avg < 1) return 0.5;
+    return Math.round(avg);
+  }
 
   function scoreCMP(p, statKey, line, opp){
     const logKey=pdToLogKey(statKey);
