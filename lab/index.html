@@ -9192,7 +9192,8 @@ function loadResults(){
     .then(function(j){
       var bets = Array.isArray(j) ? j : ((j && j.bets) || []);
       state.results = { unitSize: (j && +j.unitSize) || 25, updated:(j && j.updated) || null,
-                        bets: bets.filter(function(b){ return b && b.stake != null; }), missing: !j };
+                        // a row is valid with EITHER a dollar stake (typed in) or units (imported)
+                        bets: bets.filter(function(b){ return b && (b.stake != null || b.units != null); }), missing: !j };
       state.resultsLoading = false; render();
     })
     .catch(function(){ state.results = { unitSize:25, bets:[], missing:true }; state.resultsLoading = false; render(); });
@@ -9202,7 +9203,11 @@ function resultsStats(bets, unit){
   var run = 0;
   bets.forEach(function(b){
     if (b.result === 'pending'){ st.pend++; return; }
-    var u = (+b.stake || 0) / unit, r = (b.returned == null ? 0 : +b.returned) / unit;
+    // rows imported from the spreadsheet are already in units; typed rows carry dollars
+    var u = b.units != null ? +b.units : (+b.stake || 0) / unit;
+    var r = b.returnedUnits != null ? +b.returnedUnits
+          : b.units != null ? (b.result === 'win' && b.odds ? +b.units * +b.odds : b.result === 'void' ? +b.units : 0)
+          : (b.returned == null ? 0 : +b.returned) / unit;
     st.n++; st.staked += u; st.ret += r;
     var pl = r - u; st.profit += pl; run += pl;
     if (b.result === 'win') st.w++; else if (b.result === 'loss') st.l++; else st.v++;
@@ -9291,7 +9296,11 @@ function resultsPage(){
   var recent = bets.slice().sort(function(a,b){ return String(b.date).localeCompare(String(a.date)) || String(b.id).localeCompare(String(a.id)); }).slice(0, 25);
   h += '<div class="dayband"><span>Recent bets</span></div>'
     + recent.map(function(b){
-        var u = (+b.stake || 0)/unit, pl = b.result === 'pending' ? null : ((b.returned == null ? 0 : +b.returned)/unit - u);
+        var u = b.units != null ? +b.units : (+b.stake || 0)/unit;
+        var rr = b.returnedUnits != null ? +b.returnedUnits
+               : b.units != null ? (b.result === 'win' && b.odds ? +b.units * +b.odds : b.result === 'void' ? +b.units : 0)
+               : (b.returned == null ? 0 : +b.returned)/unit;
+        var pl = b.result === 'pending' ? null : (rr - u);
         return '<div class="res-bet"><span class="res-dt">'+esc(String(b.date || '').slice(5))+'</span>'
           + '<span class="res-sport">'+esc(b.sport || '')+'</span>'
           + '<span class="res-txt"><b>'+esc(b.bet || '')+'</b><i>'+esc(b.type || '')+(b.odds ? ' \u00b7 $'+(+b.odds).toFixed(2) : '')+' \u00b7 '+u.toFixed(2)+'u</i></span>'
