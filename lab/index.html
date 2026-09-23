@@ -791,6 +791,20 @@
   .deg-lad-sub,.deg-lad-legs{font-size:9px;color:var(--text-3);margin-top:4px;}
   .lad-bar{height:6px;border-radius:3px;background:var(--border);overflow:hidden;margin-top:5px;}
   .lad-bar-fill{height:100%;background:var(--accent);}
+  .fx-top{display:flex;align-items:center;gap:8px;margin-bottom:6px;}
+  .fx-nerd{margin-left:auto;display:inline-flex;align-items:center;gap:5px;font-size:10px;font-weight:800;
+    letter-spacing:.05em;text-transform:uppercase;padding:5px 10px;border-radius:999px;cursor:pointer;
+    border:1px dashed var(--border);background:transparent;color:var(--text-3);}
+  .fx-nerd.on{border-style:solid;border-color:var(--accent);color:var(--accent);
+    background:color-mix(in srgb,var(--accent) 12%,transparent);}
+  .nerd-row{display:flex;align-items:center;gap:9px;padding:7px 9px;border-top:1px solid var(--border);}
+  .nerd-nm{flex:none;width:112px;} .nerd-nm b{display:block;font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .nerd-nm span{font-size:8px;color:var(--text-3);}
+  .nerd-legs{flex:1;display:flex;flex-wrap:wrap;gap:4px;}
+  .nerd-leg{font-family:var(--font-mono);font-size:9px;background:var(--surface);border:1px solid var(--border);
+    border-radius:6px;padding:2px 6px;} .nerd-leg i{font-style:normal;color:var(--text-3);}
+  .nerd-val{flex:none;text-align:right;font-family:var(--font-display);font-size:13px;}
+  .nerd-val.good{color:var(--accent);} .nerd-val i{display:block;font-style:normal;font-family:var(--font-mono);font-size:8px;color:var(--text-3);}
   .sc-filter{display:flex;gap:7px;align-items:center;margin-bottom:8px;}
   .sc-filter input{flex:1;min-width:0;background:var(--surface-2);border:1px solid var(--border);
     border-radius:9px;padding:9px 12px;color:var(--text);font-size:13px;font-family:inherit;outline:none;}
@@ -6105,6 +6119,151 @@ function nflSignals(key, g){
               kickerRows(key, g).map(function(r){ return kickerRow(key, r); }),
               'No kicker on this fixture has a posted kicking market.'));
 }
+
+/* NERD MODE ------------------------------------------------------------------------
+   The market against itself, rather than the model against the market. Three reads, all from the
+   per-book rows we already store:
+
+     Arbs        both sides priced so 1/over + 1/under < 1 - the books disagree enough that backing
+                 both is profit whatever happens. Rare, small, and short-lived.
+     Middles     over at a low line with one book, under at a higher line with another. Both land if
+                 the result finishes in the gap; "cost" is what the pair loses when it doesn't.
+     Line value  the best price against the market's own fair price at that line, de-vigged with the
+                 power method (which corrects the favourite-longshot bias better than dividing by
+                 the overround). This is line shopping, not a model opinion - it says one book is
+                 out of step with the rest, which is the cleanest edge there is.
+
+   Our model's own edge is shown alongside line value, capped at the player's record as everywhere
+   else, so the two can be compared: market-derived on one side, model-derived on the other.       */
+var NERD_MIN_ARB = 0.5, NERD_MIN_GAP = 1, NERD_MAX_COST = 12, NERD_MIN_VALUE = 2;
+function powerDevig(over, under){
+  // solve p_o^k + p_u^k = 1 for k, then the fair probability is p_o^k
+  var po = 1/over, pu = 1/under;
+  if (!(po > 0 && pu > 0) || po + pu <= 1) return null;        // arb or bad input: no vig to remove
+  var lo = 0.5, hi = 3;
+  for (var i = 0; i < 60; i++){
+    var k = (lo + hi)/2, sum = Math.pow(po, k) + Math.pow(pu, k);
+    if (sum > 1) lo = k; else hi = k;
+  }
+  var kk = (lo + hi)/2;
+  return Math.max(0.01, Math.min(0.99, Math.pow(po, kk)));
+}
+function nerdRows(key, g){
+  var S = state.sports[key], out = { arbs:[], middles:[], value:[] };
+  var seenPlayers = {};
+  [g.away, g.home].forEach(function(team){
+    var opp = (team === g.home) ? g.away : g.home;
+    playersOnTeam(key, team).forEach(function(p){
+      if (!p || !p.name || seenPlayers[p.name] || !isPlayingP(key, p.name, team)) return;
+      seenPlayers[p.name] = 1;
+      var byMkt = (S.idx.bookIdx || {})[oddsPlayer(key, p.name)] || {};
+      posMarkets(key, p).forEach(function(m){
+        var rows = (byMkt[m[0]] || []).filter(function(r){ return r && r.line != null; });
+        if (rows.length < 2) return;
+        var byLine = {};
+        rows.forEach(function(r){ (byLine[+r.line] = byLine[+r.line] || []).push(r); });
+        // arbs and line value work within one line; middles across two
+        Object.keys(byLine).forEach(function(ln){
+          var rs = byLine[ln], L = +ln, bo = null, bu = null, prices = [];
+          rs.forEach(function(r){
+            if (r.over != null){ prices.push(+r.over); if (!bo || +r.over > bo.over) bo = { over:+r.over, book:r.book }; }
+            if (r.under != null && (!bu || +r.under > bu.under)) bu = { under:+r.under, book:r.book };
+          });
+          if (bo && bu){
+            var inv = 1/bo.over + 1/bu.under;
+            if (inv < 1){
+              var profit = (1 - inv) * 100;
+              if (profit >= NERD_MIN_ARB) out.arbs.push({ p:p, opp:opp, mkt:m[0], label:m[1], line:L, bo:bo, bu:bu, profit:profit });
+            }
+          }
+          // line value: the consensus two-way at this line, de-vigged, against the best over
+          var cons = null;
+          rs.forEach(function(r){ if (r.over != null && r.under != null && !cons) cons = r; });
+          if (cons && bo && prices.length >= 2){
+            var fair = powerDevig(+cons.over, +cons.under);
+            if (fair != null){
+              var ev = fair * bo.over - 1;
+              if (ev >= NERD_MIN_VALUE/100){
+                var mp = recordCap(key, p, m[0], L, 'over', modelProbAt(key, p, m[0], L, opp));
+                out.value.push({ p:p, opp:opp, mkt:m[0], label:m[1], line:L, bo:bo, fair:fair, ev:ev,
+                                 model:mp, modelEv:(mp != null ? mp * bo.over - 1 : null),
+                                 books:prices.length, consensus:1/fair });
+              }
+            }
+          }
+        });
+        var overs = rows.filter(function(r){ return r.over != null; });
+        var unders = rows.filter(function(r){ return r.under != null; });
+        var best = null;
+        overs.forEach(function(ov){
+          unders.forEach(function(un){
+            if (+un.line <= +ov.line) return;
+            var cost = (1/(+ov.over) + 1/(+un.under) - 1) * 100, gap = +un.line - +ov.line;
+            if (gap < NERD_MIN_GAP || cost > NERD_MAX_COST) return;
+            if (!best || cost < best.cost || (cost === best.cost && gap > best.gap))
+              best = { p:p, opp:opp, mkt:m[0], label:m[1], ov:ov, un:un, gap:gap, cost:cost };
+          });
+        });
+        if (best) out.middles.push(best);
+      });
+    });
+  });
+  out.arbs.sort(function(a,b){ return b.profit - a.profit; });
+  out.middles.sort(function(a,b){ return a.cost - b.cost || b.gap - a.gap; });
+  out.value.sort(function(a,b){ return b.ev - a.ev; });
+  return out;
+}
+function nerdHead(r, key){
+  return '<div class="nerd-nm"><b>'+esc(r.p.name)+'</b><span>'+esc(abbrOf(key, r.p.team))+' v '+esc(abbrOf(key, r.opp))+'</span></div>';
+}
+function nerdSection(key, g){
+  if (!state.view.nerd) return '';
+  var S = state.sports[key];
+  if (S.t2 !== 'ready' || S.noOdds)
+    return '<div class="dayband"><span>Nerd Mode</span></div><div class="sig-empty">'
+      + (S.noOdds ? 'No prices for '+esc(SPORTS[key].name)+' yet.' : 'Loading prices\u2026')+'</div>';
+  var n = nerdRows(key, g);
+  // empty tiles push onto the shared quiet list, but that note is rendered by signalsSection which
+  // runs BEFORE this one - so a quiet Nerd tile vanished with no trace. Keep our own.
+  var quietFrom = SIG_QUIET.length;
+  var tile = function(icon, title, desc, rows, why){
+    return sigTile(icon, title, desc, rows, why);
+  };
+  var arb = n.arbs.slice(0, 8).map(function(r){
+    return '<div class="nerd-row">'+nerdHead(r, key)
+      + '<div class="nerd-legs"><span class="nerd-leg">'+Math.ceil(r.line)+'+ '+esc(r.label)+' $'+r.bo.over.toFixed(2)+' <i>'+esc(r.bo.book)+'</i></span>'
+      + '<span class="nerd-leg">Under '+r.line+' $'+r.bu.under.toFixed(2)+' <i>'+esc(r.bu.book)+'</i></span></div>'
+      + '<div class="nerd-val good">+'+r.profit.toFixed(2)+'%</div></div>';
+  });
+  var mid = n.middles.slice(0, 8).map(function(r){
+    return '<div class="nerd-row">'+nerdHead(r, key)
+      + '<div class="nerd-legs"><span class="nerd-leg">'+Math.ceil(+r.ov.line)+'+ '+esc(r.label)+' $'+(+r.ov.over).toFixed(2)+' <i>'+esc(r.ov.book)+'</i></span>'
+      + '<span class="nerd-leg">Under '+(+r.un.line)+' $'+(+r.un.under).toFixed(2)+' <i>'+esc(r.un.book)+'</i></span></div>'
+      + '<div class="nerd-val">'+r.gap.toFixed(1)+' wide<i>costs '+r.cost.toFixed(1)+'%</i></div></div>';
+  });
+  var val = n.value.slice(0, 10).map(function(r){
+    return '<div class="nerd-row">'+nerdHead(r, key)
+      + '<div class="nerd-legs"><span class="nerd-leg">'+Math.ceil(r.line)+'+ '+esc(r.label)+' $'+r.bo.over.toFixed(2)+' <i>'+esc(r.bo.book)+'</i></span>'
+      + '<span class="nerd-leg">market fair $'+r.consensus.toFixed(2)+' <i>'+r.books+' books</i></span>'
+      + (r.modelEv != null ? '<span class="nerd-leg">model '+Math.round(r.model*100)+'% <i>'+(r.modelEv >= 0 ? '+' : '')+Math.round(r.modelEv*100)+'%</i></span>' : '')
+      + '</div><div class="nerd-val good">+'+Math.round(r.ev*100)+'%</div></div>';
+  });
+  var body = tile('ti-arrows-split', 'Arbs', 'Both sides priced so the pair can\u2019t lose', arb,
+           'No two books are far enough apart on this fixture to back both sides at a profit (needs '+NERD_MIN_ARB+'%+).')
+    + tile('ti-arrows-horizontal', 'Middles', 'Over low with one book, under high with another', mid,
+           'No pair of books leaves a gap of '+NERD_MIN_GAP+'+ that costs under '+NERD_MAX_COST+'% to hold.')
+    + tile('ti-scale', 'Line Value', 'Best price against the market\u2019s own fair price', val,
+           'No posted price beats the de-vigged market consensus at its line by '+NERD_MIN_VALUE+'%+.')
+    + '';
+  var mine = SIG_QUIET.slice(quietFrom);
+  SIG_QUIET.length = quietFrom;                      // these belong to this section, not the signals
+  return '<div class="dayband"><span>Nerd Mode</span></div>' + body
+    + (mine.length ? '<details class="sig-quiet"><summary>'+mine.length+' nerd read'+(mine.length === 1 ? '' : 's')
+        + ' found nothing on this fixture</summary>'
+        + mine.map(function(q){ return '<div class="sig-quiet-row"><b>'+esc(q.title)+'</b><span>'+esc(q.why)+'</span></div>'; }).join('')
+        + '</details>' : '')
+    + '<div class="cmb-corr" style="margin:2px 0 10px">Market reads, not model reads: the consensus is de-vigged with the power method, which corrects the favourite-longshot bias better than dividing by the overround. Model edge is shown beside line value for comparison, capped at the player\u2019s own record as everywhere else.</div>';
+}
 function signalsSection(key, g){
   var S = state.sports[key], cfg = S.config || {};
   if (!(cfg.oddsMkts || cfg.multiMkts || []).length)
@@ -6173,7 +6332,10 @@ function focusPage(){
   if (!f) return '';
   var key = f.sport, g = f.g, S = state.sports[key];
   var st = gameStart(g);
-  var head = '<button class="fx-back" onclick="LAB.focus(null)"><i class="ti ti-arrow-left"></i>All fixtures</button>'
+  var head = '<div class="fx-top"><button class="fx-back" onclick="LAB.focus(null)"><i class="ti ti-arrow-left"></i>All fixtures</button>'
+    + '<button class="fx-nerd'+(state.view.nerd ? ' on' : '')+'" onclick="LAB.nerd()" title="Arbs, middles and line value across books">'
+    + '<i class="ti ti-math-symbols"></i>Nerd Mode</button></div>'
+    + ''
     + '<div class="fx-hero">'
     + '<div class="fxr-team">'+teamLogo(key,g.away)+'<div class="fxr-name">'+esc(teamName(key,g.away))+'</div></div>'
     + '<div class="fxr-center"><span class="fxr-badge" style="color:var(--accent);background:color-mix(in srgb,var(--accent) 16%,transparent)">'
@@ -6216,6 +6378,7 @@ function focusPage(){
     + (S.t3==='ready' ? subsSection(key, g) : '')
     + (S.t3==='ready' ? firstLastSection(key, g) : '')
     + (S.t3==='ready' ? signalsSection(key, g) : '')
+    + (S.t3==='ready' ? nerdSection(key, g) : '')
     // the build-your-own tools sit at the foot, above the player list: you read the match, then
     // the signals, then you go and make something
     + (S.t3==='ready' ? valueBets(key, g) : '')
@@ -8783,6 +8946,7 @@ function render(){
 /* ---- public ------------------------------------------------------------- */
 window.LAB = {
   crewSport: function(k){ state.view.crewSport = k; render(); },
+  nerd: function(){ state.view.nerd = !state.view.nerd; render(); },
   degSport: function(k){ state.view.degSport = k; state.view.degStat = null; render(); },
   degBook: function(b){ state.view.degBook = b || null; render(); },
   degStat: function(st){ state.view.degStat = st; render(); },
