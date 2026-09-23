@@ -51,20 +51,39 @@ def _first_game(fixture, now):
     return min(up) if up else None
 
 
-def should_pull(out_path, force, window_hours):
-    """Pull if forced (pre-ladder run), else pull once when the pre-game window opens."""
+def should_pull(out_path, force, window_hours, within_hours=None, every_mins=None):
+    """Decide whether this run pulls.
+
+    --force                     always (the daily sweep)
+    --window N                  once, when the window opens N hours before the first game
+    --within H --every M        REFRESH MODE: pull whenever the next game is within H hours and the
+                                stored file is older than M minutes.
+
+    Refresh mode is what keeps prices current through a slate. --window latches ("already pulled
+    this window"), so extra crons under it do nothing; refresh mode re-pulls on a timer while games
+    are near and spends nothing on days with none. _first_game only returns games still to start,
+    so as a slate progresses the target moves to the next game and the refresh follows it.
+    """
     now = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
     if force:
-        return True, 'forced (pre-ladder)'
+        return True, 'forced (sweep)'
     base = os.path.dirname(out_path) or '.'
     fg = _first_game(_load(os.path.join(base, 'fixture.json')) or [], now)
     if fg is None:
         return False, 'no upcoming games'
+    prev = _load(out_path)
+    upd = _parse_dt(prev.get('updated')) if isinstance(prev, dict) else None
+    if within_hours is not None:
+        if now < fg - datetime.timedelta(hours=within_hours):
+            return False, 'next game %s UTC is more than %gh away' % (fg.strftime('%Y-%m-%d %H:%M'), within_hours)
+        if every_mins and upd is not None:
+            age = (now - upd).total_seconds() / 60.0
+            if age < every_mins:
+                return False, 'refreshed %.0f min ago (every %g)' % (age, every_mins)
+        return True, 'refresh (next game %s UTC)' % fg.strftime('%Y-%m-%d %H:%M')
     window_start = fg - datetime.timedelta(hours=window_hours)
     if now < window_start:
         return False, 'before window (first game %s UTC)' % fg.strftime('%Y-%m-%d %H:%M')
-    prev = _load(out_path)
-    upd = _parse_dt(prev.get('updated')) if isinstance(prev, dict) else None
     if upd and upd >= window_start:
         return False, 'already pulled this window'
     return True, 'window open (first game %s UTC)' % fg.strftime('%Y-%m-%d %H:%M')
@@ -424,21 +443,27 @@ def transform(resp, mkmap, sport):
 def main():
     argv = sys.argv[1:]
     force, window, pos, i = False, 3, [], 0
+    within, every = None, None
     while i < len(argv):
         a = argv[i]
         if a == '--force':
             force = True
         elif a == '--window':
             window = int(argv[i + 1]); i += 1
+        elif a == '--within':
+            within = float(argv[i + 1]); i += 1
+        elif a == '--every':
+            every = float(argv[i + 1]); i += 1
         else:
             pos.append(a)
         i += 1
     if len(pos) < 2:
-        print('usage: fetch_odds.py <SPORT_ID> <output_path> [--force] [--window N]'); sys.exit(1)
+        print('usage: fetch_odds.py <SPORT_ID> <output_path> [--force] [--window N] '
+              '[--within HOURS --every MINUTES]'); sys.exit(1)
     sport, out_path = pos[0].upper(), pos[1]
     if sport not in SPORTS:
         print('unknown sport:', sport); sys.exit(1)
-    go, why = should_pull(out_path, force, window)
+    go, why = should_pull(out_path, force, window, within, every)
     if not go:
         print('%s skip: %s' % (sport, why)); return
     print('%s pull: %s' % (sport, why))
