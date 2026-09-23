@@ -6157,7 +6157,7 @@ function normSfInv(pr){
   return (lo + hi)/2;
 }
 function nerdRows(key, g){
-  var S = state.sports[key], out = { arbs:[], middles:[], value:[], lineout:[], implied:[], market:[] };
+  var S = state.sports[key], out = { arbs:[], middles:[], value:[], drift:[], lineout:[], implied:[], market:[] };
   var seenPlayers = {};
   [g.away, g.home].forEach(function(team){
     var opp = (team === g.home) ? g.away : g.home;
@@ -6214,10 +6214,10 @@ function nerdRows(key, g){
         });
         if (best) out.middles.push(best);
 
-        // LINEOUT: anchor a distribution to the consensus MAIN line, then price the alt ladder off
-        // it. The book's headline line is its sharpest number; its milestone rungs are often set
-        // loosely against it. Mean is chosen so P(over the main line) equals the de-vigged fair
-        // price; spread comes from the player's own game-to-game variation.
+        // LADDER DRIFT: anchor a distribution to the book's MAIN line, then price its alt ladder off
+        // that anchor. The headline line is a book's sharpest number; its milestone rungs are often
+        // set loosely against it, and a rung that drifts from what the main line implies is the
+        // book disagreeing with itself. (Not the old tool's LineOut - that one is below.)
         var main = null;
         rows.forEach(function(r){ if (r.over != null && r.under != null && (!main || (r.books||0) > (main.books||0))) main = r; });
         if (main){
@@ -6234,8 +6234,40 @@ function nerdRows(key, g){
                 if (fair < 0.30 || fair > 0.70) return;                    // only rungs near the anchor
                 var ev = fair * c.price - 1;
                 if (ev < NERD_MIN_VALUE/100) return;
-                out.lineout.push({ p:p, opp:opp, mkt:m[0], label:m[1], line:c.line, price:c.price, book:c.book,
-                                   fair:fair, ev:ev, anchor:+main.line, mu:mu, sd:sd });
+                out.drift.push({ p:p, opp:opp, mkt:m[0], label:m[1], line:c.line, price:c.price, book:c.book,
+                                 fair:fair, ev:ev, anchor:+main.line, mu:mu, sd:sd });
+              });
+            }
+          }
+        }
+        // LINEOUT (the real one): a book whose MAIN line sits off what everyone else is posting.
+        // Most books at 19.5 and one at 18.5 means the over is available at a line a full unit
+        // easier; one posting 20.5 means the under is. This is line shopping on the LINE, not the
+        // price. Value is the line advantage, priced through the same anchored distribution so the
+        // units convert to an edge.
+        var twoWay = rows.filter(function(r){ return r.over != null && r.under != null; });
+        if (twoWay.length >= 3){
+          var lines = twoWay.map(function(r){ return +r.line; }).sort(function(a,b){ return a-b; });
+          var cons = lines[Math.floor(lines.length/2)];                  // the median posted line
+          var spread = statVals(key, p.name, m[0], sortLogsDesc(((S.idx.logsByName || {})[p.name] || []).slice()).slice(0, 20));
+          if (spread.length >= 8){
+            var mu1 = mean(spread);
+            var sd1 = Math.sqrt(spread.reduce(function(a,v){ return a + (v-mu1)*(v-mu1); }, 0) / spread.length);
+            var at = twoWay.filter(function(r){ return Math.abs(+r.line - cons) < 1e-9; })[0];
+            var fairCons = at ? powerDevig(+at.over, +at.under) : null;
+            if (sd1 > 0.2 && fairCons != null){
+              var muA = cons - normSfInv(fairCons) * sd1;                // anchored to the consensus line
+              twoWay.forEach(function(r){
+                var d = +r.line - cons;
+                if (Math.abs(d) < 0.5) return;                           // same line as everyone else
+                var side = d < 0 ? 'over' : 'under';                     // lower line -> over; higher -> under
+                var price = side === 'over' ? +r.over : +r.under;
+                if (!(price > 1)) return;
+                var fair = side === 'over' ? normSf((+r.line - muA) / sd1) : 1 - normSf((+r.line - muA) / sd1);
+                var ev = fair * price - 1;
+                if (ev < NERD_MIN_VALUE/100) return;
+                out.lineout.push({ p:p, opp:opp, mkt:m[0], label:m[1], line:+r.line, cons:cons, diff:d,
+                                   side:side, price:price, book:r.book, fair:fair, ev:ev, books:twoWay.length });
               });
             }
           }
@@ -6271,6 +6303,7 @@ function nerdRows(key, g){
   out.arbs.sort(function(a,b){ return b.profit - a.profit; });
   out.middles.sort(function(a,b){ return a.cost - b.cost || b.gap - a.gap; });
   out.value.sort(function(a,b){ return b.ev - a.ev; });
+  out.drift.sort(function(a,b){ return b.ev - a.ev; });
   out.lineout.sort(function(a,b){ return b.ev - a.ev; });
   out.implied.sort(function(a,b){ return b.ev - a.ev; });
   out.market.sort(function(a,b){ return b.ev - a.ev; });
@@ -6322,8 +6355,16 @@ function nerdSection(key, g){
   SIG_QUIET.length = quietFrom;                      // these belong to this section, not the signals
   var lo = n.lineout.slice(0, 10).map(function(r){
     return '<div class="nerd-row">'+nerdHead(r, key)
+      + '<div class="nerd-legs"><span class="nerd-leg">'
+      + (r.side === 'over' ? Math.ceil(r.line)+'+ ' : 'Under '+r.line+' ')+esc(r.label)+' $'+r.price.toFixed(2)+' <i>'+esc(r.book)+'</i></span>'
+      + '<span class="nerd-leg">line '+r.line+' v '+r.cons+' elsewhere <i>'+(r.diff > 0 ? '+' : '')+r.diff+', '+r.books+' books</i></span>'
+      + '<span class="nerd-leg">fair $'+(1/r.fair).toFixed(2)+'</span></div>'
+      + '<div class="nerd-val good">+'+Math.round(r.ev*100)+'%</div></div>';
+  });
+  var dr = n.drift.slice(0, 10).map(function(r){
+    return '<div class="nerd-row">'+nerdHead(r, key)
       + '<div class="nerd-legs"><span class="nerd-leg">'+Math.ceil(r.line)+'+ '+esc(r.label)+' $'+r.price.toFixed(2)+' <i>'+esc(r.book)+'</i></span>'
-      + '<span class="nerd-leg">fair $'+(1/r.fair).toFixed(2)+' <i>off the '+r.anchor+' line</i></span>'
+      + '<span class="nerd-leg">fair $'+(1/r.fair).toFixed(2)+' <i>off its own '+r.anchor+' line</i></span>'
       + '<span class="nerd-leg">'+r.mu.toFixed(1)+' \u00b1 '+r.sd.toFixed(1)+' <i>implied shape</i></span></div>'
       + '<div class="nerd-val good">+'+Math.round(r.ev*100)+'%</div></div>';
   });
@@ -6339,8 +6380,10 @@ function nerdSection(key, g){
       + '<span class="nerd-leg">others average $'+r.avg.toFixed(2)+' <i>'+r.books+' books</i></span></div>'
       + '<div class="nerd-val good">+'+Math.round(r.ev*100)+'%</div></div>';
   });
-  body += tile('ti-ruler-measure', 'LineOut', 'Ladder rungs out of step with the book\u2019s own main line', lo,
-           'No alt rung is priced '+NERD_MIN_VALUE+'%+ better than the main line implies (only rungs the anchor puts between 30% and 70% are read).')
+  body += tile('ti-ruler-measure', 'LineOut', 'A book posting its main line off everyone else\u2019s', lo,
+           'Every book is posting the same main line, or the outliers don\u2019t pay enough to be worth the half-point.')
+    + tile('ti-chart-dots', 'Ladder Drift', 'Rungs out of step with the book\u2019s own main line', dr,
+           'No alt rung is priced '+NERD_MIN_VALUE+'%+ better than that book\u2019s own main line implies (only rungs the anchor puts between 30% and 70% are read).')
     + tile('ti-history', 'Implied EV', 'His own record at the line against the price', imp,
            'No price beats what he has actually done at that line over his last '+NERD_MIN_SAMP+'+ games.')
     + tile('ti-building-bank', 'Market EV', 'Best price against the average across books', mkt,
