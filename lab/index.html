@@ -9430,12 +9430,19 @@ function liveFind(j, name, kind){
 }
 function liveStatFor(key, name, mkt){
   var j = LIVE.data[key]; if (!j) return null;
-  var isPit = LIVE_PIT[mkt] != null && LIVE_BAT[mkt] == null;
-  var hit = liveFind(j, name, isPit ? 'pitchers' : 'batters') || liveFind(j, name, isPit ? 'batters' : 'pitchers');
-  if (!hit) return null;
-  var field = (LIVE_BAT[mkt] != null && !isPit) ? LIVE_BAT[mkt] : LIVE_PIT[mkt];
-  if (field == null) return null;
-  return { v:+hit.p[field] || 0, game:hit.g };
+  // MLB's feed splits batters and pitchers and uses its own abbreviations; every other sport's
+  // worker returns players keyed by OUR market names, so the market key reads straight off.
+  if (key === 'mlb'){
+    var isPit = LIVE_PIT[mkt] != null && LIVE_BAT[mkt] == null;
+    var hit = liveFind(j, name, isPit ? 'pitchers' : 'batters') || liveFind(j, name, isPit ? 'batters' : 'pitchers');
+    if (!hit) return null;
+    var field = (LIVE_BAT[mkt] != null && !isPit) ? LIVE_BAT[mkt] : LIVE_PIT[mkt];
+    if (field == null) return null;
+    return { v:+hit.p[field] || 0, game:hit.g };
+  }
+  var f = liveFind(j, name, 'players');
+  if (!f || f.p[mkt] == null) return null;
+  return { v:+f.p[mkt] || 0, game:f.g };
 }
 function liveLegRows(){
   var legs = [];
