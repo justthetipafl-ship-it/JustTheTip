@@ -1,0 +1,228 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>JTT — Record a bet</title>
+<style>
+  :root{--bg:#0a0c0f;--surface:#12161c;--surface-2:#161b22;--border:#222a35;--text:#e8edf4;--text-2:#aab6c6;
+    --text-3:#6f7d8f;--accent:#22c55e;--bad:#ef4444;--warn:#eab308;
+    --mono:ui-monospace,SFMono-Regular,Menlo,monospace;}
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
+  html{overflow-x:hidden;}
+  body{margin:0;background:var(--bg);color:var(--text);max-width:100%;overflow-x:hidden;
+    font-family:system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;font-size:15px;
+    padding:calc(12px + env(safe-area-inset-top,0px)) 12px calc(28px + env(safe-area-inset-bottom,0px));}
+  h1{font-size:18px;margin:0 0 2px;display:flex;align-items:center;gap:8px;}
+  .sub{font-size:11px;color:var(--text-3);margin-bottom:14px;}
+  .card{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:13px;margin-bottom:12px;}
+  label{display:block;font-size:10px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;
+    color:var(--text-3);margin:0 0 4px;}
+  input,select,textarea{width:100%;background:var(--surface-2);border:1px solid var(--border);border-radius:9px;
+    color:var(--text);font:inherit;font-size:16px;padding:10px 11px;}  /* 16px stops iOS zooming on focus */
+  textarea{min-height:64px;resize:vertical;}
+  .row{display:flex;gap:9px;margin-bottom:10px;}
+  .row > div{flex:1;min-width:0;}
+  .chips{display:flex;flex-wrap:wrap;gap:6px;}
+  .chip{padding:9px 12px;border-radius:999px;border:1px solid var(--border);background:var(--surface-2);
+    color:var(--text-2);font-size:13px;font-weight:700;cursor:pointer;}
+  .chip.on{border-color:var(--accent);color:var(--accent);background:color-mix(in srgb,var(--accent) 14%,transparent);}
+  .chip.win.on{border-color:var(--accent);color:var(--accent);}
+  .chip.loss.on{border-color:var(--bad);color:var(--bad);background:color-mix(in srgb,var(--bad) 14%,transparent);}
+  .chip.void.on,.chip.pending.on{border-color:var(--warn);color:var(--warn);background:color-mix(in srgb,var(--warn) 14%,transparent);}
+  button.go{width:100%;padding:14px;border-radius:11px;border:0;background:var(--accent);color:#04120a;
+    font-size:15px;font-weight:800;cursor:pointer;}
+  button.go[disabled]{opacity:.45;}
+  button.ghost{background:none;border:1px solid var(--border);color:var(--text-2);border-radius:9px;
+    padding:9px 12px;font-size:12px;cursor:pointer;}
+  .pend{display:flex;align-items:center;gap:9px;padding:9px 0;border-top:1px solid var(--border);font-size:12px;}
+  .pend b{font-size:13px;} .pend .p-x{margin-left:auto;background:none;border:0;color:var(--text-3);font-size:18px;cursor:pointer;}
+  .note{font-size:11px;color:var(--text-3);line-height:1.5;}
+  .msg{padding:10px 12px;border-radius:9px;font-size:12px;margin-bottom:10px;}
+  .msg.ok{background:color-mix(in srgb,var(--accent) 14%,transparent);color:var(--accent);}
+  .msg.err{background:color-mix(in srgb,var(--bad) 14%,transparent);color:var(--bad);}
+  .mono{font-family:var(--mono);}
+  .tot{display:flex;gap:14px;font-family:var(--mono);font-size:12px;color:var(--text-2);margin-top:6px;}
+</style></head>
+<body>
+<h1>Record a bet</h1>
+<div class="sub">Saves to <span class="mono">data/results.json</span> in the JustTheTip repo. The site reads that file for the results dashboard.</div>
+
+<div id="msg"></div>
+
+<div class="card">
+  <div class="row">
+    <div><label>Date</label><input type="date" id="date"></div>
+    <div><label>Stake ($)</label><input type="number" id="stake" inputmode="decimal" step="0.01" placeholder="25"></div>
+  </div>
+  <div class="row">
+    <div><label>Odds</label><input type="number" id="odds" inputmode="decimal" step="0.01" placeholder="1.90"></div>
+    <div><label>Returned ($) — optional</label><input type="number" id="ret" inputmode="decimal" step="0.01" placeholder="auto"></div>
+  </div>
+  <div class="row">
+    <div><label>Unit size ($) — your 1 unit</label><input type="number" id="unit" inputmode="decimal" step="0.01" placeholder="25"></div>
+    <div><label>&nbsp;</label><div class="note">The public dashboard shows units only, never dollars. A $50 stake at a $25 unit is 2u.</div></div>
+  </div>
+  <label>Sport</label>
+  <div class="chips" id="sportChips"></div>
+  <label style="margin-top:11px">Bet type</label>
+  <div class="chips" id="typeChips"></div>
+  <label style="margin-top:11px">The bet</label>
+  <textarea id="bet" placeholder="e.g. Nick Daicos 30+ disposals&#10;or: Cripps 25+ disposals / Bontempelli 28+ disposals (2-leg multi)"></textarea>
+  <label style="margin-top:11px">Result</label>
+  <div class="chips" id="resChips"></div>
+  <div class="tot" id="calc"></div>
+</div>
+
+<button class="go" id="add">Add to the batch</button>
+
+<div class="card" id="batchCard" style="display:none">
+  <div style="display:flex;align-items:center"><b style="font-size:13px">Not yet saved</b>
+    <button class="ghost" id="clear" style="margin-left:auto">Clear</button></div>
+  <div id="batch"></div>
+  <button class="go" id="save" style="margin-top:11px">Save to GitHub</button>
+</div>
+
+<div class="card">
+  <label>GitHub token</label>
+  <input type="password" id="tok" placeholder="github_pat_...">
+  <div class="note" style="margin-top:7px">
+    Stored only in this browser (localStorage), never sent anywhere except github.com. Use a
+    <b>fine-grained personal access token</b> limited to the JustTheTip repo with
+    <b>Contents: read and write</b> — nothing else. If the phone is lost, revoke it on GitHub and the
+    token is dead.
+  </div>
+  <div class="row" style="margin-top:10px">
+    <button class="ghost" id="savetok">Remember token</button>
+    <button class="ghost" id="forgettok">Forget token</button>
+  </div>
+</div>
+
+<script>
+(function(){
+'use strict';
+var REPO = 'justthetipafl-ship-it/JustTheTip', FILE = 'data/results.json', BRANCH = 'main';
+var SPORTS = ['AFL','NFL','EPL','MLB','NBL','NHL','Other'];
+var TYPES  = ['Single','Multi','SGM','Ladder','Futures','Other'];
+var RESULTS = [['win','Win'],['loss','Loss'],['void','Void / push'],['pending','Pending']];
+var sel = { sport:'AFL', type:'Single', result:'win' };
+var unitSize = 25;                                 // dollars per unit; the dashboard shows units only
+var batch = [];
+var $ = function(id){ return document.getElementById(id); };
+function chips(box, items, key, cls){
+  $(box).innerHTML = items.map(function(it){
+    var v = Array.isArray(it) ? it[0] : it, t = Array.isArray(it) ? it[1] : it;
+    return '<button class="chip '+(cls ? v+' ' : '')+(sel[key] === v ? 'on' : '')+'" data-v="'+v+'">'+t+'</button>';
+  }).join('');
+  Array.prototype.forEach.call($(box).children, function(b){
+    b.onclick = function(){ sel[key] = b.dataset.v; chips(box, items, key, cls); calc(); };
+  });
+}
+function num(id){ var v = parseFloat($(id).value); return isFinite(v) ? v : null; }
+function payout(){
+  var st = num('stake'), od = num('odds'), rt = num('ret');
+  if (rt != null) return rt;
+  if (sel.result === 'win' && st != null && od != null) return +(st * od).toFixed(2);
+  if (sel.result === 'void') return st;
+  if (sel.result === 'loss') return 0;
+  return null;                                   // pending
+}
+function calc(){
+  var st = num('stake'), p = payout();
+  if (st == null || p == null){ $('calc').textContent = sel.result === 'pending' ? 'Pending — no profit counted yet' : ''; return; }
+  var pl = +(p - st).toFixed(2);
+  var u = num('unit') || unitSize;
+  $('calc').innerHTML = 'Returns $'+p.toFixed(2)+' &nbsp;·&nbsp; <span style="color:'+(pl >= 0 ? 'var(--accent)' : 'var(--bad)')+'">'
+    + (pl >= 0 ? '+' : '')+'$'+pl.toFixed(2)+'</span>'
+    + (u > 0 ? ' &nbsp;·&nbsp; <span style="color:var(--text-3)">'+(st/u).toFixed(2)+'u staked, '
+        + (pl >= 0 ? '+' : '')+(pl/u).toFixed(2)+'u</span>' : '');
+}
+['stake','odds','ret','unit'].forEach(function(id){ $(id).oninput = calc; });
+$('unit').onchange = function(){ var u = num('unit'); if (u > 0){ unitSize = u; try { localStorage.setItem('jtt_unit', String(u)); } catch(e){} } };
+function msg(kind, text){ $('msg').innerHTML = text ? '<div class="msg '+kind+'">'+text+'</div>' : ''; }
+function drawBatch(){
+  $('batchCard').style.display = batch.length ? '' : 'none';
+  $('batch').innerHTML = batch.map(function(b, i){
+    return '<div class="pend"><b>'+b.sport+'</b><span>'+b.bet.replace(/</g,'&lt;').slice(0, 42)
+      + '</span><span class="mono">$'+b.stake+' @ '+b.odds+'</span><span class="mono">'+b.result
+      + '</span><button class="p-x" data-i="'+i+'">&times;</button></div>';
+  }).join('');
+  Array.prototype.forEach.call($('batch').querySelectorAll('.p-x'), function(x){
+    x.onclick = function(){ batch.splice(+x.dataset.i, 1); saveDraft(); drawBatch(); };
+  });
+}
+function saveDraft(){ try { localStorage.setItem('jtt_batch', JSON.stringify(batch)); } catch(e){} }
+$('add').onclick = function(){
+  var st = num('stake'), od = num('odds'), bet = $('bet').value.trim();
+  if (!bet) return msg('err', 'Type the bet first.');
+  if (st == null) return msg('err', 'Stake is missing.');
+  if (od == null && sel.result !== 'void' && num('ret') == null) return msg('err', 'Odds are missing (or fill in Returned).');
+  batch.push({ id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
+               date: $('date').value || new Date().toISOString().slice(0, 10),
+               sport: sel.sport, type: sel.type, bet: bet, stake: st, odds: od,
+               result: sel.result, returned: payout() });
+  saveDraft(); drawBatch(); msg('ok', 'Added. It is not saved to GitHub until you press Save.');
+  $('bet').value = ''; $('ret').value = ''; calc();
+};
+$('clear').onclick = function(){ batch = []; saveDraft(); drawBatch(); };
+$('savetok').onclick = function(){ try { localStorage.setItem('jtt_tok', $('tok').value.trim()); msg('ok', 'Token remembered on this device.'); } catch(e){ msg('err', 'Could not store the token.'); } };
+$('forgettok').onclick = function(){ try { localStorage.removeItem('jtt_tok'); $('tok').value = ''; msg('ok', 'Token forgotten.'); } catch(e){} };
+
+function api(path, opts){
+  opts = opts || {};
+  opts.headers = Object.assign({ 'Authorization': 'Bearer ' + $('tok').value.trim(),
+    'Accept': 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28' }, opts.headers || {});
+  return fetch('https://api.github.com/repos/' + REPO + path, opts).then(function(r){
+    return r.json().then(function(j){ return { ok:r.ok, status:r.status, body:j }; });
+  });
+}
+// UTF-8 safe base64 both ways: bet text can carry accents and emoji
+function b64(str){ return btoa(String.fromCharCode.apply(null, new TextEncoder().encode(str))); }
+function unb64(s){ return new TextDecoder().decode(Uint8Array.from(atob(s.replace(/\n/g, '')), function(c){ return c.charCodeAt(0); })); }
+
+$('save').onclick = function(){
+  if (!$('tok').value.trim()) return msg('err', 'Add your GitHub token first.');
+  if (!batch.length) return;
+  $('save').disabled = true; msg('', '');
+  api('/contents/' + FILE + '?ref=' + BRANCH).then(function(res){
+    var existing = [], sha = null;
+    if (res.ok && res.body && res.body.content){
+      sha = res.body.sha;
+      var parsed = null;
+      try { parsed = JSON.parse(unb64(res.body.content)); } catch(e){ parsed = null; }
+      // the file is {unitSize, updated, bets:[...]}; a bare array is the older shape and still reads
+      existing = Array.isArray(parsed) ? parsed : ((parsed && parsed.bets) || []);
+      if (!Array.isArray(existing)) existing = [];
+    } else if (res.status !== 404){
+      throw new Error('Could not read the file: ' + res.status + ' ' + ((res.body && res.body.message) || ''));
+    }
+    // merge by id so a double-tap can't duplicate a bet, and an edited one replaces the old
+    var byId = {}; existing.forEach(function(b){ byId[b.id] = b; });
+    batch.forEach(function(b){ byId[b.id] = b; });
+    var all = Object.keys(byId).map(function(k){ return byId[k]; })
+      .sort(function(a, b){ return String(a.date).localeCompare(String(b.date)) || String(a.id).localeCompare(String(b.id)); });
+    return api('/contents/' + FILE, { method:'PUT', body: JSON.stringify({
+      message: 'results: +' + batch.length + ' bet' + (batch.length === 1 ? '' : 's'),
+      content: b64(JSON.stringify({ unitSize: (num('unit') || unitSize),
+                                    updated: new Date().toISOString().slice(0, 19) + 'Z',
+                                    bets: all }, null, 1)),
+      branch: BRANCH, sha: sha || undefined }) })
+      .then(function(put){
+        if (!put.ok) throw new Error('Save failed: ' + put.status + ' ' + ((put.body && put.body.message) || ''));
+        msg('ok', 'Saved ' + batch.length + ' bet' + (batch.length === 1 ? '' : 's') + '. ' + all.length + ' on file.');
+        batch = []; saveDraft(); drawBatch();
+      });
+  }).catch(function(e){ msg('err', e.message); })
+    .then(function(){ $('save').disabled = false; });
+};
+
+// boot
+$('date').value = new Date().toISOString().slice(0, 10);
+try { $('tok').value = localStorage.getItem('jtt_tok') || ''; } catch(e){}
+try { batch = JSON.parse(localStorage.getItem('jtt_batch') || '[]') || []; } catch(e){ batch = []; }
+try { var us = parseFloat(localStorage.getItem('jtt_unit')); if (us > 0){ unitSize = us; } } catch(e){}
+$('unit').value = unitSize;
+chips('sportChips', SPORTS, 'sport'); chips('typeChips', TYPES, 'type'); chips('resChips', RESULTS, 'result', true);
+drawBatch(); calc();
+})();
+</script>
+</body></html>
