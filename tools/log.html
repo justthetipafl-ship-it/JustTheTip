@@ -277,8 +277,17 @@ function api(path, opts){
     return r.json().then(function(j){ return { ok:r.ok, status:r.status, body:j }; });
   });
 }
-// UTF-8 safe base64 both ways: bet text can carry accents and emoji
-function b64(str){ return btoa(String.fromCharCode.apply(null, new TextEncoder().encode(str))); }
+// UTF-8 safe base64 both ways: bet text can carry accents and emoji.
+// Encoded in chunks: String.fromCharCode.apply passes every byte as a separate ARGUMENT, so a
+// whole season of history overflowed the call stack ("Maximum call stack size exceeded") the
+// moment the file grew past a few hundred rows.
+function b64(str){
+  var bytes = new TextEncoder().encode(str), out = '', CH = 8192;
+  for (var i = 0; i < bytes.length; i += CH){
+    out += String.fromCharCode.apply(null, bytes.subarray(i, i + CH));
+  }
+  return btoa(out);
+}
 function unb64(s){ return new TextDecoder().decode(Uint8Array.from(atob(s.replace(/\n/g, '')), function(c){ return c.charCodeAt(0); })); }
 
 $('save').onclick = function(){
