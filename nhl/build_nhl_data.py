@@ -13,7 +13,7 @@ format into nhl/data/.
   Emits (shell shapes) into nhl/data/:
     gamelogs_YYYY.json  per-season rows [{Year,Date,MatchId,Player,PlayerId,Team,Opp,home,pos,goals,assists,points,shots,ppPoints,pim,toiMin,ppToi,shToi,saves,...}]
     players.json        aggregated [{playerId,name,team,teamFull,position,pos5,games,role,goals,assists,points,shots,...}]
-    teams.json          per team for/against [{team,teamFull,games,goalsFor,goalsAgainst,shotsFor,shotsAgainst,...}]
+    teams.json          per team for/against [{team,teamFull,games,goals,goals_a,shots,shots_a,...}]
     dvp.json            team x position stat allowed per game
     results.json        completed games ; fixture.json upcoming games ; meta.json tool meta
 
@@ -275,6 +275,12 @@ def build(by_season, results, current):
         g = max(1, d["g"]); row = {"team": tm, "teamFull": TEAM_FULL.get(tm, tm), "games": d["g"]}
         row["goalsFor"] = round(d["for"]["goals"] / g, 2); row["goalsAgainst"] = round(d["ag"]["goals"] / g, 2)
         row["shotsFor"] = round(d["for"]["shots"] / g, 2); row["shotsAgainst"] = round(d["ag"]["shots"] / g, 2)
+        # The shell builds the "allowed" view by appending _a to whatever column it is showing, so
+        # goalsFor/goalsAgainst were invisible to it: it looked for "goalsFor_a" and gave up, and
+        # NHL's Teams tab said the file carries no allowed columns. Same numbers, named the way
+        # every other sport names them. The For/Against pair stays for anything already reading it.
+        row["goals"] = row["goalsFor"]; row["goals_a"] = row["goalsAgainst"]
+        row["shots"] = row["shotsFor"]; row["shots_a"] = row["shotsAgainst"]
         row["logo"] = "https://assets.nhle.com/logos/nhl/svg/%s_light.svg" % tm   # official tricode CDN
         teams.append(row)
 
