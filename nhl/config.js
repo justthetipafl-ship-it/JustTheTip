@@ -24,7 +24,7 @@ window.SPORT_CONFIG = {
   },
   displaySets: { All: [["toiMin","TOI"],["goals","G"],["assists","A"],["points","Pts"],["shots","SOG"],["ppPoints","PPP"]] },
   boxCols: [["toiMin","TOI"],["goals","G"],["assists","A"],["points","PTS"],["shots","SOG"],["ppPoints","PPP"]],
-  teamCols: [["goalsFor","GF"],["goalsAgainst","GA"],["shotsFor","SF"],["shotsAgainst","SA"]],
+  teamCols: [["goals","G"],["shots","S"]],   // the For/Allowed toggle appends _a to these
 
   cmpAliases: { sog:"shots", shot:"shots", shots:"shots", s:"shots",
                 pt:"points", pts:"points", point:"points", points:"points", p:"points",
