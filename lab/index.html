@@ -853,6 +853,43 @@
   .res-txt i{font-style:normal;font-size:9px;color:var(--text-3);}
   .res-out{font-family:var(--font-mono);font-size:12px;width:66px;text-align:right;}
   .res-out.pos{color:var(--accent);} .res-out.neg{color:#f97316;} .res-out.mid{color:var(--text-3);}
+  .card-add{flex:none;width:26px;height:26px;border-radius:7px;border:1px dashed var(--border);
+    background:transparent;color:var(--text-3);cursor:pointer;font-size:13px;display:flex;align-items:center;justify-content:center;}
+  .card-add.on{border-style:solid;border-color:var(--accent);color:var(--accent);}
+  .card-fab{position:fixed;right:14px;bottom:calc(74px + env(safe-area-inset-bottom,0px));z-index:60;
+    width:46px;height:46px;border-radius:50%;border:1px solid var(--border);background:var(--surface);
+    color:var(--text-2);font-size:20px;cursor:pointer;box-shadow:0 6px 18px rgba(0,0,0,.4);}
+  .card-fab.has{border-color:var(--accent);color:var(--accent);}
+  .card-fab span{position:absolute;top:-4px;right:-4px;min-width:19px;height:19px;border-radius:999px;
+    background:var(--accent);color:#04120a;font-size:10px;font-weight:800;line-height:19px;}
+  .cd-row{display:flex;align-items:center;gap:8px;padding:9px 0;border-top:1px solid var(--border);}
+  .cd-main{flex:1;min-width:0;} .cd-main b{display:block;font-size:12px;}
+  .cd-main span{font-size:9px;color:var(--text-3);}
+  .cd-legs{display:flex;flex-direction:column;gap:1px;margin-top:3px;}
+  .cd-legs span{font-size:9px;color:var(--text-3);} .cd-legs i{font-style:normal;color:var(--text-2);}
+  .cd-odds{flex:none;font-family:var(--font-mono);font-size:11px;text-align:right;}
+  .cd-odds i{display:block;font-style:normal;font-size:8px;color:var(--text-3);}
+  .cd-stake input{width:62px;background:var(--surface-2);border:1px solid var(--border);border-radius:7px;
+    color:var(--text);font-size:16px;padding:5px 6px;text-align:right;}
+  .cd-ret{flex:none;width:62px;text-align:right;font-family:var(--font-mono);font-size:11px;color:var(--accent);}
+  .cd-x{background:none;border:0;color:var(--text-3);font-size:18px;cursor:pointer;}
+  .cd-tot{display:flex;gap:12px;flex-wrap:wrap;padding:10px 0;border-top:1px solid var(--border);
+    font-size:11px;color:var(--text-3);margin-top:4px;}
+  .cd-tot b{color:var(--text);font-family:var(--font-mono);} .cd-tot .pos{color:var(--accent);} .cd-tot .neg{color:#f97316;}
+  .cd-acts{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;}
+  .lt-sum{font-size:11px;color:var(--text-3);margin-bottom:8px;}
+  .lt-sum b{color:var(--text);font-family:var(--font-display);}
+  .lt-leg{border:1px solid var(--border);border-radius:9px;padding:8px 9px;margin-bottom:6px;background:var(--surface-2);}
+  .lt-top{display:flex;gap:6px;align-items:baseline;font-size:12px;}
+  .lt-nm{font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .lt-bet{margin-left:auto;color:var(--text-2);font-size:10px;white-space:nowrap;}
+  .lt-bar{height:5px;border-radius:3px;background:var(--border);overflow:hidden;margin:6px 0;}
+  .lt-fill{height:100%;background:var(--accent);}
+  .lt-bot{display:flex;font-size:9px;color:var(--text-3);}
+  .lt-tag{margin-left:auto;font-weight:800;letter-spacing:.04em;}
+  .lt-leg.cashed{border-color:var(--accent);} .lt-leg.cashed .lt-tag{color:var(--accent);}
+  .lt-leg.busted{opacity:.55;} .lt-leg.busted .lt-fill{background:#ef4444;} .lt-leg.busted .lt-tag{color:#ef4444;}
+  .lt-multi{font-size:9px;color:var(--text-3);margin-top:4px;}
   .sc-filter{display:flex;gap:7px;align-items:center;margin-bottom:8px;}
   .sc-filter input{flex:1;min-width:0;background:var(--surface-2);border:1px solid var(--border);
     border-radius:9px;padding:9px 12px;color:var(--text);font-size:13px;font-family:inherit;outline:none;}
@@ -5397,8 +5434,9 @@ function eachSkater(key, g, fn){
     playersOnTeam(key, team).forEach(function(p){ if (p && eplAvail(key, p, team)) fn(p, team, opp); });
   });
 }
-function eplRow(key, r, bet, chips, big, bigL, good){
+function eplRow(key, r, bet, chips, big, bigL, good, cardLbl){
   return '<div class="gl-row sig-extra" onclick="LAB.player(\'' + key + '\',\'' + esc(r.name).replace(/'/g,"\\'") + '\')">'
+    + (cardLbl ? cardBtn(key, r, cardLbl) : '')
     + playerImgP(key, r.name, 28)
     + '<div class="gl-left"><div class="gl-nm"><b>'+esc(r.name)+'</b><span class="gl-tag">'
     + esc((posShortP(r.p) ? posShortP(r.p)+' \u00b7 ' : '')+abbrOf(key, r.p.team)+' v '+abbrOf(key, r.opp))+'</span></div>'
@@ -5742,7 +5780,7 @@ function mlbRow(key, r, betLbl, chips){
   var b = r.b;
   return eplRow(key, r, '<b>'+(b.side === 'under' ? 'Under '+b.od.line : Math.ceil(b.od.line)+'+')+' '+betLbl+'</b> \u00b7 '+fmtP(b.od),
     chips.concat([['model '+Math.round(b.pr*100)+'% v '+Math.round(100/b.od.price)+'% implied', true]]),
-    '+'+Math.round(b.ev*100)+'%', 'EDGE');
+    '+'+Math.round(b.ev*100)+'%', 'EDGE', true, betLbl);
 }
 var d3m = function(v){ return v == null ? '\u2014' : v.toFixed(3).replace(/^0/, ''); };
 /* SLUGGERS - a platoon edge: SLG against today's starter's hand 15%+ above his season SLG, on
@@ -9262,6 +9300,213 @@ function resultsPage(){
   return h;
 }
 
+/* MY CARD ---------------------------------------------------------------------------
+   The bet slip: singles and multis you've picked, kept in this browser (localStorage), each with
+   your own stake. Singles can be combined into a multi. Nothing here is sent anywhere - it is your
+   card, not a tip sheet, and it survives a refresh so it can be built before a slate and tracked
+   during it.                                                                                    */
+var CARD_KEY = 'jtt_lab_card';
+var CARD = (function(){ try { var a = JSON.parse(localStorage.getItem(CARD_KEY) || '[]'); return Array.isArray(a) ? a : []; } catch(e){ return []; } })();
+function cardSave(){ try { localStorage.setItem(CARD_KEY, JSON.stringify(CARD)); } catch(e){} }
+function cardId(){ return 'c' + Date.now().toString(36) + Math.floor(Math.random()*1e4).toString(36); }
+function cardKey(e){
+  return e.type === 'multi'
+    ? 'm|' + (e.legs || []).map(function(l){ return l.name + '@' + l.label; }).sort().join(',')
+    : 's|' + [e.key, e.name, e.mkt, e.line, e.side].join('|');
+}
+function cardHas(e){ var k = cardKey(e); return CARD.some(function(x){ return cardKey(x) === k; }); }
+function cardAdd(e){
+  if (!e || !e.name) return false;
+  if (cardHas(e)) return false;
+  CARD.push(e); cardSave(); return true;
+}
+// rows carry their market as a label ("Points"); resolve it back to the stat key the live feed uses
+function mktFromLabel(key, label){
+  var mk = ((state.sports[key].config || {}).oddsMkts) || [];
+  var hit = mk.filter(function(m){ return m[1] === label || m[0] === label; })[0];
+  return hit ? hit[0] : String(label || '').toLowerCase();
+}
+function cardBtn(key, r, betLbl){
+  var b = r && r.b; if (!b || !b.od) return '';
+  var e = { id:cardId(), type:'single', key:key, name:r.name, team:(r.p && r.p.team) || '', opp:r.opp || '',
+            mkt:mktFromLabel(key, betLbl), label:betLbl, line:b.od.line, side:b.side || 'over',
+            odds:b.od.price, book:b.od.book || '', gamePk:(r.g && r.g.gamePk) != null ? r.g.gamePk : null, stake:null };
+  return '<button class="card-add'+(cardHas(e) ? ' on' : '')+'" title="Add to my card" '
+    + 'onclick="event.stopPropagation();LAB.cardAdd(this)" data-c="'+esc(JSON.stringify(e))+'">'
+    + '<i class="ti ti-'+(cardHas(e) ? 'check' : 'plus')+'"></i></button>';
+}
+function cardCount(){ return CARD.length; }
+function cardStake(e){ return +e.stake > 0 ? +e.stake : 0; }
+function cardReturns(e){ return e.odds > 1 ? cardStake(e) * e.odds : 0; }
+function cardTotals(){
+  var st = 0, ret = 0, priced = 0;
+  CARD.forEach(function(e){ st += cardStake(e); ret += cardReturns(e); if (e.odds > 1) priced++; });
+  return { stake:st, ret:ret, priced:priced };
+}
+function cardRowHtml(e){
+  var legs = e.type === 'multi'
+    ? '<div class="cd-legs">' + e.legs.map(function(l){ return '<span>'+esc(l.name)+' <i>'+esc(l.label)+'</i>'+(l.odds ? ' $'+(+l.odds).toFixed(2) : '')+'</span>'; }).join('') + '</div>'
+    : '';
+  var title = e.type === 'multi' ? e.title : e.name;
+  var sub = e.type === 'multi' ? e.legs.length+' legs'+(e.src ? ' \u00b7 '+esc(e.src) : '')
+    : ((e.side === 'under' ? 'Under '+e.line : Math.ceil(e.line)+'+') + ' ' + esc(e.label || e.mkt)
+       + (e.team ? ' \u00b7 '+esc(abbrOf(e.key, e.team))+' v '+esc(abbrOf(e.key, e.opp)) : ''));
+  return '<div class="cd-row"><div class="cd-main"><b>'+esc(title)+'</b><span>'+sub+'</span>'+legs+'</div>'
+    + '<div class="cd-odds">'+(e.odds > 1 ? '$'+(+e.odds).toFixed(2) : '<i>no price</i>')
+    + (e.book ? '<i>'+esc(e.book)+'</i>' : '')+'</div>'
+    + '<div class="cd-stake"><input type="number" inputmode="decimal" step="0.5" placeholder="stake" value="'
+    + (e.stake == null ? '' : e.stake)+'" onchange="LAB.cardStake(\''+e.id+'\',this.value)"></div>'
+    + '<div class="cd-ret">'+(cardReturns(e) ? '$'+cardReturns(e).toFixed(2) : '\u2014')+'</div>'
+    + '<button class="cd-x" onclick="LAB.cardRemove(\''+e.id+'\')">&times;</button></div>';
+}
+function cardPanel(){
+  if (!state.view.cardOpen) return '';
+  var t = cardTotals();
+  var body = CARD.length
+    ? CARD.map(cardRowHtml).join('')
+      + '<div class="cd-tot"><span>'+CARD.length+' bet'+(CARD.length === 1 ? '' : 's')+'</span>'
+      + '<span>staked <b>$'+t.stake.toFixed(2)+'</b></span>'
+      + '<span>returns <b>$'+t.ret.toFixed(2)+'</b></span>'
+      + '<span class="'+(t.ret - t.stake >= 0 ? 'pos' : 'neg')+'">'+(t.ret - t.stake >= 0 ? '+' : '')
+      + '$'+(t.ret - t.stake).toFixed(2)+'</span></div>'
+      + '<div class="cd-acts"><button class="sl-chip" onclick="LAB.cardCombine()">Combine singles into a multi</button>'
+      + '<button class="sl-chip" onclick="LAB.cardClear()">Clear card</button>'
+      + '<button class="sl-chip on" onclick="LAB.liveOpen()"><i class="ti ti-antenna-bars-5"></i> Track live</button></div>'
+    : '<div class="sig-empty">Nothing on your card yet. Tap the + on any signal, or send a build across from Degen Crew.</div>';
+  return '<div class="cmb-overlay open" onclick="if(event.target===this)LAB.cardClose()">'
+    + '<div class="cmb-modal"><div class="cmb-hdr"><i class="ti ti-receipt"></i><h2>My Card</h2>'
+    + '<button class="cmb-close" onclick="LAB.cardClose()">&times;</button></div>'
+    + '<div class="cmb-body">'+body+'</div></div></div>';
+}
+function cardFab(){
+  var n = cardCount();
+  return '<button class="card-fab'+(n ? ' has' : '')+'" onclick="LAB.cardOpen()" title="My card">'
+    + '<i class="ti ti-receipt"></i>'+(n ? '<span>'+n+'</span>' : '')+'</button>';
+}
+
+/* LIVE TRACKER ----------------------------------------------------------------------
+   Every single on the card, matched to what the player has actually done so far, with a bar toward
+   his line. It reads the sport's live worker (config.liveWorker) - only MLB has one today, so the
+   others say so plainly rather than sitting on a spinner forever.
+   "Pop out" uses the Document Picture-in-Picture API: a small always-on-top window you can leave
+   beside the game. Chrome and Edge on desktop only; everywhere else keeps the in-page panel.     */
+var LIVE = { data:{}, at:{}, timer:null, err:null, loading:false };
+var LIVE_BAT = { H:'h', TB:'tb', HR:'hr', RBI:'rbi', R:'r', BB:'bb', K:'k', SB:'sb' };
+var LIVE_PIT = { K:'k', ER:'er', OUTS:'outs', HA:'h', BB:'bb' };
+function liveWorkerFor(key){ return ((state.sports[key].config || {}).liveWorker || '').replace(/\/+$/, ''); }
+function liveGames(){                       // sports on the card that have a live feed at all
+  var out = {};
+  CARD.forEach(function(e){
+    var keys = e.type === 'multi' ? (e.legs || []).map(function(l){ return l.key; }) : [e.key];
+    keys.forEach(function(k){ if (k && liveWorkerFor(k)) out[k] = 1; });
+  });
+  return Object.keys(out);
+}
+function liveFetch(){
+  var keys = liveGames();
+  if (!keys.length) return;
+  LIVE.loading = true;
+  Promise.all(keys.map(function(k){
+    return fetch(liveWorkerFor(k) + '/live?t=' + Date.now(), { cache:'no-store' })
+      .then(function(r){ return r.ok ? r.json() : null; })
+      .then(function(j){ if (j) { LIVE.data[k] = j; LIVE.at[k] = Date.now(); } })
+      .catch(function(){ LIVE.err = 'Live feed unavailable'; });
+  })).then(function(){ LIVE.loading = false; if (state.view.liveOpen){ render(); livePaintPip(); } });
+}
+function livePoll(){
+  clearTimeout(LIVE.timer);
+  if (!state.view.liveOpen && !LIVE.pip) return;
+  LIVE.timer = setTimeout(function(){ liveFetch(); livePoll(); }, 30000);
+}
+function liveFind(j, name, kind){
+  var want = cmbNameKey(name), games = (j && j.games) || [];
+  for (var i = 0; i < games.length; i++){
+    var arr = (games[i][kind] || games[i].players || []);
+    for (var n = 0; n < arr.length; n++){
+      if (cmbNameKey(arr[n].name || '') === want) return { p:arr[n], g:games[i] };
+    }
+  }
+  return null;
+}
+function liveStatFor(key, name, mkt){
+  var j = LIVE.data[key]; if (!j) return null;
+  var isPit = LIVE_PIT[mkt] != null && LIVE_BAT[mkt] == null;
+  var hit = liveFind(j, name, isPit ? 'pitchers' : 'batters') || liveFind(j, name, isPit ? 'batters' : 'pitchers');
+  if (!hit) return null;
+  var field = (LIVE_BAT[mkt] != null && !isPit) ? LIVE_BAT[mkt] : LIVE_PIT[mkt];
+  if (field == null) return null;
+  return { v:+hit.p[field] || 0, game:hit.g };
+}
+function liveLegRows(){
+  var legs = [];
+  CARD.forEach(function(e){
+    if (e.type === 'multi') (e.legs || []).forEach(function(l){ if (l.key) legs.push({ e:e, l:l, multi:e.title }); });
+    else legs.push({ e:e, l:e, multi:null });
+  });
+  return legs.map(function(x){
+    var l = x.l, st = l.key ? liveStatFor(l.key, l.name, l.mkt) : null;
+    var line = parseFloat(l.line), need = Math.ceil(line), side = l.side || 'over';
+    var have = st ? st.v : null;
+    var state2 = have == null ? 'waiting'
+      : side === 'over' ? (have >= need ? 'cashed' : 'open')
+      : (have >= need ? 'busted' : 'open');
+    return { name:l.name, label:(side === 'under' ? 'Under ' + l.line : need + '+') + ' ' + (l.label || l.mkt),
+             have:have, need:need, side:side, state:state2, multi:x.multi,
+             pct: (have == null || !need) ? 0 : Math.max(0, Math.min(1, have / need)) };
+  });
+}
+function liveBody(compact){
+  var keys = liveGames();
+  if (!CARD.length) return '<div class="sig-empty">Nothing on your card to track.</div>';
+  if (!keys.length) return '<div class="sig-empty">No live feed for the sports on your card yet '
+    + '\u2014 only MLB has one. The card still tracks by hand.</div>';
+  var rows = liveLegRows();
+  var done = rows.filter(function(r){ return r.state === 'cashed'; }).length;
+  var gone = rows.filter(function(r){ return r.state === 'busted'; }).length;
+  return '<div class="lt-sum"><b>'+done+'</b> landed \u00b7 <b>'+gone+'</b> gone \u00b7 '
+    + rows.filter(function(r){ return r.state === 'open'; }).length+' live'
+    + (LIVE.loading ? ' \u00b7 refreshing\u2026' : '')+'</div>'
+    + rows.map(function(r){
+        return '<div class="lt-leg '+r.state+'">'
+          + '<div class="lt-top"><span class="lt-nm">'+esc(r.name)+'</span><span class="lt-bet">'+esc(r.label)+'</span></div>'
+          + '<div class="lt-bar"><div class="lt-fill" style="width:'+Math.round(r.pct*100)+'%"></div></div>'
+          + '<div class="lt-bot"><span>'+(r.have == null ? 'not started' : r.have+' so far')+'</span>'
+          + '<span class="lt-tag">'+(r.state === 'cashed' ? 'LANDED' : r.state === 'busted' ? 'GONE'
+             : r.have == null ? '\u2014' : r.have+' / '+r.need)+'</span></div>'
+          + (compact || !r.multi ? '' : '<div class="lt-multi">'+esc(r.multi)+'</div>')+'</div>';
+      }).join('');
+}
+function livePanel(){
+  if (!state.view.liveOpen) return '';
+  var pip = ('documentPictureInPicture' in window);
+  return '<div class="cmb-overlay open" onclick="if(event.target===this)LAB.liveClose()">'
+    + '<div class="cmb-modal"><div class="cmb-hdr"><i class="ti ti-antenna-bars-5"></i><h2>Live Tracker</h2>'
+    + (pip ? '<button class="sl-chip" onclick="LAB.livePop()"><i class="ti ti-picture-in-picture-top"></i> Pop out</button>' : '')
+    + '<button class="sl-chip" onclick="LAB.liveRefresh()"><i class="ti ti-refresh"></i></button>'
+    + '<button class="cmb-close" onclick="LAB.liveClose()">&times;</button></div>'
+    + '<div class="cmb-body">'+liveBody(false)
+    + '<div class="cmb-corr">Updates every 30 seconds while this is open.'
+    + (pip ? ' Pop out puts it in a small always-on-top window for while the game is on.'
+           : ' A floating window needs Chrome or Edge on desktop.')+'</div></div></div></div>';
+}
+function livePipCss(){
+  return 'body{margin:0;background:#0a0c0f;color:#e8edf4;font:13px system-ui,-apple-system,sans-serif;padding:8px;}'
+    + '.lt-sum{font-size:11px;color:#6f7d8f;margin-bottom:7px;}.lt-sum b{color:#e8edf4;}'
+    + '.lt-leg{border:1px solid #222a35;border-radius:9px;padding:7px 8px;margin-bottom:6px;}'
+    + '.lt-top{display:flex;gap:6px;font-size:11px;}.lt-nm{font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}'
+    + '.lt-bet{margin-left:auto;color:#aab6c6;white-space:nowrap;}'
+    + '.lt-bar{height:5px;border-radius:3px;background:#222a35;overflow:hidden;margin:5px 0;}'
+    + '.lt-fill{height:100%;background:#22c55e;}'
+    + '.lt-bot{display:flex;font-size:10px;color:#6f7d8f;}.lt-tag{margin-left:auto;font-weight:700;}'
+    + '.lt-leg.cashed{border-color:#22c55e;}.lt-leg.cashed .lt-tag{color:#22c55e;}'
+    + '.lt-leg.busted{opacity:.5;}.lt-leg.busted .lt-fill{background:#ef4444;}.lt-leg.busted .lt-tag{color:#ef4444;}'
+    + '.lt-multi{font-size:9px;color:#6f7d8f;margin-top:3px;}';
+}
+function livePaintPip(){
+  if (!LIVE.pip || LIVE.pip.closed) return;
+  try { LIVE.pip.document.getElementById('lt').innerHTML = liveBody(true); } catch(e){}
+}
+
 function render(){
   var loading = Object.keys(SPORTS).filter(function(k){ return state.sports[k].status==='loading'; });
   $('status').textContent = loading.length ? ('loading '+loading.join(', ')+'…') : 'ready';
@@ -9274,7 +9519,7 @@ function render(){
 
   if (state.view.focus){
     h = '' + focusPage();                       // focused fixture replaces the page
-    $('app').innerHTML = configBanner() + h + playerPanel() + booksPanel() + cmbFab() + cmbPanel();
+    $('app').innerHTML = configBanner() + h + playerPanel() + booksPanel() + cmbFab() + cmbPanel() + cardFab() + cardPanel() + livePanel();
     return;
   }
   if (state.view.tab === 'results'){
@@ -9305,13 +9550,61 @@ function render(){
       });
     }
   }
-  $('app').innerHTML = configBanner() + h + playerPanel() + booksPanel() + cmbFab() + cmbPanel();
+  $('app').innerHTML = configBanner() + h + playerPanel() + booksPanel() + cmbFab() + cmbPanel() + cardFab() + cardPanel() + livePanel();
 }
 
 /* ---- public ------------------------------------------------------------- */
 window.LAB = {
   crewSport: function(k){ state.view.crewSport = k; state.view.crewTile = null; render(); },
   resSport: function(k){ state.view.resSport = k; render(); },
+  cardOpen: function(){ state.view.cardOpen = true; render(); },
+  liveOpen: function(){ state.view.liveOpen = true; state.view.cardOpen = false; render(); liveFetch(); livePoll(); },
+  liveClose: function(){ state.view.liveOpen = false; clearTimeout(LIVE.timer); render(); },
+  liveRefresh: function(){ liveFetch(); },
+  livePop: function(){
+    if (!('documentPictureInPicture' in window)) return;
+    documentPictureInPicture.requestWindow({ width:320, height:420 }).then(function(win){
+      LIVE.pip = win;
+      var st = win.document.createElement('style'); st.textContent = livePipCss();
+      win.document.head.appendChild(st);
+      var box = win.document.createElement('div'); box.id = 'lt'; box.innerHTML = liveBody(true);
+      win.document.body.appendChild(box);
+      win.addEventListener('pagehide', function(){ LIVE.pip = null; });
+      liveFetch(); livePoll();
+    }).catch(function(){});
+  },
+  cardClose: function(){ state.view.cardOpen = false; render(); },
+  cardAdd: function(el){
+    try {
+      var e = JSON.parse(el.getAttribute('data-c'));
+      if (cardAdd(e)){ el.classList.add('on'); el.innerHTML = '<i class="ti ti-check"></i>'; render(); }
+    } catch(err){}
+  },
+  cardRemove: function(id){ CARD = CARD.filter(function(x){ return x.id !== id; }); cardSave(); render(); },
+  cardClear: function(){ if (!CARD.length) return; CARD = []; cardSave(); render(); },
+  cardStake: function(id, v){
+    CARD.forEach(function(e){ if (e.id === id) e.stake = (v === '' || +v <= 0) ? null : +v; });
+    cardSave(); render();
+  },
+  cardCombine: function(){
+    var singles = CARD.filter(function(e){ return e.type === 'single'; });
+    if (singles.length < 2) return;
+    var comb = 1, allPriced = true;
+    singles.forEach(function(e){ if (e.odds > 1) comb *= e.odds; else allPriced = false; });
+    var book = singles.every(function(e){ return e.book === singles[0].book; }) ? singles[0].book : '';
+    CARD = CARD.filter(function(e){ return e.type !== 'single'; });
+    CARD.push({ id:cardId(), type:'multi', title:singles.length+'-leg multi', src:'My Card',
+      legs:singles.map(function(e){ return { name:e.name, key:e.key, mkt:e.mkt, line:e.line, side:e.side,
+        label:(e.side === 'under' ? 'Under '+e.line : Math.ceil(e.line)+'+')+' '+(e.label || e.mkt), odds:e.odds }; }),
+      odds: allPriced ? +comb.toFixed(2) : null, book:book, stake:null });
+    cardSave(); render();
+  },
+  cardAddMulti: function(spec){
+    if (!spec || !spec.legs || !spec.legs.length) return false;
+    var e = { id:cardId(), type:'multi', title:spec.title || (spec.legs.length+'-leg multi'), legs:spec.legs,
+              odds:(+spec.odds > 1 ? +spec.odds : null), book:spec.book || '', src:spec.src || '', stake:null };
+    var added = cardAdd(e); render(); return added;
+  },
   resPeriod: function(p){ state.view.resPeriod = p; render(); },
   crewOpen: function(id){ state.view.crewTile = id || null; if (window.scrollTo) window.scrollTo(0, 0); render(); },
   nerd: function(){ state.view.nerd = !state.view.nerd; render(); },
