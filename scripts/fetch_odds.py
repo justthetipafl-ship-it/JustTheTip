@@ -162,8 +162,11 @@ GAME_MARKETS = {
     'NBL': ['head_to_head', 'alternate_lines', 'alternate_total_points', 'alternate_team_total_points',
             'head_to_head_1st_half', 'alternate_lines_1st_half', 'alternate_total_points_1st_half',
             'alternate_team_total_points_1st_half'],
+    # MLB had no game markets at all, so the shell showed no match odds for it: no moneyline, no
+    # run line, no total. Same shape as the other two-way sports; "lines" is the run line.
+    'MLB': ['head_to_head', 'alternate_lines', 'alternate_total_runs', 'alternate_team_total_runs'],
 }
-H2H_2WAY = {'NFL', 'NBL', 'NHL'}   # 2-way moneyline (no draw) vs soccer's 3-way
+H2H_2WAY = {'NFL', 'NBL', 'NHL', 'MLB'}   # 2-way moneyline (no draw) vs soccer's 3-way
 
 # matchOdds must use the same team codes as fixture.json / teams.json, or the shell can't
 # join them (it keys on [home,away]). ROA returns full names for NFL, so map them here.
@@ -220,13 +223,14 @@ def team_code(name, sport):
 H2H_1H_KEYS  = ('head_to_head_1st_half', 'head_to_head_3_way_1st_half')
 LINE_1H_KEY  = 'alternate_lines_1st_half'
 TEAM_TOTAL_KEYS = {'alternate_team_total_points': 'teamTotal', 'alternate_team_total_points_1st_half': 'teamTotal1H',
-                   'alternate_team_total_goals': 'teamTotal'}
+                   'alternate_team_total_goals': 'teamTotal', 'alternate_team_total_runs': 'teamTotal'}
 FIELD_MARKETS = {'player_1st_touchdown_scorer': 'firstScorer',   # "player X to do Y": no line, one price per player
                  'player_1st_goalscorer': 'firstScorer'}
 FIELD_BY_SPORT = {'NFL': ['player_1st_touchdown_scorer'], 'EPL': ['player_1st_goalscorer']}
 TOTAL_KEYS = {
     'alternate_total_goals': 'total', 'alternate_total_corners': 'totalCorners', 'alternate_total_cards': 'totalCards',
     'alternate_total_points': 'total', 'alternate_total_touchdowns': 'totalTds',
+    'alternate_total_runs': 'total',                      # MLB's total is runs
     'alternate_total_points_1st_half': 'total1H',
     'alternate_total_shots': 'totalShots', 'alternate_total_shots_on_target': 'totalSOT',
     'alternate_total_goals_1st_half': 'total1H',
