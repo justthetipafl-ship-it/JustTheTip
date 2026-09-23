@@ -3,9 +3,14 @@
  *
  * Run: node tools/snapshot-odds.js        (JTT_ROOT overrides the repo root)
  *
- * Writes <SPORT>/odds-history/YYYY-MM-DD.json.gz, one file per sport per day. Each run
- * updates the current day's file rather than adding another, so the history grows by one
- * file per sport per day no matter how often the workflow fires.
+ * Writes <SPORT>/odds-history/YYYY-MM-DD.json.gz, one file per sport per day. Each run MERGES
+ * into that day's file rather than replacing it, keeping the LAST price seen for every bet.
+ *
+ * That matters now the odds worker refreshes every 15-20 minutes through a slate. A bet's props
+ * disappear from the feed once its game starts, so the last snapshot that still contains a bet is
+ * the closest thing we have to its closing price. Overwriting kept only whatever survived the
+ * final pull of the day - which for an early game is nothing at all. Merging gives every game a
+ * near-closing price, which is what the grader settles against.
  *
  * Storage: the raw odds files are 0.9-5 MB and mostly duplication - the same line quoted by
  * a dozen books. Keeping the best price per player/market/line cuts the row count by ~70%,
@@ -58,16 +63,49 @@ for (const dir of SPORTS){
                    week:g.week != null ? g.week : null, gamePk:g.gamePk != null ? g.gamePk : null }));
   } catch (e) {}
 
-  const body = { sport:dir, captured:new Date().toISOString().slice(0, 19) + 'Z',
-                 oddsUpdated: odds.updated || null,     // when the prices were pulled, not saved
-                 rows:out.length, sourceRows:rows.length, fixture, odds:out };
-
+  const captured = new Date().toISOString().slice(0, 19) + 'Z';
+  const seenAt = odds.updated || captured;               // when these prices were PULLED
   const outDir = `${ROOT}/${dir}/odds-history`;
   fs.mkdirSync(outDir, { recursive: true });
   const file = `${outDir}/${today}.json.gz`;
+
+  // merge into the day's file: last price seen wins, bets that have vanished are kept as they were
+  let prior = null;
+  if (fs.existsSync(file)){
+    try { prior = JSON.parse(zlib.gunzipSync(fs.readFileSync(file)).toString('utf8')); }
+    catch (e){ console.log(`${dir}: existing snapshot unreadable (${e.message}), starting fresh`); }
+  }
+  // the worker runs every 15 min and most runs pull nothing: if these are prices we have already
+  // recorded, leave the file alone rather than stamping a fresher "last seen" on stale odds
+  if (prior && Array.isArray(prior.pulls) && prior.pulls.indexOf(seenAt) >= 0){
+    console.log(`${dir}: no new pull since ${seenAt}, snapshot unchanged`);
+    continue;
+  }
+  const merged = {}, keyOf = r => `${r.player}|${r.market}|${r.line}`;
+  let carried = 0, updated = 0, added = 0;
+  if (prior && Array.isArray(prior.odds)){
+    for (const r of prior.odds){ merged[keyOf(r)] = r; carried++; }
+  }
+  for (const r of out){
+    const k = keyOf(r), had = merged[k];
+    r.seen = seenAt;                                     // last pull that still carried this bet
+    r.first = had && had.first ? had.first : seenAt;     // first time we saw it
+    if (had){ updated++; carried--; } else added++;
+    merged[k] = r;
+  }
+  const rowsOut = Object.values(merged);
+  const pulls = ((prior && prior.pulls) || []).concat([seenAt]).filter((v, i, a) => a.indexOf(v) === i).slice(-200);
+
+  const body = { sport:dir, captured:captured,
+                 firstCaptured: (prior && prior.firstCaptured) || captured,
+                 oddsUpdated: seenAt,                    // when the prices were pulled, not saved
+                 pulls:pulls, rows:rowsOut.length, sourceRows:rows.length,
+                 fixture: (fixture.length ? fixture : ((prior && prior.fixture) || [])), odds:rowsOut };
+
   fs.writeFileSync(file, zlib.gzipSync(Buffer.from(JSON.stringify(body)), { level: 9 }));
   const kb = (fs.statSync(file).size / 1024).toFixed(0);
-  console.log(`${dir}: ${rows.length} rows -> ${out.length} best-price rows, ${kb} KB gzipped -> ${dir}/odds-history/${today}.json.gz`);
+  console.log(`${dir}: ${rows.length} rows -> ${added} new, ${updated} repriced, ${carried} carried `
+    + `= ${rowsOut.length} bets over ${pulls.length} pull(s), ${kb} KB -> ${dir}/odds-history/${today}.json.gz`);
   wrote++;
 }
 console.log(wrote ? `\nsnapshotted ${wrote} sport(s) for ${today}` : '\nnothing snapshotted');
