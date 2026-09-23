@@ -91,11 +91,23 @@ jobs:
             fi
           done
 
+      # Snapshot straight after the pull, so the stored history holds the freshest prices we ever
+      # held. It merges into the day's file keeping each bet's LAST seen price, and skips when no
+      # new pull happened - so the 15-minute cadence costs nothing extra on a quiet run.
+      # This replaces the separate odds-snapshot.yml schedule (02:00/09:00 UTC), which captured
+      # two fixed moments and missed every game that started between them.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Snapshot odds history
+        run: node tools/snapshot-odds.js || echo "(snapshot failed - continuing)"
+
       - name: Commit
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add */data/odds.json 2>/dev/null || true
+          git add */odds-history 2>/dev/null || true
           if git diff --staged --quiet; then echo "no odds changed"; else
             git commit -m "chore(odds): $(date -u +%Y-%m-%dT%H:%MZ)"
             git pull --rebase --autostash origin main || true
