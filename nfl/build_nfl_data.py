@@ -127,6 +127,16 @@ def load_frames(seasons, pbp_seasons, current):
     print("loading nflverse frames ...")
     ps  = _safe_seasons_load(nfl.load_player_stats, seasons, "player_stats", summary_level="week")
     sc  = _safe_seasons_load(nfl.load_snap_counts, seasons, "snap_counts")
+    # Next Gen Stats: the tracking-derived numbers behind receiving and rushing props - how open a
+    # receiver gets (separation), how far downfield he is used (intended air yards), and how much a
+    # back beats his blocking (rush yards over expected). Not in load_player_stats.
+    ngs = {}
+    for st in ("receiving", "rushing", "passing"):
+        try:
+            ngs[st] = _safe_seasons_load(nfl.load_nextgen_stats, seasons, f"ngs_{st}", stat_type=st)
+        except Exception as e:
+            print(f"  (ngs {st} unavailable: {e})")
+            ngs[st] = None
     sch = nfl.load_schedules(seasons=sorted(set(seasons + [current + 1]))).to_pandas()
     try:
         inj = nfl.load_injuries(seasons=[current]).to_pandas()
@@ -189,7 +199,7 @@ def load_frames(seasons, pbp_seasons, current):
             print("  (participation unavailable - coverage feed skipped)")
     except Exception as e:
         print(f"  (participation load failed - coverage skipped: {e})")
-    return ps, sc, sch, inj, dc, tm, pbp, adv, ros, part
+    return ps, sc, sch, inj, dc, tm, pbp, adv, ros, part, ngs
 
 # ?? schedules ? game index, results, fixture ????????????????????????????????
 def build_game_index(sch):
@@ -249,6 +259,48 @@ def build_fixture(sch):
                    "week": week, "season": season, "date": date, "time": tme, "utc": utc,
                    "venue": str(g(r, st, "") or ""), "roof": str(g(r, rf, "") or "").lower()})
     return fx, week
+
+# ?? next gen stats index ????????????????????????????????????????????????????
+NGS_COLS = {
+    "receiving": {"sep": ("avg_separation",), "cushion": ("avg_cushion",),
+                  "aDotNgs": ("avg_intended_air_yards",),
+                  "airShare": ("percent_share_of_intended_air_yards",),
+                  "yacOe": ("avg_yac_above_expectation",)},
+    "rushing":   {"ryoe": ("rush_yards_over_expected_per_att", "rush_yards_over_expected"),
+                  "boxCount": ("percent_attempts_gte_eight_defenders",),
+                  "timeToLos": ("avg_time_to_los",)},
+    "passing":   {"timeToThrow": ("avg_time_to_throw",), "aggressiveness": ("aggressiveness",),
+                  "cpoe": ("completion_percentage_above_expectation",)},
+}
+def build_ngs_idx(ngs):
+    """(_norm(name), season, week) -> {sep, cushion, aDotNgs, ryoe, ...}. Weekly rows only: NGS
+    publishes season summaries under week 0, which would otherwise overwrite a real game."""
+    out = {}
+    for st, df in (ngs or {}).items():
+        if df is None or getattr(df, "empty", True):
+            continue
+        nm = col(df, "player_display_name", "player_name", "player_short_name")
+        se = col(df, "season"); wk = col(df, "week")
+        if not (nm and se and wk):
+            continue
+        cols = {k: col(df, *cands) for k, cands in NGS_COLS[st].items()}
+        for _, r in df.iterrows():
+            try:
+                week = int(g(r, wk, 0))
+            except Exception:
+                continue
+            if week <= 0:                       # season-summary row
+                continue
+            key = (_norm(r[nm]), int(g(r, se, 0)), week)
+            e = out.setdefault(key, {})
+            for k, c in cols.items():
+                if c is None:
+                    continue
+                v = g(r, c, None)
+                if v is not None and v == v:    # not NaN
+                    e[k] = r3(float(v))
+    return out
+
 
 # ?? snap index ??????????????????????????????????????????????????????????????
 def build_snap_idx(sc):
@@ -595,7 +647,8 @@ def build_pbp_derived(pbp, short_idx):
     return out, firsttd, longest
 
 # ?? players + gamelogs ??????????????????????????????????????????????????????
-def build_players_gamelogs(ps, snap_idx, game_idx, current, ros=None):
+def build_players_gamelogs(ps, snap_idx, game_idx, current, ros=None, ngs_idx=None):
+    ngs_idx = ngs_idx or {}
     name_c = col(ps, "player_display_name", "player_name")
     id_c = col(ps, "player_id")
     pos_c = col(ps, "position", "position_group")
@@ -701,6 +754,8 @@ def build_players_gamelogs(ps, snap_idx, game_idx, current, ros=None):
         row["anytimeTd"] = 1 if (row["rushTds"] + row["recTds"]) > 0 else 0
         snap = snap_idx.get((_norm(name), season, week))
         row["snapPct"] = snap if snap is not None else 0.0
+        for k, v in (ngs_idx.get((_norm(name), season, week)) or {}).items():
+            row[k] = v
         ts = g(r, tgt_share_c, 0.0)
         row["tgtShare"] = r3(ts * 100 if ts <= 1.0 else ts)
         row["airYds"] = r1(g(r, airyds_c))
@@ -1120,13 +1175,18 @@ def run_build(frames, out_dir, seasons, current, password, skip_weather=False):
         frames = frames + (None, None, None)
     elif len(frames) == 9:                    # advstats but no participation
         frames = frames + (None,)
-    ps, sc, sch, inj, dc, tm, pbp, adv, ros, part = frames
+    # tolerate an older-shaped frames tuple (no ngs) so a partial deploy can't break the build
+    ps, sc, sch, inj, dc, tm, pbp, adv, ros, part = frames[:10]
+    ngs = frames[10] if len(frames) > 10 else {}
     os.makedirs(out_dir, exist_ok=True)
     game_idx = build_game_index(sch)
     results = build_results(sch)
     fixture, next_week = build_fixture(sch)
     snap_idx = build_snap_idx(sc)
-    players, gamelogs, short_idx = build_players_gamelogs(ps, snap_idx, game_idx, current, ros=ros)
+    ngs_idx = build_ngs_idx(ngs)
+    if ngs_idx:
+        print(f"  next gen stats: {len(ngs_idx)} player-weeks")
+    players, gamelogs, short_idx = build_players_gamelogs(ps, snap_idx, game_idx, current, ros=ros, ngs_idx=ngs_idx)
     rz_usage, firsttd, longest = build_pbp_derived(pbp, short_idx)
     redzone = build_redzone(pbp, short_idx, current)
     # stamp per-game red-zone volume onto each gamelog row so the tool can window it
