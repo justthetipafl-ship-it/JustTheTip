@@ -49,7 +49,7 @@ window.SPORT_CONFIG = {
   dvpsOpts: [["shots","Shots"],["points","Points"],["goals","Goals"],["assists","Assists"]],
   jupiter: { markets: [["shots","Shots"],["points","Points"],["goals","Goals"],["assists","Assists"]], noPlayerOdds: false },
 
-  liveWorker: "",
+  liveWorker: 'https://jtt-live.justthetipafl.workers.dev/nhl',
   viewDefaults: { sortKey:"points", statsStat:"points", teamsSort:"goalsFor" },
   dataFiles: {},
 
