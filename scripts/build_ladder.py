@@ -108,12 +108,36 @@ def hit_rate(rec, field, line):
     return _wilson_lower(hits, n)
 
 
-def _mkleg(l, byp):
+ROLE_FIELD = {'AFL': 'tog', 'nfl': 'snapPct', 'nbl': 'minutes', 'nhl': 'toiMin', 'EPL': 'min'}
+ROLE_FLOOR = {'AFL': 75, 'nfl': 55, 'nbl': 18, 'nhl': 12, 'EPL': 60}
+
+
+def role_ok(rec, base):
+    """Is he a regular, or a fringe player who might not take the field at all?
+
+    Measured across every gamelog: a player who featured in 5 of his team's last 6 games still only
+    features in the NEXT one 72.7% of the time under 45% snaps (NFL) or 68.6% under 70% TOG (AFL),
+    against 86-92% for the regulars. A hit rate cannot see that coming - his record only contains
+    games he played - and a leg that never starts kills the day's ladder.
+    """
+    sport = str(base).replace('\\', '/').strip('/').split('/')[-2] if '/' in str(base) else str(base)
+    field = ROLE_FIELD.get(sport)
+    if not field:
+        return True                                    # MLB: no minutes to read
+    vals = [float(g[field]) for g in rec['games'][-6:] if g.get(field) not in (None, '')]
+    if not vals:
+        return True                                    # nothing to judge on: leave him alone
+    return (sum(vals) / len(vals)) >= ROLE_FLOOR.get(sport, 0)
+
+
+def _mkleg(l, byp, base=''):
     nm = l.get('player'); mk = l.get('market'); ov = l.get('over')
     if nm is None or ov is None or mk not in MKT or ov < LEG_LO or ov > LEG_HI:
         return None
     rec = byp.get(nm)
     if not rec or len(rec['games']) < MIN_GAMES:
+        return None
+    if not role_ok(rec, base):
         return None
     hr = hit_rate(rec, MKT[mk], l.get('line'))
     if hr is None or hr < 0.5:
@@ -246,7 +270,7 @@ def best_pick(base, gl, byp, book=LADDER_BOOK):
         gi = team_game.get(pteam.get(l.get('player')))
         if gi is None:
             continue
-        lg = _mkleg(l, byp)
+        lg = _mkleg(l, byp, base)
         if lg is None:
             continue
         tm = pteam.get(lg['name']); h, a = games[gi]
