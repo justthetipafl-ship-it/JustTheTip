@@ -6135,7 +6135,8 @@ function nflSignals(key, g){
 
    Our model's own edge is shown alongside line value, capped at the player's record as everywhere
    else, so the two can be compared: market-derived on one side, model-derived on the other.       */
-var NERD_MIN_ARB = 0.5, NERD_MIN_GAP = 1, NERD_MAX_COST = 12, NERD_MIN_VALUE = 2;
+var NERD_MIN_ARB = 0.5, NERD_MIN_GAP = 1, NERD_MAX_COST = 12, NERD_MIN_VALUE = 2,
+    NERD_MIN_SAMP = 8, NERD_MIN_MARKET = 3;
 function powerDevig(over, under){
   // solve p_o^k + p_u^k = 1 for k, then the fair probability is p_o^k
   var po = 1/over, pu = 1/under;
@@ -6148,8 +6149,15 @@ function powerDevig(over, under){
   var kk = (lo + hi)/2;
   return Math.max(0.01, Math.min(0.99, Math.pow(po, kk)));
 }
+// standard normal tail and its inverse - LineOut anchors a distribution to the market's main line
+function normSf(z){ return 0.5 * (1 - (z >= 0 ? 1 : -1) * Math.sqrt(1 - Math.exp(-2*z*z/Math.PI))); }
+function normSfInv(pr){
+  var lo = -6, hi = 6;
+  for (var i = 0; i < 80; i++){ var m = (lo + hi)/2; if (normSf(m) > pr) lo = m; else hi = m; }
+  return (lo + hi)/2;
+}
 function nerdRows(key, g){
-  var S = state.sports[key], out = { arbs:[], middles:[], value:[] };
+  var S = state.sports[key], out = { arbs:[], middles:[], value:[], lineout:[], implied:[], market:[] };
   var seenPlayers = {};
   [g.away, g.home].forEach(function(team){
     var opp = (team === g.home) ? g.away : g.home;
@@ -6205,12 +6213,67 @@ function nerdRows(key, g){
           });
         });
         if (best) out.middles.push(best);
+
+        // LINEOUT: anchor a distribution to the consensus MAIN line, then price the alt ladder off
+        // it. The book's headline line is its sharpest number; its milestone rungs are often set
+        // loosely against it. Mean is chosen so P(over the main line) equals the de-vigged fair
+        // price; spread comes from the player's own game-to-game variation.
+        var main = null;
+        rows.forEach(function(r){ if (r.over != null && r.under != null && (!main || (r.books||0) > (main.books||0))) main = r; });
+        if (main){
+          var fairC = powerDevig(+main.over, +main.under);
+          var vals = statVals(key, p.name, m[0], sortLogsDesc(((S.idx.logsByName || {})[p.name] || []).slice()).slice(0, 20));
+          if (fairC != null && vals.length >= 8){
+            var mu0 = mean(vals);
+            var sd = Math.sqrt(vals.reduce(function(a,v){ return a + (v-mu0)*(v-mu0); }, 0) / vals.length);
+            if (sd > 0.2){
+              var mu = (+main.line) - normSfInv(fairC) * sd;
+              streakCandidates(key, p.name, m[0]).forEach(function(c){
+                if (Math.abs(c.line - (+main.line)) < 1e-9) return;        // that's the anchor itself
+                var fair = normSf((c.line - mu) / sd);
+                if (fair < 0.30 || fair > 0.70) return;                    // only rungs near the anchor
+                var ev = fair * c.price - 1;
+                if (ev < NERD_MIN_VALUE/100) return;
+                out.lineout.push({ p:p, opp:opp, mkt:m[0], label:m[1], line:c.line, price:c.price, book:c.book,
+                                   fair:fair, ev:ev, anchor:+main.line, mu:mu, sd:sd });
+              });
+            }
+          }
+        }
+        // IMPLIED: his own hit rate at the line against the best price (history, not a model)
+        // MARKET: the best price against the average across books (pure line shopping)
+        Object.keys(byLine).forEach(function(ln){
+          var rs = byLine[ln], L = +ln, bo = null, prices = [];
+          rs.forEach(function(r){ if (r.over != null){ prices.push(+r.over); if (!bo || +r.over > bo.over) bo = { over:+r.over, book:r.book }; } });
+          if (!bo) return;
+          var hv = statVals(key, p.name, m[0], sortLogsDesc(((S.idx.logsByName || {})[p.name] || []).slice()).slice(0, 20));
+          if (hv.length >= NERD_MIN_SAMP){
+            var hits = hv.filter(function(v){ return v > L; }).length, raw = hits / hv.length;
+            // Same discipline as the signals: shrink toward the LEAGUE rate at this line rather than
+            // toward 50%, and ignore tails. Raw rates here were finding "15% of his last 20 at
+            // $10.50" - three lucky games on a long rung, which is how fake edges get made.
+            var lgR = leagueRateAt(key, m[0], L, 'over');
+            var hit = lgR != null ? (hits + 10*lgR) / (hv.length + 10) : (hits + 1) / (hv.length + 2);
+            var evI = hit * bo.over - 1;
+            if (raw >= 0.25 && evI >= NERD_MIN_VALUE/100)
+              out.implied.push({ p:p, opp:opp, mkt:m[0], label:m[1], line:L, bo:bo, hit:hit, raw:raw, n:hv.length, ev:evI });
+          }
+          if (prices.length >= 3){
+            var avg = prices.reduce(function(a,b){ return a+b; }, 0) / prices.length;
+            var evM = bo.over / avg - 1;
+            if (evM >= NERD_MIN_MARKET/100)
+              out.market.push({ p:p, opp:opp, mkt:m[0], label:m[1], line:L, bo:bo, avg:avg, books:prices.length, ev:evM });
+          }
+        });
       });
     });
   });
   out.arbs.sort(function(a,b){ return b.profit - a.profit; });
   out.middles.sort(function(a,b){ return a.cost - b.cost || b.gap - a.gap; });
   out.value.sort(function(a,b){ return b.ev - a.ev; });
+  out.lineout.sort(function(a,b){ return b.ev - a.ev; });
+  out.implied.sort(function(a,b){ return b.ev - a.ev; });
+  out.market.sort(function(a,b){ return b.ev - a.ev; });
   return out;
 }
 function nerdHead(r, key){
@@ -6248,15 +6311,40 @@ function nerdSection(key, g){
       + (r.modelEv != null ? '<span class="nerd-leg">model '+Math.round(r.model*100)+'% <i>'+(r.modelEv >= 0 ? '+' : '')+Math.round(r.modelEv*100)+'%</i></span>' : '')
       + '</div><div class="nerd-val good">+'+Math.round(r.ev*100)+'%</div></div>';
   });
-  var body = tile('ti-arrows-split', 'Arbs', 'Both sides priced so the pair can\u2019t lose', arb,
+  var body = '' + tile('ti-arrows-split', 'Arbs', 'Both sides priced so the pair can\u2019t lose', arb,
            'No two books are far enough apart on this fixture to back both sides at a profit (needs '+NERD_MIN_ARB+'%+).')
     + tile('ti-arrows-horizontal', 'Middles', 'Over low with one book, under high with another', mid,
            'No pair of books leaves a gap of '+NERD_MIN_GAP+'+ that costs under '+NERD_MAX_COST+'% to hold.')
     + tile('ti-scale', 'Line Value', 'Best price against the market\u2019s own fair price', val,
            'No posted price beats the de-vigged market consensus at its line by '+NERD_MIN_VALUE+'%+.')
-    + '';
+    ;
   var mine = SIG_QUIET.slice(quietFrom);
   SIG_QUIET.length = quietFrom;                      // these belong to this section, not the signals
+  var lo = n.lineout.slice(0, 10).map(function(r){
+    return '<div class="nerd-row">'+nerdHead(r, key)
+      + '<div class="nerd-legs"><span class="nerd-leg">'+Math.ceil(r.line)+'+ '+esc(r.label)+' $'+r.price.toFixed(2)+' <i>'+esc(r.book)+'</i></span>'
+      + '<span class="nerd-leg">fair $'+(1/r.fair).toFixed(2)+' <i>off the '+r.anchor+' line</i></span>'
+      + '<span class="nerd-leg">'+r.mu.toFixed(1)+' \u00b1 '+r.sd.toFixed(1)+' <i>implied shape</i></span></div>'
+      + '<div class="nerd-val good">+'+Math.round(r.ev*100)+'%</div></div>';
+  });
+  var imp = n.implied.slice(0, 10).map(function(r){
+    return '<div class="nerd-row">'+nerdHead(r, key)
+      + '<div class="nerd-legs"><span class="nerd-leg">'+Math.ceil(r.line)+'+ '+esc(r.label)+' $'+r.bo.over.toFixed(2)+' <i>'+esc(r.bo.book)+'</i></span>'
+      + '<span class="nerd-leg">'+Math.round(r.raw*100)+'% of his last '+r.n+' <i>smoothed '+Math.round(r.hit*100)+'%, fair $'+(1/r.hit).toFixed(2)+'</i></span></div>'
+      + '<div class="nerd-val good">+'+Math.round(r.ev*100)+'%</div></div>';
+  });
+  var mkt = n.market.slice(0, 10).map(function(r){
+    return '<div class="nerd-row">'+nerdHead(r, key)
+      + '<div class="nerd-legs"><span class="nerd-leg">'+Math.ceil(r.line)+'+ '+esc(r.label)+' $'+r.bo.over.toFixed(2)+' <i>'+esc(r.bo.book)+'</i></span>'
+      + '<span class="nerd-leg">others average $'+r.avg.toFixed(2)+' <i>'+r.books+' books</i></span></div>'
+      + '<div class="nerd-val good">+'+Math.round(r.ev*100)+'%</div></div>';
+  });
+  body += tile('ti-ruler-measure', 'LineOut', 'Ladder rungs out of step with the book\u2019s own main line', lo,
+           'No alt rung is priced '+NERD_MIN_VALUE+'%+ better than the main line implies (only rungs the anchor puts between 30% and 70% are read).')
+    + tile('ti-history', 'Implied EV', 'His own record at the line against the price', imp,
+           'No price beats what he has actually done at that line over his last '+NERD_MIN_SAMP+'+ games.')
+    + tile('ti-building-bank', 'Market EV', 'Best price against the average across books', mkt,
+           'No book is '+NERD_MIN_MARKET+'%+ above the average of the others on a line at least three of them price.');
   return '<div class="dayband"><span>Nerd Mode</span></div>' + body
     + (mine.length ? '<details class="sig-quiet"><summary>'+mine.length+' nerd read'+(mine.length === 1 ? '' : 's')
         + ' found nothing on this fixture</summary>'
