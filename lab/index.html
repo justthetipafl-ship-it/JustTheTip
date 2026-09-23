@@ -8951,6 +8951,24 @@ function crewPage(){
    record (recordCap), legs must be roughly fair (not just short), and same-game legs are priced
    with correlation (cmbJoint) instead of multiplying the prices as if they were independent.    */
 var DEG_TRAIN = [1.30, 1.60], DEG_YANK = [1.40, 2.10], DEG_SGM = [2.5, 3.8], DEG_MIN_EV = -0.03, DEG_TRAIN_EV = -0.10;
+/* ROLE FLOOR. A build leg is only as good as the chance the player takes the field, and that tracks
+   usage hard. Measured over every gamelog: a player who has featured in 5 of his team's last 6
+   games still only features in the NEXT one -
+     NFL   72.7% under 45% snaps   v 86.3% at 75%+
+     AFL   68.6% under 70% TOG     v 91.6% at 80-90%
+   A leg with a one-in-three chance of never starting is fatal to a ladder day or a banker train,
+   and no hit rate can see it coming: the player's record only contains games he played.
+   (Accuracy is NOT the reason - on short lines, low-usage players land within ~2pt of everyone
+   else. It is availability, and only availability.)                                            */
+var ROLE_FIELD = { afl:'tog', nfl:'snapPct', nbl:'minutes', nhl:'toiMin', epl:'min' };
+var ROLE_FLOOR = { afl:75, nfl:55, nbl:18, nhl:12, epl:60 };
+function roleOk(key, p){
+  var f = ROLE_FIELD[key];
+  if (!f || !p) return true;                       // MLB has no minutes: the lineup check covers it
+  var v = +p[f];
+  if (!isFinite(v) || v <= 0) return true;         // no usage data on this player: don't invent a reason to drop him
+  return v >= (ROLE_FLOOR[key] || 0);
+}
 // Pyramid default stat per sport (production's): a stat with enough range to stack three rungs -
 // MLB hits run 0-2, so a hits pyramid can never form
 var DEG_PYR_DEFAULT = { afl:'disposals', nfl:'recYds', epl:'shots', mlb:'K', nbl:'points', nhl:'shots' };
