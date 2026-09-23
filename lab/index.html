@@ -829,6 +829,30 @@
     font-size:10px;padding:1px 5px;border-radius:999px;background:color-mix(in srgb,var(--accent) 18%,transparent);
     color:var(--accent);}
   .ct-n.zero{background:var(--surface);color:var(--text-3);}
+  .res-hero{display:flex;align-items:center;gap:14px;background:var(--surface-2);border:1px solid var(--border);
+    border-radius:12px;padding:14px;margin-bottom:8px;flex-wrap:wrap;}
+  .res-big{font-family:var(--font-display);font-size:38px;line-height:1;}
+  .res-big span{font-size:18px;margin-left:2px;}
+  .res-big.pos{color:var(--accent);} .res-big.neg{color:#f97316;}
+  .res-kpis{display:flex;gap:16px;margin-left:auto;flex-wrap:wrap;}
+  .res-kpis b{display:block;font-family:var(--font-display);font-size:16px;}
+  .res-kpis span{font-size:9px;letter-spacing:.06em;text-transform:uppercase;color:var(--text-3);}
+  .res-curve{width:100%;height:96px;display:block;margin-bottom:6px;}
+  .res-note{font-size:10px;color:var(--text-3);margin-bottom:12px;}
+  .res-splits{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:9px;margin-bottom:6px;}
+  .res-split{background:var(--surface-2);border:1px solid var(--border);border-radius:11px;padding:10px 12px;}
+  .res-split-h{font-size:10px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:var(--text-3);margin-bottom:6px;}
+  .res-srow{display:flex;align-items:center;gap:8px;padding:5px 0;border-top:1px solid var(--border);font-size:11px;}
+  .res-sk{flex:1;font-weight:700;} .res-sn,.res-su{font-family:var(--font-mono);font-size:10px;color:var(--text-3);}
+  .res-sp{font-family:var(--font-mono);width:62px;text-align:right;} .res-sr{font-family:var(--font-mono);width:48px;text-align:right;color:var(--text-3);}
+  .res-sp.pos{color:var(--accent);} .res-sp.neg{color:#f97316;}
+  .res-bet{display:flex;align-items:center;gap:9px;padding:8px 0;border-top:1px solid var(--border);}
+  .res-dt{font-family:var(--font-mono);font-size:10px;color:var(--text-3);width:38px;}
+  .res-sport{font-size:8px;font-weight:800;letter-spacing:.05em;color:var(--text-3);width:32px;}
+  .res-txt{flex:1;min-width:0;} .res-txt b{display:block;font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .res-txt i{font-style:normal;font-size:9px;color:var(--text-3);}
+  .res-out{font-family:var(--font-mono);font-size:12px;width:66px;text-align:right;}
+  .res-out.pos{color:var(--accent);} .res-out.neg{color:#f97316;} .res-out.mid{color:var(--text-3);}
   .sc-filter{display:flex;gap:7px;align-items:center;margin-bottom:8px;}
   .sc-filter input{flex:1;min-width:0;background:var(--surface-2);border:1px solid var(--border);
     border-radius:9px;padding:9px 12px;color:var(--text);font-size:13px;font-family:inherit;outline:none;}
@@ -9115,11 +9139,134 @@ function degPage(){
   return h + degTrain(sc, book) + degPyramid(sc, book) + degYankee(sc, book) + degLadder(sc);
 }
 
+/* RESULTS ---------------------------------------------------------------------------
+   The tipped record, from data/results.json (written by the bet-entry page). Everything is in
+   UNITS: a stake divided by the unit size on the file. Dollars never reach this page - the stake
+   column would otherwise publish the bankroll.
+   Pending bets are counted nowhere except their own line: a bet that has not settled is not a
+   result, and rolling it into profit is how tipsters accidentally flatter themselves.           */
+function loadResults(){
+  if (state.results || state.resultsLoading) return;
+  state.resultsLoading = true;
+  fetch('/data/results.json?cb=' + Date.now(), { cache:'reload' })
+    .then(function(r){ return r.ok ? r.json() : null; })
+    .then(function(j){
+      var bets = Array.isArray(j) ? j : ((j && j.bets) || []);
+      state.results = { unitSize: (j && +j.unitSize) || 25, updated:(j && j.updated) || null,
+                        bets: bets.filter(function(b){ return b && b.stake != null; }), missing: !j };
+      state.resultsLoading = false; render();
+    })
+    .catch(function(){ state.results = { unitSize:25, bets:[], missing:true }; state.resultsLoading = false; render(); });
+}
+function resultsStats(bets, unit){
+  var st = { n:0, w:0, l:0, v:0, pend:0, staked:0, ret:0, profit:0, curve:[], best:null, worst:null };
+  var run = 0;
+  bets.forEach(function(b){
+    if (b.result === 'pending'){ st.pend++; return; }
+    var u = (+b.stake || 0) / unit, r = (b.returned == null ? 0 : +b.returned) / unit;
+    st.n++; st.staked += u; st.ret += r;
+    var pl = r - u; st.profit += pl; run += pl;
+    if (b.result === 'win') st.w++; else if (b.result === 'loss') st.l++; else st.v++;
+    st.curve.push({ d:b.date, run:run, pl:pl, b:b });
+    if (!st.best || pl > st.best.pl) st.best = { pl:pl, b:b };
+    if (!st.worst || pl < st.worst.pl) st.worst = { pl:pl, b:b };
+  });
+  st.roi = st.staked > 0 ? st.profit / st.staked : 0;
+  st.strike = (st.w + st.l) > 0 ? st.w / (st.w + st.l) : 0;
+  return st;
+}
+function resultsCurve(curve){
+  if (curve.length < 2) return '';
+  var W = 320, H = 96, pad = 4;
+  var lo = Math.min(0, Math.min.apply(null, curve.map(function(c){ return c.run; })));
+  var hi = Math.max(0, Math.max.apply(null, curve.map(function(c){ return c.run; })));
+  var span = (hi - lo) || 1;
+  var x = function(i){ return pad + i * (W - pad*2) / (curve.length - 1); };
+  var y = function(v){ return H - pad - (v - lo) / span * (H - pad*2); };
+  var d = curve.map(function(c, i){ return (i ? 'L' : 'M') + x(i).toFixed(1) + ' ' + y(c.run).toFixed(1); }).join(' ');
+  var zero = y(0);
+  var up = curve[curve.length-1].run >= 0;
+  return '<svg class="res-curve" viewBox="0 0 '+W+' '+H+'" preserveAspectRatio="none">'
+    + '<line x1="0" y1="'+zero.toFixed(1)+'" x2="'+W+'" y2="'+zero.toFixed(1)+'" stroke="var(--border)" stroke-dasharray="3 3"/>'
+    + '<path d="'+d+'" fill="none" stroke="'+(up ? 'var(--accent)' : '#f97316')+'" stroke-width="2"/></svg>';
+}
+function resultsSplit(title, groups, unit){
+  var keys = Object.keys(groups).filter(function(k){ return groups[k].length; });
+  if (!keys.length) return '';
+  var rows = keys.map(function(k){
+    var st = resultsStats(groups[k], unit);
+    return { k:k, st:st };
+  }).sort(function(a,b){ return b.st.profit - a.st.profit; });
+  return '<div class="res-split"><div class="res-split-h">'+esc(title)+'</div>'
+    + rows.map(function(r){
+        return '<div class="res-srow"><span class="res-sk">'+esc(r.k)+'</span>'
+          + '<span class="res-sn">'+r.st.w+'-'+r.st.l+(r.st.v ? '-'+r.st.v : '')+'</span>'
+          + '<span class="res-su">'+r.st.staked.toFixed(1)+'u</span>'
+          + '<span class="res-sp '+(r.st.profit >= 0 ? 'pos' : 'neg')+'">'+(r.st.profit >= 0 ? '+' : '')+r.st.profit.toFixed(2)+'u</span>'
+          + '<span class="res-sr">'+(r.st.roi >= 0 ? '+' : '')+Math.round(r.st.roi*100)+'%</span></div>';
+      }).join('')+'</div>';
+}
+function resultsPage(){
+  loadResults();
+  var R = state.results;
+  var h = '<div class="crew-head"><div class="crew-ttl"><i class="ti ti-trophy"></i> Just The Tip Results</div></div>';
+  if (!R) return h + '<div class="empty"><i class="ti ti-loader"></i>Loading results\u2026</div>';
+  if (!R.bets.length) return h + '<div class="empty">'+(R.missing
+    ? 'No results file yet \u2014 data/results.json appears once the first bets are logged.'
+    : 'No bets logged yet.')+'</div>';
+  var unit = R.unitSize || 25;
+  var sports = [];
+  R.bets.forEach(function(b){ if (b.sport && sports.indexOf(b.sport) < 0) sports.push(b.sport); });
+  var f = state.view.resSport || 'all', per = state.view.resPeriod || 'all';
+  var cut = per === 'all' ? null : new Date(Date.now() - (per === '30' ? 30 : 90) * 864e5).toISOString().slice(0, 10);
+  var bets = R.bets.filter(function(b){
+    return (f === 'all' || b.sport === f) && (!cut || String(b.date) >= cut);
+  });
+  h += '<div class="sl-bar"><button class="sl-chip'+(f === 'all' ? ' on' : '')+'" onclick="LAB.resSport(\'all\')">All sports</button>'
+    + sports.map(function(sp){ return '<button class="sl-chip'+(f === sp ? ' on' : '')+'" onclick="LAB.resSport(\''+esc(sp)+'\')">'+esc(sp)+'</button>'; }).join('')
+    + '</div><div class="sl-bar">'
+    + [['all','All time'],['90','90 days'],['30','30 days']].map(function(o){
+        return '<button class="sl-chip'+(per === o[0] ? ' on' : '')+'" onclick="LAB.resPeriod(\''+o[0]+'\')">'+o[1]+'</button>'; }).join('')
+    + '</div>';
+  var st = resultsStats(bets, unit);
+  if (!st.n && !st.pend) return h + '<div class="sig-empty">Nothing settled in this view yet.</div>';
+  h += '<div class="res-hero"><div class="res-big '+(st.profit >= 0 ? 'pos' : 'neg')+'">'
+    + (st.profit >= 0 ? '+' : '')+st.profit.toFixed(2)+'<span>u</span></div>'
+    + '<div class="res-kpis">'
+    + '<div><b>'+(st.roi >= 0 ? '+' : '')+(st.roi*100).toFixed(1)+'%</b><span>ROI</span></div>'
+    + '<div><b>'+st.w+'-'+st.l+(st.v ? '-'+st.v : '')+'</b><span>record</span></div>'
+    + '<div><b>'+Math.round(st.strike*100)+'%</b><span>strike</span></div>'
+    + '<div><b>'+st.staked.toFixed(1)+'u</b><span>staked</span></div>'
+    + '</div></div>'
+    + resultsCurve(st.curve)
+    + '<div class="res-note">'+st.n+' settled bet'+(st.n === 1 ? '' : 's')
+    + (st.pend ? ' \u00b7 '+st.pend+' still pending (counted nowhere until they land)' : '')
+    + ' \u00b7 1 unit = 1 unit; stakes are never shown in dollars'
+    + (R.updated ? ' \u00b7 updated '+esc(String(R.updated).replace('T', ' ').replace('Z', ' UTC')) : '')+'</div>';
+  var bySport = {}, byType = {};
+  bets.forEach(function(b){
+    (bySport[b.sport || 'Other'] = bySport[b.sport || 'Other'] || []).push(b);
+    (byType[b.type || 'Other'] = byType[b.type || 'Other'] || []).push(b);
+  });
+  h += '<div class="res-splits">'+resultsSplit('By sport', bySport, unit)+resultsSplit('By bet type', byType, unit)+'</div>';
+  var recent = bets.slice().sort(function(a,b){ return String(b.date).localeCompare(String(a.date)) || String(b.id).localeCompare(String(a.id)); }).slice(0, 25);
+  h += '<div class="dayband"><span>Recent bets</span></div>'
+    + recent.map(function(b){
+        var u = (+b.stake || 0)/unit, pl = b.result === 'pending' ? null : ((b.returned == null ? 0 : +b.returned)/unit - u);
+        return '<div class="res-bet"><span class="res-dt">'+esc(String(b.date || '').slice(5))+'</span>'
+          + '<span class="res-sport">'+esc(b.sport || '')+'</span>'
+          + '<span class="res-txt"><b>'+esc(b.bet || '')+'</b><i>'+esc(b.type || '')+(b.odds ? ' \u00b7 $'+(+b.odds).toFixed(2) : '')+' \u00b7 '+u.toFixed(2)+'u</i></span>'
+          + '<span class="res-out '+(b.result === 'win' ? 'pos' : b.result === 'loss' ? 'neg' : 'mid')+'">'
+          + (pl == null ? 'pending' : (pl >= 0 ? '+' : '')+pl.toFixed(2)+'u')+'</span></div>';
+      }).join('');
+  return h;
+}
+
 function render(){
   var loading = Object.keys(SPORTS).filter(function(k){ return state.sports[k].status==='loading'; });
   $('status').textContent = loading.length ? ('loading '+loading.join(', ')+'…') : 'ready';
 
-  var tabs = [['fixture','ti-calendar','Fixture'],['crew','ti-flame','Degen Crew'],['odds','ti-coin','Odds'],['stats','ti-chart-bar','Stats']];
+  var tabs = [['fixture','ti-calendar','Fixture'],['crew','ti-flame','Degen Crew'],['odds','ti-coin','Odds'],['stats','ti-chart-bar','Stats'],['results','ti-trophy','Results']];
   var h = '<div class="tabs">'+tabs.map(function(t){
     return '<button class="tab'+(state.view.tab===t[0]?' on':'')+'" onclick="LAB.tab(\''+t[0]+'\')">'
       +'<i class="ti '+t[1]+'"></i>'+t[2]+'</button>'; }).join('')+'</div>';
@@ -9130,7 +9277,9 @@ function render(){
     $('app').innerHTML = configBanner() + h + playerPanel() + booksPanel() + cmbFab() + cmbPanel();
     return;
   }
-  if (state.view.tab === 'crew'){
+  if (state.view.tab === 'results'){
+    h += resultsPage();
+  } else if (state.view.tab === 'crew'){
     h += crewPage();
   } else if (state.view.tab === 'stats'){
     h += statsPage();
@@ -9162,6 +9311,8 @@ function render(){
 /* ---- public ------------------------------------------------------------- */
 window.LAB = {
   crewSport: function(k){ state.view.crewSport = k; state.view.crewTile = null; render(); },
+  resSport: function(k){ state.view.resSport = k; render(); },
+  resPeriod: function(p){ state.view.resPeriod = p; render(); },
   crewOpen: function(id){ state.view.crewTile = id || null; if (window.scrollTo) window.scrollTo(0, 0); render(); },
   nerd: function(){ state.view.nerd = !state.view.nerd; render(); },
   degSport: function(k){ state.view.degSport = k; state.view.degStat = null; render(); },
