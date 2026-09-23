@@ -1454,11 +1454,21 @@ function gameStart(g){
 // Only MLB carries a status field, so completion is inferred from elapsed time, with a
 // per-sport window generous enough to cover overtime/extra innings. Matches production.
 var DONE_WINDOW = { mlb:240, nfl:225, afl:150, epl:150 };   // minutes after kickoff
+// A fixture's status is written when the data builds and never updated afterwards, so it goes
+// stale between runs. Nine MLB games sat on "In Progress" twelve hours after first pitch because
+// that status returned false unconditionally - a stale word kept them live forever. The status is
+// now only trusted while it is still plausible; past that, elapsed time decides.
+var STATUS_GRACE = 120;                                   // minutes past the window a "live" status is believed
 function gameDone(key, g, ms){
   if (key === 'mlb' && g && typeof g.status === 'string'){
     var st = g.status.toLowerCase();
-    if (st.indexOf('final') >= 0 || st.indexOf('completed') >= 0) return true;
-    if (st.indexOf('progress') >= 0 || st.indexOf('live') >= 0) return false;
+    if (st.indexOf('final') >= 0 || st.indexOf('completed') >= 0 || st.indexOf('game over') >= 0) return true;
+    // postponed or abandoned: it is not being played today, so drop it off the slate
+    if (st.indexOf('postponed') >= 0 || st.indexOf('cancelled') >= 0 || st.indexOf('canceled') >= 0) return true;
+    if (st.indexOf('progress') >= 0 || st.indexOf('live') >= 0 || st.indexOf('delayed') >= 0){
+      if (ms == null) return false;
+      return Date.now() > ms + ((DONE_WINDOW[key] || 150) + STATUS_GRACE) * 60000;
+    }
   }
   if (ms == null) return false;
   return Date.now() > ms + (DONE_WINDOW[key] || 150) * 60000;
@@ -9783,6 +9793,7 @@ window.LAB = {
   cmbLad: function(open){ state.view.cmbLadOpen = !!open; },
   // test hook: the shell's own statOf, so tests check the real function rather than a copy
   statProbe: function(key, row, mkt){ return statOf(key, row, mkt); },
+  doneProbe: function(key, g){ return gameDone(key, g, gameStart(g).ms); },
   lineupProbe: function(key){ return lineupRows(key); },
   oddsNameProbe: function(key, name){ return oddsPlayer(key, name); },
   abbrProbe: function(key, t){ return abbrOf(key, t); },
