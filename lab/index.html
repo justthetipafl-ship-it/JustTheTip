@@ -817,6 +817,18 @@
     border-radius:6px;padding:2px 6px;} .nerd-leg i{font-style:normal;color:var(--text-3);}
   .nerd-val{flex:none;text-align:right;font-family:var(--font-display);font-size:13px;}
   .nerd-val.good{color:var(--accent);} .nerd-val i{display:block;font-style:normal;font-family:var(--font-mono);font-size:8px;color:var(--text-3);}
+  .ct-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(148px,1fr));gap:8px;margin-bottom:10px;}
+  .ct{position:relative;text-align:left;background:var(--surface-2);border:1px solid var(--border);border-radius:11px;
+    padding:11px 12px;cursor:pointer;color:var(--text);display:flex;flex-direction:column;gap:3px;min-width:0;}
+  .ct:hover{border-color:var(--accent);}
+  .ct > i{font-size:18px;color:var(--accent);}
+  .ct-t{font-family:var(--font-display);font-size:13px;}
+  .ct-d{font-size:9px;color:var(--text-3);line-height:1.35;}
+  .ct-sp{font-size:8px;font-weight:800;letter-spacing:.05em;color:var(--text-3);}
+  .ct-n{position:absolute;top:9px;right:10px;min-width:20px;text-align:center;font-family:var(--font-mono);
+    font-size:10px;padding:1px 5px;border-radius:999px;background:color-mix(in srgb,var(--accent) 18%,transparent);
+    color:var(--accent);}
+  .ct-n.zero{background:var(--surface);color:var(--text-3);}
   .sc-filter{display:flex;gap:7px;align-items:center;margin-bottom:8px;}
   .sc-filter input{flex:1;min-width:0;background:var(--surface-2);border:1px solid var(--border);
     border-radius:9px;padding:9px 12px;color:var(--text);font-size:13px;font-family:inherit;outline:none;}
@@ -8720,18 +8732,58 @@ function crewQuiet(list){
     + list.map(function(t){ return '<div class="sig-quiet-row"><b>'+esc(t.title)+'</b><span>'+esc(t.why)+'</span></div>'; }).join('')
     + '</details>';
 }
+// Degen Crew is the one home for every read: a grid of tiles you open, grouped Universal /
+// per-sport / Degenerates, exactly like the old tool's crew. Degenerates used to be its own tab;
+// it belongs here as a group, and the tab bar was one tab too wide for a phone anyway.
+var DEG_TILES = [['train','The Train','ti-train','One banker per game, combined'],
+                 ['pyr','The Pyramid','ti-triangle','One stat, 1 / 2 / 3 on falling lines'],
+                 ['yank','The Yankee','ti-versions','Four ~$3 SGMs as an 11-bet system'],
+                 ['lad','The Ladder','ti-stairs-up','The running $10 to $10k challenge']];
+function crewTileCard(id, icon, title, desc, n, sport){
+  var badge = n == null ? '' : '<span class="ct-n'+(n ? '' : ' zero')+'">'+n+'</span>';
+  return '<button class="ct" onclick="LAB.crewOpen(\'' + id.replace(/'/g,"\\'") + '\')">'
+    + '<i class="ti '+icon+'"></i>'+badge
+    + '<span class="ct-t">'+esc(title)+'</span>'
+    + '<span class="ct-d">'+esc(desc || '')+'</span>'
+    + (sport ? '<span class="ct-sp">'+esc(SPORTS[sport].name)+'</span>' : '')+'</button>';
+}
+function crewHead(f, active, extra){
+  return '<div class="crew-head"><div class="crew-ttl"><i class="ti ti-flame"></i> Degen Crew</div>'
+    + '<div class="sl-bar crew-filter">'
+    + '<button class="sl-chip'+(f === 'all' ? ' on' : '')+'" onclick="LAB.crewSport(\'all\')">All</button>'
+    + active.map(function(k){ return '<button class="sl-chip'+(f === k ? ' on' : '')+'" onclick="LAB.crewSport(\''+k+'\')">'
+        + esc(SPORTS[k].name)+'</button>'; }).join('')
+    + '</div></div>' + (extra || '');
+}
 function crewPage(){
   var active = Object.keys(SPORTS).filter(function(k){ return state.view.active[k]; });
   var f = state.view.crewSport || 'all';
   if (f !== 'all' && active.indexOf(f) < 0) f = 'all';
   var show = f === 'all' ? active : [f];
-  var h = '<div class="crew-head"><div class="crew-ttl"><i class="ti ti-flame"></i> Degen Crew</div>'
-    + '<div class="sl-bar crew-filter">'
-    + '<button class="sl-chip'+(f === 'all' ? ' on' : '')+'" onclick="LAB.crewSport(\'all\')">All</button>'
-    + active.map(function(k){ return '<button class="sl-chip'+(f === k ? ' on' : '')+'" onclick="LAB.crewSport(\''+k+'\')">'
-        + esc(SPORTS[k].name)+'</button>'; }).join('')
-    + '</div></div>';
-  if (!active.length) return h + '<div class="empty">Switch on a sport to see its signals.</div>';
+  if (!active.length) return crewHead(f, active) + '<div class="empty">Switch on a sport to see its signals.</div>';
+
+  var open = state.view.crewTile || null;
+  // Degenerates run on their own scope (Mixed or one sport) and their own loader
+  if (open && open.indexOf('deg:') === 0){
+    var which = open.slice(4);
+    // the crew's own filter drives the build's scope: All = mixed, a sport = that sport. Two
+    // selectors doing the same job would just disagree with each other.
+    state.view.degSport = (f === 'all') ? 'mixed' : f;
+    var sc = degScope();
+    var back = '<button class="fx-back" onclick="LAB.crewOpen(null)"><i class="ti ti-arrow-left"></i>All tiles</button>';
+    var waitD = sc.sports.filter(function(k){ var S = state.sports[k]; if (S.t3 !== 'ready' || S.t2 !== 'ready'){ ensureSport(k); ensureTier2(); return true; } return false; });
+    if (waitD.length) return crewHead(f, active) + back + '<div class="empty"><i class="ti ti-loader"></i>Loading '
+      + esc(waitD.map(function(k){ return SPORTS[k].name; }).join(', '))+'\u2026</div>';
+    var books = degBooks(sc.sports), book = state.view.degBook && books.indexOf(state.view.degBook) >= 0 ? state.view.degBook : null;
+    var bar = '<div class="deg-bar"><span>Book</span><select class="ob-sel" onchange="LAB.degBook(this.value)"><option value="">Best price (per leg)</option>'
+      + books.map(function(b){ return '<option value="'+esc(b)+'"'+(b === book ? ' selected' : '')+'>'+esc(b)+'</option>'; }).join('')+'</select>'
+      + '<span class="deg-note">'+(book ? 'Every leg priced at '+esc(book)+' - one ticket.'
+          : (sc.sc === 'mixed' ? 'Books listed price every sport in view.' : 'Pick a book to make each build one ticket.'))+'</span></div>';
+    var body = which === 'train' ? degTrain(sc, book) : which === 'pyr' ? degPyramid(sc, book)
+             : which === 'yank' ? degYankee(sc, book) : degLadder(sc);
+    return crewHead(f, active) + back + bar + body;
+  }
+
   var waiting = [], caps = {};
   show.forEach(function(k){
     var S = state.sports[k];
@@ -8740,35 +8792,58 @@ function crewPage(){
   });
   var have = Object.keys(caps);
   var gamesTxt = have.map(function(k){ return SPORTS[k].name+' '+caps[k].games; }).join(' \u00b7 ');
-  h += '<div class="crew-sub">'+(gamesTxt ? 'Games in view: '+esc(gamesTxt)+' \u00b7 next '+CREW_HOURS+' hours' : '')
+  var sub = '<div class="crew-sub">'+(gamesTxt ? 'Games in view: '+esc(gamesTxt)+' \u00b7 next '+CREW_HOURS+' hours' : '')
     + (waiting.length ? (gamesTxt ? ' \u00b7 ' : '')+'loading '+esc(waiting.join(', '))+'\u2026' : '')+'</div>';
-  // universal band: merge each shared tile across every sport in view
-  var uni = {}, uQuiet = [];
+
+  // merge the shared tiles across every sport in view; keep each sport's own separately
+  var uni = {}, own = {};
   have.forEach(function(k){
     caps[k].tiles.forEach(function(t){
-      if (t.phase !== 'u') return;
-      var u = uni[t.title] = uni[t.title] || { icon:t.icon, title:t.title, desc:t.desc, rows:[], why:t.why };
-      u.rows = u.rows.concat(t.rows);
+      if (t.phase === 'u'){
+        var u = uni[t.title] = uni[t.title] || { icon:t.icon, title:t.title, desc:t.desc, rows:[], why:t.why };
+        u.rows = u.rows.concat(t.rows);
+      } else {
+        (own[k] = own[k] || []).push(t);
+      }
     });
   });
-  var uniTiles = CREW_UNIVERSAL.map(function(tt){ return uni[tt]; }).filter(Boolean)
+  var uniList = CREW_UNIVERSAL.map(function(tt){ return uni[tt]; }).filter(Boolean)
     .concat(Object.keys(uni).filter(function(tt){ return CREW_UNIVERSAL.indexOf(tt) < 0; }).map(function(tt){ return uni[tt]; }));
-  var uHtml = '';
-  uniTiles.forEach(function(t){ if (t.rows.length) uHtml += crewTile(t, have.length > 1); else uQuiet.push(t); });
-  h += '<div class="dayband"><span>Universal Signals</span></div>' + (uHtml || '<div class="sig-empty">No universal signal fired across these games.</div>')
-    + crewQuiet(uQuiet);
-  // then each sport's own tiles
+
+  // a tile is open: show its rows in full
+  if (open){
+    var back2 = '<button class="fx-back" onclick="LAB.crewOpen(null)"><i class="ti ti-arrow-left"></i>All tiles</button>';
+    var t = null, sport = null;
+    if (open.indexOf('u:') === 0) t = uniList.filter(function(x){ return x.title === open.slice(2); })[0];
+    else if (open.indexOf('sp:') === 0){
+      var parts = open.slice(3).split('|'); sport = parts[0];
+      t = (own[sport] || []).filter(function(x){ return x.title === parts[1]; })[0];
+      if (t) t.sport = sport;
+    }
+    if (!t) return crewHead(f, active, sub) + back2 + '<div class="sig-empty">That tile has nothing on the current slate.</div>';
+    state.view.crewOpen = state.view.crewOpen || {};
+    state.view.crewOpen[(t.sport || 'u') + '|' + t.title] = true;          // show every row, not the top 8
+    return crewHead(f, active, sub) + back2
+      + (t.rows.length ? crewTile(t, !sport && have.length > 1)
+         : '<div class="sig-empty">'+esc(t.why || 'Nothing fired on the current slate.')+'</div>');
+  }
+
+  // the grid
+  var h = crewHead(f, active, sub);
+  h += '<div class="dayband"><span>Universal</span></div><div class="ct-grid">'
+    + uniList.map(function(t){ return crewTileCard('u:'+t.title, t.icon, t.title, t.desc, t.rows.length); }).join('')
+    + '</div>';
   have.forEach(function(k){
-    var own = caps[k].tiles.filter(function(t){ return t.phase === 'sp'; });
-    if (!own.length) return;
-    var body = '', q = [];
-    own.forEach(function(t){ t.sport = k; if (t.rows.length) body += crewTile(t, false); else q.push(t); });
-    h += '<div class="dayband"><span>'+esc(SPORTS[k].name)+' Signals</span></div>'
-      + (body || '<div class="sig-empty">No '+esc(SPORTS[k].name)+' signal fired across these games.</div>') + crewQuiet(q);
+    if (!(own[k] || []).length) return;
+    h += '<div class="dayband"><span>'+esc(SPORTS[k].name)+'</span></div><div class="ct-grid">'
+      + own[k].map(function(t){ return crewTileCard('sp:'+k+'|'+t.title, t.icon, t.title, t.desc, t.rows.length); }).join('')
+      + '</div>';
   });
+  h += '<div class="dayband"><span>Degenerates</span></div><div class="ct-grid">'
+    + DEG_TILES.map(function(d){ return crewTileCard('deg:'+d[0], d[2], d[1], d[3], null); }).join('')
+    + '</div>';
   return h;
 }
-
 
 /* DEGENERATES ------------------------------------------------------------------------
    The old tool's high-variance page, per sport or MIXED across every sport switched on, priced at
@@ -9044,7 +9119,7 @@ function render(){
   var loading = Object.keys(SPORTS).filter(function(k){ return state.sports[k].status==='loading'; });
   $('status').textContent = loading.length ? ('loading '+loading.join(', ')+'…') : 'ready';
 
-  var tabs = [['fixture','ti-calendar','Fixture'],['crew','ti-flame','Degen Crew'],['degen','ti-dice-5','Degenerates'],['odds','ti-coin','Odds'],['stats','ti-chart-bar','Stats']];
+  var tabs = [['fixture','ti-calendar','Fixture'],['crew','ti-flame','Degen Crew'],['odds','ti-coin','Odds'],['stats','ti-chart-bar','Stats']];
   var h = '<div class="tabs">'+tabs.map(function(t){
     return '<button class="tab'+(state.view.tab===t[0]?' on':'')+'" onclick="LAB.tab(\''+t[0]+'\')">'
       +'<i class="ti '+t[1]+'"></i>'+t[2]+'</button>'; }).join('')+'</div>';
@@ -9057,8 +9132,6 @@ function render(){
   }
   if (state.view.tab === 'crew'){
     h += crewPage();
-  } else if (state.view.tab === 'degen'){
-    h += degPage();
   } else if (state.view.tab === 'stats'){
     h += statsPage();
   } else if (state.view.tab === 'odds'){
@@ -9088,7 +9161,8 @@ function render(){
 
 /* ---- public ------------------------------------------------------------- */
 window.LAB = {
-  crewSport: function(k){ state.view.crewSport = k; render(); },
+  crewSport: function(k){ state.view.crewSport = k; state.view.crewTile = null; render(); },
+  crewOpen: function(id){ state.view.crewTile = id || null; if (window.scrollTo) window.scrollTo(0, 0); render(); },
   nerd: function(){ state.view.nerd = !state.view.nerd; render(); },
   degSport: function(k){ state.view.degSport = k; state.view.degStat = null; render(); },
   degBook: function(b){ state.view.degBook = b || null; render(); },
