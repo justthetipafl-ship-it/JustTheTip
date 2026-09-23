@@ -1,7 +1,12 @@
 name: JTT NFL — split data refresh (advanced)
 
-# NFL plays Thu / Sun / Mon. Two weekly runs:
-#   • Wed 09:00 UTC → after MNF settles: full stats/DVP/gamelogs/first-TD refresh
+# NFL plays Thu / Sun / Mon. Four weekly runs, each timed to land AFTER the games it needs:
+#   • Tue 12:00 UTC → the week's main refresh. Monday night ends ~03:30 UTC Tue, so this is ~8h
+#                     later, giving nflverse time to publish. Wednesday (the old main run) left the
+#                     weekend a full day stale: Monday's grading and calibration could not settle
+#                     any of it, and Tuesday's signals still ran on the week before.
+#   • Wed 09:00 UTC → safety net: picks up anything nflverse published late on Tuesday.
+#   • Fri 12:00 UTC → after Thursday night, so the weekend's signals include that game.
 #   • Sat 16:00 UTC → final injuries + depth charts + weather before the Sunday slate
 # Plus manual dispatch (optionally with the weekly password → hashed into meta.json).
 # Off-season runs are cheap no-ops: identical output → nothing committed.
@@ -11,8 +16,10 @@ name: JTT NFL — split data refresh (advanced)
 
 on:
   schedule:
-    - cron: "0 9 * * 3"    # Wednesday 09:00 UTC
-    - cron: "0 16 * * 6"   # Saturday 16:00 UTC
+    - cron: "0 12 * * 2"   # Tuesday 12:00 UTC  - main refresh, after Monday night settles
+    - cron: "0 9 * * 3"    # Wednesday 09:00 UTC - safety net for late nflverse publishes
+    - cron: "0 12 * * 5"   # Friday 12:00 UTC   - after Thursday night
+    - cron: "0 16 * * 6"   # Saturday 16:00 UTC - injuries, depth charts, weather
   workflow_dispatch:
     inputs:
       password:
