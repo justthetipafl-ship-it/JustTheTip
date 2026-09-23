@@ -8610,12 +8610,13 @@ function degYankee(sc, book){
   if (sgms.length < 4) return degSec('The Yankee', 'ti-versions', '', '<div class="sig-empty">Only '+sgms.length
     +' game'+(sgms.length === 1 ? '' : 's')+' can build a roughly fair ~$3 same-game multi'+(book ? ' at '+esc(book) : '')+' - a Yankee needs four.</div>');
   var sys = degYankeeSystem(sgms);
-  var cards = sgms.map(function(x){
+  var cards = sgms.map(function(x, i){
     var l0 = x.legs[0];
     return '<div class="deg-sgm"><div class="deg-sgm-h">'+(sc.sc === 'mixed' ? '<span class="crew-sp">'+esc(SPORTS[l0.key].name)+'</span> ' : '')
       + esc(abbrOf(l0.key, l0.g.away))+' @ '+esc(abbrOf(l0.key, l0.g.home))
       + '<span>$'+x.price.toFixed(2)+' \u00b7 '+Math.round(x.prob*100)+'% correlated</span></div>'
-      + x.legs.map(function(l){ return degLegRow(l, false); }).join('')+'</div>';
+      + x.legs.map(function(l){ return degLegRow(l, false); }).join('')
+      + '<button class="pc-add" onclick="LAB.degSend(\'yank:'+i+'\')">Send this SGM to Check My Multi</button></div>';
   }).join('');
   return degSec('The Yankee', 'ti-versions', '4 SGMs \u00b7 11 bets', cards
     + '<div class="deg-sum"><div class="cmb-sum-row"><span>Stake</span><b>11 units (6 doubles, 4 trebles, 1 four-fold)</b></div>'
@@ -8628,6 +8629,11 @@ function degYankee(sc, book){
 /* THE PYRAMID - one stat: 1 player at the top rung, 2 a rung lower, 3 lower again, each leg $1.25+
    and priced at the book. Swap any card for the next best. Legs can share a game, so the whole
    pyramid is priced with correlation.                                                          */
+// the pyramid's six legs, so the Send button builds exactly what is on screen
+function degPyramidLegs(sc, book){
+  var cache = state.view._pyrLegs;
+  return (cache && cache.sc === sc.sc && cache.book === (book || '') && cache.stat === state.view.degStat) ? cache.legs : null;
+}
 function degPyramid(sc, book){
   if (sc.sc === 'mixed') return degSec('The Pyramid', 'ti-triangle', '', '<div class="sig-empty">A pyramid is one stat - pick a sport above to build one.</div>');
   var k = sc.sc, mk = (state.sports[k].config || {}).oddsMkts || [];
@@ -8680,6 +8686,7 @@ function degPyramid(sc, book){
   }
   if (!tiers) return degSec('The Pyramid', 'ti-triangle', '', sel+'<div class="sig-empty">Couldn\u2019t fill all six '+esc(label)+' spots at $1.25+'+(book ? ' at '+esc(book) : '')+'.</div>');
   var all = tiers[0].concat(tiers[1], tiers[2]);
+  state.view._pyrLegs = { sc:sc.sc, book:book || '', stat:state.view.degStat, legs:all };
   var price = all.reduce(function(a,l){ return a * l.price; }, 1), prob = cmbJoint(all);
   var card = function(l){
     return '<div class="pyr-card"><button class="pyr-swap" title="Swap for the next best" onclick="LAB.degSkip(\''+esc(l.p.name).replace(/'/g,"\\'")+'\')">'
@@ -8789,6 +8796,23 @@ window.LAB = {
     var stat = state.view.degStat || DEG_PYR_DEFAULT[sc.sc] || ((mk[0] || [])[0]); if (state.view.degSkip) delete state.view.degSkip[sc.sc + '|' + stat]; render(); },
   degSend: function(which){
     var sc = degScope(), book = state.view.degBook || null, legs = [];
+    if (which === 'pyr'){
+      var built0 = degPyramidLegs(sc, book);
+      if (built0 && built0.length){
+        state.view.cmbLegs = built0.map(function(l){ return cmbLeg(l.key, l.p, [l.mkt, l.label], l.line, 'over'); }).filter(Boolean);
+        state.view.cmbOpen = true; state.view.cmbMode = 'multi'; render();
+      }
+      return;
+    }
+    if (which && which.indexOf('yank:') === 0){
+      var ix = +which.split(':')[1];
+      var sg = degYankeeSgms(sc, book).slice(0, 4)[ix];
+      if (sg){
+        state.view.cmbLegs = sg.legs.map(function(l){ return cmbLeg(l.key, l.p, [l.mkt, l.label], l.line, 'over'); }).filter(Boolean);
+        state.view.cmbOpen = true; state.view.cmbMode = 'multi'; render();
+      }
+      return;
+    }
     if (which === 'train'){
       var pool = degPool(sc.sports, book, DEG_TRAIN[0], DEG_TRAIN[1]).filter(function(l){ return l.ev >= DEG_TRAIN_EV; }), best = {};
       pool.forEach(function(l){ var c = best[l.gk]; if (!c || l.prob > c.prob) best[l.gk] = l; });
