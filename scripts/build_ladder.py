@@ -324,10 +324,43 @@ def grade_leg(byp, name, field, line, year, rnd):
     return None
 
 
+def mixed_pick(bases, book=LADDER_BOOK):
+    """The best build across EVERY sport at once, for the mixed challenge.
+
+    Each sport is asked for its own best pick, and the strongest is taken - legs inside one build
+    still come from one sport and one book, because that is what a bookmaker will let you place as
+    a single ticket. A genuinely cross-sport multi is possible at most books, but only within one
+    book's own board, so this stays honest about what it is: the best single-sport build of the day.
+    """
+    best = None
+    for base in bases:
+        if not os.path.isdir(base):
+            continue
+        try:
+            fresh = load(os.path.join(base, 'ladder_gamelogs.json'))
+            fresh = fresh if isinstance(fresh, list) else []
+            gl = fresh + load_gamelogs(base)
+            fx = load(os.path.join(base, 'fixture.json')) or []
+            byp = build_index(gl)
+            pick = best_pick(base, gl, byp, book)
+        except Exception as e:
+            print('  mixed: %s failed (%s)' % (base, e))
+            continue
+        if not pick:
+            continue
+        pick['sport'] = str(base).replace('\\', '/').strip('/').split('/')[-2]
+        if best is None or (pick.get('odds') or 0) > (best.get('odds') or 0):
+            best = pick
+    return best
+
+
 def main():
     if len(sys.argv) < 2:
         print('usage: build_ladder.py <data_dir> [fallback_stat]')
+        print('       build_ladder.py --mixed <out_dir> <data_dir> [<data_dir> ...]')
         return
+    if sys.argv[1] == '--mixed':
+        return main_mixed(sys.argv[2], sys.argv[3:])
     base = sys.argv[1]
     book = sys.argv[2] if len(sys.argv) > 2 else LADDER_BOOK
     if not os.path.isdir(base):
@@ -343,6 +376,19 @@ def main():
     lpath = os.path.join(base, 'ladder.json')
     lad = load(lpath) or {'bank': START, 'start': START, 'target': TARGET,
                           'attempt': 1, 'peak': START, 'days': []}
+    # A hand-made or older file can carry the wrong challenge size - NHL's said it started at $100
+    # while every other sport starts at $10. Normalise it, and restart a stub that never ran.
+    if float(lad.get('start') or 0) != START:
+        stale = not [d for d in lad.get('days', []) if d.get('result') not in (None, 'pending')]
+        print('  ladder: start was $%s, resetting to $%s%s' % (lad.get('start'), START,
+              ' (no graded days, starting fresh)' if stale else ''))
+        lad['start'] = START
+        lad['target'] = TARGET
+        if stale:
+            lad['bank'] = START
+            lad['peak'] = START
+            lad['days'] = []
+            lad['attempt'] = lad.get('attempt') or 1
     byp = build_index(gl)
 
     # 1) grade the pending rung (all legs must clear); winnings compound, a loss busts
@@ -405,6 +451,90 @@ def main():
     print('ladder %s: attempt %s, rung %s, bank $%s (peak $%s), latest: %s @ $%s' %
           (base, lad.get('attempt', 1), tail.get('rung', 0), lad['bank'], lad.get('peak', START),
            (tail.get('pick') or '-')[:60], tail.get('odds')))
+
+
+def main_mixed(out_dir, bases):
+    """One challenge whose day can come from ANY sport - the best build on the board that day.
+
+    Each day records which sport it came from, so grading loads that sport's gamelogs and nothing
+    else. Same $10 start, same compounding, same bust rule as a single-sport ladder.
+    """
+    if not bases:
+        print('mixed: no sport dirs given')
+        return
+    lpath = os.path.join(out_dir, 'ladder.json')
+    lad = load(lpath) or {'bank': START, 'start': START, 'target': TARGET,
+                          'attempt': 1, 'peak': START, 'days': [], 'mixed': True}
+    lad['mixed'] = True
+    if float(lad.get('start') or 0) != START:
+        lad['start'] = START; lad['target'] = TARGET
+
+    idx_cache = {}
+    def index_for(sport):
+        if sport in idx_cache:
+            return idx_cache[sport]
+        base = next((b for b in bases if str(b).replace('\\', '/').strip('/').split('/')[-2] == sport), None)
+        gl = []
+        if base and os.path.isdir(base):
+            fresh = load(os.path.join(base, 'ladder_gamelogs.json'))
+            gl = (fresh if isinstance(fresh, list) else []) + load_gamelogs(base)
+        idx_cache[sport] = build_index(gl)
+        return idx_cache[sport]
+
+    # 1) grade any pending day, against the sport that day came from
+    for d in lad['days']:
+        if d.get('result') not in (None, 'pending'):
+            continue
+        byp = index_for(d.get('sport') or '')
+        outcomes = []
+        for lg in (d.get('legs') or []):
+            fld = MKT.get(lg.get('market'), lg.get('market'))
+            outcomes.append(grade_leg(byp, lg.get('pick_name') or lg.get('name'), fld,
+                                      lg.get('line'), d.get('year', 0), d.get('round', 0)))
+        if not outcomes or any(o is None for o in outcomes):
+            continue
+        before = d.get('bank_before', lad['bank'])
+        if all(outcomes):
+            d['result'] = 'win'; d['bank_after'] = round(before * d['odds'], 2)
+            lad['bank'] = d['bank_after']; lad['peak'] = max(lad.get('peak', START), lad['bank'])
+            if lad['bank'] >= lad.get('target', TARGET):
+                d['complete'] = True
+        else:
+            d['result'] = 'loss'; d['bank_after'] = 0.0
+
+    # 2) add today's rung once the last one is graded
+    last = lad['days'][-1] if lad['days'] else None
+    if last is None or last.get('result') not in (None, 'pending'):
+        if last is None:
+            bank, rung = lad.get('bank', START), 1
+        elif last.get('result') == 'win' and not last.get('complete'):
+            bank, rung = lad['bank'], last.get('rung', 1) + 1
+        else:
+            bank, rung = START, 1
+            lad['attempt'] = lad.get('attempt', 1) + 1
+            lad['days'] = []
+        lad['bank'] = bank
+        pick = mixed_pick(bases)
+        if pick:
+            legs = [{'name': lg['name'], 'pick_name': lg['name'], 'market': lg['market'],
+                     'line': lg['line'], 'odds': lg['over'], 'team': lg.get('team'),
+                     'opp': lg.get('opp')} for lg in pick['legs']]
+            desc = ' + '.join('%s %s+ %s' % (lg['name'].split(' ')[-1], lg['line'], lg['market'])
+                              for lg in pick['legs'])
+            lad['days'].append({'date': datetime.date.today().isoformat(), 'rung': rung,
+                                'sport': pick.get('sport'), 'legs': legs, 'pick': desc,
+                                'odds': pick['price'], 'book': pick['book'], 'type': pick.get('type'),
+                                'bank_before': round(bank, 2), 'bank_after': None,
+                                'result': 'pending', 'year': pick['year'], 'round': pick['round']})
+
+    lad['days'] = lad['days'][-MAX_RUNGS:]
+    os.makedirs(out_dir, exist_ok=True)
+    with open(lpath, 'w') as fh:
+        json.dump(lad, fh, indent=2)
+    tail = lad['days'][-1] if lad['days'] else {}
+    print('ladder MIXED: attempt %s, rung %s, bank $%s, from %s, latest: %s @ $%s' %
+          (lad.get('attempt', 1), tail.get('rung', 0), lad['bank'], tail.get('sport', '-'),
+           (tail.get('pick') or '-')[:50], tail.get('odds')))
 
 
 if __name__ == '__main__':
