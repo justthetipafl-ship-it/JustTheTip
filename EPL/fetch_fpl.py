@@ -99,9 +99,32 @@ def build_player(e, teams):
     }
 
 
-def build_gamelog(history, teams):
+def finished_fixtures():
+    """Fixture ids FPL has marked finished. A history row appears as soon as a match KICKS OFF,
+    before any stats post, so an in-progress round publishes a full set of zero-minute rows - the
+    20 Sep round went out as 257 rows of zeros, which then counted as real games with zero output
+    (lower averages, broken streaks) and could not be settled by the grader. Only finished
+    fixtures are written. If the endpoint fails we return None and keep every row, rather than
+    silently publishing nothing."""
+    try:
+        fx = fetch(BASE + "/fixtures/")
+    except Exception as e:
+        print(f"  (fixtures endpoint unavailable: {e} - keeping all history rows)")
+        return None
+    if not isinstance(fx, list):
+        return None
+    done = {f.get("id") for f in fx if f.get("finished") or f.get("finished_provisional")}
+    print(f"  fixtures: {len(done)} finished of {len(fx)}")
+    return done
+
+
+def build_gamelog(history, teams, done=None):
     rows = []
+    skipped = 0
     for h in history or []:
+        if done is not None and h.get("fixture") is not None and h.get("fixture") not in done:
+            skipped += 1                      # match not finished: FPL's row is a placeholder
+            continue
         opp = teams.get(h.get("opponent_team"), {})
         rows.append({
             "gw": h.get("round"), "date": h.get("kickoff_time"),
@@ -114,6 +137,8 @@ def build_gamelog(history, teams):
             "recoveries": h.get("recoveries"), "defcon": h.get("defensive_contribution"),
             "ict": _f(h.get("ict_index")), "pts": h.get("total_points"),
         })
+    if skipped:
+        build_gamelog.skipped = getattr(build_gamelog, "skipped", 0) + skipped
     return rows
 
 
@@ -122,6 +147,8 @@ def main():
     teams = {t["id"]: {"name": t["name"], "short": t.get("short_name")} for t in boot["teams"]}
     els = boot["elements"]
     print("bootstrap: %d players, %d teams" % (len(els), len(teams)))
+    done = finished_fixtures()
+
 
     players, gamelogs, byName = [], {}, {}
     for i, e in enumerate(els):
@@ -129,7 +156,7 @@ def main():
         e["_history_past"] = summ.get("history_past")
         p = build_player(e, teams)
         players.append(p)
-        gamelogs[str(e["id"])] = build_gamelog(summ.get("history"), teams)
+        gamelogs[str(e["id"])] = build_gamelog(summ.get("history"), teams, done)
         if p["nmkey"]:
             byName.setdefault(p["nmkey"], p["id"])  # first wins; collisions are rare across a single squad set
         # polite pacing so the FPL backend doesn't soft-block
@@ -143,6 +170,9 @@ def main():
     with open(os.path.join(out, "fpl_gamelogs.json"), "w") as f:
         json.dump({"updated": now, "logs": gamelogs}, f, separators=(",", ":"))
     n_rows = sum(len(v) for v in gamelogs.values())
+    skipped = getattr(build_gamelog, "skipped", 0)
+    if skipped:
+        print("  skipped %d history rows for matches not yet finished" % skipped)
     print("wrote fpl_players.json (%d) + fpl_gamelogs.json (%d rows)" % (len(players), n_rows))
 
 
