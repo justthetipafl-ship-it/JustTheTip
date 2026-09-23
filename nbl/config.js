@@ -82,7 +82,7 @@ window.SPORT_CONFIG = {
                        ["threes","Threes"],["pra","PRA"]],
              noPlayerOdds: false },
 
-  liveWorker: "",
+  liveWorker: 'https://jtt-live.justthetipafl.workers.dev/nbl',
   viewDefaults: { sortKey:"points", statsStat:"points", teamsSort:"points" },
   dataFiles: {},               // shell defaults + meta.gamelogFiles drive loading
 
