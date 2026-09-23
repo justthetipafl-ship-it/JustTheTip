@@ -82,6 +82,7 @@ window.SPORT_CONFIG = {
   dvMarkets: [['passYds','Pass Yds',150],['rushYds','Rush Yds',30],['recYds','Rec Yds',30],['receptions','Receptions',3],['rushAtt','Rush Att',8],['passAtt','Pass Att',24],['rushRecYds','Rush+Rec Yds',40],['tackles','Tackles+Ast',4]],
   roundWord: 'W',
   betStats: [['passYds','Pass Yds'],['rushYds','Rush Yds'],['rushAtt','Rush Att'],['receptions','Receptions'],['targets','Targets'],['passTds','Pass TDs'],['rushTds','Rush TDs']],
+  liveWorker: 'https://jtt-live.justthetipafl.workers.dev/nfl',
   dataFiles: { firsttd:'data/firsttd.json', redzone:'data/redzone.json', dbs:'data/dbs.json' },
   posOrder: ['QB','RB','WR','TE','LB','DL','DB'],
   dvpStats: [['receptions','Receptions'],['targets','Targets'],['recYds','Rec Yds'],['recTds','Rec TDs'],['rushYds','Rush Yds'],['rushAtt','Rush Att'],['rushTds','Rush TDs'],['passYds','Pass Yds'],['passAtt','Pass Att'],['passTds','Pass TDs'],['passInt','INTs'],['rushRecYds','Rush+Rec'],['anytimeTd','Anytime TD'],['fanPts','Fan Pts'],['tackles','Tackles+Ast'],['soloTk','Solo Tackles'],['defSacks','Sacks Made']],
