@@ -6422,9 +6422,10 @@ function nerdSection(key, g){
   if (S.t2 !== 'ready' || S.noOdds)
     return '<div class="dayband"><span>Nerd Mode</span></div><div class="sig-empty">'
       + (S.noOdds ? 'No prices for '+esc(SPORTS[key].name)+' yet.' : 'Loading prices\u2026')+'</div>';
+  SIG_QUIET = [];                     // signalsSection normally clears this; it is skipped in this mode
   var n = nerdRows(key, g);
-  // empty tiles push onto the shared quiet list, but that note is rendered by signalsSection which
-  // runs BEFORE this one - so a quiet Nerd tile vanished with no trace. Keep our own.
+  // empty tiles push onto the shared quiet list, which is rendered by signalsSection - so a quiet
+  // Nerd tile would vanish with no trace. Keep our own.
   var quietFrom = SIG_QUIET.length;
   var tile = function(icon, title, desc, rows, why){
     return sigTile(icon, title, desc, rows, why);
@@ -6612,7 +6613,9 @@ function focusPage(){
     + (S.t3==='ready' ? halvesSection(key, g) : '')
     + (S.t3==='ready' ? subsSection(key, g) : '')
     + (S.t3==='ready' ? firstLastSection(key, g) : '')
-    + (S.t3==='ready' ? signalsSection(key, g) : '')
+    // Nerd Mode replaces the signals rather than adding to them: it is a different read of the
+    // same fixture (the market against itself), and stacking both made the page enormous.
+    + (S.t3==='ready' && !state.view.nerd ? signalsSection(key, g) : '')
     + (S.t3==='ready' ? nerdSection(key, g) : '')
     // the build-your-own tools sit at the foot, above the player list: you read the match, then
     // the signals, then you go and make something
