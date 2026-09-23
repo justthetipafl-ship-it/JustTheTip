@@ -11,7 +11,7 @@ format into nhl/data/.
     api.nhle.com/stats/rest/en/team/summary?cayenneExp=...     team for/against
 
   Emits (shell shapes) into nhl/data/:
-    gamelogs_YYYY.json  per-season rows [{Year,Date,MatchId,Player,PlayerId,Team,Opp,home,pos,goals,assists,points,shots,ppPoints,pim,toiMin,saves,...}]
+    gamelogs_YYYY.json  per-season rows [{Year,Date,MatchId,Player,PlayerId,Team,Opp,home,pos,goals,assists,points,shots,ppPoints,pim,toiMin,ppToi,shToi,saves,...}]
     players.json        aggregated [{playerId,name,team,teamFull,position,pos5,games,role,goals,assists,points,shots,...}]
     teams.json          per team for/against [{team,teamFull,games,goalsFor,goalsAgainst,shotsFor,shotsAgainst,...}]
     dvp.json            team x position stat allowed per game
@@ -140,8 +140,14 @@ def fetch_boxscores(game_ids):
                     pid = p.get("playerId")
                     if pid is None:
                         continue
-                    bx[(gid, pid)] = {"hits": num(p.get("hits")), "blocks": num(p.get("blockedShots"))}
-    print(f"  boxscores: {len(ids)} games -> {len(bx)} player-game block/hit rows")
+                    # powerPlayToi comes in this same payload and was being thrown away. It is the
+                    # DIRECT measure of power-play usage; the Power Play signal currently infers it
+                    # from power-play points per game, which is an outcome, not the opportunity.
+                    bx[(gid, pid)] = {"hits": num(p.get("hits")), "blocks": num(p.get("blockedShots")),
+                                      "ppToi": toi_min(p.get("powerPlayToi")),
+                                      "shToi": toi_min(p.get("shorthandedToi"))}
+    withpp = sum(1 for v in bx.values() if v.get("ppToi"))
+    print(f"  boxscores: {len(ids)} games -> {len(bx)} player-game rows ({withpp} with power-play TOI)")
     return bx
 
 def merge_boxscores(by_season, cur_yr, bx):
@@ -149,6 +155,8 @@ def merge_boxscores(by_season, cur_yr, bx):
         b = bx.get((r.get("MatchId"), r.get("PlayerId")))
         if b:
             r["blocks"] = b.get("blocks"); r["hits"] = b.get("hits")
+            if b.get("ppToi") is not None: r["ppToi"] = b["ppToi"]
+            if b.get("shToi") is not None: r["shToi"] = b["shToi"]
 
 def fetch_schedule(seasons):
     results, fixtures = [], []
