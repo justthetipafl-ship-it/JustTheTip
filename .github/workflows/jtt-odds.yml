@@ -1,8 +1,13 @@
-name: JTT Odds (rapidoddsapi)
+name: AFL odds snapshot (worker -> committed file)
+
+# Was the all-sports rapidoddsapi puller. Every rapidoddsapi sport now runs through
+# odds-worker.yml; leaving the MLB pull here as well would have pulled MLB twice.
+# What remains is the one job the worker does NOT do: copy the AFL Cloudflare worker's live odds
+# into the committed AFL/data/odds.json at 22:55 UTC, six minutes before the 23:01 ladder build
+# reads that file.
 on:
   schedule:
     - cron: '55 22 * * *'   # 08:55 AEST — forced pull just before the 9:01 ladder build
-    - cron: '0 * * * *'     # hourly — pulls ONCE when the pre-game window opens (else skips, no credits)
   workflow_dispatch:
 concurrency:
   group: jtt-odds
@@ -17,15 +22,6 @@ jobs:
           python-version: '3.11'
       - name: Install SDK
         run: pip install rapidoddsapi
-      # The 08:55 cron (and manual runs) force a pull; the hourly cron only pulls
-      # when within --window hours before the first game and it hasn't pulled yet.
-      - name: Fetch odds
-        env:
-          ROA_API_KEY: ${{ secrets.ROA_API_KEY }}
-        run: |
-          FORCE=""
-          if [ "${{ github.event.schedule }}" = "55 22 * * *" ] || [ "${{ github.event_name }}" = "workflow_dispatch" ]; then FORCE="--force"; fi
-          python scripts/fetch_odds.py MLB  mlb/data/odds.json  $FORCE --window 3 || true
       # AFL live odds live in the Cloudflare worker (the shell reads them via oddsUrl); the ladder
       # reads the COMMITTED file, so snapshot the worker into it just before the 9:01 ladder build.
       - name: Snapshot AFL odds (worker -> committed file for the ladder)
