@@ -1,0 +1,103 @@
+name: JTT Odds Worker (all sports)
+
+# ONE worker for every sport. Replaces nfl-odds / epl-odds / nhl-odds / nbl-odds / mlb-odds.
+#
+# Two tiers:
+#
+#   SWEEPS - three full pulls a day, EVERY day, whether or not a game is on. This is the early
+#            board: NFL posts a week's props on Monday/Tuesday, EPL a few days out, and punters
+#            betting Tuesday on Sunday's games need something to look at - and want to see it move.
+#            06:00, 12:00 and 18:00 AEST (20:00, 02:00, 08:00 UTC).
+#
+#   REFRESH - every 15 minutes, but fetch_odds.py only pulls when the NEXT game is within the
+#            sport's window AND its file is older than that sport's interval. Prices move most in
+#            the final hour (scratches, confirmed lineups, weather, steam), so this keeps the board
+#            no more than 15-20 minutes stale right through a slate, and costs nothing on an off
+#            day - the gate skips in about a second without touching the API.
+#
+# Cost at the peak overlap (NFL + NHL + NBL + EPL in season): ~112k credits a month of refresh plus
+# ~21k of sweeps, against a 200k plan. MLB only overlaps in Sep/Oct.
+#
+# Per-sport tuning lives in one place: the SPORTS table below. Columns:
+#   ID  output path  within(h)  every(min)
+# within  = how far before the next game the refresh starts
+# every   = minimum minutes between refresh pulls (cheap sports refresh faster)
+#
+# AFL still runs through its Cloudflare worker; add a row here when that moves across.
+
+on:
+  workflow_dispatch:
+    inputs:
+      sport:
+        description: "Single sport to pull (blank = all)"
+        required: false
+      force:
+        description: "Force a full pull, ignoring the gate"
+        required: false
+        default: "true"
+  schedule:
+    - cron: "0 20 * * *"     # 06:00 AEST - sweep
+    - cron: "0 2 * * *"      # 12:00 AEST - sweep
+    - cron: "0 8 * * *"      # 18:00 AEST - sweep
+    - cron: "*/15 * * * *"   # refresh; the gate decides whether anything is pulled
+
+permissions:
+  contents: write
+concurrency:
+  group: odds-worker
+  cancel-in-progress: false
+
+jobs:
+  odds:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install RapidOddsAPI
+        run: pip install rapidoddsapi
+
+      - name: Pull odds
+        env:
+          ROA_API_KEY: ${{ secrets.ROA_API_KEY }}
+          SCHEDULE: ${{ github.event.schedule }}
+          ONLY: ${{ github.event.inputs.sport }}
+          FORCE: ${{ github.event.inputs.force }}
+        run: |
+          set -u
+          # ID  path  within(h)  every(min)
+          SPORTS="NFL nfl/data/odds.json 6 20
+          EPL EPL/data/odds.json 6 20
+          NHL nhl/data/odds.json 5 15
+          NBL nbl/data/odds.json 5 20
+          MLB mlb/data/odds.json 5 15"
+
+          MODE="refresh"
+          case "$SCHEDULE" in
+            "0 20 * * *"|"0 2 * * *"|"0 8 * * *") MODE="sweep" ;;
+          esac
+          if [ -z "$SCHEDULE" ] && [ "${FORCE:-true}" = "true" ]; then MODE="sweep"; fi
+          echo "mode: $MODE  (schedule='${SCHEDULE:-manual}')"
+
+          echo "$SPORTS" | while read -r ID PATH_ WITHIN EVERY; do
+            [ -z "${ID:-}" ] && continue
+            if [ -n "${ONLY:-}" ] && [ "$ONLY" != "$ID" ]; then continue; fi
+            if [ "$MODE" = "sweep" ]; then
+              python3 scripts/fetch_odds.py "$ID" "$PATH_" --force || echo "  ($ID sweep failed - continuing)"
+            else
+              python3 scripts/fetch_odds.py "$ID" "$PATH_" --within "$WITHIN" --every "$EVERY" \
+                || echo "  ($ID refresh failed - continuing)"
+            fi
+          done
+
+      - name: Commit
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add */data/odds.json 2>/dev/null || true
+          if git diff --staged --quiet; then echo "no odds changed"; else
+            git commit -m "chore(odds): $(date -u +%Y-%m-%dT%H:%MZ)"
+            git pull --rebase --autostash origin main || true
+            git push
+          fi
