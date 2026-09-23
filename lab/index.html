@@ -888,6 +888,7 @@
   .lt-bot{display:flex;font-size:9px;color:var(--text-3);}
   .lt-tag{margin-left:auto;font-weight:800;letter-spacing:.04em;}
   .lt-leg.cashed{border-color:var(--accent);} .lt-leg.cashed .lt-tag{color:var(--accent);}
+  .lt-leg.untracked{opacity:.5;} .lt-leg.untracked .lt-tag{color:var(--text-3);}
   .lt-leg.busted{opacity:.55;} .lt-leg.busted .lt-fill{background:#ef4444;} .lt-leg.busted .lt-tag{color:#ef4444;}
   .lt-multi{font-size:9px;color:var(--text-3);margin-top:4px;}
   .sc-filter{display:flex;gap:7px;align-items:center;margin-bottom:8px;}
@@ -9454,7 +9455,12 @@ function liveLegRows(){
     var l = x.l, st = l.key ? liveStatFor(l.key, l.name, l.mkt) : null;
     var line = parseFloat(l.line), need = Math.ceil(line), side = l.side || 'over';
     var have = st ? st.v : null;
-    var state2 = have == null ? 'waiting'
+    // a market the feed cannot see is NOT "not started" - say so, or it looks like he simply
+    // hasn't done it yet all game (EPL tackles: ESPN's soccer feed has no tackles stat at all)
+    var feed = LIVE.data[l.key], cov = feed && feed.markets;
+    var untracked = !!(cov && cov.length && cov.indexOf(l.mkt) < 0);
+    var state2 = untracked ? 'untracked'
+      : have == null ? 'waiting'
       : side === 'over' ? (have >= need ? 'cashed' : 'open')
       : (have >= need ? 'busted' : 'open');
     return { name:l.name, label:(side === 'under' ? 'Under ' + l.line : need + '+') + ' ' + (l.label || l.mkt),
@@ -9477,8 +9483,10 @@ function liveBody(compact){
         return '<div class="lt-leg '+r.state+'">'
           + '<div class="lt-top"><span class="lt-nm">'+esc(r.name)+'</span><span class="lt-bet">'+esc(r.label)+'</span></div>'
           + '<div class="lt-bar"><div class="lt-fill" style="width:'+Math.round(r.pct*100)+'%"></div></div>'
-          + '<div class="lt-bot"><span>'+(r.have == null ? 'not started' : r.have+' so far')+'</span>'
+          + '<div class="lt-bot"><span>'+(r.state === 'untracked' ? 'the live feed doesn\u2019t carry this stat'
+             : r.have == null ? 'not started' : r.have+' so far')+'</span>'
           + '<span class="lt-tag">'+(r.state === 'cashed' ? 'LANDED' : r.state === 'busted' ? 'GONE'
+             : r.state === 'untracked' ? 'NOT TRACKED'
              : r.have == null ? '\u2014' : r.have+' / '+r.need)+'</span></div>'
           + (compact || !r.multi ? '' : '<div class="lt-multi">'+esc(r.multi)+'</div>')+'</div>';
       }).join('');
