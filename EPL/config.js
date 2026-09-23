@@ -97,8 +97,10 @@ window.SPORT_CONFIG = {
 
   // extra per-sport data files (merged with the shell's common set)
   noPlayerOdds: true,   // RapidOdds soccer = team markets only; Jupiter (player props) can't run
-  dataFiles: { fpl_players: 'data/fpl_players.json', fpl_gamelogs: 'data/fpl_gamelogs.json',
-               apifootball: 'data/apifootball_stats.json', referees: 'data/referees.json', events: 'data/events.json' },
+  // fpl_players (371k), fpl_gamelogs (777k) and apifootball_stats (8.4MB) are build INPUTS: the
+  // build already merges them into players.json and gamelogs.json, and nothing in the shell reads
+  // them. Loading them cost 9.6MB on every EPL page view - most of it on a phone's data.
+  dataFiles: { referees: 'data/referees.json', events: 'data/events.json' },
 
   // ---- Degen Crew tiles (ported from the WC tool's CREW_TABS) ----
   jupiter: {
