@@ -862,6 +862,13 @@
   .card-fab.has{border-color:var(--accent);color:var(--accent);}
   .card-fab span{position:absolute;top:-4px;right:-4px;min-width:19px;height:19px;border-radius:999px;
     background:var(--accent);color:#04120a;font-size:10px;font-weight:800;line-height:19px;}
+  .cd-add-own{display:block;width:100%;margin-top:9px;padding:10px;border-radius:9px;border:1px dashed var(--border);
+    background:none;color:var(--text-2);font-size:12px;font-weight:700;cursor:pointer;}
+  .cd-own{margin-top:9px;padding:10px;border:1px solid var(--border);border-radius:10px;background:var(--surface-2);}
+  .cd-own-r{display:flex;gap:6px;margin-bottom:7px;align-items:center;flex-wrap:wrap;}
+  .cd-own-r input,.cd-own-r select{flex:1;min-width:74px;background:var(--surface);border:1px solid var(--border);
+    border-radius:8px;color:var(--text);font-size:16px;padding:8px 9px;}
+  .cd-own-r input#cw-bet{flex:1 0 100%;}
   .cd-row{display:flex;align-items:center;gap:8px;padding:9px 0;border-top:1px solid var(--border);}
   .cd-main{flex:1;min-width:0;} .cd-main b{display:block;font-size:12px;}
   .cd-main span{font-size:9px;color:var(--text-3);}
@@ -9369,7 +9376,8 @@ function cardRowHtml(e){
     : '';
   var title = e.type === 'multi' ? e.title : e.name;
   var sub = e.type === 'multi' ? e.legs.length+' legs'+(e.src ? ' \u00b7 '+esc(e.src) : '')
-    : ((e.side === 'under' ? 'Under '+e.line : Math.ceil(e.line)+'+') + ' ' + esc(e.label || e.mkt)
+    : (((e.line === '' || e.line == null || !(e.label || e.mkt)) ? esc(SPORTS[e.key] ? SPORTS[e.key].name : '')
+        : (e.side === 'under' ? 'Under '+e.line : Math.ceil(e.line)+'+') + ' ' + esc(e.label || e.mkt))
        + (e.team ? ' \u00b7 '+esc(abbrOf(e.key, e.team))+' v '+esc(abbrOf(e.key, e.opp)) : ''));
   return '<div class="cd-row"><div class="cd-main"><b>'+esc(title)+'</b><span>'+sub+'</span>'+legs+'</div>'
     + '<div class="cd-odds">'+(e.odds > 1 ? '$'+(+e.odds).toFixed(2) : '<i>no price</i>')
@@ -9391,8 +9399,10 @@ function cardPanel(){
       + '$'+(t.ret - t.stake).toFixed(2)+'</span></div>'
       + '<div class="cd-acts"><button class="sl-chip" onclick="LAB.cardCombine()">Combine singles into a multi</button>'
       + '<button class="sl-chip" onclick="LAB.cardClear()">Clear card</button>'
+      + '<button class="sl-chip" onclick="LAB.cardShare()"><i class="ti ti-share"></i> Share card</button>'
       + '<button class="sl-chip on" onclick="LAB.liveOpen()"><i class="ti ti-antenna-bars-5"></i> Track live</button></div>'
-    : '<div class="sig-empty">Nothing on your card yet. Tap the + on any signal, or send a build across from Degen Crew.</div>';
+    : '<div class="sig-empty">Nothing on your card yet. Tap the <b>+</b> on any signal row, send a build across from Degen Crew, or add one by hand below.</div>';
+  body += cardCustomForm();
   return '<div class="cmb-overlay open" onclick="if(event.target===this)LAB.cardClose()">'
     + '<div class="cmb-modal"><div class="cmb-hdr"><i class="ti ti-receipt"></i><h2>My Card</h2>'
     + '<button class="cmb-close" onclick="LAB.cardClose()">&times;</button></div>'
@@ -9541,6 +9551,108 @@ function livePaintPip(){
   try { LIVE.pip.document.getElementById('lt').innerHTML = liveBody(true); } catch(e){}
 }
 
+/* Anything you like on the card, typed in: a bet the tool never surfaced, a bet from another book,
+   or a leg from somewhere else entirely. Stored exactly like a signal-added single, so it stakes,
+   combines, shares and (where the market is one we track) runs in the live tracker.            */
+function cardCustomForm(){
+  var open = state.view.cardCustom;
+  if (!open) return '<button class="cd-add-own" onclick="LAB.cardCustomOpen(1)"><i class="ti ti-plus"></i> Add your own bet</button>';
+  var sports = Object.keys(SPORTS);
+  return '<div class="cd-own"><div class="cd-own-r">'
+    + '<input id="cw-bet" placeholder="e.g. Daicos 30+ disposals" value="'+esc(state.view.cwBet || '')+'">'
+    + '</div><div class="cd-own-r">'
+    + '<select id="cw-sport">'+sports.map(function(k){ return '<option value="'+k+'"'+(state.view.cwSport === k ? ' selected' : '')+'>'+esc(SPORTS[k].name)+'</option>'; }).join('')+'</select>'
+    + '<input id="cw-line" inputmode="decimal" placeholder="line" value="'+esc(state.view.cwLine || '')+'">'
+    + '<input id="cw-odds" inputmode="decimal" placeholder="odds" value="'+esc(state.view.cwOdds || '')+'">'
+    + '<input id="cw-stake" inputmode="decimal" placeholder="stake" value="'+esc(state.view.cwStake || '')+'">'
+    + '</div><div class="cd-own-r">'
+    + '<button class="sl-chip on" onclick="LAB.cardCustomAdd()">Add to card</button>'
+    + '<button class="sl-chip" onclick="LAB.cardCustomOpen(0)">Cancel</button>'
+    + '<span class="deg-note">Market and line are optional \u2014 fill them in and the live tracker can follow it.</span>'
+    + '</div></div>';
+}
+/* SHARE CARD - the card as an image, branded, for sending to the group chat. Drawn on a canvas so
+   it needs nothing at run time but the wordmark in AFL/assets. Uses the Web Share sheet where the
+   browser has it (every phone), and falls back to a download on desktop.                        */
+var SHARE_W = 1080, BRAND = { wordmark:'/AFL/assets/jtt-wordmark.png', check:'/AFL/assets/jtt-check.png' };
+function shareLines(){
+  return CARD.map(function(e){
+    if (e.type === 'multi'){
+      return { title:e.title, sub:(e.legs || []).map(function(l){ return l.name + ' ' + l.label; }).join('  \u00b7  '),
+               odds:e.odds, stake:e.stake };
+    }
+    // a free-text bet has no line or market: show what was typed, not "0+"
+    // free text is already the title, so leave the second line to the sport rather than repeat it
+    var sub = (e.line === '' || e.line == null || !(e.label || e.mkt))
+      ? (SPORTS[e.key] ? SPORTS[e.key].name : '')
+      : (e.side === 'under' ? 'Under ' + e.line : Math.ceil(e.line) + '+') + ' ' + (e.label || e.mkt);
+    return { title:e.name, sub:sub + (e.team ? '   ' + abbrOf(e.key, e.team) + ' v ' + abbrOf(e.key, e.opp) : ''),
+             odds:e.odds, stake:e.stake };
+  });
+}
+function loadImg(src){
+  return new Promise(function(done){
+    var im = new Image();
+    im.crossOrigin = 'anonymous';
+    im.onload = function(){ done(im); };
+    im.onerror = function(){ done(null); };                 // branding is nice to have, not required
+    im.src = src;
+  });
+}
+function drawShareCard(){
+  var lines = shareLines();
+  if (!lines.length) return Promise.resolve(null);
+  var pad = 56, rowH = 132, headH = 250, footH = 120;
+  var H = headH + lines.length * rowH + footH;
+  var c = document.createElement('canvas');
+  c.width = SHARE_W; c.height = H;
+  var x = c.getContext && c.getContext('2d');
+  if (!x) return Promise.resolve(null);              // no canvas (very old browser): nothing to share
+  var grad = x.createLinearGradient(0, 0, 0, H);
+  grad.addColorStop(0, '#0d1117'); grad.addColorStop(1, '#070a0e');
+  x.fillStyle = grad; x.fillRect(0, 0, SHARE_W, H);
+  x.strokeStyle = 'rgba(34,197,94,.35)'; x.lineWidth = 6; x.strokeRect(3, 3, SHARE_W - 6, H - 6);
+  return loadImg(BRAND.wordmark).then(function(mark){
+    if (mark){
+      var w = Math.min(420, mark.width), h = w * mark.height / mark.width;
+      x.drawImage(mark, pad, 54, w, h);
+    } else {
+      x.fillStyle = '#e8edf4'; x.font = '700 46px system-ui,sans-serif';
+      x.fillText('JUST THE TIP', pad, 100);
+    }
+    x.fillStyle = '#6f7d8f'; x.font = '500 26px system-ui,sans-serif';
+    x.fillText('MY CARD  \u00b7  ' + new Date().toLocaleDateString('en-AU', { day:'numeric', month:'short' }).toUpperCase(),
+               pad, 190);
+    var y = headH, tot = 1, allPriced = true, stake = 0;
+    lines.forEach(function(l){
+      x.strokeStyle = 'rgba(255,255,255,.07)'; x.lineWidth = 2;
+      x.beginPath(); x.moveTo(pad, y - 28); x.lineTo(SHARE_W - pad, y - 28); x.stroke();
+      x.fillStyle = '#e8edf4'; x.font = '700 40px system-ui,sans-serif';
+      x.fillText(String(l.title).slice(0, 34), pad, y + 16);
+      x.fillStyle = '#aab6c6'; x.font = '400 27px system-ui,sans-serif';
+      x.fillText(String(l.sub).slice(0, 60), pad, y + 58);
+      if (l.odds > 1){
+        x.fillStyle = '#22c55e'; x.font = '700 44px ui-monospace,monospace';
+        var t = '$' + (+l.odds).toFixed(2);
+        x.fillText(t, SHARE_W - pad - x.measureText(t).width, y + 32);
+        tot *= +l.odds;
+      } else allPriced = false;
+      stake += +l.stake > 0 ? +l.stake : 0;
+      y += rowH;
+    });
+    x.fillStyle = '#6f7d8f'; x.font = '500 26px system-ui,sans-serif';
+    x.fillText(CARD.length + (CARD.length === 1 ? ' bet' : ' bets'), pad, H - 52);
+    if (allPriced && CARD.length > 1){
+      x.fillStyle = '#22c55e'; x.font = '700 40px ui-monospace,monospace';
+      var lab = 'ALL UP  $' + tot.toFixed(2);
+      x.fillText(lab, SHARE_W - pad - x.measureText(lab).width, H - 46);
+    }
+    x.fillStyle = '#3a4756'; x.font = '500 24px system-ui,sans-serif';
+    x.fillText('justthetipaus.com', pad, H - 18);
+    return c;
+  });
+}
+
 function render(){
   var loading = Object.keys(SPORTS).filter(function(k){ return state.sports[k].status==='loading'; });
   $('status').textContent = loading.length ? ('loading '+loading.join(', ')+'…') : 'ready';
@@ -9592,6 +9704,40 @@ window.LAB = {
   crewSport: function(k){ state.view.crewSport = k; state.view.crewTile = null; render(); },
   resSport: function(k){ state.view.resSport = k; render(); },
   cardOpen: function(){ state.view.cardOpen = true; render(); },
+  cardCustomOpen: function(on){ state.view.cardCustom = !!on; render(); },
+  cardCustomAdd: function(){
+    var g = function(id){ var el = document.getElementById(id); return el ? el.value.trim() : ''; };
+    var bet = g('cw-bet'), odds = parseFloat(g('cw-odds')), line = parseFloat(g('cw-line')),
+        stake = parseFloat(g('cw-stake')), key = g('cw-sport') || Object.keys(SPORTS)[0];
+    if (!bet) return;
+    // "Daicos 30+ disposals" -> name and market, so a typed bet can track live like any other
+    var m = bet.match(/^(.+?)\s+(?:o|over\s+)?(\d+(?:\.\d+)?)\+?\s+(.+)$/i);
+    var name = m ? m[1].trim() : bet, mkt = m ? mktFromLabel(key, m[3].trim()) : '';
+    if (m && !isFinite(line)) line = +m[2] - 0.5;
+    CARD.push({ id:cardId(), type:'single', key:key, name:name, team:'', opp:'',
+                mkt:mkt, label:(m ? m[3].trim() : ''), line:isFinite(line) ? line : '', text:bet,
+                side:/under/i.test(bet) ? 'under' : 'over', odds:odds > 1 ? odds : null, book:'',
+                custom:true, stake:stake > 0 ? stake : null });
+    cardSave();
+    state.view.cardCustom = false; state.view.cwBet = state.view.cwOdds = state.view.cwLine = state.view.cwStake = '';
+    render();
+  },
+  cardShare: function(){
+    drawShareCard().then(function(c){
+      if (!c) return;
+      c.toBlob(function(blob){
+        if (!blob) return;
+        var file = new File([blob], 'jtt-card.png', { type:'image/png' });
+        if (navigator.canShare && navigator.canShare({ files:[file] })){
+          navigator.share({ files:[file], title:'My card' }).catch(function(){});
+          return;
+        }
+        var url = URL.createObjectURL(blob), a = document.createElement('a');
+        a.href = url; a.download = 'jtt-card.png'; a.click();
+        setTimeout(function(){ URL.revokeObjectURL(url); }, 4000);
+      }, 'image/png');
+    });
+  },
   liveOpen: function(){ state.view.liveOpen = true; state.view.cardOpen = false; render(); liveFetch(); livePoll(); },
   liveClose: function(){ state.view.liveOpen = false; clearTimeout(LIVE.timer); render(); },
   liveRefresh: function(){ liveFetch(); },
@@ -9794,6 +9940,7 @@ window.LAB = {
   // test hook: the shell's own statOf, so tests check the real function rather than a copy
   statProbe: function(key, row, mkt){ return statOf(key, row, mkt); },
   doneProbe: function(key, g){ return gameDone(key, g, gameStart(g).ms); },
+  shareProbe: function(){ return shareLines(); },
   lineupProbe: function(key){ return lineupRows(key); },
   oddsNameProbe: function(key, name){ return oddsPlayer(key, name); },
   abbrProbe: function(key, t){ return abbrOf(key, t); },
