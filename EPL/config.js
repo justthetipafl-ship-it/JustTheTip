@@ -16,6 +16,7 @@
             liveWorker:'', resultsWorker:'https://jtt-afl-results.justthetipafl.workers.dev' }
 */
 window.SPORT_CONFIG = {
+  liveWorker: 'https://jtt-live.justthetipafl.workers.dev/epl',   // live player stats for the tracker
   // prop-calculator stat chips — EPL's own markets (else it falls back to AFL disposals/marks)
   pcStats: [['shots','Shots'],['shotsOn','Shots on Target'],['goals','Goals'],['assists','Assists'],['tackles','Tackles'],['saves','Saves']],
   key: 'epl', dir: 'EPL', name: 'EPL', logoExt: '.png',
