@@ -42,6 +42,7 @@ window.SPORT_CONFIG = {
   dvMarkets: [['disposals','Disposals',15],['kicks','Kicks',8],['handballs','Handballs',6],['marks','Marks',3],['tackles','Tackles',3],['clearances','Clearances',2],['goals','Goals',1]],
   roundWord: 'Round',
   betStats: [['disposals','Disposals'],['goals','Goals'],['marks','Marks'],['tackles','Tackles'],['kicks','Kicks'],['handballs','Handballs'],['clearances','Clearances']],
+  liveWorker: 'https://jtt-live.justthetipafl.workers.dev/afl',
   dataFiles: { kickins:'data/kickins.json' },
   posOrder: ['Midfielder','Mid-Forward','Gen. Forward','Key Forward','Gen. Defender','Key Defender','Ruck'],
   dvpStats: [['disposals','Disposals'],['kicks','Kicks'],['handballs','Handballs'],['marks','Marks'],['tackles','Tackles'],['goals','Goals'],['shotsAtGoal','Shots'],['clearances','Clearances'],['inside50s','Inside 50s'],['contested','Cont. Poss'],['intercepts','Intercepts'],['hitouts','Hitouts'],['marks','Marks'],['groundBallGets','Ground Balls'],['metresGained','Metres'],['scoreInvolvements','Score Inv.']],
