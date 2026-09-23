@@ -840,17 +840,28 @@ def _team_games(gamelogs, results, current):
         for k in ["passYds","passAtt","passComp","passTds","passInt","sacks",
                   "rushYds","rushAtt","rushTds","receptions","targets"]:
             tg[key][k] += r[k]
-        meta[key] = {"opp": r["Opp"], "week": r["Week"]}
-    # points from results
+        meta[key] = {"opp": r["Opp"], "week": r["Week"], "year": r.get("Year")}
+    # Points come from results. TWO bugs lived here:
+    #   * results were only indexed for the CURRENT season while the team rows are built over the
+    #     last full season (17 games). Every 2025 week missed, scored 0, and the two 2026 weeks that
+    #     did match were averaged across all 17 - Buffalo read 4.5 points a game instead of 38.5.
+    #   * a missing result was written as 0, which is not a nil score, it is an unknown one.
+    # Index every season, look up by the game's own year, and leave unknown games out of the mean.
     pts = {}
     for x in results:
-        if x["season"] != current:
-            continue
-        pts[(x["home"], x["season"], x["week"])] = x["hs"]
-        pts[(x["away"], x["season"], x["week"])] = x["as"]
+        pts[(x["home"], int(x["season"]), x["week"])] = x["hs"]
+        pts[(x["away"], int(x["season"]), x["week"])] = x["as"]
     for key, m in meta.items():
         team, _ = key
-        tg[key]["points"] = float(pts.get((team, current, m["week"]), 0))
+        yr = m.get("year")
+        got = None
+        if yr is not None:
+            try:
+                got = pts.get((team, int(yr), m["week"]))
+            except (TypeError, ValueError):
+                got = None
+        if got is not None:
+            tg[key]["points"] = float(got)
         tg[key]["plays"] = tg[key]["passAtt"] + tg[key]["rushAtt"] + tg[key]["sacks"]
     return tg, meta
 
