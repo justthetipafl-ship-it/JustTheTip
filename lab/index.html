@@ -738,6 +738,7 @@
     color:var(--text);font-family:inherit;font-size:11px;padding:4px 6px;}
   .deja-step{flex-wrap:wrap;max-width:100%;}
   .j-wrap{overflow-x:hidden;}
+  .j-ax{padding:3px 9px;font-size:10px;min-width:0;}
   .deja-step{display:inline-flex;align-items:center;gap:5px;background:var(--surface-2);border:1px solid var(--border);
     border-radius:9px;padding:4px 8px;font-size:10px;color:var(--text-3);}
   .deja-step button{background:var(--surface);border:1px solid var(--border);color:var(--text);width:24px;height:24px;
@@ -829,6 +830,9 @@
     font-size:10px;padding:1px 5px;border-radius:999px;background:color-mix(in srgb,var(--accent) 18%,transparent);
     color:var(--accent);}
   .ct-n.zero{background:var(--surface);color:var(--text-3);}
+  .res-ttl{display:flex;align-items:center;gap:9px;font-weight:500;}
+  .res-ttl b{font-weight:800;}
+  .res-logo{width:26px;height:26px;border-radius:7px;}
   .res-hero{display:flex;align-items:center;gap:14px;background:var(--surface-2);border:1px solid var(--border);
     border-radius:12px;padding:14px;margin-bottom:8px;flex-wrap:wrap;}
   .res-big{font-family:var(--font-display);font-size:38px;line-height:1;}
@@ -1100,8 +1104,8 @@ var state = {
              cmbLadOpen: false, mbFix: 0, mbMode: 'signals', pc: null, ttWin: 10, smDrop: {},
              rdrPick: null, ulMk: 'snapPct', ulWin: 'l5',
              dvMeets: 3, dvLegs: 3, jMkt: null, jLine: 'auto', jSel: {},
-             jHide: {}, jMin: null, jMax: null, jFocus: null, jVenue: 'venue',
-             dvMkts: null, dvHail: false, dvDrop: {}, dvMin: null, dvMax: null, dvBook: null,
+             jHide: {}, jMin: 1.60, jMax: null, jFocus: null, jVenue: 'venue',
+             dvMkts: null, dvHail: false, dvDrop: {}, dvMin: null, dvMax: null, dvBook: 'Sportsbet',
              stSport: null, stMode: 'scanner', stMkt: {}, stPos: {},
              stQ: '', stPosF: '', stWin: 'season', stSort: null, stDir: -1, stAllowed: false,
              stTeamSort: null, stDvpSort: null }   // filter + current page + market per sport
@@ -4854,7 +4858,7 @@ function dejaVuSection(key, g){
       + '<input type="number" step="0.05" min="1" value="'+(state.view.dvMax != null ? state.view.dvMax : '')
       + '" placeholder="max" style="width:52px" onchange="LAB.dvOdds(\'max\',this.value)"></span></div>'
     + '<div class="sl-bar">'
-      + '<button class="sl-chip'+(!state.view.dvBook ? ' on' : '')+'" onclick="LAB.dvBook(\'\')">Best price</button>'
+      + '<button class="sl-chip'+(!state.view.dvBook ? ' on' : '')+'" onclick="LAB.dvBook(\'\')">Best price (not one ticket)</button>'
       + booksFor(key).slice(0, 10).map(function(b){
           return '<button class="sl-chip'+(state.view.dvBook === b ? ' on' : '')+'" onclick="LAB.dvBook(\''
             + esc(b).replace(/'/g,"\\'")+'\')">'+esc(b)+'</button>'; }).join('')+'</div>'
@@ -5080,10 +5084,10 @@ function jupiterSection(key, g){
         + '<input type="number" step="0.05" min="1" value="'+(state.view.jMax != null ? state.view.jMax : '')
         + '" placeholder="max" style="width:52px" onchange="LAB.jOdds(\'max\',this.value)"></span>'
       + '<span class="deja-step">4th axis'
-        + '<button class="sl-chip'+((state.view.jVenue || 'venue') === 'venue' ? ' on' : '')
-        + '" onclick="LAB.jVenue(\'venue\')">Venue</button>'
-        + '<button class="sl-chip'+(state.view.jVenue === 'ha' ? ' on' : '')
-        + '" onclick="LAB.jVenue(\'ha\')">Home/Away</button></span>'
+        + '<button class="sl-chip j-ax'+((state.view.jVenue || 'venue') === 'venue' ? ' on' : '')
+        + '" onclick="LAB.jVenue(\'venue\')">V</button>'
+        + '<button class="sl-chip j-ax'+(state.view.jVenue === 'ha' ? ' on' : '')
+        + '" onclick="LAB.jVenue(\'ha\')">H</button></span>'
       + '<span class="cmb-corr" style="margin:0">'+data.rows.length+' plotted</span></div>'
     + jupiterOrb(data.rows, g, key)
     + (focus ? '<div class="j-detail"><b>'+esc(focus.name)+'</b> '+Math.ceil(focus.line)+'+ '
@@ -6557,7 +6561,7 @@ function signalsSection(key, g){
   return sigBand('Degen Signals \u00b7 Picks', picks)
     + nfl
     + sigBand('Form &amp; Matchups', reads + form)
-    + sigQuietNote();
+    + '';                                   // the quiet list is gone: it was longer than the signals
 }
 function secNote(title, why){
   return '<div class="dayband"><span>'+title+'</span></div>'
@@ -9044,9 +9048,12 @@ function degSec(title, icon, sub, body){
 // shops each leg to a different book and the result cannot be bet. Instead, when no book is
 // chosen, pick the book that covers the most of the window at the prices these builds want, and
 // say which one it picked. The Ladder is unaffected - it is a record, not a build.
+var HOUSE_BOOK = 'Sportsbet';        // where a multi is placed unless told otherwise
 function degBestBook(sc, lo, hi){
   var books = degBooks(sc.sports);
   if (!books.length) return null;
+  // a build has to be placeable, and in practice that means the book the user actually holds
+  for (var i = 0; i < books.length; i++){ if (books[i] === HOUSE_BOOK) return HOUSE_BOOK; }
   var cover = {};
   sc.sports.forEach(function(k){
     var S = state.sports[k], games = crewGames(k), inWin = {};
@@ -9224,24 +9231,41 @@ function degPyramid(sc, book){
 }
 /* THE LADDER - read-only view of each sport's running challenge (scripts/build_ladder.py). */
 function degLadderCard(k){
-  var L = state.sports[k].data.ladder;
+  return ladderCardFrom(state.sports[k].data.ladder, SPORTS[k].name, k);
+}
+function ladderCardFrom(L, label, k){
   if (!L || !L.days || !L.days.length) return '';
   var start = +L.start || 10, target = +L.target || 10000, bank = L.bank != null ? +L.bank : start;
   var prog = Math.max(0, Math.min(1, Math.log(Math.max(bank, start) / start) / Math.log(target / start)));
   var d = L.days[L.days.length - 1];
   var st = d.result === 'win' ? 'won' : d.result === 'loss' ? 'lost' : 'pending';
-  var legs = (d.legs || []).map(function(l){ return esc(String(l.name || '').split(' ').pop())+' '+(l.line != null ? Math.ceil(l.line)+'+' : '')+' '+esc(mktLabel(k, l.market)); }).join(' \u00b7 ');
-  return '<div class="deg-lad"><div class="deg-lad-h"><b>'+esc(SPORTS[k].name)+'</b><span>$'+start+' \u2192 $'+(target >= 1000 ? (target/1000)+'k' : target)
+  var mk = k || d.sport || null;                  // a mixed day names its own sport
+  var legs = (d.legs || []).map(function(l){ return esc(String(l.name || '').split(' ').pop())+' '+(l.line != null ? Math.ceil(l.line)+'+' : '')+' '+esc(mk ? mktLabel(mk, l.market) : l.market); }).join(' \u00b7 ');
+  return '<div class="deg-lad"><div class="deg-lad-h"><b>'+esc(label)+(d.sport && !k ? ' \u00b7 '+esc(String(d.sport).toUpperCase()) : '')+'</b><span>$'+start+' \u2192 $'+(target >= 1000 ? (target/1000)+'k' : target)
     + '</span><span class="deg-lad-bank">$'+bank.toFixed(2)+'</span></div>'
     + '<div class="lad-bar"><div class="lad-bar-fill" style="width:'+(prog*100).toFixed(1)+'%"></div></div>'
     + '<div class="deg-lad-sub">Rung '+(d.rung || '?')+(L.attempt ? ' \u00b7 attempt #'+L.attempt : '')+' \u00b7 '+esc(d.date || '')+' \u00b7 '
     + (d.type === 'sgm' ? 'SGM' : 'multi')+(d.odds ? ' @ $'+(+d.odds).toFixed(2) : '')+' \u00b7 <b>'+st+'</b></div>'
     + (legs ? '<div class="deg-lad-legs">'+legs+'</div>' : '')+'</div>';
 }
+// the mixed challenge lives at /data/ladder.json, outside any sport's folder
+function loadMixedLadder(){
+  if (state.mixedLadder !== undefined || state.mixedLadderLoading) return;
+  state.mixedLadderLoading = true;
+  fetch('/data/ladder.json?cb=' + Date.now(), { cache:'reload' })
+    .then(function(r){ return r.ok ? r.json() : null; })
+    .then(function(j){ state.mixedLadder = j || null; state.mixedLadderLoading = false; render(); })
+    .catch(function(){ state.mixedLadder = null; state.mixedLadderLoading = false; });
+}
 function degLadder(sc){
+  loadMixedLadder();
   var cards = sc.sports.map(degLadderCard).filter(Boolean);
-  return degSec('The Ladder', 'ti-stairs-up', '', cards.length ? cards.join('')
-    : '<div class="sig-empty">No ladder challenge is running for '+esc(sc.sc === 'mixed' ? 'these sports' : SPORTS[sc.sc].name)+'.</div>');
+  var mixed = (sc.sc === 'mixed' && state.mixedLadder) ? ladderCardFrom(state.mixedLadder, 'Mixed', null) : '';
+  var missing = sc.sports.filter(function(k){ var L = state.sports[k].data.ladder; return !L || !(L.days || []).length; })
+    .map(function(k){ return SPORTS[k].name; });
+  return degSec('The Ladder', 'ti-stairs-up', '', (mixed + cards.join(''))
+    || '<div class="sig-empty">No ladder challenge is running for '+esc(sc.sc === 'mixed' ? 'these sports' : SPORTS[sc.sc].name)+'.</div>')
+    + (missing.length ? '<div class="deg-note">No challenge running yet for '+esc(missing.join(', '))+'.</div>' : '');
 }
 function degPage(){
   var sc = degScope();
@@ -9334,7 +9358,9 @@ function resultsSplit(title, groups, unit){
 function resultsPage(){
   loadResults();
   var R = state.results;
-  var h = '<div class="crew-head"><div class="crew-ttl"><i class="ti ti-trophy"></i> Just The Tip Results</div></div>';
+  var h = '<div class="crew-head"><div class="crew-ttl res-ttl">'
+    + '<img src="/AFL/assets/jtt-check.png" alt="" class="res-logo" onerror="this.style.display=\'none\'">'
+    + 'JustTheTip <b>Premium Results</b></div></div>';
   if (!R) return h + '<div class="empty"><i class="ti ti-loader"></i>Loading results\u2026</div>';
   if (!R.bets.length) return h + '<div class="empty">'+(R.missing
     ? 'No results file yet \u2014 data/results.json appears once the first bets are logged.'
@@ -9366,7 +9392,6 @@ function resultsPage(){
     + resultsCurve(st.curve)
     + '<div class="res-note">'+st.n+' settled bet'+(st.n === 1 ? '' : 's')
     + (st.pend ? ' \u00b7 '+st.pend+' still pending (counted nowhere until they land)' : '')
-    + ' \u00b7 1 unit = 1 unit; stakes are never shown in dollars'
     + (R.updated ? ' \u00b7 updated '+esc(String(R.updated).replace('T', ' ').replace('Z', ' UTC')) : '')+'</div>';
   var bySport = {}, byType = {};
   bets.forEach(function(b){
