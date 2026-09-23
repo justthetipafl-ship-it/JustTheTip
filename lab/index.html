@@ -1409,7 +1409,7 @@ function buildIndexes(key){
   players.forEach(function(p){ if (p && p.name) ix.byName[p.name] = p; });
 
   ix.lgAvg = {}; ix.winAvg = {}; ix.matchOpp = null; ix.fs = null;
-  ix.pricedSet = null; ix.oddsName = null; ix.oddsIni = null; ix.vac = null; ix.bookList = null; ix.resIdx = null; ix.mlbLg = null; ix.lgRate = null; ix.scState = null; ix.nhlPim = null; ix.injIdx = null; ix.luRows = null;
+  ix.pricedSet = null; ix.oddsName = null; ix.oddsIni = null; ix.vac = null; ix.bookList = null; ix.resIdx = null; ix.mlbLg = null; ix.lgRate = null; ix.scState = null; ix.nhlPim = null; ix.injIdx = null; ix.luRows = null; ix.foldName = null;
   var logs = asArray(d.gamelogs) || [];
   ix.logsByName = {};
   logs.forEach(function(r){
@@ -8736,7 +8736,11 @@ function fixtureCard(item){
    capture mode and merging rows by tile. Each sport covers its next 36 hours of games (or its
    next game day if that's further out), and results are cached until that sport's odds, data or
    fixture list change.                                                                          */
-var CREW_HOURS = 36, CREW_SHOW = 8;
+// How far ahead a crew tile looks. A round is the unit people bet in - an AFL or NFL round, an EPL
+// matchweek - so the window is a week. MLB is the exception: 15 games a day means a week is 100+
+// fixtures, and its board is only posted a day or so out anyway.
+var CREW_HOURS_DEFAULT = 168, CREW_HOURS = { mlb:36 }, CREW_SHOW = 8;
+function crewHours(k){ return CREW_HOURS[k] != null ? CREW_HOURS[k] : CREW_HOURS_DEFAULT; }
 var CREW_UNIVERSAL = ['Green Lights','Death Riders','Streakers','Elite Matchups','Let\u2019s Climb',
                       'Tackle Machines','Bunnies','Bogey','Form Alerts'];
 function crewGames(k){
@@ -8748,7 +8752,7 @@ function crewGames(k){
     if (first == null || ms < first) first = ms;
     out.push({ g:g, ms:ms, i:i });
   });
-  var hz = first == null ? now : Math.max(now + CREW_HOURS * 36e5, first + 864e5);
+  var hz = first == null ? now : Math.max(now + crewHours(k) * 36e5, first + 864e5);
   // a signal is about a player's NEXT game: MLB clubs play daily, so a 36-hour window holds two
   // games for most of them and every row appeared twice. Keep each club's first fixture only.
   var seen = {};
@@ -8857,11 +8861,17 @@ function crewPage(){
     var waitD = sc.sports.filter(function(k){ var S = state.sports[k]; if (S.t3 !== 'ready' || S.t2 !== 'ready'){ ensureSport(k); ensureTier2(); return true; } return false; });
     if (waitD.length) return crewHead(f, active) + back + '<div class="empty"><i class="ti ti-loader"></i>Loading '
       + esc(waitD.map(function(k){ return SPORTS[k].name; }).join(', '))+'\u2026</div>';
-    var books = degBooks(sc.sports), book = state.view.degBook && books.indexOf(state.view.degBook) >= 0 ? state.view.degBook : null;
-    var bar = '<div class="deg-bar"><span>Book</span><select class="ob-sel" onchange="LAB.degBook(this.value)"><option value="">Best price (per leg)</option>'
-      + books.map(function(b){ return '<option value="'+esc(b)+'"'+(b === book ? ' selected' : '')+'>'+esc(b)+'</option>'; }).join('')+'</select>'
-      + '<span class="deg-note">'+(book ? 'Every leg priced at '+esc(book)+' - one ticket.'
-          : (sc.sc === 'mixed' ? 'Books listed price every sport in view.' : 'Pick a book to make each build one ticket.'))+'</span></div>';
+    var books = degBooks(sc.sports);
+    var chosen = state.view.degBook && books.indexOf(state.view.degBook) >= 0 ? state.view.degBook : null;
+    var auto = chosen ? null : degBestBook(sc, DEG_TRAIN[0], DEG_YANK[1]);
+    var book = chosen || auto;                       // a build is always priced at ONE book
+    var bar = '<div class="deg-bar"><span>Book</span><select class="ob-sel" onchange="LAB.degBook(this.value)">'
+      + '<option value="">Best single book'+(auto ? ' (' + esc(auto) + ')' : '')+'</option>'
+      + books.map(function(b){ return '<option value="'+esc(b)+'"'+(b === chosen ? ' selected' : '')+'>'+esc(b)+'</option>'; }).join('')+'</select>'
+      + '<span class="deg-note">'+(book ? 'Every leg priced at '+esc(book)+' \u2014 one ticket you can actually place.'
+          : 'No book prices every sport in view.')
+      + (auto ? ' Picked automatically as the book covering the most of this round.' : '')
+      + (sc.sc === 'mixed' && books.length ? ' Books listed price every sport in view.' : '')+'</span></div>';
     var body = which === 'train' ? degTrain(sc, book) : which === 'pyr' ? degPyramid(sc, book)
              : which === 'yank' ? degYankee(sc, book) : degLadder(sc);
     return crewHead(f, active) + back + bar + body;
@@ -8875,7 +8885,9 @@ function crewPage(){
   });
   var have = Object.keys(caps);
   var gamesTxt = have.map(function(k){ return SPORTS[k].name+' '+caps[k].games; }).join(' \u00b7 ');
-  var sub = '<div class="crew-sub">'+(gamesTxt ? 'Games in view: '+esc(gamesTxt)+' \u00b7 next '+CREW_HOURS+' hours' : '')
+  var winTxt = have.length === 1 ? (crewHours(have[0]) >= 168 ? 'this round' : 'next '+crewHours(have[0])+' hours')
+    : 'this round \u00b7 MLB next '+crewHours('mlb')+'h';
+  var sub = '<div class="crew-sub">'+(gamesTxt ? 'Games in view: '+esc(gamesTxt)+' \u00b7 '+winTxt : '')
     + (waiting.length ? (gamesTxt ? ' \u00b7 ' : '')+'loading '+esc(waiting.join(', '))+'\u2026' : '')+'</div>';
 
   // merge the shared tiles across every sport in view; keep each sport's own separately
@@ -8913,6 +8925,9 @@ function crewPage(){
 
   // the grid
   var h = crewHead(f, active, sub);
+  h += '<div class="dayband"><span>Degenerates</span></div><div class="ct-grid">'
+    + DEG_TILES.map(function(d){ return crewTileCard('deg:'+d[0], d[2], d[1], d[3], null); }).join('')
+    + '</div>';
   h += '<div class="dayband"><span>Universal</span></div><div class="ct-grid">'
     + uniList.map(function(t){ return crewTileCard('u:'+t.title, t.icon, t.title, t.desc, t.rows.length); }).join('')
     + '</div>';
@@ -8922,9 +8937,6 @@ function crewPage(){
       + own[k].map(function(t){ return crewTileCard('sp:'+k+'|'+t.title, t.icon, t.title, t.desc, t.rows.length); }).join('')
       + '</div>';
   });
-  h += '<div class="dayband"><span>Degenerates</span></div><div class="ct-grid">'
-    + DEG_TILES.map(function(d){ return crewTileCard('deg:'+d[0], d[2], d[1], d[3], null); }).join('')
-    + '</div>';
   return h;
 }
 
@@ -9009,6 +9021,37 @@ function degSec(title, icon, sub, body){
 }
 /* THE TRAIN - one banker per game: the most likely leg priced $1.30-1.60 that's at least roughly
    fair on the capped probability. Different games, so the legs multiply honestly. */
+
+// A build has to be placeable as ONE ticket, so "best price per leg" is wrong for Degenerates: it
+// shops each leg to a different book and the result cannot be bet. Instead, when no book is
+// chosen, pick the book that covers the most of the window at the prices these builds want, and
+// say which one it picked. The Ladder is unaffected - it is a record, not a build.
+function degBestBook(sc, lo, hi){
+  var books = degBooks(sc.sports);
+  if (!books.length) return null;
+  var cover = {};
+  sc.sports.forEach(function(k){
+    var S = state.sports[k], games = crewGames(k), inWin = {};
+    games.forEach(function(x){ inWin[normTeam(x.g.home)] = inWin[normTeam(x.g.away)] = 1; });
+    oddsRowsAll(k).forEach(function(r){
+      if (!r || !r.book || r.over == null || +r.over < lo || +r.over > hi) return;
+      // odds files name players slightly differently; fold once per sport and cache it
+      if (!S.idx.foldName){
+        S.idx.foldName = {};
+        (S.idx.players || []).forEach(function(pp){ if (pp && pp.name) S.idx.foldName[cmbNameKey(pp.name)] = pp; });
+      }
+      var p = (S.idx.byName || {})[r.player] || S.idx.foldName[cmbNameKey(r.player)];
+      if (!p || !inWin[normTeam(p.team)]) return;
+      (cover[r.book] = cover[r.book] || {})[normTeam(p.team)] = 1;
+    });
+  });
+  var best = null;
+  books.forEach(function(b){
+    var n = Object.keys(cover[b] || {}).length;
+    if (!best || n > best.n) best = { book:b, n:n };
+  });
+  return best && best.n ? best.book : books[0];
+}
 function degTrain(sc, book){
   // A banker train carries the book's margin on every leg by construction, so asking each leg to be
   // near-fair left it empty across 17 games. Production had no value gate at all. Here: the most
