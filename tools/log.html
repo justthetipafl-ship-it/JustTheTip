@@ -50,6 +50,16 @@
 <div id="msg"></div>
 
 <div class="card">
+  <label>Paste from your spreadsheet</label>
+  <textarea id="paste" placeholder="Copy the rows out of Google Sheets (headers optional) and paste here.&#10;21/09/2026 06:00&#9;Football&#9;Prop Bet&#9;josh oliver o1.5 receptions&#9;0.75&#9;2.10&#9;Loss&#9;-0.75"></textarea>
+  <div class="row" style="margin-top:9px">
+    <button class="ghost" id="parse">Read the rows</button>
+    <button class="ghost" id="pasteClear">Clear</button>
+  </div>
+  <div id="pv"></div>
+</div>
+
+<div class="card">
   <div class="row">
     <div><label>Date</label><input type="date" id="date"></div>
     <div><label>Stake ($)</label><input type="number" id="stake" inputmode="decimal" step="0.01" placeholder="25"></div>
@@ -167,6 +177,98 @@ $('clear').onclick = function(){ batch = []; saveDraft(); drawBatch(); };
 $('savetok').onclick = function(){ try { localStorage.setItem('jtt_tok', $('tok').value.trim()); msg('ok', 'Token remembered on this device.'); } catch(e){ msg('err', 'Could not store the token.'); } };
 $('forgettok').onclick = function(){ try { localStorage.removeItem('jtt_tok'); $('tok').value = ''; msg('ok', 'Token forgotten.'); } catch(e){} };
 
+/* ---- spreadsheet import -------------------------------------------------------------
+   A pasted Google Sheets selection is tab separated. Columns are found by their CONTENT, not
+   their position, so the sheet can be reordered or re-headed without breaking this: a date looks
+   like a date, odds are >= 1.01, units are small, a result says win/loss/void.
+   Everything here is in UNITS - the stake column is never read as dollars.                     */
+var SPORT_ALIAS = { football:'NFL', nfl:'NFL', 'american football':'NFL', afl:'AFL', aussie:'AFL',
+  epl:'EPL', soccer:'EPL', football_uk:'EPL', mlb:'MLB', baseball:'MLB', nbl:'NBL',
+  basketball:'NBL', nba:'NBA', nhl:'NHL', hockey:'NHL', tennis:'Tennis', other:'Other' };
+var TYPE_ALIAS = { 'prop bet':'Prop', prop:'Prop', props:'Prop', multi:'Multi', parlay:'Multi',
+  sgm:'SGM', 'same game multi':'SGM', ladder:'Ladder', "pick'em":'Pick\u2019em', pickem:'Pick\u2019em',
+  total:'Total', totals:'Total', futures:'Futures', h2h:'Head to head', line:'Line' };
+var RESULT_ALIAS = { win:'win', won:'win', w:'win', loss:'loss', lose:'loss', lost:'loss', l:'loss',
+  void:'void', push:'void', refund:'void', cancelled:'void', pending:'pending', open:'pending', '':'pending' };
+
+function parseDate(v){
+  var t = String(v || '').trim();
+  var m = t.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})/);          // 21/09/2026 - day first
+  if (m){
+    var y = m[3].length === 2 ? '20' + m[3] : m[3];
+    return y + '-' + ('0'+m[2]).slice(-2) + '-' + ('0'+m[1]).slice(-2);
+  }
+  m = t.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  return m ? m[0] : null;
+}
+function looksResult(v){ return RESULT_ALIAS[String(v || '').trim().toLowerCase()] != null && String(v||'').trim() !== ''; }
+function numOf(v){
+  var n = parseFloat(String(v == null ? '' : v).replace(/[$,\s]/g, ''));
+  return isFinite(n) ? n : null;
+}
+function detectCols(rows){
+  var n = (rows[0] || []).length, col = {};
+  var score = function(test){
+    var best = -1, bestI = -1;
+    for (var i = 0; i < n; i++){
+      if (Object.keys(col).some(function(k){ return col[k] === i; })) continue;
+      var hits = 0;
+      rows.forEach(function(r){ if (test(r[i], r)) hits++; });
+      if (hits > best){ best = hits; bestI = i; }
+    }
+    return best > rows.length * 0.5 ? bestI : -1;
+  };
+  col.date   = score(function(v){ return !!parseDate(v); });
+  col.result = score(function(v){ return looksResult(v); });
+  col.odds   = score(function(v){ var x = numOf(v); return x != null && x >= 1.01 && x <= 1000; });
+  col.units  = score(function(v){ var x = numOf(v); return x != null && x > 0 && x <= 50; });
+  col.sport  = score(function(v){ return SPORT_ALIAS[String(v||'').trim().toLowerCase()] != null; });
+  col.type   = score(function(v){ return TYPE_ALIAS[String(v||'').trim().toLowerCase()] != null; });
+  // the bet is the widest text column left over
+  var bestLen = -1;
+  for (var i = 0; i < n; i++){
+    if (Object.keys(col).some(function(k){ return col[k] === i; })) continue;
+    var len = 0, words = 0;
+    rows.forEach(function(r){ var t = String(r[i] || '').trim(); len += t.length; if (/\s/.test(t)) words++; });
+    if (words > rows.length * 0.4 && len > bestLen){ bestLen = len; col.bet = i; }
+  }
+  if (col.bet == null) col.bet = -1;
+  return col;
+}
+function parsePaste(text){
+  var lines = String(text || '').split(/\r?\n/).map(function(l){ return l.replace(/\s+$/, ''); })
+    .filter(function(l){ return l.trim(); });
+  if (!lines.length) return { rows:[], warn:['Nothing pasted.'] };
+  var sep = lines[0].indexOf('\t') >= 0 ? '\t' : (lines[0].split(',').length > 3 ? ',' : '\t');
+  var cells = lines.map(function(l){ return l.split(sep); });
+  // drop a header row: it has no date and no result
+  if (cells.length > 1 && !parseDate(cells[0][0]) && !cells[0].some(looksResult)) cells = cells.slice(1);
+  var col = detectCols(cells), out = [], warn = [];
+  ['date','odds','units','result'].forEach(function(k){ if (col[k] < 0) warn.push('Could not find the ' + k + ' column.'); });
+  cells.forEach(function(r, i){
+    var date = parseDate(r[col.date]);
+    var odds = numOf(r[col.odds]), units = numOf(r[col.units]);
+    var res = RESULT_ALIAS[String(r[col.result] || '').trim().toLowerCase()] || 'pending';
+    var bet = String(col.bet >= 0 ? (r[col.bet] || '') : '').trim();
+    if (!bet && !units){ return; }
+    if (!date || units == null){ warn.push('Row ' + (i+1) + ' skipped: needs a date and a unit size.'); return; }
+    var sport = SPORT_ALIAS[String(r[col.sport] || '').trim().toLowerCase()] || String(r[col.sport] || 'Other').trim() || 'Other';
+    var type = TYPE_ALIAS[String(r[col.type] || '').trim().toLowerCase()] || String(r[col.type] || 'Other').trim() || 'Other';
+    var retU = res === 'win' ? (odds ? +(units * odds).toFixed(3) : null)
+             : res === 'void' ? units : res === 'loss' ? 0 : null;
+    out.push({ id:'i' + rowKeyId(date + '|' + bet + '|' + units + '|' + (odds || '')),
+               date:date, sport:sport, type:type, bet:bet || '(no description)',
+               units:units, odds:odds, result:res, returnedUnits:retU });
+  });
+  return { rows:out, warn:warn, col:col };
+}
+// stable id from the row itself, so re-pasting the same history cannot duplicate it
+function rowKeyId(str){
+  var h = 0;
+  for (var i = 0; i < str.length; i++){ h = ((h << 5) - h + str.charCodeAt(i)) | 0; }
+  return Math.abs(h).toString(36);
+}
+
 function api(path, opts){
   opts = opts || {};
   opts.headers = Object.assign({ 'Authorization': 'Bearer ' + $('tok').value.trim(),
@@ -213,6 +315,37 @@ $('save').onclick = function(){
       });
   }).catch(function(e){ msg('err', e.message); })
     .then(function(){ $('save').disabled = false; });
+};
+
+$('pasteClear').onclick = function(){ $('paste').value = ''; $('pv').innerHTML = ''; };
+$('parse').onclick = function(){
+  var res = parsePaste($('paste').value);
+  if (!res.rows.length){
+    $('pv').innerHTML = '<div class="msg err">' + (res.warn[0] || 'No rows recognised.') + '</div>';
+    return;
+  }
+  var w = res.rows.filter(function(r){ return r.result === 'win'; }).length,
+      l = res.rows.filter(function(r){ return r.result === 'loss'; }).length,
+      v = res.rows.filter(function(r){ return r.result === 'void'; }).length,
+      pd = res.rows.filter(function(r){ return r.result === 'pending'; }).length;
+  var staked = res.rows.reduce(function(a, r){ return a + (r.result === 'pending' ? 0 : r.units); }, 0);
+  var ret = res.rows.reduce(function(a, r){ return a + (r.returnedUnits || 0); }, 0);
+  var sports = {}; res.rows.forEach(function(r){ sports[r.sport] = (sports[r.sport] || 0) + 1; });
+  $('pv').innerHTML = '<div class="msg ok">Read ' + res.rows.length + ' bets \u00b7 ' + w + '-' + l + (v ? '-' + v : '')
+    + (pd ? ' \u00b7 ' + pd + ' pending' : '') + ' \u00b7 ' + staked.toFixed(2) + 'u staked \u00b7 '
+    + ((ret - staked) >= 0 ? '+' : '') + (ret - staked).toFixed(2) + 'u</div>'
+    + '<div class="note">' + Object.keys(sports).map(function(k){ return k + ' ' + sports[k]; }).join(' \u00b7 ')
+    + '</div><div class="note" style="margin-top:6px">First row read as: <b>' + res.rows[0].date + '</b> \u00b7 '
+    + res.rows[0].sport + ' \u00b7 ' + res.rows[0].type + ' \u00b7 ' + res.rows[0].bet.replace(/</g,'&lt;')
+    + ' \u00b7 ' + res.rows[0].units + 'u @ ' + (res.rows[0].odds || '?') + ' \u00b7 ' + res.rows[0].result + '</div>'
+    + (res.warn.length ? '<div class="note" style="color:var(--warn);margin-top:6px">' + res.warn.slice(0, 5).join('<br>') + '</div>' : '')
+    + '<button class="go" style="margin-top:10px" id="pasteAdd">Add these ' + res.rows.length + ' to the batch</button>';
+  $('pasteAdd').onclick = function(){
+    var added = 0;
+    res.rows.forEach(function(r){ if (!batch.some(function(b){ return b.id === r.id; })){ batch.push(r); added++; } });
+    saveDraft(); drawBatch(); msg('ok', 'Added ' + added + ' bets. Press Save to write them to GitHub.');
+    $('pv').innerHTML = ''; $('paste').value = '';
+  };
 };
 
 // boot
