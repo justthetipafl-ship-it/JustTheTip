@@ -199,7 +199,7 @@ def _combo_cross_game(by_game):
     return best
 
 
-def best_pick(base, gl, byp, book=LADDER_BOOK):
+def best_pick(base, gl, byp, book=LADDER_BOOK, fixtures=None):
     """Cross-game multi across the slate (one book); SGM only when a single game is on."""
     od = load(os.path.join(base, 'odds.json'))
     fx = load(os.path.join(base, 'fixture.json')) or []
@@ -307,21 +307,74 @@ def best_pick(base, gl, byp, book=LADDER_BOOK):
     for lg in best['legs']:
         g = byp[lg['name']]['games'][-1]
         latest = max(latest, (int(g.get('Year', 0) or 0), rnum(g.get('RoundName') or g.get('Week'))))
+    target = (latest[0], latest[1] + 1)
+    # the fixture knows which round is actually being played; the gamelogs only know what has been
+    # published, and they lag. Prefer the fixture for the leg's own team where it carries a round.
+    teams = {lg.get('team') for lg in best['legs'] if lg.get('team')}
+    for fxg in (fixtures or []):
+        if fxg.get('week') is None and fxg.get('round') is None:
+            continue
+        if teams and not (teams & {fxg.get('home'), fxg.get('away')}):
+            continue
+        yr = int(fxg.get('season') or fxg.get('year') or latest[0] or 0)
+        rd = rnum(fxg.get('week') if fxg.get('week') is not None else fxg.get('round'))
+        if (yr, rd) >= (latest[0], latest[1]):
+            target = (yr, rd)
+            break
     return {'legs': best['legs'], 'price': round(best['price'], 2), 'book': best['book'],
-            'type': best['type'], 'sub': subleg, 'year': latest[0], 'round': latest[1] + 1}
+            # `round` is the last COMPLETED round at pick time; grading takes the next game after it
+            'type': best['type'], 'sub': subleg, 'year': target[0], 'round': target[1]}
 
 
 
-def grade_leg(byp, name, field, line, year, rnd):
+DNP = 'dnp'          # he never took the field in the rounds after the bet
+
+
+def grade_leg(byp, name, field, line, year, rnd, stale_by=0, after_date=None):
+    """Grade the leg against the game it was actually struck on.
+
+    Two anchors, because the sports carry different keys:
+      * MLB / NBL / NHL / EPL gamelogs have dates -> the first game AFTER the day the bet was made.
+      * NFL / AFL have only year+round -> the row for THAT round exactly. Not ">= round": with a
+        week-3 target and no week-3 row, that silently graded the week-4 game instead.
+    Unresolved is not the same as lost. While the round has not been played (or the logs lag, which
+    is why NFL days sat pending with week 2 half-loaded) it stays pending. Once the league is past
+    it and he still has no row, he did not take the field and the day is void.
+    """
     rec = byp.get(name)
     if not rec:
         return None
+    if after_date:
+        for r in rec['games']:
+            d = str(r.get('Date') or r.get('date') or '')
+            if d and d > after_date and r.get(field) is not None:
+                return float(r.get(field)) >= line
+        return DNP if stale_by > 0 else None
+    # exact round first
     for r in rec['games']:
         y = int(r.get('Year', 0) or 0)
         rd = rnum(r.get('RoundName') or r.get('Week'))
-        if (y, rd) >= (year, rnd) and r.get(field) is not None:
+        if (y, rd) == (year, rnd) and r.get(field) is not None:
             return float(r.get(field)) >= line
-    return None
+    # AFL finals are named, not numbered ("Preliminary Final" gives no usable round), so allow the
+    # very next round before giving up. Anything further away is a different game, not this bet.
+    best = None
+    for r in rec['games']:
+        y = int(r.get('Year', 0) or 0)
+        rd = rnum(r.get('RoundName') or r.get('Week'))
+        if y == year and 0 < rd - rnd <= 1 and r.get(field) is not None:
+            if best is None or rd < best[0]:
+                best = (rd, float(r.get(field)) >= line)
+    if best:
+        return best[1]
+    return DNP if stale_by > 0 else None
+
+def league_round(gl):
+    """The latest (year, round) anywhere in the gamelogs - how far the league has actually got."""
+    latest = (0, 0)
+    for r in gl:
+        latest = max(latest, (int(r.get('Year', 0) or 0), rnum(r.get('RoundName') or r.get('Week'))))
+    return latest
 
 
 def mixed_pick(bases, book=LADDER_BOOK):
@@ -342,7 +395,7 @@ def mixed_pick(bases, book=LADDER_BOOK):
             gl = fresh + load_gamelogs(base)
             fx = load(os.path.join(base, 'fixture.json')) or []
             byp = build_index(gl)
-            pick = best_pick(base, gl, byp, book)
+            pick = best_pick(base, gl, byp, book, fx)
         except Exception as e:
             print('  mixed: %s failed (%s)' % (base, e))
             continue
@@ -396,11 +449,29 @@ def main():
         if d.get('result') not in (None, 'pending'):
             continue
         legs = d.get('legs') or []
+        # days written before the boundary change stored "target week" = last completed + 1;
+        # step back one so old and new days are graded the same way
+        by, br = d.get('year', 0), d.get('round', 0)
+        lr = league_round(gl)
+        stale = (lr[1] - br) if lr[0] == by else (99 if lr[0] > by else 0)
+        # does this sport's gamelogs carry dates? then the bet's own date is the anchor
+        dated = any(str(r.get('Date') or r.get('date') or '') for r in gl[:50])
+        if dated:
+            newest = max((str(r.get('Date') or r.get('date') or '') for r in gl), default='')
+            stale = 1 if (d.get('date') and newest and newest > d.get('date')) else 0
         outcomes = []
         for lg in legs:
             fld = MKT.get(lg.get('market'), lg.get('market'))
             outcomes.append(grade_leg(byp, lg.get('pick_name') or lg.get('name'), fld,
-                                      lg.get('line'), d.get('year', 0), d.get('round', 0)))
+                                      lg.get('line'), by, br, stale, dated and d.get('date')))
+        if DNP in outcomes:
+            # a leg whose player never took the field is a void, not a loss: drop the day and let
+            # today's run pick a fresh rung at the same bank
+            print('  ladder: %s voided - %s did not play' % (d.get('date'),
+                  ', '.join(lg.get('name') for lg, o in zip(legs, outcomes) if o == DNP)))
+            d['result'] = 'void'
+            d['bank_after'] = d.get('bank_before', lad['bank'])
+            continue
         if not outcomes or any(o is None for o in outcomes):
             continue                              # not all legs played yet
         before = d.get('bank_before', lad['bank'])
@@ -427,7 +498,7 @@ def main():
             lad['attempt'] = lad.get('attempt', 1) + 1
             lad['days'] = []
         lad['bank'] = bank
-        sgm = best_pick(base, gl, byp, book)
+        sgm = best_pick(base, gl, byp, book, fx)
         if sgm:
             legs = [{'name': lg['name'], 'pick_name': lg['name'], 'market': lg['market'],
                      'line': lg['line'], 'odds': lg['over'], 'team': lg.get('team'),
@@ -479,6 +550,7 @@ def main_mixed(out_dir, bases):
             fresh = load(os.path.join(base, 'ladder_gamelogs.json'))
             gl = (fresh if isinstance(fresh, list) else []) + load_gamelogs(base)
         idx_cache[sport] = build_index(gl)
+        idx_cache['_gl_' + sport] = gl
         return idx_cache[sport]
 
     # 1) grade any pending day, against the sport that day came from
@@ -489,8 +561,13 @@ def main_mixed(out_dir, bases):
         outcomes = []
         for lg in (d.get('legs') or []):
             fld = MKT.get(lg.get('market'), lg.get('market'))
+            gl2 = (idx_cache.get('_gl_' + (d.get('sport') or '')) or [])
+            dated2 = any(str(r.get('Date') or r.get('date') or '') for r in gl2[:50])
+            newest2 = max((str(r.get('Date') or r.get('date') or '') for r in gl2), default='')
+            stale2 = 1 if (dated2 and d.get('date') and newest2 > d.get('date')) else 0
             outcomes.append(grade_leg(byp, lg.get('pick_name') or lg.get('name'), fld,
-                                      lg.get('line'), d.get('year', 0), d.get('round', 0)))
+                                      lg.get('line'), d.get('year', 0), d.get('round', 0),
+                                      stale2, dated2 and d.get('date')))
         if not outcomes or any(o is None for o in outcomes):
             continue
         before = d.get('bank_before', lad['bank'])
@@ -507,6 +584,9 @@ def main_mixed(out_dir, bases):
     if last is None or last.get('result') not in (None, 'pending'):
         if last is None:
             bank, rung = lad.get('bank', START), 1
+        elif last.get('result') == 'void':
+            bank, rung = last.get('bank_after', lad['bank']), last.get('rung', 1)   # same rung, same bank
+            lad['days'] = [x for x in lad['days'] if x is not last]
         elif last.get('result') == 'win' and not last.get('complete'):
             bank, rung = lad['bank'], last.get('rung', 1) + 1
         else:
