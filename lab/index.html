@@ -10572,6 +10572,10 @@ window.LAB = {
    subscriber who unlocked the AFL tool today is already through here.
    This is a paywall, not a security boundary: the data files are public URLs. It keeps the tool
    behind the subscription without pretending to be more than it is.                              */
+// ==> ONE SWITCH. Set to true on launch day and the gate is live again; nothing else to change.
+//     Off, the tool opens straight to the fixtures - handy while testing.
+//     (localStorage 'jtt_auth_force' = '1' turns it on for one browser, for checking the gate.)
+var AUTH_ON = false;
 var AUTH_HASH = '6bbaa0af9ac8cf78c4cf5ca258bfd862c3aa4fb860401abfb387fc34b65af59b';   // fallback only
 var AUTH_KEY = 'jtt_afl_auth';                    // shared with the per-sport tools on purpose
 var AUTH_DAYS = 7;
@@ -10615,6 +10619,15 @@ window._authSubmit = function(ev){
   return false;
 };
 (function gate(){
+  var forced = false;
+  try { forced = localStorage.getItem('jtt_auth_force') === '1'; } catch(e){}
+  if (!AUTH_ON && !forced){                      // gate off: open the tool straight away
+    var o0 = document.getElementById('auth-overlay');
+    if (o0) o0.remove();
+    document.body.classList.remove('auth-locked');
+    _appBoot();
+    return;
+  }
   // the live hash, in the same order the other tools look for it
   var pull = function(u){
     return fetch(u, { cache:'reload' }).then(function(r){ return r.ok ? r.json() : null; })
