@@ -79,6 +79,13 @@ def load_csv(name):
     with open(p, newline="", encoding="utf-8") as f:
         return list(csv.DictReader(f))
 
+# Columns the Genius feed always carried and this build ignored until now. foulsDrawn is the one
+# that matters most - it is what earns free throws, and free throws are points. The rest describe
+# where a player's points actually come from, which the tool can correlate against a market.
+NEW_STATS = ("foulsDrawn", "twosMade", "twosAtt", "paintPts", "fastBreakPts",
+             "secondChancePts", "blocksAgainst", "eff")
+
+
 def main():
     box = load_csv("box_player.csv")
     res = load_csv("results.csv")
@@ -129,10 +136,14 @@ def main():
             "steals": stl, "blocks": blk, "turnovers": num(b.get("turnovers")),
             "fouls": num(b.get("fouls_personal")), "plusMinus": num(b.get("plus_minus")),
             "minutes": to_min(b.get("minutes")),
+            "foulsDrawn": num(b.get("fouls_on")),
+            "twosMade": num(b.get("two_pointers_made")), "twosAtt": num(b.get("two_pointers_attempted")),
+            "paintPts": num(b.get("points_in_the_paint")),
+            "fastBreakPts": num(b.get("points_fast_break")),
+            "secondChancePts": num(b.get("points_second_chance")),
+            "blocksAgainst": num(b.get("blocks_received")),
+            "eff": num(b.get("efficiency")),
         }
-        # Report the box-score columns this build is NOT reading, once per run. nblR passes through
-        # everything Genius provides and the mapping above is a fixed list, so anything useful the
-        # feed adds would otherwise sit there unnoticed.
         if not globals().get("_UNMAPPED_LOGGED"):
             globals()["_UNMAPPED_LOGGED"] = True
             used = {"match_id", "player_id", "season", "home_away", "starter", "playing_position",
@@ -140,7 +151,10 @@ def main():
                     "field_goals_attempted", "free_throws_made", "free_throws_attempted",
                     "rebounds_offensive", "rebounds_defensive", "turnovers", "fouls_personal",
                     "plus_minus", "minutes", "points", "rebounds_total", "assists", "steals", "blocks",
-                    "first_name", "family_name", "name"}
+                    "first_name", "family_name", "name", "fouls_on", "two_pointers_made",
+                    "two_pointers_attempted", "points_in_the_paint", "points_fast_break",
+                    "points_second_chance", "blocks_received", "efficiency",
+                    "team_name", "team_short_name", "opp_name", "opp_short_name"}
             spare = sorted(k for k in b.keys() if k not in used and not str(k).startswith("_"))
             if spare:
                 print("  [nbl] box columns available but not read: " + ", ".join(spare))
@@ -177,7 +191,7 @@ def main():
             if yr == cur_season:
                 d["cur"] += 1
             for s_ in ("points", "rebounds", "assists", "threes", "threesAtt", "fgm", "fga", "ftm", "fta",
-                       "oreb", "dreb", "steals", "blocks", "turnovers", "minutes"):
+                       "oreb", "dreb", "steals", "blocks", "turnovers", "minutes") + NEW_STATS:
                 if r.get(s_) is not None: d["sum"][s_] += r[s_]
     tfull = {v["code"]: v["full"] for v in tmap.values()}
     players = []
@@ -187,7 +201,8 @@ def main():
         row = {"playerId": d["pid"], "name": d["name"], "team": d["team"], "teamFull": tfull.get(d["team"], d["team"]),
                "position": pos5, "pos5": pos5, "games": d["g"], "starterPct": round(d["st"] / g, 2),
                "role": "starter" if d["st"] / g >= 0.5 else "bench"}
-        for s_ in ("points", "rebounds", "assists", "threes", "threesAtt", "fgm", "fga", "ftm", "fta", "oreb", "dreb", "steals", "blocks", "turnovers", "minutes"):
+        for s_ in ("points", "rebounds", "assists", "threes", "threesAtt", "fgm", "fga", "ftm", "fta",
+                       "oreb", "dreb", "steals", "blocks", "turnovers", "minutes") + NEW_STATS:
             row[s_] = round(d["sum"][s_] / g, 2)
         # 3+ games across the window, OR on a roster this season - a player who has taken the
         # court this year is on a team sheet and the books will price him
@@ -218,7 +233,7 @@ def main():
                                     "pos": [], "g": 0, "st": 0, "sum": defaultdict(float), "yr": yr})
             d["g"] += 1; d["st"] += r["starter"]; d["pos"].append(r["pos"]); d["team"] = r["Team"]; d["yr"] = yr
             for s_ in ("points", "rebounds", "assists", "threes", "threesAtt", "fgm", "fga", "ftm", "fta",
-                       "oreb", "dreb", "steals", "blocks", "turnovers", "minutes"):
+                       "oreb", "dreb", "steals", "blocks", "turnovers", "minutes") + NEW_STATS:
                 if r.get(s_) is not None: d["sum"][s_] += r[s_]
     for d in back.values():
         if d["g"] < 3:
@@ -228,7 +243,8 @@ def main():
         row = {"playerId": d["pid"], "name": d["name"], "team": d["team"], "teamFull": tfull.get(d["team"], d["team"]),
                "position": pos5, "pos5": pos5, "games": g, "starterPct": round(d["st"] / g, 2),
                "role": "starter" if d["st"] / g >= 0.5 else "bench", "lastSeason": d["yr"], "returning": True}
-        for s_ in ("points", "rebounds", "assists", "threes", "threesAtt", "fgm", "fga", "ftm", "fta", "oreb", "dreb", "steals", "blocks", "turnovers", "minutes"):
+        for s_ in ("points", "rebounds", "assists", "threes", "threesAtt", "fgm", "fga", "ftm", "fta",
+                       "oreb", "dreb", "steals", "blocks", "turnovers", "minutes") + NEW_STATS:
             row[s_] = round(d["sum"][s_] / g, 2)
         players.append(row)
 
