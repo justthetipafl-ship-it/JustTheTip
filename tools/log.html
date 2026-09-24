@@ -247,7 +247,9 @@ function parsePaste(text){
     .filter(function(l){ return l.trim(); });
   if (!lines.length) return { rows:[], warn:['Nothing pasted.'] };
   var sep = lines[0].indexOf('\t') >= 0 ? '\t' : (lines[0].split(',').length > 3 ? ',' : '\t');
-  var cells = lines.map(function(l){ return l.split(sep); });
+  var cells = lines.map(function(l){ return l.split(sep); })
+    .filter(function(c){ return c.length >= 3; });          // a real row has several columns
+  if (!cells.length) return { rows:[], warn:['Those lines do not look like spreadsheet rows \u2014 copy the cells, not the text.'] };
   // drop a header row: it has no date and no result
   if (cells.length > 1 && !parseDate(cells[0][0]) && !cells[0].some(looksResult)) cells = cells.slice(1);
   var col = detectCols(cells), out = [], warn = [];
@@ -303,15 +305,18 @@ $('save').onclick = function(){
   $('save').disabled = true; msg('', '');
   api('/contents/' + FILE + '?ref=' + BRANCH).then(function(res){
     var existing = [], sha = null, fileUnit = null;
-    if (res.ok && res.body && res.body.content){
-      sha = res.body.sha;
+    // An EMPTY file comes back 200 with no content, and that used to throw "Could not read the
+    // file: 200" and block every save. An empty or unparseable file just means there is nothing to
+    // merge with - keep its sha so we overwrite it rather than failing to create it.
+    if (res.ok && res.body){
+      sha = res.body.sha || null;
       var parsed = null;
-      try { parsed = JSON.parse(unb64(res.body.content)); } catch(e){ parsed = null; }
+      try { parsed = res.body.content ? JSON.parse(unb64(res.body.content)) : null; } catch(e){ parsed = null; }
       // the file is {unitSize, updated, bets:[...]}; a bare array is the older shape and still reads
       existing = Array.isArray(parsed) ? parsed : ((parsed && parsed.bets) || []);
       if (!Array.isArray(existing)) existing = [];
       fileUnit = (parsed && !Array.isArray(parsed) && +parsed.unitSize > 0) ? +parsed.unitSize : null;
-    } else if (res.status !== 404){
+    } else if (res.status !== 404 && res.status !== 200){
       throw new Error('Could not read the file: ' + res.status + ' ' + ((res.body && res.body.message) || ''));
     }
     // merge by id so a double-tap can't duplicate a bet, and an edited one replaces the old
@@ -367,6 +372,10 @@ $('parse').onclick = function(){
     + (pd ? ' \u00b7 ' + pd + ' pending' : '') + ' \u00b7 ' + staked.toFixed(2) + 'u staked \u00b7 '
     + ((ret - staked) >= 0 ? '+' : '') + (ret - staked).toFixed(2) + 'u</div>'
     + '<div class="note">' + Object.keys(sports).map(function(k){ return k + ' ' + sports[k]; }).join(' \u00b7 ')
+    + '</div><div class="note" style="margin-top:6px">Columns read \u2014 '
+    + ['date','sport','type','bet','units','odds','result'].map(function(k){
+        return k + ': ' + (res.col && res.col[k] >= 0 ? 'col ' + String.fromCharCode(65 + res.col[k]) : '<b style="color:var(--warn)">not found</b>');
+      }).join(' \u00b7 ')
     + '</div><div class="note" style="margin-top:6px">First row read as: <b>' + res.rows[0].date + '</b> \u00b7 '
     + res.rows[0].sport + ' \u00b7 ' + res.rows[0].type + ' \u00b7 ' + res.rows[0].bet.replace(/</g,'&lt;')
     + ' \u00b7 ' + res.rows[0].units + 'u @ ' + (res.rows[0].odds || '?') + ' \u00b7 ' + res.rows[0].result + '</div>'
