@@ -881,6 +881,11 @@
   .dd-kv{display:grid;grid-template-columns:auto auto auto auto;gap:4px 10px;font-size:11px;align-items:baseline;}
   .dd-kv span{color:var(--text-3);font-size:10px;} .dd-kv b{font-family:var(--font-mono);}
   .dd-kv b.good{color:var(--accent);} .dd-kv b.bad{color:#f97316;}
+  .dd-drv{display:flex;align-items:baseline;gap:8px;padding:4px 0;font-size:11px;border-top:1px solid rgba(255,255,255,.04);}
+  .dd-dn{flex:1;color:var(--text-2);} .dd-drv b{font-family:var(--font-mono);font-size:13px;min-width:38px;text-align:right;}
+  .dd-dt{font-size:9px;color:var(--text-3);width:96px;} .dd-dt.good{color:var(--accent);} .dd-dt.bad{color:#f97316;}
+  .dd-dp{font-size:9px;color:var(--text-3);width:54px;text-align:right;}
+  .dd-drv i{font-style:normal;font-size:9px;color:var(--text-3);width:96px;text-align:right;}
   .dd-books{display:flex;flex-wrap:wrap;gap:5px;}
   .dd-bk{font-size:9px;color:var(--text-3);border:1px solid var(--border);border-radius:7px;padding:3px 7px;}
   .dd-bk b{display:block;font-family:var(--font-mono);font-size:11px;color:var(--text);}
@@ -9972,6 +9977,158 @@ function deepData(key, name, mkt, line, side, opp){
   });
   return { p:p, all:all, l5:l5, l10:l10, l20:l20, seas:seas, vsOpp:vsOpp, home:home, away:away };
 }
+
+/* WHAT MOVES THIS MARKET -----------------------------------------------------------------------
+   Rather than a hand-written list of "important stats" per sport, the drivers are found in the
+   data: every numeric column in the gamelogs is correlated against the market across the whole
+   league, and the strongest are shown. For receptions that surfaces targets (0.95), target share
+   (0.92) and air yards (0.70) without anyone deciding so in advance, and it works the same for a
+   sport whose columns I have never looked at.
+   Outcomes are excluded - receiving yards "drives" receptions at 0.90 but is just the same event
+   measured twice, so any column that is itself a posted market, or a fantasy total, is dropped. */
+var DRIVER_NAMES = {
+  targets:'Targets', tgtShare:'Target share', airYds:'Air yards', aDot:'Depth of target',
+  snapPct:'Snap share', routes:'Routes run', rushAtt:'Carries', rushShare:'Carry share',
+  rzAtt_g:'Red-zone carries', rzTgt_g:'Red-zone targets', passAtt:'Pass attempts',
+  cba:'Centre bounces', tog:'Time on ground', contested:'Contested possessions',
+  inside50s:'Inside 50s', minutes:'Minutes', toiMin:'Ice time', ppToi:'Power-play time',
+  shots:'Shots', shotsOn:'Shots on target', fga:'Field-goal attempts', threesAtt:'Threes attempted',
+  oreb:'Offensive rebounds', dreb:'Defensive rebounds', AB:'At bats', PA:'Plate appearances',
+  pitches:'Pitches', IP:'Innings', kicks:'Kicks', handballs:'Handballs', marks:'Marks'
+};
+function driverName(key, f){
+  if (DRIVER_NAMES[f]) return DRIVER_NAMES[f];
+  var mk = ((state.sports[key].config || {}).oddsMkts || []).filter(function(m){ return m[0] === f; })[0];
+  if (mk) return mk[1];
+  return String(f).replace(/([a-z])([A-Z])/g, '$1 $2').replace(/_/g, ' ')
+    .replace(/^./, function(c){ return c.toUpperCase(); });
+}
+function ddCorr(rows, a, b){
+  var n = 0, sa = 0, sb = 0, saa = 0, sbb = 0, sab = 0;
+  for (var i = 0; i < rows.length; i++){
+    var x = +rows[i][a], y = +rows[i][b];
+    if (!isFinite(x) || !isFinite(y)) continue;
+    n++; sa += x; sb += y; saa += x*x; sbb += y*y; sab += x*y;
+  }
+  if (n < 150) return null;
+  var den = Math.sqrt((n*saa - sa*sa) * (n*sbb - sb*sb));
+  return den ? (n*sab - sa*sb) / den : null;
+}
+function ddDrivers(key, mkt){
+  var S = state.sports[key];
+  S.idx.drivers = S.idx.drivers || {};
+  if (S.idx.drivers[mkt]) return S.idx.drivers[mkt];
+  var logs = (asArray(S.data.gamelogs) || []).slice(-6000);
+  if (!logs.length) return (S.idx.drivers[mkt] = []);
+  var markets = {}; ((S.config || {}).oddsMkts || []).forEach(function(m){ markets[m[0]] = 1; });
+  var skip = { fanPts:1, dreamteam:1, pts:1, Year:1, Week:1, MatchId:1, PlayerId:1 };
+  // Take the column list from a SPREAD of rows, not one. MLB's last row is often a pitcher, whose
+  // row has no batting columns at all - so a batting market found no drivers whatsoever.
+  var seen = {}, fields = [];
+  for (var si = 0; si < logs.length; si += Math.max(1, Math.floor(logs.length / 200))){
+    var row = logs[si] || {};
+    for (var f in row){
+      if (seen[f] || f === mkt || skip[f] || markets[f]) continue;
+      if (typeof row[f] !== 'number') continue;
+      seen[f] = 1; fields.push(f);
+    }
+  }
+  var scan = function(list){
+    var res = [];
+    list.forEach(function(f){
+      var r = ddCorr(logs, mkt, f);
+      if (r != null && Math.abs(r) >= 0.25) res.push({ f:f, r:r });
+    });
+    res.sort(function(a, b){ return Math.abs(b.r) - Math.abs(a.r); });
+    return res;
+  };
+  var out = scan(fields);
+  if (!out.length){
+    // Some sports carry nothing but their own markets - MLB's batting rows are H, TB, HR, RBI, R
+    // and nothing else, so excluding markets left no drivers at all. Fall back to them, minus the
+    // near-twins (0.9+), which are the same event counted twice.
+    var alt = [];
+    for (var ai = 0; ai < 400 && ai < logs.length; ai++){
+      var row2 = logs[logs.length - 1 - ai] || {};
+      for (var f2 in row2){
+        if (f2 === mkt || skip[f2] || alt.indexOf(f2) >= 0) continue;
+        if (typeof row2[f2] === 'number') alt.push(f2);
+      }
+    }
+    out = scan(alt).filter(function(x){ return Math.abs(x.r) < 0.9; });
+  }
+  return (S.idx.drivers[mkt] = out.slice(0, 6));
+}
+function ddDriverSection(key, name, mkt, opp){
+  var drv = ddDrivers(key, mkt);
+  if (!drv.length) return '';
+  var S = state.sports[key];
+  var logs = sortLogsDesc(((S.idx.logsByName || {})[name] || []).slice());
+  var rows = drv.map(function(d){
+    var l10 = [], seas = [];
+    logs.forEach(function(r){
+      var v = +r[d.f];
+      if (!isFinite(v)) return;
+      if (l10.length < 10) l10.push(v);
+      if (String(r.Year || r.year) === String(curSeason(key))) seas.push(v);
+    });
+    if (!l10.length) return null;
+    var recent = mean(l10), base = seas.length ? mean(seas) : recent;
+    // where he sits among everyone with a price in this market
+    var peers = [];
+    Object.keys(S.idx.logsByName || {}).forEach(function(nm){
+      var g = (S.idx.logsByName[nm] || []).slice(-10), v = [];
+      g.forEach(function(r){ var x = +r[d.f]; if (isFinite(x)) v.push(x); });
+      if (v.length >= 5) peers.push(mean(v));
+    });
+    peers.sort(function(a, b){ return a - b; });
+    var pct = peers.length ? Math.round(peers.filter(function(v){ return v < recent; }).length / peers.length * 100) : null;
+    var trend = base ? (recent - base) / Math.abs(base) : 0;
+    return { name:driverName(key, d.f), r:d.r, recent:recent, base:base, pct:pct, trend:trend };
+  }).filter(Boolean);
+  if (!rows.length) return '';
+  return '<div class="dd-sec"><div class="dd-h">What moves this market</div>'
+    + rows.map(function(x){
+        var up = x.trend >= 0.08, down = x.trend <= -0.08;
+        return '<div class="dd-drv"><span class="dd-dn">'+esc(x.name)+'</span>'
+          + '<b>'+(x.recent >= 10 ? x.recent.toFixed(0) : x.recent.toFixed(1))+'</b>'
+          + '<span class="dd-dt '+(up ? 'good' : down ? 'bad' : '')+'">'
+          + (up ? '\u25b2' : down ? '\u25bc' : '\u2013')+' '+(x.trend >= 0 ? '+' : '')+Math.round(x.trend*100)+'% v season</span>'
+          + (x.pct != null ? '<span class="dd-dp">'+x.pct+'th pct</span>' : '')
+          + '<i>drives it '+(x.r >= 0 ? '' : 'inversely ')+Math.abs(x.r).toFixed(2)+'</i></div>';
+      }).join('')
+    + '<div class="dd-note">Found by correlating every column in the gamelogs against this market '
+    + 'across the league, not from a fixed list. The number on the right is that correlation; his '
+    + 'figure is the last 10 games, against his own season and everyone else\u2019s.</div></div>';
+}
+/* GAME SCRIPT - the match odds say how the game is expected to go, which decides how much work a
+   player gets: a big underdog throws more and runs less, a low total means fewer plays for all. */
+function ddScript(key, team, opp){
+  var S = state.sports[key], mo = null;
+  var idx = S.idx.matchOddsIdx || {};
+  Object.keys(idx).forEach(function(k){
+    var parts = k.split('|');
+    if (mo) return;
+    if (normTeam(parts[0]) === normTeam(team) || normTeam(parts[1]) === normTeam(team)) mo = { k:k, m:idx[k] };
+  });
+  if (!mo) return '';
+  var m = mo.m, parts = mo.k.split('|'), isHome = normTeam(parts[0]) === normTeam(team);
+  var total = m.total && m.total.line != null ? +m.total.line : null;
+  var line = m.line ? (isHome ? m.line.homeLine : m.line.awayLine) : null;
+  if (line == null && m.line && m.line.line != null) line = isHome ? -Math.abs(+m.line.line) : Math.abs(+m.line.line);
+  var teamTotal = (total != null && line != null) ? (total / 2) - (+line / 2) : null;
+  var bits = [];
+  if (total != null) bits.push('<span>Match total</span><b>'+total+'</b>');
+  if (line != null) bits.push('<span>Line</span><b>'+(line > 0 ? '+' : '')+line+'</b>');
+  if (teamTotal != null) bits.push('<span>'+esc(abbrOf(key, team))+' implied</span><b>'+teamTotal.toFixed(1)+'</b>');
+  if (!bits.length) return '';
+  var read = line == null ? ''
+    : line <= -6 ? 'Comfortable favourite: expect the lead, which means more running and fewer late plays.'
+    : line >= 6 ? 'Clear underdog: chasing the game usually means more passing volume and more plays.'
+    : 'Close game expected, so neither side is forced into a script.';
+  return '<div class="dd-sec"><div class="dd-h">Game script</div><div class="dd-kv">'+bits.join('')+'</div>'
+    + (read ? '<div class="dd-note">'+read+'</div>' : '')+'</div>';
+}
 function deepPanel(){
   var d = state.view.deep;
   if (!d) return '';
@@ -10073,10 +10230,12 @@ function deepPanel(){
         + (1/fair).toFixed(2)+'</b>'+(best && +best.over > 1/fair ? ' \u2014 '+esc(best.book)+' is paying above it.'
         : '. No book is beating it.')+'</div>' : '')+'</div>' : '';
 
+  var drivers = ddDriverSection(key, name, mkt, d.opp);
+  var script = ddScript(key, p.team, d.opp);
   return '<div class="cmb-overlay open" onclick="if(event.target===this)LAB.deepClose()">'
     + '<div class="cmb-modal dd-modal"><div class="cmb-hdr"><i class="ti ti-telescope"></i><h2>Deep Dive</h2>'
     + '<button class="cmb-close" onclick="LAB.deepClose()">&times;</button></div>'
-    + '<div class="cmb-body">'+head+worm+rates+shape+matchup+role+market
+    + '<div class="cmb-body">'+head+worm+rates+drivers+script+shape+matchup+role+market
     + '<div class="dd-acts"><button class="pc-add" onclick="LAB.deepToCard()">Add to my card</button>'
     + '<button class="sl-chip" onclick="LAB.player(\''+key+'\',\''+esc(name).replace(/'/g,"\\'")+'\')">Full player page</button></div>'
     + '</div></div></div>';
