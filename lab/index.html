@@ -857,6 +857,8 @@
   .res-txt i{font-style:normal;font-size:9px;color:var(--text-3);}
   .res-out{font-family:var(--font-mono);font-size:12px;width:66px;text-align:right;}
   .res-out.pos{color:var(--accent);} .res-out.neg{color:#f97316;} .res-out.mid{color:var(--text-3);}
+  .row-btns{flex:none;display:flex;flex-direction:column;gap:3px;margin-right:2px;}
+  .row-btns .card-add,.row-btns .dd-btn{width:24px;height:22px;font-size:12px;}
   .dd-btn{flex:none;width:26px;height:26px;border-radius:7px;border:1px dashed var(--border);
     background:transparent;color:var(--text-3);cursor:pointer;font-size:13px;display:flex;align-items:center;justify-content:center;}
   .dd-btn:hover{border-style:solid;border-color:var(--accent);color:var(--accent);}
@@ -3148,6 +3150,8 @@ function streakers(key, g){
   return out.slice(0, SIG_MAX_ROWS);
 }
 function streakRow(key, r){
+  var btns = rowBtns(key, { name:r.name, mkt:mktFromLabel(key, r.label), line:r.line, side:'over',
+                            odds:r.price, book:r.book, opp:r.opp, team:r.team, label:r.label });
   var mx = Math.max.apply(null, r.last.concat([r.line])) || 1;
   var pips = '<div class="stk-pips">'+r.last.map(function(v){
     var hit = v > r.line, h = Math.max(6, Math.round(v / mx * 100));
@@ -3156,7 +3160,9 @@ function streakRow(key, r){
   + '<div class="stk-vals">'+r.last.map(function(v){
       return '<span>'+(v % 1 ? v.toFixed(1) : v)+'</span>'; }).join('')+'</div>';
   var ask = (Math.round(r.line) === r.line) ? (r.line + 1) : Math.ceil(r.line);
-  return '<div class="stk-row" onclick="LAB.player(\''+key+'\',\''+esc(r.name).replace(/'/g,"\\'")+'\')">'
+  return '<div class="stk-row" onclick="LAB.player(\''
+    +key+'\',\''+esc(r.name).replace(/'/g,"\\'")+'\')">'
+    + btns
     + playerImgP(key, r.name, 28)
     + '<div class="stk-left">'
       + '<div class="stk-nm"><b>'+esc(r.name)+'</b><span class="stk-tag">'
@@ -3262,10 +3268,14 @@ function eliteMatchups(key, g){
   return out.slice(0, SIG_MAX_ROWS);
 }
 function eliteRow(key, r){
+  var btns = r.entry ? rowBtns(key, { name:r.name, mkt:mktFromLabel(key, r.label), line:r.entry.line,
+                       side:'over', odds:r.entry.price, book:r.entry.book, opp:r.opp, label:r.label }) : '';
   var ord = function(n){ return n + (['th','st','nd','rd'][(n%100-n%10!=10)*(n%10<4)*n%10] || 'th'); };
   var soft = Math.round((1 - (r.dvp.rank - 1) / Math.max(1, r.dvp.total - 1)) * 100);
   var ask = r.entry ? ((Math.round(r.entry.line) === r.entry.line) ? r.entry.line + 1 : Math.ceil(r.entry.line)) : null;
-  return '<div class="elm-row" onclick="LAB.player(\''+key+'\',\''+esc(r.name).replace(/'/g,"\\'")+'\')">'
+  return '<div class="elm-row" onclick="LAB.player(\''
+    +key+'\',\''+esc(r.name).replace(/'/g,"\\'")+'\')">'
+    + btns
     + playerImgP(key, r.name, 28)
     + '<div class="elm-left">'
       + '<div class="elm-nm"><b>'+esc(r.name)+'</b><span class="elm-rk">'+ord(r.lgRank)+' IN LEAGUE</span></div>'
@@ -3422,6 +3432,8 @@ function h2hSignals(key, g, kind){
 }
 function h2hSigRow(key, r){
   var up = r.kind === 'bunny';
+  var btns = rowBtns(key, { name:r.name, mkt:mktFromLabel(key, r.label), line:r.line,
+                            side:(r.kind === 'bunny' ? 'over' : 'under'), odds:r.price, opp:r.opp, label:r.label });
   var meets = r.line != null ? '<div class="h2h-meet">'+r.vals.map(function(v){
       var hit = up ? v > r.line : v <= r.line;
       return '<span class="'+(hit ? 'over' : 'under')+'">'+(v % 1 ? v.toFixed(1) : v)+'</span>'; }).join('')+'</div>'
@@ -3431,7 +3443,9 @@ function h2hSigRow(key, r){
   var vsField = r.diffPct != null
     ? (up ? '+' : '-')+Math.abs(r.diffPct).toFixed(0)+'% vs next-'+(up ? 'best' : 'worst')+' matchup'
     : 'only matchup on file';
-  return '<div class="h2h-sig-row" onclick="LAB.player(\''+key+'\',\''+esc(r.name).replace(/'/g,"\\'")+'\')">'
+  return '<div class="h2h-sig-row" onclick="LAB.player(\''
+    +key+'\',\''+esc(r.name).replace(/'/g,"\\'")+'\')">'
+    + btns
     + playerImgP(key, r.name, 28)
     + '<div class="h2h-sig-left">'
       + '<div class="h2h-sig-nm"><b>'+esc(r.name)+'</b>'
@@ -3734,6 +3748,8 @@ function ctxChips(key, p, mkt, line, opp){
 }
 function ouRow(key, r){
   var ask = (Math.round(r.line) === r.line) ? r.line + 1 : Math.ceil(r.line);
+  var btns = rowBtns(key, { name:r.name, mkt:r.mkt, line:r.line, side:(r.over === false ? 'under' : 'over'),
+                            odds:r.price, book:r.book, opp:r.opp, team:r.team, label:r.label });
   var chips = '<div class="gl-why">'
     + '<span class="gl-chip '+(r.prob >= 0.6 ? 'good' : '')+'">'+Math.round(r.prob*100)+'% model</span>'
     + (r.edge != null ? '<span class="gl-chip '+(r.edge > 0 ? 'good' : 'bad')+'">'
@@ -3745,7 +3761,9 @@ function ouRow(key, r){
         + (r.dvpPct > 0 ? '+' : '')+r.dvpPct.toFixed(0)+'% DVP</span>' : '')
     + ctxChips(key, (state.sports[key].idx.byName||{})[r.name], r.mkt, r.line, r.opp)
     + '<span class="gl-chip">'+r.avg.toFixed(r.avg < 3 ? 2 : 1)+' avg \u00b7 '+r.games+' gm</span></div>';
-  return '<div class="gl-row" onclick="LAB.player(\''+key+'\',\''+esc(r.name).replace(/'/g,"\\'")+'\')">'
+  return '<div class="gl-row" onclick="LAB.player(\''
+    +key+'\',\''+esc(r.name).replace(/'/g,"\\'")+'\')">'
+    + btns
     + playerImgP(key, r.name, 28)
     + '<div class="gl-left">'
       + '<div class="gl-nm"><b>'+esc(r.name)+'</b><span class="gl-tag">'
@@ -4212,8 +4230,10 @@ function tuddyProfile(key, r){
   return h;
 }
 function nflTuddyRow(key, r){
+  var btns = rowBtns(key, { name:r.name, mkt:'anytimeTd', line:0.5, side:'over', odds:r.price, book:r.book, opp:r.opp, team:(r.p||{}).team, label:'Anytime TD' });
   // reuses the Green Lights row chrome, tagged so the two are distinguishable
   return '<div class="gl-row nfl-row" onclick="LAB.player(\'' + key + '\',\'' + esc(r.name).replace(/'/g,"\\'") + '\')">'
+    + btns
     + playerImgP(key, r.name, 28)
     + '<div class="gl-left"><div class="gl-nm"><b>'+esc(r.name)+'</b><span class="gl-tag">'
       + esc((posShortP(r.p) ? posShortP(r.p)+' \u00b7 ' : '')+abbrOf(key, r.p.team)+' v '+abbrOf(key, r.opp))+'</span></div>'
@@ -4229,6 +4249,7 @@ function nflTuddyRow(key, r){
     + '<div class="gl-right"><div class="gl-ev pos">'+r.dvp.rank+'</div><div class="gl-evl">TD RANK</div></div></div>';
 }
 function nflChunkRow(key, r){
+  var btns = rowBtns(key, { name:r.name, mkt:r.mkt, line:r.line, side:'over', odds:r.price, book:r.book, opp:r.opp, team:(r.p||{}).team });
   var seq = r.last.slice().reverse();
   var mx = Math.max.apply(null, seq.concat([r.line])) || 1;
   var pips = '<div class="stk-pips">'+seq.map(function(v){
@@ -4238,6 +4259,7 @@ function nflChunkRow(key, r){
         return '<span>'+(v % 1 ? v.toFixed(1) : v)+'</span>'; }).join('')+'</div>';
   // shares the streak-row look, but must be distinguishable from Streakers in the DOM
   return '<div class="stk-row chunk-row" onclick="LAB.player(\'' + key + '\',\'' + esc(r.name).replace(/'/g,"\\'") + '\')">'
+    + btns
     + playerImgP(key, r.name, 28)
     + '<div class="stk-left"><div class="stk-nm"><b>'+esc(r.name)+'</b><span class="stk-tag">'
       + esc((posShortP(r.p) ? posShortP(r.p)+' \u00b7 ' : '')+abbrOf(key, r.p.team))+'</span></div>'
@@ -4254,7 +4276,9 @@ function nflChunkRow(key, r){
       + (r.price != null ? '<div class="stk-odds">$'+r.price.toFixed(2)+'</div>' : '')+'</div></div>';
 }
 function nflAngleRow(key, r, kind){
+  var btns = rowBtns(key, { name:r.name, mkt:r.mkt, line:r.line, side:'over', odds:r.price, book:r.book, opp:r.opp, team:(r.p||{}).team });
   return '<div class="gl-row nfl-row" onclick="LAB.player(\'' + key + '\',\'' + esc(r.name).replace(/'/g,"\\'") + '\')">'
+    + btns
     + playerImgP(key, r.name, 28)
     + '<div class="gl-left"><div class="gl-nm"><b>'+esc(r.name)+'</b><span class="gl-tag">'
       + esc((posShortP(r.p) ? posShortP(r.p)+' \u00b7 ' : '')+abbrOf(key, r.p.team)+' v '+abbrOf(key, r.opp))+'</span></div>'
@@ -4660,8 +4684,13 @@ function kickerRows(key, g){
   return out;
 }
 function kickerRow(key, r){
+  // a kicker pick keeps its price under .od, like the posted-line tiles
+  var pk = (r.picks || [])[0] || {}, pod = pk.od || {};
+  var btns = pod.line != null ? rowBtns(key, { name:(r.p||{}).name, mkt:pk.mkt || 'kickingPts', line:pod.line,
+                    side:'over', odds:pod.price, book:pod.book, opp:r.opp, team:r.team, label:pk.label }) : '';
   var pct = function(v){ return v.toFixed(1); };
   return '<div class="gl-row nfl-row" onclick="LAB.player(\'' + key + '\',\'' + esc(r.p.name).replace(/'/g,"\\'") + '\')">'
+    + btns
     + playerImgP(key, r.p, 28)
     + '<div class="gl-left"><div class="gl-nm"><b>'+esc(r.p.name)+'</b><span class="gl-tag">'
       + esc('K \u00b7 '+abbrOf(key, r.team)+' v '+abbrOf(key, r.opp))+'</span></div>'
@@ -4767,9 +4796,12 @@ function tackleMachines(key, g){
              + Math.round(cfg.hit*100)+'% of games against an opponent that concedes them.' };
 }
 function tackleRow(key, r){
+  var btns = rowBtns(key, { name:r.name, mkt:'tackles', line:r.line, side:'over',
+                            odds:r.price, book:r.book, opp:r.opp, team:r.team, label:'Tackles' });
   var seq = r.last.slice().reverse();
   var mx = Math.max.apply(null, seq.concat([r.line])) || 1;
-  return '<div class="stk-row chunk-row" onclick="LAB.player(\'' + key + '\',\'' + esc(r.name).replace(/'/g,"\\'") + '\')">'
+  return '<div class="stk-row chunk-row" onclick="LAB.player(\''
+    + btns + key + '\',\'' + esc(r.name).replace(/'/g,"\\'") + '\')">'
     + playerImgP(key, r.name, 28)
     + '<div class="stk-left"><div class="stk-nm"><b>'+esc(r.name)+'</b><span class="stk-tag">'
       + esc((posShortP(r.p) ? posShortP(r.p)+' \u00b7 ' : '')+abbrOf(key, r.team))+'</span></div>'
@@ -5381,7 +5413,13 @@ function letsClimb(key, g){
 }
 /* ---- rows ---- */
 function aflRowHead(key, r, tag){
+  // the AFL tiles build this markup themselves rather than going through eplRow, so they need the
+  // buttons wired in here or Snags, Hunting Grounds and Kick In Merchants have none
+  var od = r.od || (r.b && r.b.od) || (r.bet && r.bet.od) || {};   // tiles store the price three ways
   return '<div class="gl-row sig-extra" onclick="LAB.player(\'' + key + '\',\'' + esc(r.name).replace(/'/g,"\\'") + '\')">'
+    + rowBtns(key, { name:r.name, mkt:r.mkt || (r.b && r.b.mkt), line:(od.line != null ? od.line : r.line),
+                     side:(r.b && r.b.side) || 'over', odds:od.price || r.price, book:od.book || r.book,
+                     opp:r.opp, team:(r.p || {}).team, label:r.label })
     + playerImgP(key, r.name, 28)
     + '<div class="gl-left"><div class="gl-nm"><b>'+esc(r.name)+'</b><span class="gl-tag">'
     + esc(tag)+'</span></div>';
@@ -5415,6 +5453,11 @@ function kickInRow(key, r){
     + '<div class="gl-right"><div class="gl-ev '+(r.clears ? 'pos' : 'neg')+'">'+r.projKicks.toFixed(1)+'</div><div class="gl-evl">PROJ KICKS</div></div></div>';
 }
 function climbRow(key, r){
+  // a ladder is a package, not one bet: the buttons work off its BASE rung, which is the line the
+  // whole thing is built on
+  var base = (r.legs || []).filter(function(l){ return l.base; })[0] || (r.legs || [])[0];
+  var btns = base ? rowBtns(key, { name:r.name, mkt:r.mkt, line:base.line, side:'over',
+                    odds:base.price, book:base.book, opp:r.opp, label:mktLabel(key, r.mkt) }) : '';
   var pc = function(v){ return Math.round(v*100); };
   var legs = r.legs.map(function(l, i){
     return '<div class="lad-leg'+(l.base ? ' base' : '')+'">'
@@ -5425,6 +5468,7 @@ function climbRow(key, r){
       + '<span class="lad-ev '+(l.ev >= 0 ? 'pos' : 'neg')+'">'+(l.ev >= 0 ? '+' : '')+pc(l.ev)+'%</span></div>';
   }).join('');
   return '<div class="gl-row sig-extra lad-row" onclick="LAB.player(\'' + key + '\',\'' + esc(r.name).replace(/'/g,"\\'") + '\')">'
+    + btns
     + playerImgP(key, r.name, 28)
     + '<div class="gl-left"><div class="gl-nm"><b>'+esc(r.name)+'</b><span class="gl-tag">'
     + esc((posShortP(r.p) ? posShortP(r.p)+' \u00b7 ' : '')+abbrOf(key, r.p.team)+' v '+abbrOf(key, r.opp))+'</span></div>'
@@ -5484,9 +5528,20 @@ function eachSkater(key, g, fn){
     playersOnTeam(key, team).forEach(function(p){ if (p && eplAvail(key, p, team)) fn(p, team, opp); });
   });
 }
-function eplRow(key, r, bet, chips, big, bigL, good, cardLbl){
+function eplRow(key, r, bet, chips, big, bigL, good, cardLbl, betOd){
   return '<div class="gl-row sig-extra" onclick="LAB.player(\'' + key + '\',\'' + esc(r.name).replace(/'/g,"\\'") + '\')">'
-    + (cardLbl ? cardBtn(key, r, cardLbl) + deepBtn(key, r, cardLbl) : '')
+    + (function(){
+        // every caller gets the buttons, label or not: the EPL tiles pass no label and had none.
+        // Their price hides under one of three shapes (b.od, od, pick.c), so try each.
+        var od = betOd || (r.b && r.b.od) || r.od || (r.pick && r.pick.c) || (r.entry) || {};
+        var price = od.price != null ? od.price : od.over;
+        if (price == null) return '';
+        // "anytime goal" and "first scorer" carry no line - they are 0.5 bets in everything but name
+        var ln = od.line != null ? od.line : 0.5;
+        return rowBtns(key, { name:r.name, mkt:mktOfRow(key, r, cardLbl), line:ln,
+                              side:(r.b && r.b.side) || 'over', odds:price,
+                              book:od.book, opp:r.opp, team:(r.p || {}).team, label:cardLbl });
+      })()
     + playerImgP(key, r.name, 28)
     + '<div class="gl-left"><div class="gl-nm"><b>'+esc(r.name)+'</b><span class="gl-tag">'
     + esc((posShortP(r.p) ? posShortP(r.p)+' \u00b7 ' : '')+abbrOf(key, r.p.team)+' v '+abbrOf(key, r.opp))+'</span></div>'
@@ -5526,7 +5581,7 @@ function eplLockedIn(key, g){
       return eplRow(key, r, '<b>'+Math.ceil(b.c.line)+'+ '+esc(b.m[1])+'</b> \u00b7 '+fmtP(b.c),
         [[b.hits+'/5 last five', true], ['last 5: '+b.v5.slice().reverse().join(' '), false],
          ['model '+Math.round(b.pr*100)+'%', b.pr > 1/b.c.price]],
-        '+'+Math.round(edgeOf(b.pr, b.c.price)*100)+'%', 'EDGE');
+        '+'+Math.round(edgeOf(b.pr, b.c.price)*100)+'%', 'EDGE', true, b.m[1], b.c);
     }),
     why:'No priced player has cleared a $1.50+ posted line in 4 of his last 5 with the model agreeing.' };
 }
@@ -9479,6 +9534,26 @@ function mktFromLabel(key, label){
 function mktOfRow(key, r, label){
   return (r && (r.mkt || (r.b && r.b.mkt))) || mktFromLabel(key, label);
 }
+/* Both buttons for any row, whatever shape it is. Only eplRow had them, so they appeared on the
+   sport-specific tiles and nowhere else - not on Green Lights, Streakers, Elite Matchups, Bunnies
+   or Tackle Machines, which are the rows people actually look at first. */
+function rowBtns(key, o){
+  if (!o || !o.name || o.line == null) return '';
+  var spec = { key:key, name:o.name, mkt:o.mkt || '', line:+o.line, side:o.side || 'over',
+               odds:+o.odds || null, book:o.book || '', opp:o.opp || '' };
+  var p = (state.sports[key].idx.byName || {})[o.name] || { name:o.name, team:o.team || '' };
+  var card = { id:'', type:'single', key:key, name:o.name, team:p.team || o.team || '', opp:o.opp || '',
+               mkt:spec.mkt, label:o.label || mktLabel(key, spec.mkt), line:spec.line, side:spec.side,
+               odds:spec.odds, book:spec.book, stake:null };
+  var onCard = cardHas(card);
+  return '<div class="row-btns">'
+    + '<button class="card-add'+(onCard ? ' on' : '')+'" title="Add to my card" '
+    + 'onclick="event.stopPropagation();LAB.cardAddSpec(this)" data-c="'+esc(JSON.stringify(card))+'">'
+    + '<i class="ti ti-'+(onCard ? 'check' : 'plus')+'"></i></button>'
+    + '<button class="dd-btn" title="Deep dive on this bet" '
+    + 'onclick="event.stopPropagation();LAB.deep(this)" data-d="'+esc(JSON.stringify(spec))+'">'
+    + '<i class="ti ti-telescope"></i></button></div>';
+}
 function deepBtn(key, r, betLbl){
   var b = r && r.b; if (!b || !b.od) return '';
   var d = { key:key, name:r.name, mkt:mktOfRow(key, r, betLbl), line:b.od.line,
@@ -10063,6 +10138,13 @@ window.LAB = {
     }).catch(function(){});
   },
   cardClose: function(){ state.view.cardOpen = false; render(); },
+  cardAddSpec: function(el){
+    try {
+      var e = JSON.parse(el.getAttribute('data-c'));
+      e.id = cardId();
+      if (cardAdd(e)){ el.classList.add('on'); el.innerHTML = '<i class="ti ti-check"></i>'; render(); }
+    } catch(err){}
+  },
   cardAdd: function(el){
     try {
       var e = JSON.parse(el.getAttribute('data-c'));
