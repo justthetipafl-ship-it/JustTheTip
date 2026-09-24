@@ -886,6 +886,10 @@
   .dd-dt{font-size:9px;color:var(--text-3);width:96px;} .dd-dt.good{color:var(--accent);} .dd-dt.bad{color:#f97316;}
   .dd-dp{font-size:9px;color:var(--text-3);width:54px;text-align:right;}
   .dd-drv i{font-style:normal;font-size:9px;color:var(--text-3);width:96px;text-align:right;}
+  .dd-teams{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:10px;}
+  .dd-team{background:var(--surface-2);border:1px solid var(--border);border-radius:10px;padding:9px 11px;}
+  .dd-th{font-size:10px;font-weight:800;letter-spacing:.05em;text-transform:uppercase;color:var(--text-2);margin-bottom:4px;}
+  .dd-team .dd-drv{font-size:10px;} .dd-team .dd-dt{width:82px;} .dd-team .dd-drv i{width:56px;}
   .dd-books{display:flex;flex-wrap:wrap;gap:5px;}
   .dd-bk{font-size:9px;color:var(--text-3);border:1px solid var(--border);border-radius:7px;padding:3px 7px;}
   .dd-bk b{display:block;font-family:var(--font-mono);font-size:11px;color:var(--text);}
@@ -10129,6 +10133,73 @@ function ddScript(key, team, opp){
   return '<div class="dd-sec"><div class="dd-h">Game script</div><div class="dd-kv">'+bits.join('')+'</div>'
     + (read ? '<div class="dd-note">'+read+'</div>' : '')+'</div>';
 }
+
+/* THE TWO TEAMS -------------------------------------------------------------------------------
+   A player's market is set by how much work his own side generates and how much the opponent
+   concedes. The team files carry both - every column has a for and an _a (allowed) twin - so the
+   relevant ones are pulled for BOTH sides and ranked across the league.
+   Which columns are relevant is decided the same way the drivers are: the market itself, whatever
+   the correlation pass found driving it, and always pace and scoring, because they set the number
+   of chances everyone in the game gets.                                                          */
+function teamRowsFor(key){
+  var raw = asArray(state.sports[key].data.teams) || [];
+  return raw.filter(function(t){ return t && (t.team || t.name); });
+}
+function ddTeamCols(key, mkt){
+  var drivers = ddDrivers(key, mkt).map(function(d){ return d.f; });
+  var rows = teamRowsFor(key);
+  if (!rows.length) return [];
+  var have = {};
+  rows.forEach(function(t){ Object.keys(t).forEach(function(k){ if (typeof t[k] === 'number') have[k] = 1; }); });
+  var want = [mkt].concat(drivers), out = [], seen = {};
+  var stem = function(x){ return String(x).toLowerCase().replace(/[^a-z]/g, '').slice(0, 4); };
+  Object.keys(have).forEach(function(col){
+    if (/_a$/.test(col) || seen[col]) return;
+    var relevant = want.some(function(w){ return w === col || (stem(w).length >= 3 && stem(w) === stem(col)); });
+    if (relevant){ seen[col] = 1; out.push(col); }
+  });
+  // pace and scoring always matter: they decide how many chances the game produces at all
+  ['plays', 'points', 'possessions', 'disposals', 'shots', 'R'].forEach(function(c){
+    if (have[c] && !seen[c]){ seen[c] = 1; out.push(c); }
+  });
+  return out.slice(0, 5);
+}
+function ddRank(rows, col, team, high){
+  var vals = rows.filter(function(t){ return isFinite(+t[col]); })
+    .map(function(t){ return { team:normTeam(t.team || t.name), v:+t[col] }; });
+  if (vals.length < 4) return null;
+  vals.sort(function(a, b){ return high ? b.v - a.v : a.v - b.v; });
+  var i = vals.findIndex(function(x){ return x.team === normTeam(team); });
+  if (i < 0) return null;
+  var mean0 = vals.reduce(function(a, x){ return a + x.v; }, 0) / vals.length;
+  return { rank:i + 1, of:vals.length, v:vals[i].v, mean:mean0,
+           pct: mean0 ? (vals[i].v - mean0) / Math.abs(mean0) * 100 : 0 };
+}
+function ddTeamSection(key, team, opp, mkt){
+  var cols = ddTeamCols(key, mkt), rows = teamRowsFor(key);
+  if (!cols.length || !rows.length) return '';
+  var side = function(who, suffix, label, note){
+    var body = cols.map(function(c){
+      var col = c + suffix;
+      if (!rows.some(function(t){ return isFinite(+t[col]); })) return '';
+      var r = ddRank(rows, col, who, true);
+      if (!r) return '';
+      var good = suffix ? r.pct > 0 : r.pct > 0;          // allowed high = good for the bet's over
+      return '<div class="dd-drv"><span class="dd-dn">'+esc(driverName(key, c))+'</span>'
+        + '<b>'+(r.v >= 10 ? r.v.toFixed(0) : r.v.toFixed(1))+'</b>'
+        + '<span class="dd-dt '+(good ? 'good' : 'bad')+'">'+(r.pct >= 0 ? '+' : '')+Math.round(r.pct)+'% v league</span>'
+        + '<i>'+r.rank+' of '+r.of+'</i></div>';
+    }).join('');
+    return body ? '<div class="dd-team"><div class="dd-th">'+esc(label)+'</div>'+body
+      + (note ? '<div class="dd-note">'+note+'</div>' : '')+'</div>' : '';
+  };
+  var own = side(team, '', abbrOf(key, team) + ' generate', 'What his own side produces per game.');
+  var them = opp ? side(opp, '_a', abbrOf(key, opp) + ' concede',
+      'What the opponent gives up per game. Above the league average is help for an over.') : '';
+  if (!own && !them) return '';
+  return '<div class="dd-sec"><div class="dd-h">Both teams</div>'
+    + '<div class="dd-teams">'+own+them+'</div></div>';
+}
 function deepPanel(){
   var d = state.view.deep;
   if (!d) return '';
@@ -10231,11 +10302,12 @@ function deepPanel(){
         : '. No book is beating it.')+'</div>' : '')+'</div>' : '';
 
   var drivers = ddDriverSection(key, name, mkt, d.opp);
+  var teams = ddTeamSection(key, p.team || d.team, d.opp, mkt);
   var script = ddScript(key, p.team, d.opp);
   return '<div class="cmb-overlay open" onclick="if(event.target===this)LAB.deepClose()">'
     + '<div class="cmb-modal dd-modal"><div class="cmb-hdr"><i class="ti ti-telescope"></i><h2>Deep Dive</h2>'
     + '<button class="cmb-close" onclick="LAB.deepClose()">&times;</button></div>'
-    + '<div class="cmb-body">'+head+worm+rates+drivers+script+shape+matchup+role+market
+    + '<div class="cmb-body">'+head+worm+rates+drivers+teams+script+shape+matchup+role+market
     + '<div class="dd-acts"><button class="pc-add" onclick="LAB.deepToCard()">Add to my card</button>'
     + '<button class="sl-chip" onclick="LAB.player(\''+key+'\',\''+esc(name).replace(/'/g,"\\'")+'\')">Full player page</button></div>'
     + '</div></div></div>';
