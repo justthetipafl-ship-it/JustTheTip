@@ -1146,11 +1146,16 @@
   .auth-msg.error{color:#ef4444;} .auth-msg.success{color:var(--accent);}
   .auth-footer{margin-top:14px;font-size:10px;color:var(--text-3);text-align:center;line-height:1.5;}
   .auth-footer a{color:var(--accent);}
-  .jtt-foot{border-top:1px solid var(--border);margin-top:28px;padding:18px 0 34px;background:var(--surface);}
-  .jtt-foot-in{max-width:900px;margin:0 auto;padding:0 16px;}
-  .jtt-foot p{font-size:10px;line-height:1.65;color:var(--text-3);margin:0 0 9px;}
-  .jtt-foot b{color:var(--text-2);}
-  .jtt-foot a{color:var(--text-2);text-decoration:underline;}
+  .jtt-foot{border-top:1px solid var(--border);margin-top:28px;padding:12px 16px 30px;background:var(--surface);}
+  .jtt-note{max-width:900px;margin:0 auto;}
+  .jtt-note summary{list-style:none;cursor:pointer;font-size:10px;line-height:1.6;color:var(--text-3);
+    display:flex;gap:7px;align-items:baseline;flex-wrap:wrap;}
+  .jtt-note summary::-webkit-details-marker{display:none;}
+  .jtt-note summary b{color:var(--text-2);font-weight:700;}
+  .jtt-more{color:var(--accent);text-decoration:underline;}
+  .jtt-note[open] .jtt-more::after{content:' 4 hide';}
+  .jtt-body p{font-size:10px;line-height:1.65;color:var(--text-3);margin:9px 0 0;}
+  .jtt-body a{color:var(--text-2);text-decoration:underline;}
   .boot{text-align:center;padding:50px 16px;color:var(--text-3);font-family:var(--font-mono);font-size:12px;}
 </style>
 </head>
@@ -1165,19 +1170,22 @@
   <span class="hdr-status" id="status">starting…</span>
 </div></div>
 <footer class="jtt-foot">
-  <div class="jtt-foot-in">
-    <p><b>Just The Tip is a research tool, not betting advice.</b> It shows what the data says about
-      a market — a player's record, the matchup and what the bookmakers are charging — so you can
-      make your own decision. Nothing here is a tip, a recommendation or a prediction, and no model
-      knows what will happen in a game.</p>
-    <p>Every number comes from historical data and posted prices, both of which can be wrong, stale
-      or misread. Past results do not indicate future results. Check the bet at your bookmaker
-      before you place it.</p>
-    <p><b>18+ only.</b> Gamble responsibly. Only ever stake what you can afford to lose, and never
-      chase a loss. Free, confidential help is available 24/7 —
-      <a href="https://www.gamblinghelponline.org.au" target="_blank" rel="noopener">Gambling Help
-      Online</a> or <a href="tel:1800858858">1800 858 858</a> in Australia.</p>
-  </div>
+  <details class="jtt-note">
+    <summary><b>18+. A research tool, not betting advice. Gamble responsibly.</b>
+      <span class="jtt-more">the full notice</span></summary>
+    <div class="jtt-body">
+      <p>Just The Tip shows what the data says about a market — a player's record, the matchup and
+        what the bookmakers are charging — so you can make your own decision. Nothing here is a tip,
+        a recommendation or a prediction, and no model knows what will happen in a game.</p>
+      <p>Every number comes from historical data and posted prices, both of which can be wrong,
+        stale or misread. Past results do not indicate future results. Check the bet at your
+        bookmaker before you place it.</p>
+      <p>Only ever stake what you can afford to lose, and never chase a loss. Free, confidential
+        help is available 24/7 —
+        <a href="https://www.gamblinghelponline.org.au" target="_blank" rel="noopener">Gambling Help
+        Online</a> or <a href="tel:1800858858">1800 858 858</a> in Australia.</p>
+    </div>
+  </details>
 </footer>
 <div class="auth-overlay" id="auth-overlay">
   <div class="auth-card">
@@ -8103,6 +8111,7 @@ function mbFixtures(){
   });
   return out.slice(0, 40);
 }
+function mbBookName(){ var b = mbBook(); return b || null; }
 function mbBook(){
   var b = state.view.mbBook;
   if (b === '*') return null;                      // the user asked for best price per leg
@@ -8329,6 +8338,7 @@ function mbPanel(){
     + '<option value="*"'+(cur === '*' ? ' selected' : '')+'>Best price per leg (not one ticket)</option></select>'
     + '<span class="deg-note">'+(cur === '*' ? 'Legs may sit at different books \u2014 you could not place this as one multi.'
         : 'Every leg priced at '+esc(cur)+', so the multi is placeable.')+'</span></div>';
+  if (state.view.mbNote) h += '<div class="deg-note" style="padding:6px 2px">'+esc(state.view.mbNote)+'</div>';
   h += '<div class="mb-modes">'+MB_MODES.map(function(m){
     return '<button class="sl-chip'+(m[0]===mode?' on':'')+'" onclick="LAB.mbMode(\''+m[0]+'\')">'
       + m[1]+'</button>'; }).join('')+'</div>';
@@ -11261,7 +11271,16 @@ window.LAB = {
     if (!f) return;
     var cands = mbCandidates(f.key, f.g, state.view.mbMode || 'value');
     var picked = mbAuto(cands, 3);
-    if (!picked.length) return;
+    // One leg is not a multi. Since every leg must sit at one book, a thin board can leave only a
+    // single candidate - say so rather than dropping the user into an analysis of one bet.
+    if (picked.length < 2){
+      state.view.mbNote = picked.length
+        ? 'Only one leg qualifies at ' + (mbBookName() || 'this book') + ' for this game. Try another book, or another mode.'
+        : 'No legs qualify here at ' + (mbBookName() || 'this book') + '.';
+      render();
+      return;
+    }
+    state.view.mbNote = null;
     state.view.cmbLegs = picked.map(mbToLeg);
     state.view.cmbMode = 'multi';                       // straight to the analysis
     render();
