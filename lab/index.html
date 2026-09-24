@@ -1076,10 +1076,38 @@
   .done-b.on{border-color:var(--accent);color:var(--accent);}
   .empty{text-align:center;padding:40px 16px;color:var(--text-3);}
   .empty i{font-size:30px;display:block;margin-bottom:8px;opacity:.5;}
+  /* ---- subscriber gate ---- */
+  body.auth-locked{overflow:hidden;}
+  body.auth-locked .wrap{filter:blur(7px);pointer-events:none;user-select:none;}
+  .auth-overlay{position:fixed;inset:0;z-index:200;display:flex;align-items:center;justify-content:center;
+    background:rgba(6,8,11,.93);backdrop-filter:blur(6px);padding:20px;
+    padding-top:calc(20px + env(safe-area-inset-top,0px));transition:opacity .28s;}
+  .auth-overlay.unlocked{opacity:0;pointer-events:none;}
+  .auth-card{width:100%;max-width:380px;background:var(--surface);border:1px solid var(--border);
+    border-radius:16px;padding:22px;box-shadow:0 20px 60px rgba(0,0,0,.6);}
+  .auth-brand{display:flex;align-items:center;gap:11px;margin-bottom:18px;}
+  .auth-img{width:38px;height:38px;border-radius:50%;display:block;}
+  .auth-title{font-family:var(--font-display);font-size:18px;}
+  .auth-sub{font-size:9px;font-weight:800;letter-spacing:.12em;color:var(--text-3);}
+  .auth-label{display:block;font-size:10px;font-weight:800;letter-spacing:.07em;text-transform:uppercase;
+    color:var(--text-3);margin-bottom:6px;}
+  .auth-input{width:100%;background:var(--surface-2);border:1px solid var(--border);border-radius:10px;
+    color:var(--text);font-size:16px;padding:12px 13px;}
+  .auth-input:focus{outline:none;border-color:var(--accent);}
+  .auth-input.error{border-color:#ef4444;animation:authShake .32s;}
+  @keyframes authShake{0%,100%{transform:translateX(0);}25%{transform:translateX(-5px);}75%{transform:translateX(5px);}}
+  .auth-btn{width:100%;margin-top:11px;padding:13px;border:0;border-radius:10px;background:var(--accent);
+    color:#04120a;font-size:15px;font-weight:800;cursor:pointer;display:flex;align-items:center;
+    justify-content:center;gap:7px;}
+  .auth-btn[disabled]{opacity:.5;}
+  .auth-msg{min-height:16px;margin-top:9px;font-size:11px;text-align:center;}
+  .auth-msg.error{color:#ef4444;} .auth-msg.success{color:var(--accent);}
+  .auth-footer{margin-top:14px;font-size:10px;color:var(--text-3);text-align:center;line-height:1.5;}
+  .auth-footer a{color:var(--accent);}
   .boot{text-align:center;padding:50px 16px;color:var(--text-3);font-family:var(--font-mono);font-size:12px;}
 </style>
 </head>
-<body>
+<body class="auth-locked">
 <div class="hdr"><div class="hdr-in">
   <span class="logo">
     <img class="brand-img" src="/AFL/assets/jtt-check.png" alt="JTT"
@@ -1089,6 +1117,24 @@
   </span>
   <span class="hdr-status" id="status">starting…</span>
 </div></div>
+<div class="auth-overlay" id="auth-overlay">
+  <div class="auth-card">
+    <div class="auth-brand">
+      <img class="auth-img" src="/AFL/assets/jtt-check.png" alt="" onerror="this.style.display='none'">
+      <div><div class="auth-title">Just The Tip <span class="tier">LAB</span></div>
+        <div class="auth-sub">SUBSCRIBER ACCESS</div></div>
+    </div>
+    <form id="auth-form" onsubmit="return _authSubmit(event)">
+      <label class="auth-label" for="auth-pw">Weekly password</label>
+      <input type="password" id="auth-pw" class="auth-input" autocomplete="current-password" autofocus>
+      <button type="submit" class="auth-btn" id="auth-btn"><i class="ti ti-key"></i> Unlock</button>
+      <div class="auth-msg" id="auth-msg"></div>
+    </form>
+    <div class="auth-footer">The password drops weekly via
+      <a href="https://dubclub.win/JustTheTipAUS/" target="_blank" rel="noopener">DubClub</a>.<br>
+      One password unlocks every Just The Tip tool.</div>
+  </div>
+</div>
 <div class="wrap"><div id="app"><div class="boot">Loading fixtures…</div></div></div>
 
 <script>
@@ -10519,9 +10565,75 @@ window.LAB = {
   state: state
 };
 
-// boot: tier 1 for every sport (fixtures+teams are ~0 MB, so this is cheap)
-Object.keys(SPORTS).forEach(loadTier1);
-render();
+/* SUBSCRIBER GATE -----------------------------------------------------------------------------
+   The same weekly password as every other Just The Tip tool: SHA-256 of what the subscriber types,
+   compared with the hash the AFL pipeline rotates into meta.json each week. Nothing is downloaded
+   until it matches, and the unlock is shared with the other tools through one storage key, so a
+   subscriber who unlocked the AFL tool today is already through here.
+   This is a paywall, not a security boundary: the data files are public URLs. It keeps the tool
+   behind the subscription without pretending to be more than it is.                              */
+var AUTH_HASH = '6bbaa0af9ac8cf78c4cf5ca258bfd862c3aa4fb860401abfb387fc34b65af59b';   // fallback only
+var AUTH_KEY = 'jtt_afl_auth';                    // shared with the per-sport tools on purpose
+var AUTH_DAYS = 7;
+function _sha256(t){
+  return crypto.subtle.digest('SHA-256', new TextEncoder().encode(t)).then(function(b){
+    return Array.from(new Uint8Array(b)).map(function(x){ return x.toString(16).padStart(2, '0'); }).join('');
+  });
+}
+function _appBoot(){
+  if (state.booted) return;
+  state.booted = true;
+  Object.keys(SPORTS).forEach(loadTier1);
+  render();
+}
+window._authUnlock = _authUnlock;     // the test harness unlocks with this; it is a paywall, not a key
+function _authUnlock(){
+  var o = document.getElementById('auth-overlay');
+  if (o){ o.classList.add('unlocked'); setTimeout(function(){ o && o.remove(); }, 320); }
+  document.body.classList.remove('auth-locked');
+  try { localStorage.setItem(AUTH_KEY, JSON.stringify({ unlockedAt:Date.now(), hash:AUTH_HASH })); } catch(e){}
+  _appBoot();
+}
+window._authSubmit = function(ev){
+  ev.preventDefault();
+  var i = document.getElementById('auth-pw'), m = document.getElementById('auth-msg'), b = document.getElementById('auth-btn');
+  var pw = i.value;
+  if (!pw) return false;
+  b.disabled = true; m.textContent = ''; m.className = 'auth-msg';
+  _sha256(pw).then(function(h){
+    if (h === AUTH_HASH){
+      m.textContent = 'Unlocked'; m.className = 'auth-msg success';
+      setTimeout(_authUnlock, 220);
+    } else {
+      i.classList.add('error'); m.textContent = 'Incorrect password'; m.className = 'auth-msg error';
+      setTimeout(function(){ i.classList.remove('error'); }, 420);
+      b.disabled = false;
+    }
+  }).catch(function(){
+    m.textContent = 'Could not check that password'; m.className = 'auth-msg error'; b.disabled = false;
+  });
+  return false;
+};
+(function gate(){
+  // the live hash, in the same order the other tools look for it
+  var pull = function(u){
+    return fetch(u, { cache:'reload' }).then(function(r){ return r.ok ? r.json() : null; })
+      .then(function(m){ return (m && m.password_hash) || null; }).catch(function(){ return null; });
+  };
+  pull('/auth.json')
+    .then(function(h){ return h || pull('/AFL/data/meta.json'); })
+    .then(function(h){ if (h) AUTH_HASH = h; })
+    .then(function(){
+      try {
+        var sess = JSON.parse(localStorage.getItem(AUTH_KEY) || 'null');
+        if (sess && sess.hash === AUTH_HASH && (Date.now() - sess.unlockedAt) < AUTH_DAYS * 864e5){
+          _authUnlock(); return;                   // already unlocked this week, on any JTT tool
+        }
+      } catch(e){}
+      var pw = document.getElementById('auth-pw');
+      if (pw) pw.focus();
+    });
+})();
 
 })();
 </script>
