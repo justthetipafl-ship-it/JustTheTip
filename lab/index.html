@@ -420,6 +420,8 @@
     border:1px solid var(--border);border-radius:5px;padding:3px 7px;}
   .stk-book{display:block;font-family:var(--font-mono);font-size:7px;color:var(--text-3);margin-top:3px;}
   .stk-odds.short{color:var(--text-3);border-style:dashed;}
+  .stk-odds i,.h2h-sig-odds i,.elm-odds i{font-style:normal;color:var(--text-3);font-size:9px;}
+  .gl-odds i,.deja-px i{display:block;font-style:normal;color:var(--text-3);font-size:8px;font-weight:400;}
   .elm-row{display:flex;gap:10px;padding:10px 12px;border-top:1px solid var(--border);align-items:center;cursor:pointer;}
   .elm-left{flex:1;min-width:0;}
   .elm-nm{font-size:12px;font-weight:700;display:flex;align-items:center;gap:6px;min-width:0;}
@@ -805,6 +807,10 @@
   .lad-bar{height:6px;border-radius:3px;background:var(--border);overflow:hidden;margin-top:5px;}
   .lad-bar-fill{height:100%;background:var(--accent);}
   .fx-top{display:flex;align-items:center;gap:8px;margin-bottom:6px;}
+  .fx-build{display:inline-flex;align-items:center;gap:5px;font-size:10px;font-weight:800;letter-spacing:.05em;
+    text-transform:uppercase;padding:5px 10px;border-radius:999px;cursor:pointer;border:1px solid var(--border);
+    background:transparent;color:var(--text-2);}
+  .fx-build:hover{border-color:var(--accent);color:var(--accent);}
   .fx-nerd{margin-left:auto;display:inline-flex;align-items:center;gap:5px;font-size:10px;font-weight:800;
     letter-spacing:.05em;text-transform:uppercase;padding:5px 10px;border-radius:999px;cursor:pointer;
     border:1px dashed var(--border);background:transparent;color:var(--text-3);}
@@ -3240,7 +3246,7 @@ function streakRow(key, r){
     + '</div>'
     + '<div class="stk-right"><div class="stk-hit">'+r.streak+'</div>'
       + '<div class="stk-hitl">STRAIGHT</div>'
-      + '<div class="stk-odds'+(r.short ? ' short' : '')+'">$'+r.price.toFixed(2)+'</div>'
+      + '<div class="stk-odds'+(r.short ? ' short' : '')+'">$'+r.price.toFixed(2)+(r.book ? ' <i>'+esc(r.book)+'</i>' : '')+'</div>'
       + '<span class="stk-book">'+esc(r.book||'')+' \u00b7 '+r.hits+'/'+r.n+'</span></div></div>';
 }
 
@@ -3352,7 +3358,8 @@ function eliteRow(key, r){
     + '</div>'
     + '<div class="elm-right"><div class="elm-dvp">'+r.dvp.rank+'</div>'
       + '<div class="elm-dvpl">OF '+r.dvp.total+' SOFTEST</div>'
-      + (r.entry ? '<div class="elm-odds">'+ask+'+ $'+r.entry.price.toFixed(2)+'</div>'
+      + (r.entry ? '<div class="elm-odds">'+ask+'+ $'+r.entry.price.toFixed(2)
+          + (r.entry.book ? ' <i>'+esc(r.entry.book)+'</i>' : '')+'</div>'
           + '<span class="elm-book">'+esc(r.entry.book||'')+'</span>' : '')
     + '</div></div>';
 }
@@ -3524,7 +3531,8 @@ function h2hSigRow(key, r){
     + '<div class="h2h-sig-right"><div class="h2h-sig-v '+(up ? 'up' : 'down')+'">'
       +(r.meetings != null ? r.meetings : r.vals.length)+'</div>'
       + '<div class="h2h-sig-l">MEETINGS</div>'
-      + (r.price != null ? '<div class="h2h-sig-odds">'+(up ? ask+'+ ' : 'U'+r.line+' ')+'$'+r.price.toFixed(2)+'</div>' : '')
+      + (r.price != null ? '<div class="h2h-sig-odds">'+(up ? ask+'+ ' : 'U'+r.line+' ')+'$'+r.price.toFixed(2)
+          + (r.book ? ' <i>'+esc(r.book)+'</i>' : '')+'</div>' : '')
     + '</div></div>';
 }
 
@@ -3840,7 +3848,7 @@ function ouRow(key, r){
     + '<div class="gl-right"><div class="gl-ev '+(r.ev >= 0 ? 'pos' : 'neg')+'">'
       + (r.ev > 0 ? '+' : '')+Math.round(r.ev*100)+'%</div>'
       + '<div class="gl-evl">'+(evTrusted(key) ? 'EDGE' : 'EDGE?')+'</div>'
-      + '<div class="gl-odds">$'+r.price.toFixed(2)+'</div>'
+      + '<div class="gl-odds">$'+r.price.toFixed(2)+(r.book ? '<i>'+esc(r.book)+'</i>' : '')+'</div>'
       + '<span class="gl-book">'+esc(r.book||'')+'</span></div></div>';
 }
 function ouTile(key, g, kind){
@@ -4339,7 +4347,7 @@ function nflChunkRow(key, r){
     + pips + '</div>'
     + '<div class="stk-right"><div class="stk-hit">'+Math.round(r.rate*100)+'%</div>'
       + '<div class="stk-hitl">'+r.hits+'/'+r.n+' GAMES</div>'
-      + (r.price != null ? '<div class="stk-odds">$'+r.price.toFixed(2)+'</div>' : '')+'</div></div>';
+      + (r.price != null ? '<div class="stk-odds">$'+r.price.toFixed(2)+(r.book ? ' <i>'+esc(r.book)+'</i>' : '')+'</div>' : '')+'</div></div>';
 }
 function nflAngleRow(key, r, kind){
   var btns = rowBtns(key, { name:r.name, mkt:r.mkt, line:r.line, side:'over', odds:r.price, book:r.book, opp:r.opp, team:(r.p||{}).team });
@@ -4530,7 +4538,7 @@ function radarMarkets(key, p, opp){
   return '<div class="rdr-mkts">'+rows.map(function(r){
     return '<div class="rdr-mk"><span class="rdr-mk-l">'+esc(r.label)+'</span>'
       + '<span class="rdr-mk-v">'+r.avg.toFixed(1)+'/gm'
-      + (r.od ? ' \u00b7 '+Math.ceil(r.od.line)+'+ $'+r.od.price.toFixed(2) : '')+'</span>'
+      + (r.od ? ' \u00b7 '+Math.ceil(r.od.line)+'+ $'+r.od.price.toFixed(2)+(r.od.book ? ' '+esc(r.od.book) : '') : '')+'</span>'
       + '<span class="rdr-mk-e" style="color:'+(r.dvp && r.dvp.pct > 5 ? 'var(--accent)' : (r.dvp && r.dvp.pct < -5 ? '#f97316' : 'var(--text-3)'))+'">'
       + (r.dvp ? '#'+r.dvp.rank+'/'+r.dvp.total : '\u2014')+'</span></div>';
   }).join('')+'</div>';
@@ -4763,6 +4771,7 @@ function kickerRow(key, r){
     + '<div class="gl-bet">'+(r.picks.length
         ? r.picks.map(function(x){
             return '<b>'+Math.ceil(x.od.line)+'+ '+esc(x.label)+'</b> $'+x.od.price.toFixed(2)
+              + (x.od.book ? ' '+esc(x.od.book) : '')
               + ' \u00b7 proj '+(x.proj != null ? x.proj.toFixed(1) : '\u2014')
               + (x.good ? ' \u2713' : ''); }).join(' \u00b7 ')
         : 'no posted kicking market')+'</div>'
@@ -4888,7 +4897,7 @@ function tackleRow(key, r){
         return '<span>'+(v % 1 ? v.toFixed(1) : v)+'</span>'; }).join('')+'</div></div>'
     + '<div class="stk-right"><div class="stk-hit">'+Math.round(r.rate*100)+'%</div>'
       + '<div class="stk-hitl">'+r.hits+'/'+r.n+' GAMES</div>'
-      + '<div class="stk-odds">$'+r.price.toFixed(2)+'</div>'
+      + '<div class="stk-odds">$'+r.price.toFixed(2)+(r.book ? ' <i>'+esc(r.book)+'</i>' : '')+'</div>'
       + '<span class="stk-book">'+esc(r.book||'')+'</span></div></div>';
 }
 
@@ -5015,7 +5024,7 @@ function dejaVuSection(key, g){
         return '<div class="deja-card">'+playerImgP(key, l.p, 26)
           + '<div class="deja-m"><b>'+esc(l.name)+'</b><span>'+Math.ceil(l.line)+'+ '+esc(l.label)
           + ' \u00b7 '+esc(abbrOf(key, l.team))+' \u00b7 <span class="deja-vals">'+l.vals.join(' / ')+'</span></span></div>'
-          + '<span class="deja-px">$'+l.price.toFixed(2)+'</span>'
+          + '<span class="deja-px">$'+l.price.toFixed(2)+(l.book ? '<i>'+esc(l.book)+'</i>' : '')+'</span>'
           + (hail ? '<button class="cmb-leg-x" onclick="LAB.dvDrop(\''+esc(l.name).replace(/'/g,"\\'")
               + '\')">&times;</button>' : '')+'</div>';
       }).join('')
@@ -6722,6 +6731,11 @@ function focusPage(){
   var key = f.sport, g = f.g, S = state.sports[key];
   var st = gameStart(g);
   var head = '<div class="fx-top"><button class="fx-back" onclick="LAB.focus(null)"><i class="ti ti-arrow-left"></i>All fixtures</button>'
+    // only offer the builder when this fixture is one it can actually build on: a game that has
+    // started is not in its list, and the button would open an empty panel
+    + (mbFixtures().some(function(x){ return x.key === key && x.i === f.i; })
+        ? '<button class="fx-build" onclick="LAB.mbHere(\''+key+'\','+(f.i != null ? f.i : 0)+')">'
+          + '<i class="ti ti-layers-subtract"></i>Build a multi</button>' : '')
     + '<button class="fx-nerd'+(state.view.nerd ? ' on' : '')+'" onclick="LAB.nerd()" title="Arbs, middles and line value across books">'
     + '<i class="ti ti-math-symbols"></i>Nerd Mode</button></div>'
     + ''
@@ -6831,6 +6845,8 @@ function ppCalc(key, name){
   var twoWay = cmbPosted(key, name, st.mkt);
   var price = over ? (od ? od.price : null)
                    : (twoWay && Math.ceil(+twoWay.line) === st.line && twoWay.under != null ? +twoWay.under : null);
+  // a price with no bookmaker beside it is not much use: name the book the number came from
+  var bookName = over ? (od && od.book) : (twoWay && (twoWay.underBook || twoWay.book));
   var raw = null;
   try { raw = S.scoring && S.scoring.prob ? S.scoring.prob(p, st.mkt, thr, opp) : null; } catch(e){}
   if (raw == null && (key === 'epl' || key === 'mlb')){
@@ -6860,7 +6876,7 @@ function ppCalc(key, name){
           return '<button class="sl-chip'+(st.scope === x[0] ? ' on' : '')+'" onclick="LAB.pcScope(\''+x[0]+'\')">'
             + x[1]+'</button>'; }).join('')+'</span></div>'
     + '<div class="pc-odds">'
-      + '<span><b>'+(price != null ? '$'+price.toFixed(2) : '\u2014')+'</b>posted</span>'
+      + '<span><b>'+(price != null ? '$'+price.toFixed(2) : '\u2014')+'</b>'+(bookName ? esc(bookName) : 'posted')+'</span>'
       + '<span><b>'+(prob != null ? Math.round(prob*100)+'%' : '\u2014')+'</b>model</span>'
       + '<span><b class="'+(ev != null && ev > 0 ? 'pos' : (ev != null ? 'neg' : ''))+'">'
         + (ev != null ? (ev > 0 ? '+' : '')+Math.round(ev*100)+'%' : '\u2014')+'</b>edge</span></div>'
@@ -10375,6 +10391,17 @@ window.LAB = {
               odds:+d.odds || null, book:d.book || '', stake:null });
     state.view.deep = null; state.view.cardOpen = true; render();
   },
+  mbHere: function(key, i){
+    // open the Multi Builder already pointed at the fixture being viewed, rather than making the
+    // user find it again in the picker
+    var fixes = mbFixtures();
+    var cur = state.view.focus && state.view.focus.g;
+    var at = fixes.findIndex(function(f){ return f.key === key && f.i === +i; });
+    if (at < 0 && cur) at = fixes.findIndex(function(f){
+      return f.key === key && normTeam(f.g.home) === normTeam(cur.home) && normTeam(f.g.away) === normTeam(cur.away); });
+    if (at >= 0) state.view.mbFix = at;
+    state.view.cmbMode = 'build'; state.view.cmbOpen = true; render();
+  },
   cardOpen: function(){ state.view.cardOpen = true; render(); },
   cardCustomOpen: function(on){ state.view.cardCustom = !!on; render(); },
   cardCustomAdd: function(){
@@ -10526,7 +10553,7 @@ window.LAB = {
     var fx = asArray(state.sports[k].data.fixture) || [];
     var g = fx[i];
     if (!g) return;
-    state.view.focus = { sport:k, g:g };
+    state.view.focus = { sport:k, g:g, i:+i };     // the index is needed to point the builder here
     if (!state.sports[k].t2) loadTier2(k);      // focused view needs odds
     if (!state.sports[k].t3) loadTier3(k);      // and the heavy layer for the real sections
     render(); window.scrollTo({top:0});
