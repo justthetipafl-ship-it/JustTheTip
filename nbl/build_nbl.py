@@ -130,6 +130,21 @@ def main():
             "fouls": num(b.get("fouls_personal")), "plusMinus": num(b.get("plus_minus")),
             "minutes": to_min(b.get("minutes")),
         }
+        # Report the box-score columns this build is NOT reading, once per run. nblR passes through
+        # everything Genius provides and the mapping above is a fixed list, so anything useful the
+        # feed adds would otherwise sit there unnoticed.
+        if not globals().get("_UNMAPPED_LOGGED"):
+            globals()["_UNMAPPED_LOGGED"] = True
+            used = {"match_id", "player_id", "season", "home_away", "starter", "playing_position",
+                    "three_pointers_made", "three_pointers_attempted", "field_goals_made",
+                    "field_goals_attempted", "free_throws_made", "free_throws_attempted",
+                    "rebounds_offensive", "rebounds_defensive", "turnovers", "fouls_personal",
+                    "plus_minus", "minutes", "points", "rebounds_total", "assists", "steals", "blocks",
+                    "first_name", "family_name", "name"}
+            spare = sorted(k for k in b.keys() if k not in used and not str(k).startswith("_"))
+            if spare:
+                print("  [nbl] box columns available but not read: " + ", ".join(spare))
+
         p, r_, a = pts or 0, reb or 0, ast or 0
         row["pra"] = p + r_ + a; row["pr"] = p + r_; row["pa"] = p + a; row["ra"] = r_ + a
         row["stocks"] = (stl or 0) + (blk or 0)
