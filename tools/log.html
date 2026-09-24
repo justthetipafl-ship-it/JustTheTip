@@ -70,7 +70,8 @@
   </div>
   <div class="row">
     <div><label>Unit size ($) — your 1 unit</label><input type="number" id="unit" inputmode="decimal" step="0.01" placeholder="25"></div>
-    <div><label>&nbsp;</label><div class="note">The public dashboard shows units only, never dollars. A $50 stake at a $25 unit is 2u.</div></div>
+    <div><label>&nbsp;</label><div class="note">The dashboard shows units only, never dollars. A $50 stake at a $25 unit is 2u.
+      This converts <b>this entry</b> as you save it — it never rescales bets already logged.</div></div>
   </div>
   <label>Sport</label>
   <div class="chips" id="sportChips"></div>
@@ -169,6 +170,10 @@ $('add').onclick = function(){
   batch.push({ id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
                date: $('date').value || new Date().toISOString().slice(0, 10),
                sport: sel.sport, type: sel.type, bet: bet, stake: st, odds: od,
+               // Frozen at entry: the dashboard reads these and never divides by a file-wide unit
+               // size again. That division is what let one change to the unit field rescale every
+               // bet ever logged - a 0.5u bet reading as 1u, and the whole profit curve doubling.
+               units: (num('unit') || unitSize) > 0 ? +(st / (num('unit') || unitSize)).toFixed(4) : null,
                result: sel.result, returned: payout() });
   saveDraft(); drawBatch(); msg('ok', 'Added. It is not saved to GitHub until you press Save.');
   $('bet').value = ''; $('ret').value = ''; calc();
@@ -295,7 +300,7 @@ $('save').onclick = function(){
   if (!batch.length) return;
   $('save').disabled = true; msg('', '');
   api('/contents/' + FILE + '?ref=' + BRANCH).then(function(res){
-    var existing = [], sha = null;
+    var existing = [], sha = null, fileUnit = null;
     if (res.ok && res.body && res.body.content){
       sha = res.body.sha;
       var parsed = null;
@@ -303,17 +308,33 @@ $('save').onclick = function(){
       // the file is {unitSize, updated, bets:[...]}; a bare array is the older shape and still reads
       existing = Array.isArray(parsed) ? parsed : ((parsed && parsed.bets) || []);
       if (!Array.isArray(existing)) existing = [];
+      fileUnit = (parsed && !Array.isArray(parsed) && +parsed.unitSize > 0) ? +parsed.unitSize : null;
     } else if (res.status !== 404){
       throw new Error('Could not read the file: ' + res.status + ' ' + ((res.body && res.body.message) || ''));
     }
     // merge by id so a double-tap can't duplicate a bet, and an edited one replaces the old
+    // One-time migration: any older row still priced in dollars is converted with the file's own
+    // unit size and frozen, so no future change to the unit field can move it.
+    var migrated = 0;
+    if (fileUnit > 0){
+      existing.forEach(function(b){
+        if (b && b.units == null && +b.stake > 0){
+          b.units = +(+b.stake / fileUnit).toFixed(4);
+          if (b.returned != null) b.returnedUnits = +(+b.returned / fileUnit).toFixed(4);
+          else if (b.result === 'loss') b.returnedUnits = 0;
+          else if (b.result === 'void') b.returnedUnits = b.units;
+          else if (b.result === 'win' && +b.odds > 1) b.returnedUnits = +(b.units * +b.odds).toFixed(4);
+          migrated++;
+        }
+      });
+    }
     var byId = {}; existing.forEach(function(b){ byId[b.id] = b; });
     batch.forEach(function(b){ byId[b.id] = b; });
     var all = Object.keys(byId).map(function(k){ return byId[k]; })
       .sort(function(a, b){ return String(a.date).localeCompare(String(b.date)) || String(a.id).localeCompare(String(b.id)); });
     return api('/contents/' + FILE, { method:'PUT', body: JSON.stringify({
       message: 'results: +' + batch.length + ' bet' + (batch.length === 1 ? '' : 's'),
-      content: b64(JSON.stringify({ unitSize: (num('unit') || unitSize),
+      content: b64(JSON.stringify({ unitSize: (fileUnit || num('unit') || unitSize),
                                     updated: new Date().toISOString().slice(0, 19) + 'Z',
                                     bets: all }, null, 1)),
       branch: BRANCH, sha: sha || undefined }) })
