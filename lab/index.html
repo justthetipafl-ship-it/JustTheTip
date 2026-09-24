@@ -10367,6 +10367,106 @@ function ddTeamSection(key, team, opp, mkt){
   return '<div class="dd-sec"><div class="dd-h">Both teams</div>'
     + '<div class="dd-teams">'+own+them+'</div></div>';
 }
+
+/* MLB ADVANCED --------------------------------------------------------------------------------
+   MLB's gamelogs are a plain box score, so the correlation pass finds little. Its real depth sits
+   in players.json: Statcast expected numbers, platoon splits, the opposing starter's own profile
+   and batter-versus-pitcher history. None of it reached the dive until now.
+   The Statcast block is gated: Savant's CSV header shifts a column when a name contains a comma,
+   and a batter reading xBA .017 against a real .223 is a broken feed, not an unlucky hitter. If the
+   numbers are outside a sane range the block says so rather than showing nonsense.              */
+function mlbStarterFor(key, team, opp){
+  var fx = asArray(state.sports[key].data.fixture) || [];
+  for (var i = 0; i < fx.length; i++){
+    var g = fx[i];
+    if (!g) continue;
+    var isHome = normTeam(g.home) === normTeam(team) || normTeam(g.homeAbbr) === normTeam(team);
+    var isAway = normTeam(g.away) === normTeam(team) || normTeam(g.awayAbbr) === normTeam(team);
+    if (!isHome && !isAway) continue;
+    var nm = isHome ? g.awayPitcher : g.homePitcher;        // the arm he faces
+    if (!nm) return null;
+    var pit = (state.sports[key].idx.byName || {})[nm];
+    return pit || { name:nm };
+  }
+  return null;
+}
+function statcastSane(sc){
+  if (!sc) return false;
+  var ok = function(v, lo, hi){ return isFinite(+v) && +v >= lo && +v <= hi; };
+  return ok(sc.ba, 0.1, 0.45) && ok(sc.xba, 0.1, 0.45) && ok(sc.woba, 0.2, 0.55) && ok(sc.xwoba, 0.2, 0.55);
+}
+function ddMlbSection(key, p, opp, mkt){
+  if (key !== 'mlb' || !p) return '';
+  var out = '';
+  var arm = mlbStarterFor(key, p.team, opp);
+  // the platoon edge against the hand he actually faces today
+  if (arm && arm.throws && (p.splitVsL || p.splitVsR)){
+    var mine = arm.throws === 'L' ? p.splitVsL : p.splitVsR;
+    var other = arm.throws === 'L' ? p.splitVsR : p.splitVsL;
+    if (mine && mine.PA){
+      var better = other && other.OPS != null && mine.OPS != null ? mine.OPS - other.OPS : null;
+      out += '<div class="dd-sec"><div class="dd-h">Against this arm</div>'
+        + '<div class="dd-kv"><span>Faces</span><b>'+esc(arm.name)+' ('+esc(arm.throws)+'HP)</b>'
+        + '<span>His OPS v '+esc(arm.throws)+'HP</span><b class="'+(better == null ? '' : better >= 0 ? 'good' : 'bad')+'">'
+        + (+mine.OPS).toFixed(3)+'</b>'
+        + '<span>Sample</span><b>'+mine.PA+' PA</b>'
+        + (other && other.OPS != null ? '<span>v the other hand</span><b>'+(+other.OPS).toFixed(3)+'</b>' : '')
+        + '<span>AVG / SLG</span><b>'+(+mine.AVG).toFixed(3)+' / '+(+mine.SLG).toFixed(3)+'</b>'
+        + '<span>HR in split</span><b>'+(mine.HR != null ? mine.HR : '\u2014')+'</b></div>'
+        + (better != null ? '<div class="dd-note">'+(better >= 0.05
+            ? 'This is his better side of the platoon, by '+Math.round(better*1000)/1000+' OPS.'
+            : better <= -0.05 ? 'This is his weaker side, by '+Math.abs(Math.round(better*1000)/1000)+' OPS.'
+            : 'Little platoon split either way.')+'</div>' : '')+'</div>';
+    }
+  }
+  // the starter's own profile - what he gives up
+  if (arm && (arm.ERA != null || arm.K9 != null)){
+    var hand = p.bats || null;
+    var vs = hand === 'L' ? arm.splitVsL : hand === 'R' ? arm.splitVsR : null;
+    out += '<div class="dd-sec"><div class="dd-h">The starter</div><div class="dd-kv">'
+      + (arm.ERA != null ? '<span>ERA</span><b>'+(+arm.ERA).toFixed(2)+'</b>' : '')
+      + (arm.WHIP != null ? '<span>WHIP</span><b>'+(+arm.WHIP).toFixed(2)+'</b>' : '')
+      + (arm.K9 != null ? '<span>K per 9</span><b>'+(+arm.K9).toFixed(1)+'</b>' : '')
+      + (arm.BB9 != null ? '<span>BB per 9</span><b>'+(+arm.BB9).toFixed(1)+'</b>' : '')
+      + (arm.HR9 != null ? '<span>HR per 9</span><b>'+(+arm.HR9).toFixed(2)+'</b>' : '')
+      + (arm.oppAVG != null ? '<span>Opponents hit</span><b>'+(+arm.oppAVG).toFixed(3)+'</b>' : '')
+      + (vs && vs.oppAVG != null ? '<span>v '+esc(hand)+'HB</span><b>'+(+vs.oppAVG).toFixed(3)
+          + (vs.K9 != null ? ', '+(+vs.K9).toFixed(1)+' K9' : '')+'</b>' : '')
+      + '</div></div>';
+  }
+  // batter v this pitcher, where they have met
+  if (arm && arm.id && p.bvp && p.bvp[arm.id]){
+    var b = p.bvp[arm.id];
+    out += '<div class="dd-sec"><div class="dd-h">He has faced him</div><div class="dd-kv">'
+      + Object.keys(b).slice(0, 6).map(function(k){ return '<span>'+esc(k)+'</span><b>'+esc(String(b[k]))+'</b>'; }).join('')
+      + '</div><div class="dd-note">Small samples: a few at-bats say far less than the platoon split above.</div></div>';
+  }
+  // Statcast: what he has deserved against what he has got
+  var sc = p.statcast;
+  if (sc){
+    if (!statcastSane(sc)){
+      out += '<div class="dd-sec"><div class="dd-h">Statcast</div>'
+        + '<div class="dd-note">The Statcast columns are misaligned in the current feed (reading xBA '
+        + esc(String(sc.xba))+' against a real BA of '+esc(String(sc.ba))+'), so they are left out '
+        + 'rather than shown wrong. They return on the next Savant rebuild.</div></div>';
+    } else {
+      var gap = (+sc.xwoba - +sc.woba);
+      out += '<div class="dd-sec"><div class="dd-h">Statcast</div><div class="dd-kv">'
+        + '<span>xBA / BA</span><b>'+(+sc.xba).toFixed(3)+' / '+(+sc.ba).toFixed(3)+'</b>'
+        + '<span>xSLG / SLG</span><b>'+(+sc.xslg).toFixed(3)+' / '+(+sc.slg).toFixed(3)+'</b>'
+        + '<span>xwOBA / wOBA</span><b class="'+(gap > 0.02 ? 'good' : gap < -0.02 ? 'bad' : '')+'">'
+        + (+sc.xwoba).toFixed(3)+' / '+(+sc.woba).toFixed(3)+'</b>'
+        + (sc.barrelPct != null ? '<span>Barrel %</span><b>'+(+sc.barrelPct).toFixed(1)+'</b>' : '')
+        + (sc.hardHitPct != null ? '<span>Hard hit %</span><b>'+(+sc.hardHitPct).toFixed(1)+'</b>' : '')
+        + (sc.ev != null ? '<span>Exit velo</span><b>'+(+sc.ev).toFixed(1)+'</b>' : '')
+        + '</div><div class="dd-note">'+(gap > 0.02
+            ? 'He has been hitting the ball harder than the results show - due some correction upward.'
+            : gap < -0.02 ? 'His results are running ahead of the contact behind them.'
+            : 'Results and contact quality are in line.')+'</div></div>';
+    }
+  }
+  return out;
+}
 function deepPanel(){
   var d = state.view.deep;
   if (!d) return '';
@@ -10473,12 +10573,13 @@ function deepPanel(){
 
   var drivers = ddDriverSection(key, name, mkt, d.opp);
   var teams = ddTeamSection(key, p.team || d.team, d.opp, mkt);
+  var mlbAdv = ddMlbSection(key, p, d.opp, mkt);
   var script = ddScript(key, p.team, d.opp);
   return '<div class="cmb-overlay open" onclick="if(event.target===this)LAB.deepClose()">'
     + '<div class="cmb-modal dd-modal"><div class="cmb-hdr"><i class="ti ti-telescope"></i><h2>Deep Dive</h2>'
     + '<button class="sl-chip" onclick="LAB.deepShare()"><i class="ti ti-share"></i> Share</button>'
     + '<button class="cmb-close" onclick="LAB.deepClose()">&times;</button></div>'
-    + '<div class="cmb-body">'+head+worm+rates+drivers+teams+script+shape+matchup+role+market
+    + '<div class="cmb-body">'+head+worm+rates+drivers+mlbAdv+teams+script+shape+matchup+role+market
     + '<div class="dd-acts"><button class="pc-add" onclick="LAB.deepToCard()">Add to my card</button>'
     + '<button class="sl-chip" onclick="LAB.player(\''+key+'\',\''+esc(name).replace(/'/g,"\\'")+'\')">Full player page</button></div>'
     + '</div></div></div>';
