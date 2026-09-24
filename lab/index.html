@@ -10557,6 +10557,60 @@ function ddNblScoring(key, p, opp, mkt){
     + (conc ? esc(abbrOf(key, opp)) + ' concede ' + conc.pts.toFixed(1) + ' a game overall. ' : '')
     + 'A scorer who lives at the line and in the paint is a steadier bet than one who needs threes to fall.</div></div>';
 }
+
+/* NEXT GEN STATS ------------------------------------------------------------------------------
+   Tracking data, which is genuinely different information from a player's own box score: how much
+   room he gets, how far downfield he is used, what he does beyond what the play was worth. The
+   correlation pass will not surface these reliably yet - they cover a couple of weeks against
+   years of box score - so they get their own block, with the sample stated rather than implied. */
+var NGS_REC = [['sep', 'Separation at the catch', 'yards of room from the nearest defender', 1],
+               ['cushion', 'Cushion at the snap', 'yards the corner gives him pre-snap', 1],
+               ['aDotNgs', 'Depth of target', 'average yards downfield when thrown to', 1],
+               ['airShare', 'Share of team air yards', 'how much of the passing game goes his way', 1],
+               ['yacOe', 'Yards after catch over expected', 'what he adds beyond the play\u2019s value', 1]];
+var NGS_RUSH = [['ryoe', 'Rush yards over expected', 'what he adds beyond what the blocking gave him', 1],
+                ['boxCount', 'Defenders in the box', 'how stacked the front is against him', -1],
+                ['timeToLos', 'Time to the line', 'seconds from snap to crossing the line', -1]];
+function ddNgsSection(key, p, mkt){
+  if (key !== 'nfl' || !p) return '';
+  var rec = ['receptions', 'recYds', 'longRec', 'rushRecYds', 'anytimeTd'].indexOf(mkt) >= 0;
+  var rush = ['rushYds', 'rushAtt', 'rushRecYds', 'anytimeTd'].indexOf(mkt) >= 0;
+  var set = (rec ? NGS_REC : []).concat(rush ? NGS_RUSH : []);
+  if (!set.length) return '';
+  var S = state.sports[key];
+  var logs = sortLogsDesc(((S.idx.logsByName || {})[p.name] || []).slice());
+  var rows = set.map(function(c){
+    var vals = [];
+    logs.forEach(function(r){ var v = +r[c[0]]; if (isFinite(v)) vals.push(v); });
+    if (!vals.length) return null;
+    var mine = mean(vals.slice(0, 8));
+    // where he sits among everyone the tracking data covers
+    var peers = [];
+    Object.keys(S.idx.logsByName || {}).forEach(function(nm){
+      var v = [];
+      (S.idx.logsByName[nm] || []).forEach(function(r){ var x = +r[c[0]]; if (isFinite(x)) v.push(x); });
+      if (v.length) peers.push(mean(v));
+    });
+    peers.sort(function(a, b){ return a - b; });
+    var pct = peers.length > 5 ? Math.round(peers.filter(function(v){ return v < mine; }).length / peers.length * 100) : null;
+    var good = pct == null ? null : (c[3] > 0 ? pct >= 60 : pct <= 40);
+    return { name:c[1], note:c[2], v:mine, n:vals.length, pct:pct, good:good, dir:c[3] };
+  }).filter(Boolean);
+  if (!rows.length) return '';
+  var thin = rows.reduce(function(a, r){ return Math.min(a, r.n); }, 99);
+  return '<div class="dd-sec"><div class="dd-h">Next Gen Stats</div>'
+    + rows.map(function(r){
+        return '<div class="dd-drv"><span class="dd-dn">'+esc(r.name)+'</span>'
+          + '<b>'+(r.v >= 10 ? r.v.toFixed(0) : r.v.toFixed(2))+'</b>'
+          + '<span class="dd-dt '+(r.good === true ? 'good' : r.good === false ? 'bad' : '')+'">'
+          + (r.pct != null ? r.pct+'th pct' : '')+'</span>'
+          + '<i>'+esc(r.note)+'</i></div>';
+      }).join('')
+    + '<div class="dd-note">Tracking data, averaged over his last '+Math.min(8, thin)+' covered games'
+    + (thin < 6 ? ' \u2014 only '+thin+' game'+(thin === 1 ? '' : 's')+' of it so far, so treat this as a hint, not evidence.'
+        : '. A high box count or a long time to the line works against a rusher; room and depth work for a receiver.')
+    + '</div></div>';
+}
 function deepPanel(){
   var d = state.view.deep;
   if (!d) return '';
@@ -10663,7 +10717,8 @@ function deepPanel(){
 
   var drivers = ddDriverSection(key, name, mkt, d.opp);
   var teams = ddTeamSection(key, p.team || d.team, d.opp, mkt);
-  var mlbAdv = ddMlbSection(key, p, d.opp, mkt) + ddNblScoring(key, p, d.opp, mkt);
+  var mlbAdv = ddMlbSection(key, p, d.opp, mkt) + ddNblScoring(key, p, d.opp, mkt)
+             + ddNgsSection(key, p, mkt);
   var script = ddScript(key, p.team, d.opp);
   return '<div class="cmb-overlay open" onclick="if(event.target===this)LAB.deepClose()">'
     + '<div class="cmb-modal dd-modal"><div class="cmb-hdr"><i class="ti ti-telescope"></i><h2>Deep Dive</h2>'
