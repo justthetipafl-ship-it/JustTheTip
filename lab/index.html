@@ -892,6 +892,15 @@
   .dd-dt{font-size:9px;color:var(--text-3);width:96px;} .dd-dt.good{color:var(--accent);} .dd-dt.bad{color:#f97316;}
   .dd-dp{font-size:9px;color:var(--text-3);width:54px;text-align:right;}
   .dd-drv i{font-style:normal;font-size:9px;color:var(--text-3);width:96px;text-align:right;}
+  .nb-bar{display:flex;height:10px;border-radius:5px;overflow:hidden;margin:2px 0 8px;background:var(--border);}
+  .nb-seg{display:block;height:100%;}
+  .nb-dot{display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:6px;}
+  .nb-paintPts,.nb-paintPts.nb-dot{background:#22c55e;} .nb-fastBreakPts{background:#38bdf8;}
+  .nb-secondChancePts{background:#a78bfa;} .nb-three{background:#f97316;} .nb-ft{background:#eab308;}
+  .nb-mid{background:#64748b;}
+  i.nb-dot.nb-paintPts{background:#22c55e;} i.nb-dot.nb-fastBreakPts{background:#38bdf8;}
+  i.nb-dot.nb-secondChancePts{background:#a78bfa;} i.nb-dot.nb-three{background:#f97316;}
+  i.nb-dot.nb-ft{background:#eab308;} i.nb-dot.nb-mid{background:#64748b;}
   .dd-teams{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:10px;}
   .dd-team{background:var(--surface-2);border:1px solid var(--border);border-radius:10px;padding:9px 11px;}
   .dd-th{font-size:10px;font-weight:800;letter-spacing:.05em;text-transform:uppercase;color:var(--text-2);margin-bottom:4px;}
@@ -10467,6 +10476,87 @@ function ddMlbSection(key, p, opp, mkt){
   }
   return out;
 }
+
+/* NBL SCORING PROFILE -------------------------------------------------------------------------
+   Where his points actually come from, and whether the opponent defends that channel. Two players
+   averaging 18 are not the same bet: one lives at the line and in the paint, the other needs threes
+   to fall. The channels come straight from the box score now that the build reads them; mid-range
+   is what is left once the others are taken off his total, so the parts always sum to the whole.  */
+var NBL_CH = [['paintPts', 'In the paint'], ['fastBreakPts', 'Fast break'],
+              ['secondChancePts', 'Second chance'], ['_three', 'Threes'], ['_ft', 'Free throws'],
+              ['_mid', 'Other two-point']];
+function nblChannels(key, name, n){
+  var S = state.sports[key];
+  var logs = sortLogsDesc(((S.idx.logsByName || {})[name] || []).slice()).slice(0, n || 15);
+  var sum = { paintPts:0, fastBreakPts:0, secondChancePts:0, _three:0, _ft:0, _mid:0, pts:0, fd:0, fta:0 }, g = 0;
+  var have = false;
+  logs.forEach(function(r){
+    if (r.points == null) return;
+    g++;
+    sum.pts += +r.points || 0;
+    sum._three += 3 * (+r.threes || 0);
+    sum._ft += (+r.ftm || 0);
+    if (r.paintPts != null || r.fastBreakPts != null || r.secondChancePts != null) have = true;
+    sum.paintPts += +r.paintPts || 0;
+    sum.fastBreakPts += +r.fastBreakPts || 0;
+    sum.secondChancePts += +r.secondChancePts || 0;
+    sum.fd += +r.foulsDrawn || 0;
+    sum.fta += +r.fta || 0;
+  });
+  if (!g || !have) return null;
+  // paint/fast-break/second-chance overlap each other and the two-point total, so the remainder is
+  // taken against threes and free throws only - the honest way to avoid double counting
+  sum._mid = Math.max(0, sum.pts - sum._three - sum._ft - sum.paintPts - sum.fastBreakPts - sum.secondChancePts);
+  var out = { g:g, perGame:sum.pts / g, fd:sum.fd / g, fta:sum.fta / g, parts:[] };
+  NBL_CH.forEach(function(c){
+    var v = sum[c[0]] / g;
+    if (v > 0.05) out.parts.push({ key:c[0], name:c[1], per:v, pct: sum.pts ? sum[c[0]] / sum.pts : 0 });
+  });
+  out.parts.sort(function(a, b){ return b.per - a.per; });
+  return out;
+}
+function nblConceded(key, opp, n){
+  // what this opponent lets the other side score, by channel
+  var S = state.sports[key], logs = asArray(S.data.gamelogs) || [];
+  var byMatch = {}, sum = { paintPts:0, fastBreakPts:0, secondChancePts:0, pts:0 }, games = {};
+  logs.forEach(function(r){
+    if (!r || normTeam(r.Opp) !== normTeam(opp)) return;      // rows BY the other side, against them
+    games[r.MatchId] = 1;
+    sum.pts += +r.points || 0;
+    sum.paintPts += +r.paintPts || 0;
+    sum.fastBreakPts += +r.fastBreakPts || 0;
+    sum.secondChancePts += +r.secondChancePts || 0;
+  });
+  var n2 = Object.keys(games).length;
+  if (!n2) return null;
+  return { games:n2, pts:sum.pts / n2, paintPts:sum.paintPts / n2,
+           fastBreakPts:sum.fastBreakPts / n2, secondChancePts:sum.secondChancePts / n2 };
+}
+function ddNblScoring(key, p, opp, mkt){
+  if (key !== 'nbl' || !p) return '';
+  if (['points', 'pra', 'pr', 'pa', 'threes'].indexOf(mkt) < 0) return '';
+  var prof = nblChannels(key, p.name, 15);
+  if (!prof) return '';
+  var conc = opp ? nblConceded(key, opp, 15) : null;
+  var bar = '<div class="nb-bar">' + prof.parts.map(function(c){
+    return '<span class="nb-seg nb-' + esc(c.key.replace('_', '')) + '" style="width:' + (c.pct * 100).toFixed(1) + '%" '
+      + 'title="' + esc(c.name) + '"></span>';
+  }).join('') + '</div>';
+  var rows = prof.parts.map(function(c){
+    var against = conc && conc[c.key] != null ? conc[c.key] : null;
+    return '<div class="dd-drv"><span class="dd-dn"><i class="nb-dot nb-' + esc(c.key.replace('_', '')) + '"></i>'
+      + esc(c.name) + '</span><b>' + c.per.toFixed(1) + '</b>'
+      + '<span class="dd-dt">' + Math.round(c.pct * 100) + '% of his points</span>'
+      + (against != null ? '<i>' + esc(abbrOf(key, opp)) + ' concede ' + against.toFixed(1) + '</i>' : '<i></i>')
+      + '</div>';
+  }).join('');
+  return '<div class="dd-sec"><div class="dd-h">How he scores</div>' + bar + rows
+    + '<div class="dd-drv"><span class="dd-dn">Gets to the line</span><b>' + prof.fta.toFixed(1) + '</b>'
+    + '<span class="dd-dt">free throws a game</span><i>' + prof.fd.toFixed(1) + ' fouls drawn</i></div>'
+    + '<div class="dd-note">His last ' + prof.g + ' games, ' + prof.perGame.toFixed(1) + ' points a game. '
+    + (conc ? esc(abbrOf(key, opp)) + ' concede ' + conc.pts.toFixed(1) + ' a game overall. ' : '')
+    + 'A scorer who lives at the line and in the paint is a steadier bet than one who needs threes to fall.</div></div>';
+}
 function deepPanel(){
   var d = state.view.deep;
   if (!d) return '';
@@ -10573,7 +10663,7 @@ function deepPanel(){
 
   var drivers = ddDriverSection(key, name, mkt, d.opp);
   var teams = ddTeamSection(key, p.team || d.team, d.opp, mkt);
-  var mlbAdv = ddMlbSection(key, p, d.opp, mkt);
+  var mlbAdv = ddMlbSection(key, p, d.opp, mkt) + ddNblScoring(key, p, d.opp, mkt);
   var script = ddScript(key, p.team, d.opp);
   return '<div class="cmb-overlay open" onclick="if(event.target===this)LAB.deepClose()">'
     + '<div class="cmb-modal dd-modal"><div class="cmb-hdr"><i class="ti ti-telescope"></i><h2>Deep Dive</h2>'
