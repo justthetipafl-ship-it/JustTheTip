@@ -857,6 +857,34 @@
   .res-txt i{font-style:normal;font-size:9px;color:var(--text-3);}
   .res-out{font-family:var(--font-mono);font-size:12px;width:66px;text-align:right;}
   .res-out.pos{color:var(--accent);} .res-out.neg{color:#f97316;} .res-out.mid{color:var(--text-3);}
+  .dd-btn{flex:none;width:26px;height:26px;border-radius:7px;border:1px dashed var(--border);
+    background:transparent;color:var(--text-3);cursor:pointer;font-size:13px;display:flex;align-items:center;justify-content:center;}
+  .dd-btn:hover{border-style:solid;border-color:var(--accent);color:var(--accent);}
+  .dd-modal .cmb-body{padding-bottom:20px;}
+  .dd-head{display:flex;align-items:center;gap:10px;padding-bottom:8px;}
+  .dd-bet b{display:block;font-size:15px;} .dd-bet span{font-size:11px;color:var(--text-2);}
+  .dd-verdict{margin-left:auto;text-align:right;font-family:var(--font-display);font-size:24px;line-height:1;}
+  .dd-verdict.good{color:var(--accent);} .dd-verdict.bad{color:#f97316;}
+  .dd-verdict i{display:block;font-style:normal;font-size:8px;letter-spacing:.08em;text-transform:uppercase;color:var(--text-3);}
+  .dd-sub{font-size:10px;color:var(--text-3);margin-bottom:10px;}
+  .dd-sec{border-top:1px solid var(--border);padding:10px 0;}
+  .dd-h{font-size:10px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:var(--text-3);margin-bottom:7px;}
+  .dd-bars{width:100%;height:74px;display:block;}
+  .dd-note{font-size:10px;color:var(--text-3);margin-top:6px;line-height:1.45;}
+  .dd-rate{display:flex;align-items:center;gap:8px;font-size:11px;padding:3px 0;}
+  .dd-rate > span{width:88px;color:var(--text-2);} .dd-rate i{font-style:normal;font-size:9px;color:var(--text-3);width:76px;}
+  .dd-rate b{font-family:var(--font-mono);width:34px;text-align:right;}
+  .dd-track{flex:1;height:6px;border-radius:3px;background:var(--border);overflow:hidden;}
+  .dd-fill{height:100%;background:var(--text-3);} .dd-fill.good{background:var(--accent);} .dd-fill.bad{background:#f97316;}
+  .dd-kv{display:grid;grid-template-columns:auto auto auto auto;gap:4px 10px;font-size:11px;align-items:baseline;}
+  .dd-kv span{color:var(--text-3);font-size:10px;} .dd-kv b{font-family:var(--font-mono);}
+  .dd-kv b.good{color:var(--accent);} .dd-kv b.bad{color:#f97316;}
+  .dd-books{display:flex;flex-wrap:wrap;gap:5px;}
+  .dd-bk{font-size:9px;color:var(--text-3);border:1px solid var(--border);border-radius:7px;padding:3px 7px;}
+  .dd-bk b{display:block;font-family:var(--font-mono);font-size:11px;color:var(--text);}
+  .dd-bk.top{border-color:var(--accent);} .dd-bk.top b{color:var(--accent);}
+  .dd-acts{display:flex;gap:8px;align-items:center;margin-top:12px;}
+  .dd-acts .pc-add{flex:1;}
   .card-add{flex:none;width:26px;height:26px;border-radius:7px;border:1px dashed var(--border);
     background:transparent;color:var(--text-3);cursor:pointer;font-size:13px;display:flex;align-items:center;justify-content:center;}
   .card-add.on{border-style:solid;border-color:var(--accent);color:var(--accent);}
@@ -5458,7 +5486,7 @@ function eachSkater(key, g, fn){
 }
 function eplRow(key, r, bet, chips, big, bigL, good, cardLbl){
   return '<div class="gl-row sig-extra" onclick="LAB.player(\'' + key + '\',\'' + esc(r.name).replace(/'/g,"\\'") + '\')">'
-    + (cardLbl ? cardBtn(key, r, cardLbl) : '')
+    + (cardLbl ? cardBtn(key, r, cardLbl) + deepBtn(key, r, cardLbl) : '')
     + playerImgP(key, r.name, 28)
     + '<div class="gl-left"><div class="gl-nm"><b>'+esc(r.name)+'</b><span class="gl-tag">'
     + esc((posShortP(r.p) ? posShortP(r.p)+' \u00b7 ' : '')+abbrOf(key, r.p.team)+' v '+abbrOf(key, r.opp))+'</span></div>'
@@ -9437,15 +9465,32 @@ function cardAdd(e){
   CARD.push(e); cardSave(); return true;
 }
 // rows carry their market as a label ("Points"); resolve it back to the stat key the live feed uses
+// A row's own market key is the truth; this is only the fallback for callers that have a label.
+// It used to be exact-match, so "Home Run" against a config label of "Home Runs" fell through to
+// the lower-cased words - and every lookup keyed on it (his games, the books) came back empty.
 function mktFromLabel(key, label){
   var mk = ((state.sports[key].config || {}).oddsMkts) || [];
-  var hit = mk.filter(function(m){ return m[1] === label || m[0] === label; })[0];
+  var norm = function(x){ return String(x || '').toLowerCase().replace(/[^a-z0-9]/g, '').replace(/s$/, ''); };
+  var want = norm(label);
+  var hit = mk.filter(function(m){ return m[1] === label || m[0] === label; })[0]
+         || mk.filter(function(m){ return norm(m[1]) === want || norm(m[0]) === want; })[0];
   return hit ? hit[0] : String(label || '').toLowerCase();
+}
+function mktOfRow(key, r, label){
+  return (r && (r.mkt || (r.b && r.b.mkt))) || mktFromLabel(key, label);
+}
+function deepBtn(key, r, betLbl){
+  var b = r && r.b; if (!b || !b.od) return '';
+  var d = { key:key, name:r.name, mkt:mktOfRow(key, r, betLbl), line:b.od.line,
+            side:b.side || 'over', odds:b.od.price, book:b.od.book || '', opp:r.opp || '' };
+  return '<button class="dd-btn" title="Deep dive on this bet" '
+    + 'onclick="event.stopPropagation();LAB.deep(this)" data-d="'+esc(JSON.stringify(d))+'">'
+    + '<i class="ti ti-telescope"></i></button>';
 }
 function cardBtn(key, r, betLbl){
   var b = r && r.b; if (!b || !b.od) return '';
   var e = { id:cardId(), type:'single', key:key, name:r.name, team:(r.p && r.p.team) || '', opp:r.opp || '',
-            mkt:mktFromLabel(key, betLbl), label:betLbl, line:b.od.line, side:b.side || 'over',
+            mkt:mktOfRow(key, r, betLbl), label:betLbl, line:b.od.line, side:b.side || 'over',
             odds:b.od.price, book:b.od.book || '', gamePk:(r.g && r.g.gamePk) != null ? r.g.gamePk : null, stake:null };
   return '<button class="card-add'+(cardHas(e) ? ' on' : '')+'" title="Add to my card" '
     + 'onclick="event.stopPropagation();LAB.cardAdd(this)" data-c="'+esc(JSON.stringify(e))+'">'
@@ -9742,6 +9787,169 @@ function drawShareCard(){
   });
 }
 
+/* DEEP DIVE ----------------------------------------------------------------------------------
+   Everything that bears on ONE bet, in one place: the model's read, his own record at that exact
+   line cut every way that matters, the game-by-game worm, who he is facing, whether he will even
+   be on the field, and what every book is charging. Opened from any signal row or a Check My Bet
+   result, because a suggestion is worth nothing if you cannot see what it rests on.            */
+function ddBars(vals, line, w, h){
+  if (!vals.length) return '';
+  var n = Math.min(vals.length, 20), use = vals.slice(0, n).reverse();
+  var max = Math.max(line * 1.4, Math.max.apply(null, use.concat([line])) * 1.05, 1);
+  var bw = (w - 2) / n, out = '';
+  use.forEach(function(v, i){
+    var bh = Math.max(1, (v / max) * (h - 14)), x = 1 + i * bw;
+    out += '<rect x="'+x.toFixed(1)+'" y="'+(h - 12 - bh).toFixed(1)+'" width="'+(bw - 1.6).toFixed(1)
+        + '" height="'+bh.toFixed(1)+'" fill="'+(v > line ? 'var(--accent)' : '#39424f')+'" rx="1"/>';
+  });
+  var ly = h - 12 - Math.max(1, (line / max) * (h - 14));
+  out += '<line x1="0" y1="'+ly.toFixed(1)+'" x2="'+w+'" y2="'+ly.toFixed(1)+'" stroke="#f97316" stroke-width="1.2" stroke-dasharray="4 3"/>';
+  out += '<text x="2" y="'+(h - 2)+'" fill="var(--text-3)" font-size="8">oldest</text>'
+       + '<text x="'+(w - 2)+'" y="'+(h - 2)+'" fill="var(--text-3)" font-size="8" text-anchor="end">latest</text>';
+  return '<svg class="dd-bars" viewBox="0 0 '+w+' '+h+'" preserveAspectRatio="none">'+out+'</svg>';
+}
+function ddRate(vals, line, side){
+  var n = vals.length;
+  if (!n) return null;
+  var hits = vals.filter(function(v){ return side === 'under' ? v <= line : v > line; }).length;
+  return { n:n, hits:hits, pct:hits / n };
+}
+function ddBar(label, r, extra){
+  if (!r || !r.n) return '<div class="dd-rate"><span>'+esc(label)+'</span><i>no games</i></div>';
+  var pc = Math.round(r.pct * 100);
+  return '<div class="dd-rate"><span>'+esc(label)+'</span>'
+    + '<div class="dd-track"><div class="dd-fill'+(pc >= 60 ? ' good' : pc <= 40 ? ' bad' : '')+'" style="width:'+pc+'%"></div></div>'
+    + '<b>'+pc+'%</b><i>'+r.hits+'/'+r.n+(extra ? ' \u00b7 '+extra : '')+'</i></div>';
+}
+function deepData(key, name, mkt, line, side, opp){
+  var S = state.sports[key], p = (S.idx.byName || {})[name] || {};
+  var logs = sortLogsDesc(((S.idx.logsByName || {})[name] || []).slice());
+  var season = curSeason(key);
+  var all = [], l5 = [], l10 = [], l20 = [], seas = [], vsOpp = [], home = [], away = [];
+  logs.forEach(function(r){
+    var v = statOf(key, r, mkt);
+    if (v == null) return;
+    all.push(v);
+    if (all.length <= 5) l5.push(v);
+    if (all.length <= 10) l10.push(v);
+    if (all.length <= 20) l20.push(v);
+    if (String(r.Year || r.year) === String(season)) seas.push(v);
+    if (opp && normTeam(oppOf(key, r)) === normTeam(opp)) vsOpp.push(v);
+    var rv = rowVenue(key, r);
+    if (rv.home === true) home.push(v); else if (rv.home === false) away.push(v);
+  });
+  return { p:p, all:all, l5:l5, l10:l10, l20:l20, seas:seas, vsOpp:vsOpp, home:home, away:away };
+}
+function deepPanel(){
+  var d = state.view.deep;
+  if (!d) return '';
+  var key = d.key, S = state.sports[key];
+  var name = d.name, mkt = d.mkt, line = +d.line, side = d.side || 'over';
+  var lab = mktLabel(key, mkt);
+  var dat = deepData(key, name, mkt, line, side, d.opp);
+  var p = dat.p;
+  var betTxt = (side === 'under' ? 'Under ' + line : Math.ceil(line) + '+') + ' ' + lab;
+
+  // ---- the model's read, capped at his record as everywhere else ----
+  var raw = modelProbAt(key, p, mkt, line, d.opp);
+  var pr = (raw != null && p.name) ? recordCap(key, p, mkt, line, side, raw) : raw;
+  var price = +d.odds || null;
+  var implied = price ? 1 / price : null;
+  var ev = (pr != null && price) ? pr * price - 1 : null;
+  var head = '<div class="dd-head"><div class="dd-bet"><b>'+esc(name)+'</b>'
+    + '<span>'+esc(betTxt)+(price ? ' \u00b7 $'+price.toFixed(2)+(d.book ? ' '+esc(d.book) : '') : '')+'</span></div>'
+    + (pr != null ? '<div class="dd-verdict '+(ev != null && ev >= 0 ? 'good' : 'bad')+'">'
+        + (ev != null ? (ev >= 0 ? '+' : '')+Math.round(ev*100)+'%' : Math.round(pr*100)+'%')
+        + '<i>'+(ev != null ? 'edge' : 'model')+'</i></div>' : '')
+    + '</div>'
+    + (pr != null ? '<div class="dd-sub">model '+Math.round(pr*100)+'%'
+        + (implied ? ' v '+Math.round(implied*100)+'% implied' : '')
+        + (raw != null && pr < raw - 0.005 ? ' \u00b7 capped down from '+Math.round(raw*100)+'% by his own record' : '')
+        + '</div>' : '');
+
+  // ---- the worm: his last 20 against this line ----
+  var worm = '<div class="dd-sec"><div class="dd-h">Last '+Math.min(20, dat.all.length)+' games against '+esc(String(line))+'</div>'
+    + ddBars(dat.all, line, 320, 74)
+    + '<div class="dd-note">bars are his actual '+esc(lab)+'; the dashed line is the bet</div></div>';
+
+  // ---- the same record cut every way that matters ----
+  var rates = '<div class="dd-sec"><div class="dd-h">His record at this line</div>'
+    + ddBar('Last 5', ddRate(dat.l5, line, side))
+    + ddBar('Last 10', ddRate(dat.l10, line, side))
+    + ddBar('Last 20', ddRate(dat.l20, line, side))
+    + ddBar('This season', ddRate(dat.seas, line, side))
+    + (d.opp ? ddBar('v ' + abbrOf(key, d.opp), ddRate(dat.vsOpp, line, side)) : '')
+    + ddBar('Home', ddRate(dat.home, line, side))
+    + ddBar('Away', ddRate(dat.away, line, side))
+    + '<div class="dd-note">a short sample is not a trend: 3 of 5 is the same as a coin toss</div></div>';
+
+  // ---- shape of his numbers, so the line's position is visible ----
+  var srt = dat.all.slice().sort(function(a,b){ return a - b; });
+  var med = srt.length ? srt[Math.floor(srt.length/2)] : null;
+  var q1 = srt.length ? srt[Math.floor(srt.length*0.25)] : null;
+  var q3 = srt.length ? srt[Math.floor(srt.length*0.75)] : null;
+  var shape = srt.length ? '<div class="dd-sec"><div class="dd-h">Where the line sits</div>'
+    + '<div class="dd-kv"><span>Median</span><b>'+med+'</b><span>Middle half</span><b>'+q1+' to '+q3+'</b>'
+    + '<span>Best</span><b>'+srt[srt.length-1]+'</b><span>Worst</span><b>'+srt[0]+'</b></div>'
+    + '<div class="dd-note">'+(line >= q3 ? 'The line is above his usual range \u2014 it needs a big game.'
+        : line <= q1 ? 'The line sits below his usual range \u2014 it only fails on a quiet one.'
+        : 'The line is inside his normal range, so this is close to a coin toss on form alone.')+'</div></div>' : '';
+
+  // ---- who he is facing ----
+  var dvpRows = (asArray(S.data.dvp) || []).filter(function(r){ return r.pos === p.position && r.market === mkt; });
+  var oppRow = d.opp ? dvpRows.filter(function(r){ return normTeam(r.team) === normTeam(d.opp); })[0] : null;
+  var matchup = '';
+  if (oppRow && dvpRows.length > 2){
+    var sorted = dvpRows.slice().sort(function(a,b){ return b.val - a.val; });
+    var rank = sorted.findIndex(function(r){ return normTeam(r.team) === normTeam(d.opp); }) + 1;
+    var lgMean = sorted.reduce(function(a,r){ return a + (+r.val || 0); }, 0) / sorted.length;
+    var diff = lgMean ? ((+oppRow.val - lgMean) / lgMean * 100) : 0;
+    matchup = '<div class="dd-sec"><div class="dd-h">The matchup</div>'
+      + '<div class="dd-kv"><span>'+esc(abbrOf(key, d.opp))+' allow</span><b>'+(+oppRow.val).toFixed(1)+' '+esc(lab)+'</b>'
+      + '<span>League rank</span><b>'+rank+' of '+sorted.length+'</b>'
+      + '<span>v average</span><b class="'+(diff >= 0 ? 'good' : 'bad')+'">'+(diff >= 0 ? '+' : '')+Math.round(diff)+'%</b></div>'
+      + '<div class="dd-note">'+(rank <= 5 ? 'One of the softest matchups in the league for his position.'
+          : rank >= sorted.length - 4 ? 'One of the toughest \u2014 this is working against him.'
+          : 'A middling matchup: not a reason to take or leave the bet.')+'</div></div>';
+  }
+
+  // ---- will he even be out there ----
+  var rf = ROLE_FIELD[key], roleVal = rf ? +p[rf] : null;
+  var inj = injStatus(key, name);
+  var role = '<div class="dd-sec"><div class="dd-h">Role and availability</div>'
+    + '<div class="dd-kv">'
+    + (roleVal ? '<span>'+(rf === 'snapPct' ? 'Snap share' : rf === 'tog' ? 'Time on ground' : 'Minutes')+'</span><b class="'
+        + (roleVal >= (ROLE_FLOOR[key] || 0) ? 'good' : 'bad') + '">'+roleVal+(rf === 'snapPct' || rf === 'tog' ? '%' : '')+'</b>' : '')
+    + '<span>Status</span><b class="'+(inj ? 'bad' : 'good')+'">'+esc(inj || 'no flag')+'</b>'
+    + '<span>Games on file</span><b>'+dat.all.length+'</b></div>'
+    + (roleVal && roleVal < (ROLE_FLOOR[key] || 0)
+        ? '<div class="dd-note">Below the usage we trust for a build leg. A player at this share features in his next game about 70% of the time, and a hit rate cannot see that coming.</div>'
+        : roleVal ? '<div class="dd-note">Enough of the game to rely on.</div>'
+        : '<div class="dd-note">This sport reports no minutes, so availability rests on the posted lineup.</div>')+'</div>';
+
+  // ---- what the market is charging ----
+  var rows = bookRows(key, name, mkt, line) || [];
+  var cons = rows.filter(function(r){ return r.over != null && r.under != null; })[0];
+  var fair = cons ? powerDevig(+cons.over, +cons.under) : null;
+  var best = rows.reduce(function(a, r){ return (r.over != null && (!a || +r.over > +a.over)) ? r : a; }, null);
+  var market = rows.length ? '<div class="dd-sec"><div class="dd-h">The price</div>'
+    + '<div class="dd-books">'+rows.filter(function(r){ return r.over != null; })
+        .sort(function(a,b){ return b.over - a.over; })
+        .map(function(r){ return '<span class="dd-bk'+(best && r.book === best.book ? ' top' : '')+'">'
+          + esc(r.book || '?')+'<b>$'+(+r.over).toFixed(2)+'</b></span>'; }).join('')+'</div>'
+    + (fair ? '<div class="dd-note">The market\u2019s own fair price at this line, with the vig removed, is <b>$'
+        + (1/fair).toFixed(2)+'</b>'+(best && +best.over > 1/fair ? ' \u2014 '+esc(best.book)+' is paying above it.'
+        : '. No book is beating it.')+'</div>' : '')+'</div>' : '';
+
+  return '<div class="cmb-overlay open" onclick="if(event.target===this)LAB.deepClose()">'
+    + '<div class="cmb-modal dd-modal"><div class="cmb-hdr"><i class="ti ti-telescope"></i><h2>Deep Dive</h2>'
+    + '<button class="cmb-close" onclick="LAB.deepClose()">&times;</button></div>'
+    + '<div class="cmb-body">'+head+worm+rates+shape+matchup+role+market
+    + '<div class="dd-acts"><button class="pc-add" onclick="LAB.deepToCard()">Add to my card</button>'
+    + '<button class="sl-chip" onclick="LAB.player(\''+key+'\',\''+esc(name).replace(/'/g,"\\'")+'\')">Full player page</button></div>'
+    + '</div></div></div>';
+}
+
 function render(){
   var loading = Object.keys(SPORTS).filter(function(k){ return state.sports[k].status==='loading'; });
   $('status').textContent = loading.length ? ('loading '+loading.join(', ')+'…') : 'ready';
@@ -9754,7 +9962,7 @@ function render(){
 
   if (state.view.focus){
     h = '' + focusPage();                       // focused fixture replaces the page
-    $('app').innerHTML = configBanner() + h + playerPanel() + booksPanel() + cmbFab() + cmbPanel() + cardFab() + cardPanel() + livePanel();
+    $('app').innerHTML = configBanner() + h + playerPanel() + booksPanel() + cmbFab() + cmbPanel() + cardFab() + cardPanel() + livePanel() + deepPanel();
     return;
   }
   if (state.view.tab === 'results'){
@@ -9785,13 +9993,25 @@ function render(){
       });
     }
   }
-  $('app').innerHTML = configBanner() + h + playerPanel() + booksPanel() + cmbFab() + cmbPanel() + cardFab() + cardPanel() + livePanel();
+  $('app').innerHTML = configBanner() + h + playerPanel() + booksPanel() + cmbFab() + cmbPanel() + cardFab() + cardPanel() + livePanel() + deepPanel();
 }
 
 /* ---- public ------------------------------------------------------------- */
 window.LAB = {
   crewSport: function(k){ state.view.crewSport = k; state.view.crewTile = null; render(); },
   resSport: function(k){ state.view.resSport = k; render(); },
+  deep: function(el){
+    try { state.view.deep = JSON.parse(el.getAttribute('data-d')); render(); } catch(e){}
+  },
+  deepClose: function(){ state.view.deep = null; render(); },
+  deepToCard: function(){
+    var d = state.view.deep; if (!d) return;
+    var p = (state.sports[d.key].idx.byName || {})[d.name] || { name:d.name, team:'' };
+    cardAdd({ id:cardId(), type:'single', key:d.key, name:d.name, team:p.team || '', opp:d.opp || '',
+              mkt:d.mkt, label:mktLabel(d.key, d.mkt), line:+d.line, side:d.side || 'over',
+              odds:+d.odds || null, book:d.book || '', stake:null });
+    state.view.deep = null; state.view.cardOpen = true; render();
+  },
   cardOpen: function(){ state.view.cardOpen = true; render(); },
   cardCustomOpen: function(on){ state.view.cardCustom = !!on; render(); },
   cardCustomAdd: function(){
