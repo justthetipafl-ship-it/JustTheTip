@@ -970,6 +970,12 @@
   .cmb-sum-row{display:flex;justify-content:space-between;align-items:baseline;padding:4px 0;font-size:11px;}
   .cmb-sum-row b{font-family:var(--font-display);font-size:14px;}
   .cmb-sum-row.tot{border-top:1px solid var(--border);margin-top:5px;padding-top:8px;}
+  .cmb-acts{display:flex;gap:8px;align-items:center;margin-top:8px;}
+  .cmb-acts .cmb-go{flex:1;justify-content:center;padding:10px;}
+  .cmb-warn{margin:8px 0 2px;padding:8px 10px;border-radius:9px;font-size:11px;line-height:1.5;
+    background:color-mix(in srgb,#eab308 12%,transparent);border:1px solid color-mix(in srgb,#eab308 35%,transparent);
+    color:var(--text-2);}
+  .cmb-warn b{color:var(--text);}
   .cmb-corr{font-size:10px;color:var(--text-3);margin-top:7px;line-height:1.5;}
   .ca-hd{display:flex;align-items:center;gap:9px;margin-bottom:9px;}
   .ca-hd .fxr-logo,.ca-hd .fxr-logo-ph{width:34px;height:34px;margin:0;font-size:11px;}
@@ -8066,6 +8072,12 @@ function mbFixtures(){
   });
   return out.slice(0, 40);
 }
+function mbBook(){
+  var b = state.view.mbBook;
+  if (b === '*') return null;                      // the user asked for best price per leg
+  if (b) return b;
+  return HOUSE_BOOK;                               // default: one ticket at the house book
+}
 function mbCandidates(key, g, mode){
   var S = state.sports[key], out = [];
   var mkts = (S.config || {}).oddsMkts || (S.config || {}).multiMkts || [];
@@ -8093,7 +8105,15 @@ function mbCandidates(key, g, mode){
           var v = statOf(key, r, k); if (v != null) h2h.push(v);
         });
         var dr = dvpRankFor(key, opp, p.position || p.pos, k);
-        streakCandidates(key, p.name, k).forEach(function(c){
+        streakCandidates(key, p.name, k).forEach(function(c0){
+          // A multi has to be placeable, so every leg is priced at ONE book. Best-price-per-leg
+          // shops each leg to a different book and produces a ticket nobody can actually put on.
+          var c = c0;
+          if (mbBook()){
+            var bp = bookPriceFor(key, p.name, k, c0.line, mbBook());
+            if (!bp) return;                       // this book does not price that rung
+            c = { line:c0.line, price:bp.price, book:bp.book };
+          }
           if (c.price == null || c.price < STREAK_ODDS_FLOOR) return;
           var raw = null;
           try { raw = S.scoring && S.scoring.prob ? S.scoring.prob(p, k, c.line, opp) : null; } catch(e){}
@@ -8271,6 +8291,13 @@ function mbPanel(){
           + esc(SPORTS[x.key].name+' \u00b7 '+abbrOf(x.key, x.g.away)+' @ '+abbrOf(x.key, x.g.home))+'</option>';
       }).join('')+'</select>';
   var mode = v.mbMode || 'value';
+  var books = booksFor(f.key);
+  var cur = state.view.mbBook === '*' ? '*' : (state.view.mbBook || HOUSE_BOOK);
+  h += '<div class="deg-bar"><span>Book</span><select class="ob-sel" onchange="LAB.mbBook(this.value)">'
+    + books.map(function(b){ return '<option value="'+esc(b)+'"'+(b === cur ? ' selected' : '')+'>'+esc(b)+'</option>'; }).join('')
+    + '<option value="*"'+(cur === '*' ? ' selected' : '')+'>Best price per leg (not one ticket)</option></select>'
+    + '<span class="deg-note">'+(cur === '*' ? 'Legs may sit at different books \u2014 you could not place this as one multi.'
+        : 'Every leg priced at '+esc(cur)+', so the multi is placeable.')+'</span></div>';
   h += '<div class="mb-modes">'+MB_MODES.map(function(m){
     return '<button class="sl-chip'+(m[0]===mode?' on':'')+'" onclick="LAB.mbMode(\''+m[0]+'\')">'
       + m[1]+'</button>'; }).join('')+'</div>';
@@ -8315,8 +8342,11 @@ function cmbPanel(){
       + cmbSugList(v.cmbQ, 'single')
       + (res ? (res.err ? '<div class="empty" style="padding:18px">'+esc(res.err)+'</div>'
              : (res.loading ? '<div class="empty" style="padding:18px">Loading history\u2026</div>'
-             : cmbAnalysis(res.leg) + '<button class="cmb-go" style="width:100%;justify-content:center;padding:10px"'
-               + ' onclick="LAB.cmbAdd()"><i class="ti ti-plus"></i> Add to multi</button>')) : '')
+             : cmbAnalysis(res.leg)
+               + '<div class="cmb-acts">'
+               + '<button class="cmb-go" onclick="LAB.cmbAdd()"><i class="ti ti-plus"></i> Add to multi</button>'
+               + '<button class="sl-chip" onclick="LAB.cmbShare()"><i class="ti ti-share"></i> Share</button>'
+               + '</div>')) : '')
       + (v.cmbRecent && v.cmbRecent.length ? '<div class="cmb-recent">'+v.cmbRecent.map(function(r){
           return '<button class="sl-chip" onclick="LAB.cmbRun(\''+esc(r).replace(/'/g,"\\'")+'\')">'
             + esc(r)+'</button>'; }).join('')+'</div>' : '')
@@ -8377,6 +8407,26 @@ function cmbPanel(){
             + cmbOdds(joint)+'</b></div>'
           + '<div class="cmb-sum-row tot"><span>Fair price</span><b>'
             + (fair != null ? '$'+fair.toFixed(2) : 'no model for every leg')+'</b></div>'
+          + (function(){
+              // The weak link. A multi is only as good as its worst leg, and people rarely notice
+              // that one leg at 35% is halving the whole ticket - so say what dropping it does.
+              var ls = (state.view.cmbLegs || []).filter(function(l){ return l && l.prob != null; });
+              if (ls.length < 3 || joint == null) return '';
+              var worst = ls.reduce(function(a, l){ return (!a || l.prob < a.prob) ? l : a; }, null);
+              var rest = ls.filter(function(l){ return l !== worst; });
+              if (!worst || worst.prob > 0.45) return '';
+              var others = rest.reduce(function(a, l){ return Math.min(a, l.prob); }, 1);
+              if (others < worst.prob + 0.15) return '';        // no single weak link, just a long multi
+              var jr = cmbJoint(rest);
+              if (jr == null) return '';
+              var priceNow = (state.view.cmbLegs || []).reduce(function(a, l){ return a * (l.price || 1); }, 1);
+              var priceThen = rest.reduce(function(a, l){ return a * (l.price || 1); }, 1);
+              return '<div class="cmb-warn"><b>'+esc(worst.p ? worst.p.name : 'One leg')+'</b> is the weak link at '
+                + Math.round(worst.prob*100)+'%. Dropping it takes the multi from '
+                + Math.round(joint*100)+'% to '+Math.round(jr*100)+'%'
+                + (priceNow > 1 && priceThen > 1 ? ', and the price from $'+priceNow.toFixed(2)+' to $'+priceThen.toFixed(2) : '')
+                + '.</div>';
+            })()
           + (combined && joint != null ? '<div class="cmb-sum-row"><span>Posted combined</span><b>$'
               + combined.toFixed(2)+'</b></div>'
             + '<div class="cmb-sum-row"><span>Edge</span><b class="'
@@ -9890,6 +9940,107 @@ function loadImg(src){
     im.src = src;
   });
 }
+/* One branded renderer for everything that can be shared: the card, a Check My Bet verdict and a
+   Deep Dive. Same wordmark, same layout, so a screenshot from any of them looks like the others. */
+function drawShare(kicker, lines, footer){
+  if (!lines || !lines.length) return Promise.resolve(null);
+  var pad = 56, rowH = 118, headH = 250, footH = 120;
+  var H = headH + lines.length * rowH + footH;
+  var c = document.createElement('canvas');
+  c.width = SHARE_W; c.height = H;
+  var x = c.getContext && c.getContext('2d');
+  if (!x) return Promise.resolve(null);
+  var grad = x.createLinearGradient(0, 0, 0, H);
+  grad.addColorStop(0, '#0d1117'); grad.addColorStop(1, '#070a0e');
+  x.fillStyle = grad; x.fillRect(0, 0, SHARE_W, H);
+  x.strokeStyle = 'rgba(34,197,94,.35)'; x.lineWidth = 6; x.strokeRect(3, 3, SHARE_W - 6, H - 6);
+  return loadImg(BRAND.wordmark).then(function(mark){
+    if (mark){
+      var w = Math.min(420, mark.width), h = w * mark.height / mark.width;
+      x.drawImage(mark, pad, 54, w, h);
+    } else {
+      x.fillStyle = '#e8edf4'; x.font = '700 46px system-ui,sans-serif';
+      x.fillText('JUST THE TIP', pad, 100);
+    }
+    x.fillStyle = '#6f7d8f'; x.font = '500 26px system-ui,sans-serif';
+    x.fillText(String(kicker).toUpperCase(), pad, 190);
+    var y = headH;
+    lines.forEach(function(l){
+      x.strokeStyle = 'rgba(255,255,255,.07)'; x.lineWidth = 2;
+      x.beginPath(); x.moveTo(pad, y - 28); x.lineTo(SHARE_W - pad, y - 28); x.stroke();
+      x.fillStyle = '#e8edf4'; x.font = '700 38px system-ui,sans-serif';
+      x.fillText(String(l.title).slice(0, 34), pad, y + 14);
+      if (l.sub){
+        x.fillStyle = '#aab6c6'; x.font = '400 26px system-ui,sans-serif';
+        x.fillText(String(l.sub).slice(0, 62), pad, y + 54);
+      }
+      if (l.right){
+        x.fillStyle = l.good === false ? '#f97316' : '#22c55e';
+        x.font = '700 42px ui-monospace,monospace';
+        var t = String(l.right);
+        x.fillText(t, SHARE_W - pad - x.measureText(t).width, y + 26);
+      }
+      y += rowH;
+    });
+    if (footer){
+      x.fillStyle = '#6f7d8f'; x.font = '500 26px system-ui,sans-serif';
+      x.fillText(String(footer).slice(0, 62), pad, H - 52);
+    }
+    x.fillStyle = '#3a4756'; x.font = '500 24px system-ui,sans-serif';
+    x.fillText('justthetipaus.com', pad, H - 18);
+    return c;
+  });
+}
+function shareCanvas(c, name){
+  if (!c) return;
+  c.toBlob(function(blob){
+    if (!blob) return;
+    var file = new File([blob], name || 'jtt.png', { type:'image/png' });
+    if (navigator.canShare && navigator.canShare({ files:[file] })){
+      navigator.share({ files:[file], title:'Just The Tip' }).catch(function(){});
+      return;
+    }
+    var url = URL.createObjectURL(blob), a = document.createElement('a');
+    a.href = url; a.download = name || 'jtt.png'; a.click();
+    setTimeout(function(){ URL.revokeObjectURL(url); }, 4000);
+  }, 'image/png');
+}
+// what a Check My Bet verdict says, as share lines
+function shareCmbLines(){
+  var r = state.view.cmbResult, l = r && r.leg;
+  if (!l) return null;
+  var price = l.price || (l.od && l.od.price), prob = l.prob != null ? l.prob : (l.pr != null ? l.pr : null);
+  var ev = (price && prob != null) ? prob * price - 1 : null;
+  var bet = (l.side === 'under' ? 'Under ' + l.line : Math.ceil(l.line) + '+') + ' ' + (l.label || l.mkt || '');
+  return [{ title:(l.p && l.p.name) || l.name || 'Bet', sub:bet + (price ? '  ·  $' + (+price).toFixed(2) + (l.book ? ' ' + l.book : '') : ''),
+            right: ev != null ? ((ev >= 0 ? '+' : '') + Math.round(ev * 100) + '%') : (prob != null ? Math.round(prob*100)+'%' : ''),
+            good: ev == null || ev >= 0 }]
+    .concat(prob != null ? [{ title:'Model', sub:'against the posted price', right:Math.round(prob*100)+'%', good:true }] : []);
+}
+// and a Deep Dive, summarised
+function shareDeepLines(){
+  var d = state.view.deep;
+  if (!d) return null;
+  var key = d.key, S = state.sports[key];
+  var p = (S.idx.byName || {})[d.name] || { name:d.name };
+  var side0 = d.side || 'over';
+  var rawOver2 = modelProbAt(key, p, d.mkt, +d.line, d.opp);
+  var raw = (rawOver2 == null) ? null : (side0 === 'under' ? 1 - rawOver2 : rawOver2);
+  var pr = raw != null ? recordCap(key, p, d.mkt, +d.line, side0, raw) : null;
+  var ev = (pr != null && d.odds) ? pr * d.odds - 1 : null;
+  var dat = deepData(key, d.name, d.mkt, +d.line, d.side || 'over', d.opp);
+  var side = d.side || 'over';
+  var r10 = ddRate(dat.l10, +d.line, side), rs = ddRate(dat.seas, +d.line, side);
+  var out = [{ title:d.name, sub:((side === 'under' ? 'Under ' + d.line : Math.ceil(d.line) + '+') + ' ' + mktLabel(key, d.mkt))
+                 + (d.odds ? '  ·  $' + (+d.odds).toFixed(2) + (d.book ? ' ' + d.book : '') : ''),
+               right: ev != null ? ((ev >= 0 ? '+' : '') + Math.round(ev*100) + '%') : '', good: ev == null || ev >= 0 }];
+  if (pr != null) out.push({ title:'Model', sub:'capped at his own record', right:Math.round(pr*100)+'%', good:true });
+  if (r10) out.push({ title:'Last 10', sub:r10.hits+' of '+r10.n, right:Math.round(r10.pct*100)+'%', good:r10.pct >= 0.5 });
+  if (rs && rs.n) out.push({ title:'This season', sub:rs.hits+' of '+rs.n, right:Math.round(rs.pct*100)+'%', good:rs.pct >= 0.5 });
+  var drv = ddDrivers(key, d.mkt).slice(0, 2);
+  drv.forEach(function(x){ out.push({ title:driverName(key, x.f), sub:'drives this market ' + Math.abs(x.r).toFixed(2), right:'' }); });
+  return out;
+}
 function drawShareCard(){
   var lines = shareLines();
   if (!lines.length) return Promise.resolve(null);
@@ -10227,7 +10378,10 @@ function deepPanel(){
   var betTxt = (side === 'under' ? 'Under ' + line : Math.ceil(line) + '+') + ' ' + lab;
 
   // ---- the model's read, capped at his record as everywhere else ----
-  var raw = modelProbAt(key, p, mkt, line, d.opp);
+  // modelProbAt returns the chance he goes OVER. An under bet is the other side of it - without
+  // this flip a Death Rider read 26% while his own record cleared the under 8 times in 10.
+  var rawOver = modelProbAt(key, p, mkt, line, d.opp);
+  var raw = (rawOver == null) ? null : (side === 'under' ? 1 - rawOver : rawOver);
   var pr = (raw != null && p.name) ? recordCap(key, p, mkt, line, side, raw) : raw;
   var price = +d.odds || null;
   var implied = price ? 1 / price : null;
@@ -10322,6 +10476,7 @@ function deepPanel(){
   var script = ddScript(key, p.team, d.opp);
   return '<div class="cmb-overlay open" onclick="if(event.target===this)LAB.deepClose()">'
     + '<div class="cmb-modal dd-modal"><div class="cmb-hdr"><i class="ti ti-telescope"></i><h2>Deep Dive</h2>'
+    + '<button class="sl-chip" onclick="LAB.deepShare()"><i class="ti ti-share"></i> Share</button>'
     + '<button class="cmb-close" onclick="LAB.deepClose()">&times;</button></div>'
     + '<div class="cmb-body">'+head+worm+rates+drivers+teams+script+shape+matchup+role+market
     + '<div class="dd-acts"><button class="pc-add" onclick="LAB.deepToCard()">Add to my card</button>'
@@ -10383,6 +10538,16 @@ window.LAB = {
     try { state.view.deep = JSON.parse(el.getAttribute('data-d')); render(); } catch(e){}
   },
   deepClose: function(){ state.view.deep = null; render(); },
+  deepShare: function(){
+    var l = shareDeepLines();
+    if (!l) return;
+    drawShare('Deep Dive', l, 'Model capped at his own record').then(function(c){ shareCanvas(c, 'jtt-deep-dive.png'); });
+  },
+  cmbShare: function(){
+    var l = shareCmbLines();
+    if (!l) return;
+    drawShare('Check My Bet', l, 'Checked against his record and the market').then(function(c){ shareCanvas(c, 'jtt-check.png'); });
+  },
   deepToCard: function(){
     var d = state.view.deep; if (!d) return;
     var p = (state.sports[d.key].idx.byName || {})[d.name] || { name:d.name, team:'' };
@@ -10647,6 +10812,8 @@ window.LAB = {
   statProbe: function(key, row, mkt){ return statOf(key, row, mkt); },
   doneProbe: function(key, g){ return gameDone(key, g, gameStart(g).ms); },
   shareProbe: function(){ return shareLines(); },
+  shareDeepProbe: function(){ return shareDeepLines(); },
+  shareCmbProbe: function(){ return shareCmbLines(); },
   lineupProbe: function(key){ return lineupRows(key); },
   oddsNameProbe: function(key, name){ return oddsPlayer(key, name); },
   abbrProbe: function(key, t){ return abbrOf(key, t); },
@@ -10761,6 +10928,7 @@ window.LAB = {
   stMkt: function(k, m){ state.view.stMkt = state.view.stMkt || {}; state.view.stMkt[k] = m; render(); },
   stPos: function(k, p){ state.view.stPos = state.view.stPos || {}; state.view.stPos[k] = p; render(); },
   mbFix: function(i){ state.view.mbFix = +i; state.view.smDrop = {}; render(); },
+  mbBook: function(b){ state.view.mbBook = b; render(); },
   smDrop: function(n){
     state.view.smDrop = state.view.smDrop || {};
     if (state.view.smDrop[n]) delete state.view.smDrop[n]; else state.view.smDrop[n] = 1;
