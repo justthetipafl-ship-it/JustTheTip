@@ -740,10 +740,11 @@
     color:var(--text);font-family:inherit;font-size:11px;padding:4px 6px;}
   .deja-step{flex-wrap:wrap;max-width:100%;}
   .j-wrap{overflow-x:hidden;}
-  .j-ax{padding:3px 9px;font-size:10px;min-width:0;}
+  /* the stepper's 24x24 rule applies to every button in the control, which clipped these */
+  .j-ax{padding:3px 10px;font-size:10px;width:auto !important;height:auto !important;min-width:0;line-height:1.6;}
   .deja-step{display:inline-flex;align-items:center;gap:5px;background:var(--surface-2);border:1px solid var(--border);
     border-radius:9px;padding:4px 8px;font-size:10px;color:var(--text-3);}
-  .deja-step button{background:var(--surface);border:1px solid var(--border);color:var(--text);width:24px;height:24px;
+  .deja-step button:not(.j-ax){background:var(--surface);border:1px solid var(--border);color:var(--text);width:24px;height:24px;
     border-radius:6px;font-size:13px;line-height:1;cursor:pointer;}
   .deja-step button:disabled{opacity:.35;cursor:default;}
   .deja-step b{font-family:var(--font-display);font-size:13px;min-width:14px;text-align:center;}
@@ -8354,6 +8355,7 @@ function cmbPanel(){
              : cmbAnalysis(res.leg)
                + '<div class="cmb-acts">'
                + '<button class="cmb-go" onclick="LAB.cmbAdd()"><i class="ti ti-plus"></i> Add to multi</button>'
+               + '<button class="sl-chip" onclick="LAB.cmbToCard()"><i class="ti ti-receipt"></i> Add to card</button>'
                + '<button class="sl-chip" onclick="LAB.cmbShare()"><i class="ti ti-share"></i> Share</button>'
                + '</div>')) : '')
       + (v.cmbRecent && v.cmbRecent.length ? '<div class="cmb-recent">'+v.cmbRecent.map(function(r){
@@ -8442,6 +8444,9 @@ function cmbPanel(){
               + (combined*joint - 1 > 0 ? 'cmb-vscore good' : 'cmb-vscore bad')
               + '" style="font-size:14px">'+((combined*joint - 1) > 0 ? '+' : '')
               + Math.round((combined*joint - 1)*100)+'%</b></div>' : '')
+          + '<div class="cmb-acts" style="margin-top:10px">'
+          + '<button class="cmb-go" onclick="LAB.cmbMultiToCard()"><i class="ti ti-receipt"></i> Add multi to card</button>'
+          + '</div>'
           + (unpriced.length ? '<div class="cmb-corr">No combined price: '
               + esc(unpriced.map(function(l){ return l.p.name; }).join(', '))
               + ' ha'+(unpriced.length===1?'s':'ve')+' too little history to model.</div>' : '')
@@ -9656,7 +9661,9 @@ function cardKey(e){
 }
 function cardHas(e){ var k = cardKey(e); return CARD.some(function(x){ return cardKey(x) === k; }); }
 function cardAdd(e){
-  if (!e || !e.name) return false;
+  // a multi carries a title and legs, not a name - this rejected every multi ever sent to the card
+  if (!e) return false;
+  if (!e.name && !(e.type === 'multi' && e.legs && e.legs.length)) return false;
   if (cardHas(e)) return false;
   CARD.push(e); cardSave(); return true;
 }
@@ -10788,6 +10795,30 @@ window.LAB = {
     var l = shareDeepLines();
     if (!l) return;
     drawShare('Deep Dive', l, 'Model capped at his own record').then(function(c){ shareCanvas(c, 'jtt-deep-dive.png'); });
+  },
+  cmbToCard: function(){
+    // the bet just checked, onto the card - the same shape a signal row adds
+    var r = state.view.cmbResult, l = r && r.leg;
+    if (!l) return;
+    var key = l.key || (l.p && l.p.key) || state.view.cmbSport;
+    var p = l.p || {};
+    cardAdd({ id:cardId(), type:'single', key:key, name:p.name || l.name, team:p.team || '', opp:l.opp || '',
+              mkt:l.mkt, label:l.label || mktLabel(key, l.mkt), line:l.line, side:l.side || 'over',
+              odds:(l.price || (l.od && l.od.price) || null), book:l.book || (l.od && l.od.book) || '', stake:null });
+    state.view.cardOpen = true; render();
+  },
+  cmbMultiToCard: function(){
+    // the whole slip as ONE multi on the card, priced the way the slip is priced
+    var legs = (state.view.cmbLegs || []).map(function(l){
+      return { key:l.key, name:(l.p && l.p.name) || l.name, mkt:l.mkt,
+               label:l.label || mktLabel(l.key, l.mkt), line:l.line, side:l.side || 'over',
+               odds:l.price || null, book:l.book || '' };
+    });
+    if (legs.length < 2) return;
+    var comb = legs.reduce(function(a, l){ return a * (l.odds || 1); }, 1);
+    LAB.cardAddMulti({ title:legs.length + '-leg multi', legs:legs, odds:comb > 1 ? comb : null,
+                       book:legs[0].book || '', src:'Check My Multi' });
+    state.view.cardOpen = true; render();
   },
   cmbShare: function(){
     var l = shareCmbLines();
