@@ -1292,6 +1292,35 @@ var SPORTS = {
   nhl: { key:'nhl', dir:'nhl', name:'NHL' }
 };
 
+
+/* The same game, listed twice. MLB's schedule hands back two entries for one fixture with
+   different game ids and start times minutes apart (BAL @ NYY came through at 20:05 and 20:10),
+   and both were drawn as separate games. A real doubleheader is hours apart and both halves are
+   genuine, so the rule is a time gap, not the teams: same two clubs, same day, starts within two
+   hours means one game. The entry carrying more of a game - a status, a venue, a pitcher - wins. */
+var DUP_GAP_MS = 2 * 36e5;
+function dedupeFixtures(list){
+  var out = [], weight = function(g){
+    var w = 0;
+    ['status', 'venue', 'homePitcher', 'awayPitcher', 'park', 'gamePk'].forEach(function(k){ if (g[k]) w++; });
+    return w;
+  };
+  (list || []).forEach(function(g){
+    if (!g || !g.home || !g.away) { out.push(g); return; }
+    var ms = gameStart(g).ms;
+    var twin = -1;
+    for (var i = 0; i < out.length; i++){
+      var o = out[i];
+      if (!o || normTeam(o.home) !== normTeam(g.home) || normTeam(o.away) !== normTeam(g.away)) continue;
+      var oms = gameStart(o).ms;
+      if (ms == null || oms == null) continue;
+      if (Math.abs(ms - oms) <= DUP_GAP_MS){ twin = i; break; }
+    }
+    if (twin < 0){ out.push(g); return; }
+    if (weight(g) > weight(out[twin])) out[twin] = g;      // keep whichever entry is fuller
+  });
+  return out;
+}
 var TIER1 = { fixture:'data/fixture.json', teams:'data/teams.json', meta:'data/meta.json' };
 
 var state = {
@@ -1384,7 +1413,7 @@ function loadTier1(key){
       return Promise.all(Object.keys(TIER1).map(function(k){
         return fetch(sportPath(key, TIER1[k])+q, {cache:'reload'})
           .then(function(r){ return r.ok ? r.json() : null; })
-          .then(function(j){ if (j) S.data[k] = j; })
+          .then(function(j){ if (j) S.data[k] = (k === 'fixture') ? dedupeFixtures(asArray(j) || []) : j; })
           .catch(function(){});
       }));
     })
