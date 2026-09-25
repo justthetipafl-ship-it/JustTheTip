@@ -628,6 +628,12 @@
   .mb-m{flex:1;min-width:0;}
   .mb-nm{font-size:12px;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
   .mb-bet{font-family:var(--font-mono);font-size:10px;color:var(--text-2);margin-top:2px;}
+  .mb-badges{display:flex;flex-wrap:wrap;gap:3px;margin-top:4px;}
+  .mb-b{font-size:8px;font-weight:800;letter-spacing:.03em;padding:2px 6px;border-radius:999px;
+    border:1px solid var(--border);color:var(--text-3);}
+  .mb-b-bank{border-color:#22c55e;color:#22c55e;} .mb-b-form{border-color:#eab308;color:#eab308;}
+  .mb-b-streak{border-color:#f97316;color:#f97316;} .mb-b-deja{border-color:#38bdf8;color:#38bdf8;}
+  .mb-b-ceil{border-color:#a78bfa;color:#a78bfa;} .mb-b-val{border-color:var(--accent);color:var(--accent);}
   .mb-why{font-family:var(--font-mono);font-size:8px;color:var(--text-3);margin-top:3px;
     overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
   .mb-px{flex:none;text-align:right;}
@@ -6777,11 +6783,6 @@ function focusPage(){
   var key = f.sport, g = f.g, S = state.sports[key];
   var st = gameStart(g);
   var head = '<div class="fx-top"><button class="fx-back" onclick="LAB.focus(null)"><i class="ti ti-arrow-left"></i>All fixtures</button>'
-    // only offer the builder when this fixture is one it can actually build on: a game that has
-    // started is not in its list, and the button would open an empty panel
-    + (mbFixtures().some(function(x){ return x.key === key && x.i === f.i; })
-        ? '<button class="fx-build'+(state.view.mbOpen ? ' on' : '')+'" onclick="LAB.mbHere(\''+key+'\','+(f.i != null ? f.i : 0)+')">'
-          + '<i class="ti ti-layers-subtract"></i>Build a multi</button>' : '')
     + '<button class="fx-nerd'+(state.view.nerd ? ' on' : '')+'" onclick="LAB.nerd()" title="Arbs, middles and line value across books">'
     + '<i class="ti ti-math-symbols"></i>Nerd Mode</button></div>'
     + ''
@@ -6826,7 +6827,7 @@ function focusPage(){
     + (S.t3==='ready' ? halvesSection(key, g) : '')
     + (S.t3==='ready' ? subsSection(key, g) : '')
     + (S.t3==='ready' ? firstLastSection(key, g) : '')
-    + (S.t3==='ready' && !state.view.nerd && state.view.mbOpen
+    + (S.t3==='ready' && !state.view.nerd && mbFixtures().some(function(x){ return x.key === key && x.i === f.i; })
         ? '<div class="dayband"><span>Multi Builder</span></div>'
           + '<div class="mb-inline">'+mbPanel({ key:key, g:g })+'</div>'
         : '')
@@ -8128,6 +8129,36 @@ function mbBook(){
   if (b) return b;
   return HOUSE_BOOK;                               // default: one ticket at the house book
 }
+
+/* What kind of leg is this? A leg is often several things at once - a banker that is also on a
+   streak and has cleared this line every time against this opponent - so they are computed
+   independently and all of them are shown, the way the original tool did it. */
+function mbBadges(key, p, mkt, line, price, prob, vals, h2h){
+  var out = [];
+  var l10 = vals.slice(0, 10), l20 = vals.slice(0, 20);
+  var hit10 = l10.filter(function(v){ return v > line; }).length;
+  var hit20 = l20.filter(function(v){ return v > line; }).length;
+  // Banker: short price, and his record backs it
+  if (price <= 1.55 && l10.length >= 5 && hit10 >= l10.length - 1) out.push(['Banker', 'bank']);
+  // Form: clearing it consistently over a real sample
+  if (l20.length >= 8 && hit20 / l20.length >= 0.65) out.push(['Form', 'form']);
+  // Streak: consecutive clears, right now
+  var run = 0;
+  for (var i = 0; i < vals.length; i++){ if (vals[i] > line) run++; else break; }
+  if (run >= 4) out.push(['Streak x' + run, 'streak']);
+  // Deja Vu: he has cleared this line every time he has met them
+  var dv = h2h.filter(function(v){ return v > line; }).length;
+  if (h2h.length >= 2 && dv === h2h.length) out.push(['D\u00e9j\u00e0 Vu x' + dv, 'deja']);
+  // Ceiling: the line sits well inside what he is capable of
+  if (vals.length >= 6){
+    var srt = vals.slice().sort(function(a, b){ return b - a; });
+    var top = srt[Math.max(0, Math.floor(srt.length * 0.15))];
+    if (top >= line * 1.6) out.push(['Ceiling', 'ceil']);
+  }
+  // Value: the price is longer than the read
+  if (prob != null && price && prob - 1 / price >= 0.05) out.push(['Value', 'val']);
+  return out;
+}
 function mbCandidates(key, g, mode){
   var S = state.sports[key], out = [];
   var mkts = (S.config || {}).oddsMkts || (S.config || {}).multiMkts || [];
@@ -8222,6 +8253,7 @@ function mbCandidates(key, g, mode){
           if (!best || rank > best.rank)
             best = { key:key, p:p, mkt:k, label:m[1], line:c.line, price:c.price, book:c.book,
                      prob:prob, ev:ev, opp:opp, team:team, why:why, rank:rank,
+                     badges:mbBadges(key, p, k, c.line, c.price, prob, vals, h2h),
                      id:key+'|'+p.name+'|'+k+'|'+c.line };
         });
       });
@@ -8386,6 +8418,17 @@ function mbPanel(pin){
         : nud > 0 ? 'Longer lines, bigger prices \u2014 riskier.'
         : 'Nudge down for safer legs, up for riskier ones.')+'</span></div>';
   if (state.view.mbNote) h += '<div class="deg-note" style="padding:6px 2px">'+esc(state.view.mbNote)+'</div>';
+  // Market, bookmaker and signal - the three filters the original tool had. The modes below still
+  // decide HOW legs are ranked; these decide which ones are eligible at all.
+  var mkts = ((S.config || {}).oddsMkts) || [];
+  h += '<div class="deg-bar"><span>Market</span>'
+    + '<select class="ob-sel" onchange="LAB.mbMkt(this.value)"><option value="">All markets</option>'
+    + mkts.map(function(m){ return '<option value="'+esc(m[0])+'"'+(v.mbMkt === m[0] ? ' selected' : '')+'>'+esc(m[1])+'</option>'; }).join('')
+    + '</select>'
+    + '<span>Signal</span><select class="ob-sel" onchange="LAB.mbSig(this.value)">'
+    + [['','Any signal'],['bank','Banker'],['form','Form'],['streak','Streak'],['deja','D\u00e9j\u00e0 Vu'],['ceil','Ceiling'],['val','Value']]
+        .map(function(o){ return '<option value="'+o[0]+'"'+(v.mbSig === o[0] ? ' selected' : '')+'>'+esc(o[1])+'</option>'; }).join('')
+    + '</select></div>';
   h += '<div class="mb-modes">'+MB_MODES.map(function(m){
     return '<button class="sl-chip'+(m[0]===mode?' on':'')+'" onclick="LAB.mbMode(\''+m[0]+'\')">'
       + m[1]+'</button>'; }).join('')+'</div>';
@@ -8394,7 +8437,11 @@ function mbPanel(pin){
     return h + '<div class="empty" style="padding:18px">Loading '+esc(SPORTS[f.key].name)+' history\u2026</div>';
   }
   if (mode === 'signals') return h + signalsMultiPanel(f.key, f.g);
-  var cands = mbCandidates(f.key, f.g, mode);
+  var cands = mbCandidates(f.key, f.g, mode).filter(function(c){
+    if (v.mbMkt && c.mkt !== v.mbMkt) return false;
+    if (v.mbSig && !(c.badges || []).some(function(b){ return b[1] === v.mbSig; })) return false;
+    return true;
+  });
   if (!cands.length) return h + '<div class="empty" style="padding:18px">No legs qualify for '
     + esc((MB_MODES.filter(function(m){ return m[0]===mode; })[0]||['',''])[1])+' on this game.</div>';
   h += '<button class="mb-auto" onclick="LAB.mbAuto()"><i class="ti ti-wand"></i> Auto-build best 3-leg multi</button>';
@@ -8406,6 +8453,8 @@ function mbPanel(pin){
       + (playerImgP(c.key, c.p, 26) || teamLogo(c.key, c.team))
       + '<div class="mb-m"><div class="mb-nm">'+esc(c.p.name)+'</div>'
       + '<div class="mb-bet">'+Math.ceil(c.line)+'+ '+esc(c.label)+' \u00b7 v '+esc(abbrOf(c.key, c.opp))+'</div>'
+      + '<div class="mb-badges">'+(c.badges || []).map(function(b){
+          return '<span class="mb-b mb-b-'+b[1]+'">'+esc(b[0])+'</span>'; }).join('')+'</div>'
       + '<div class="mb-why">'+esc(c.why.join(' \u00b7 '))+'</div></div>'
       + '<div class="mb-px"><b>$'+c.price.toFixed(2)+'</b>'
       + '<span>'+Math.round(c.prob*100)+'% \u00b7 <span class="mb-ev">'
@@ -11291,6 +11340,8 @@ window.LAB = {
   stPos: function(k, p){ state.view.stPos = state.view.stPos || {}; state.view.stPos[k] = p; render(); },
   mbFix: function(i){ state.view.mbFix = +i; state.view.smDrop = {}; render(); },
   mbBook: function(b){ state.view.mbBook = b; render(); },
+  mbMkt: function(m){ state.view.mbMkt = m || null; state.view.mbNote = null; render(); },
+  mbSig: function(x){ state.view.mbSig = x || null; state.view.mbNote = null; render(); },
   mbNudge: function(d){
     state.view.mbNudge = Math.max(-3, Math.min(3, (+state.view.mbNudge || 0) + d));
     state.view.mbNote = null; render();
