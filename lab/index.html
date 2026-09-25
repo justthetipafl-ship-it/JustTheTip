@@ -9048,8 +9048,15 @@ function sportBar(){
   }).join('')+'</div>';
 }
 function countGames(key){
+  // What is actually in view, not what is in the file. NBL and NHL ship a whole season of
+  // fixtures, so the toggle was reading 158 and 1344 while the list below it showed a round.
   var fx = asArray(state.sports[key].data.fixture) || [];
-  return fx.filter(function(g){ return g && g.home && g.away; }).length;
+  var hz = fixtureHorizon(key);
+  return fx.filter(function(g){
+    if (!g || !g.home || !g.away) return false;
+    if (gameDone(key, g, gameStart(g).ms)) return false;      // finished games are not "in view"
+    return inFixtureWindow(key, g, hz);
+  }).length;
 }
 
 function doneCount(){
@@ -11258,6 +11265,7 @@ window.LAB = {
   // test hook: the shell's own statOf, so tests check the real function rather than a copy
   statProbe: function(key, row, mkt){ return statOf(key, row, mkt); },
   doneProbe: function(key, g){ return gameDone(key, g, gameStart(g).ms); },
+  countProbe: function(key){ return countGames(key); },
   shareProbe: function(){ return shareLines(); },
   shareDeepProbe: function(){ return shareDeepLines(); },
   shareCmbProbe: function(){ return shareCmbLines(); },
