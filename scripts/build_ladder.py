@@ -327,7 +327,8 @@ def best_pick(base, gl, byp, book=LADDER_BOOK, fixtures=None):
 
 
 
-DNP = 'dnp'          # he never took the field in the rounds after the bet
+DNP = 'dnp'
+STALE_DAYS = 3        # a pending day older than this is written off rather than freezing the ladder          # he never took the field in the rounds after the bet
 
 
 def grade_leg(byp, name, field, line, year, rnd, stale_by=0, after_date=None):
@@ -464,6 +465,19 @@ def main():
             fld = MKT.get(lg.get('market'), lg.get('market'))
             outcomes.append(grade_leg(byp, lg.get('pick_name') or lg.get('name'), fld,
                                       lg.get('line'), by, br, stale, dated and d.get('date')))
+        # A day that cannot be graded must not freeze the ladder. The round-based void needs the
+        # league to move on, which never happens once a season ends - AFL and NFL both sat pending
+        # from 20 September, so no new rung was ever added. After STALE_DAYS the day is written off
+        # as a void, the bank is untouched and the next run picks a fresh rung.
+        try:
+            age = (datetime.date.today() - datetime.date.fromisoformat(str(d.get('date'))[:10])).days
+        except (TypeError, ValueError):
+            age = 0
+        if age > STALE_DAYS and (not outcomes or any(o is None for o in outcomes)):
+            print('  ladder: %s voided - still ungraded after %s days' % (d.get('date'), age))
+            d['result'] = 'void'
+            d['bank_after'] = d.get('bank_before', lad['bank'])
+            continue
         if DNP in outcomes:
             # a leg whose player never took the field is a void, not a loss: drop the day and let
             # today's run pick a fresh rung at the same bank
@@ -568,6 +582,15 @@ def main_mixed(out_dir, bases):
             outcomes.append(grade_leg(byp, lg.get('pick_name') or lg.get('name'), fld,
                                       lg.get('line'), d.get('year', 0), d.get('round', 0),
                                       stale2, dated2 and d.get('date')))
+        try:
+            age2 = (datetime.date.today() - datetime.date.fromisoformat(str(d.get('date'))[:10])).days
+        except (TypeError, ValueError):
+            age2 = 0
+        if age2 > STALE_DAYS and (not outcomes or any(o is None for o in outcomes)):
+            print('  mixed: %s voided - still ungraded after %s days' % (d.get('date'), age2))
+            d['result'] = 'void'
+            d['bank_after'] = d.get('bank_before', lad['bank'])
+            continue
         if not outcomes or any(o is None for o in outcomes):
             continue
         before = d.get('bank_before', lad['bank'])
