@@ -4256,6 +4256,32 @@ function nflChunk(key, g){
        than a three-down player with the same number.
      - project rather than rank: expected = own rate per opportunity x expected opportunities x
        the opponent multiplier, so the row can be compared with the posted line directly.        */
+
+/* The projection tiles (Pick Watch, Sack Artists, Kicker Matchup) assert a number. The evidence
+   tiles show a record and let you judge. These give the projection tiles the same evidence: how
+   often he has actually cleared this line, and the raw last-ten so you can see the shape of it. */
+function sigRecord(key, name, mkt, line, n){
+  var S = state.sports[key];
+  var vals = [];
+  sortLogsDesc(((S.idx.logsByName || {})[name] || []).slice()).forEach(function(r){
+    var v = statOf(key, r, mkt);
+    if (v != null) vals.push(v);
+  });
+  if (!vals.length) return null;
+  var last = vals.slice(0, n || 10);
+  var hits = (line == null) ? null : last.filter(function(v){ return v > line; }).length;
+  return { last:last, n:last.length, hits:hits, all:vals.length,
+           allHits:(line == null) ? null : vals.filter(function(v){ return v > line; }).length };
+}
+function sigPips(rec, line){
+  if (!rec || !rec.last.length) return '';
+  var mx = Math.max.apply(null, rec.last.concat([line || 0])) || 1;
+  return '<div class="stk-pips">' + rec.last.slice().reverse().map(function(v){
+    var hit = line != null && v > line;
+    return '<span class="stk-pip' + (line != null && !hit ? ' miss' : '') + '"><i style="height:'
+      + Math.max(6, Math.round(v / mx * 100)) + '%"></i></span>';
+  }).join('') + '</div>';
+}
 function nflOppRate(key, team, madeField, oppField, volField){
   var row = nflTeamRow(key, team);
   if (!row) return null;
@@ -4303,7 +4329,8 @@ function nflTeamAngle(key, g, kind){
       var posDvp = dvpRankFor(key, opp, p.position, kind === 'sacks' ? 'defSacks' : 'passInt');
       var posMult = posDvp ? Math.max(0.8, Math.min(1.3, 1 + posDvp.pct/200)) : 1;
       var proj = lg.avg * o.mult * posMult;
-      out.push({ name:p.name, p:p, opp:opp, stat:stat, avg:lg.avg, games:lg.games,
+      var rec = sigRecord(key, p.name, stat, od.line, 10);
+      out.push({ name:p.name, p:p, opp:opp, stat:stat, avg:lg.avg, games:lg.games, rec:rec,
                  oppRate:o.rate, oppMult:o.mult, posDvp:posDvp, snap:snap, vol:vol, proj:proj,
                  price:od.price, line:od.line, book:od.book,
                  clears:(od.line != null ? proj - od.line : null),
@@ -4522,6 +4549,12 @@ function nflAngleRow(key, r, kind){
     + '<div class="gl-bet"><b>'+(r.line != null ? Math.ceil(r.line)+'+ ' : '')
       + (kind === 'sacks' ? 'Sacks' : 'Interceptions')+'</b>'
       + (r.price != null ? ' \u00b7 $'+r.price.toFixed(2)+' '+esc(r.book||'') : ' \u00b7 no price')+'</div>'
+    + (r.rec && r.rec.hits != null
+        ? '<div class="gl-why"><span class="gl-chip'+(r.rec.hits >= Math.ceil(r.rec.n * 0.5) ? ' good' : '')+'">'
+          + r.rec.hits+'/'+r.rec.n+' cleared '+(r.line != null ? Math.ceil(r.line)+'+' : 'it')+'</span>'
+          + '<span class="gl-chip">'+r.rec.allHits+'/'+r.rec.all+' all time</span></div>'
+          + sigPips(r.rec, r.line)
+        : '')
     + '<div class="gl-why"><span class="gl-chip">'+r.avg.toFixed(2)+'/gm \u00b7 '+r.games+' games</span>'
       + (r.snap != null ? '<span class="gl-chip">'+Math.round(r.snap)+'% snaps</span>' : '')
       + (r.vol != null ? '<span class="gl-chip">'+r.vol.toFixed(0)+' att/gm</span>' : '')
@@ -4910,6 +4943,7 @@ function kickerRows(key, g){
         if (!od || m[1] == null) return;
         var projm = m[0] === 'kickingPts' ? proj : m[1] * windMult * oppMult;
         picks.push({ mkt:m[0], label:m[2], od:od, proj:projm, own:m[1],
+                     rec:sigRecord(key, p.name, m[0], od.line, 10),
                      good:(projm != null && od.line != null && projm > od.line + 0.3) });
       });
       out.push({ p:p, team:team, opp:opp, kp:kp, fga:fga, lng:lng, short:short, mid:mid, long:long,
@@ -4935,9 +4969,11 @@ function kickerRow(key, r){
         ? r.picks.map(function(x){
             return '<b>'+Math.ceil(x.od.line)+'+ '+esc(x.label)+'</b> $'+x.od.price.toFixed(2)
               + (x.od.book ? ' '+esc(x.od.book) : '')
+              + (x.rec && x.rec.hits != null ? ' \u00b7 ' + x.rec.hits + '/' + x.rec.n : '')
               + ' \u00b7 proj '+(x.proj != null ? x.proj.toFixed(1) : '\u2014')
               + (x.good ? ' \u2713' : ''); }).join(' \u00b7 ')
         : 'no posted kicking market')+'</div>'
+    + ((r.picks || [])[0] && r.picks[0].rec ? sigPips(r.picks[0].rec, r.picks[0].od.line) : '')
     + '<div class="gl-why">'
       + '<span class="gl-chip">'+(r.kp != null ? r.kp.toFixed(1) : '\u2014')+' pts/gm</span>'
       + '<span class="gl-chip">'+(r.fga != null ? r.fga.toFixed(1) : '\u2014')+' FGA/gm</span>'
