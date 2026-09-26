@@ -8928,7 +8928,11 @@ function scannerView(key){
 }
 function teamsView(key){
   var S = state.sports[key], v = state.view;
-  var teams = asArray(S.data.teams_form) || asArray(S.data.teams) || [];
+  // The Teams tab was reading teams_form - a rolling last-five-games file - so "GP 5" looked like
+  // a games-played count that disagreed with the round. Both are useful; say which you are seeing.
+  var tWin = v.stTeamWin || 'season';
+  var seasonT = asArray(S.data.teams) || [], formT = asArray(S.data.teams_form) || [];
+  var teams = (tWin === 'form' && formT.length) ? formT : (seasonT.length ? seasonT : formT);
   if (!teams.length) return secNote('Teams', 'teams.json returned nothing for '+SPORTS[key].name+'.');
   var cols = ((S.config || {}).teamCols || stCols(key)).slice(0, 10);
   var allowed = !!v.stAllowed, suf = allowed ? '_a' : '';
@@ -8942,13 +8946,20 @@ function teamsView(key){
   });
   var h = '<div class="st-bar"><span class="st-seg">'
     + '<button class="'+(!allowed?'on':'')+'" onclick="LAB.stAllowed(false)">For</button>'
-    + '<button class="'+(allowed?'on':'')+'" onclick="LAB.stAllowed(true)">Allowed</button></span></div>';
+    + '<button class="'+(allowed?'on':'')+'" onclick="LAB.stAllowed(true)">Allowed</button></span>'
+    + (formT.length && seasonT.length ? '<span class="st-seg">'
+        + '<button class="'+(tWin==='season'?'on':'')+'" onclick="LAB.stTeamWin(\'season\')">Season</button>'
+        + '<button class="'+(tWin==='form'?'on':'')+'" onclick="LAB.stTeamWin(\'form\')">Last 5</button></span>' : '')
+    + '</div>';
   if (allowed && !hasAllowed)
     return h + secNote('Teams', SPORTS[key].name+'\u2019s team file carries no \u201callowed\u201d columns, '
       + 'so only the team\u2019s own output can be shown.');
   h += '<div class="cmb-corr" style="margin:0 0 7px">'
     + (allowed ? 'Average conceded to opponents \u2014 higher is a softer defence.'
                : 'The team\u2019s own per-game output.')+'</div>'
+    + '<div class="cmb-corr" style="margin:2px 0 6px">'
+    + (tWin === 'form' ? 'Each team\u2019s last 5 games.' : 'The season these stats are built from \u2014 GP is how many games that is.')
+    + '</div>'
     + '<div class="st-wrap"><table class="st-t"><thead><tr><th>Team</th><th>GP</th>'
     + cols.map(function(c){
         return '<th class="'+(sortKey===c[0]?'on':'')+'" onclick="LAB.stTeamSort(\''+c[0]+'\')">'
