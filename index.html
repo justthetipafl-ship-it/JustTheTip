@@ -553,6 +553,7 @@
     border-radius:999px;border:1px solid var(--border);background:var(--surface-2);color:var(--text-3);cursor:pointer;}
   .pp-tab.on{border-color:var(--accent);color:var(--accent);background:color-mix(in srgb,var(--accent) 12%,transparent);}
   .pf-row{background:var(--surface-2);border:1px solid var(--border);border-radius:10px;padding:10px 12px;margin-bottom:7px;}
+  .pf-dd{margin-left:auto;}
   .pf-hd{display:flex;align-items:baseline;gap:8px;}
   .pf-mk{font-family:var(--font-display);font-size:12px;font-weight:800;}
   .pf-line{font-family:var(--font-mono);font-size:10px;color:var(--text-2);}
@@ -686,6 +687,11 @@
   .mb-ev{color:var(--accent);}
   .st-bar{display:flex;flex-wrap:wrap;gap:4px;align-items:center;margin-bottom:8px;}
   .st-wins button{padding:4px 8px;font-size:9px;}
+  .st-find{display:inline-flex;align-items:center;gap:6px;background:var(--surface-2);
+    border:1px solid var(--border);border-radius:9px;padding:4px 9px;color:var(--text-3);}
+  .st-find input{background:none;border:0;color:var(--text);font-family:inherit;font-size:12px;
+    width:120px;outline:none;}
+  .st-bar{display:flex;gap:7px;flex-wrap:wrap;align-items:center;}
   .st-seg{display:flex;gap:3px;background:var(--surface-2);padding:3px;border-radius:8px;margin-left:auto;}
   .st-seg button{background:transparent;border:0;color:var(--text-3);font-family:var(--font-display);
     font-weight:800;font-size:11px;padding:6px 11px;border-radius:6px;cursor:pointer;}
@@ -1165,7 +1171,7 @@
      force 16px on every form control at touch widths. Desktop keeps the compact sizes. */
   @media (max-width:820px){
     input, select, textarea, .cmb-in input, .cmb-search input, .deja-ctrl input,
-    .sc-filter input, .ob-sel, .cd-own-r input, .cd-own-r select, .cd-stake input{
+    .sc-filter input, .ob-sel, .cd-own-r input, .cd-own-r select, .cd-stake input, .st-find input{
       font-size:16px !important;
     }
   }
@@ -7256,10 +7262,15 @@ function ppFormTab(key, name){
   return out.map(function(r){
     var mx = Math.max.apply(null, r.last.concat([r.bet ? r.bet.line : 0])) || 1;
     var pips = r.last.slice().reverse();
+    var dSpec = r.bet ? { key:key, name:name, mkt:r.mkt || r.k, line:r.bet.line, side:'over',
+                          odds:r.bet.price, book:r.bet.book || '', opp:opp || '' } : null;
     return '<div class="pf-row">'
       + '<div class="pf-hd"><span class="pf-mk">'+esc(r.label)+'</span>'
         + (r.bet ? '<span class="pf-line">'+(Math.ceil(r.bet.line))+'+ @ $'+r.bet.price.toFixed(2)
             +' '+esc(r.bet.book||'')+'</span>' : '<span class="pf-line">no priced line</span>')
+        + (dSpec ? '<button class="dd-btn pf-dd" title="Deep dive on this market" '
+            + 'onclick="event.stopPropagation();LAB.deep(this)" data-d="'+esc(JSON.stringify(dSpec))+'">'
+            + '<i class="ti ti-telescope"></i></button>' : '')
         + (r.ev != null ? '<span class="pf-ev '+(r.ev > 0 ? 'pos' : 'neg')+'">'
             + Math.round(r.prob*100)+'% \u00b7 '+(r.ev > 0 ? '+' : '')+Math.round(r.ev*100)+'% edge</span>' : '')
       + '</div>'
@@ -8654,6 +8665,7 @@ function cmbPanel(){
              : cmbAnalysis(res.leg)
                + '<div class="cmb-acts">'
                + '<button class="cmb-go" onclick="LAB.cmbAdd()"><i class="ti ti-plus"></i> Add to multi</button>'
+               + '<button class="sl-chip" onclick="LAB.cmbDeep()"><i class="ti ti-telescope"></i> Deep dive</button>'
                + '<button class="sl-chip" onclick="LAB.cmbToCard()"><i class="ti ti-receipt"></i> Add to card</button>'
                + '<button class="sl-chip" onclick="LAB.cmbShare()"><i class="ti ti-share"></i> Share</button>'
                + '</div>')) : '')
@@ -9049,7 +9061,11 @@ function teamsView(key){
   // does this file even carry the allowed side?
   var hasAllowed = teams.some(function(t){ return cols.some(function(c){ return t[c[0]+'_a'] != null; }); });
   var sortKey = (v.stTeamSort && cols.some(function(c){ return c[0] === v.stTeamSort; })) ? v.stTeamSort : cols[0][0];
-  var rows = teams.slice().sort(function(a,b){ return (+b[sortKey+suf]||0) - (+a[sortKey+suf]||0); });
+  var tq = String(v.stTeamQ || '').trim().toLowerCase();
+  var rows = teams.slice().filter(function(t){
+    if (!tq) return true;
+    return (String(t.team || '') + ' ' + teamFullName(key, t.team)).toLowerCase().indexOf(tq) >= 0;
+  }).sort(function(a,b){ return (+b[sortKey+suf]||0) - (+a[sortKey+suf]||0); });
   var avg = {};
   cols.forEach(function(c){
     avg[c[0]] = rows.reduce(function(a,t){ return a + (+t[c[0]+suf]||0); }, 0) / rows.length;
@@ -9057,6 +9073,9 @@ function teamsView(key){
   var h = '<div class="st-bar"><span class="st-seg">'
     + '<button class="'+(!allowed?'on':'')+'" onclick="LAB.stAllowed(false)">For</button>'
     + '<button class="'+(allowed?'on':'')+'" onclick="LAB.stAllowed(true)">Allowed</button></span>'
+    + '<span class="st-find"><i class="ti ti-search"></i>'
+      + '<input placeholder="Find a team" value="'+esc(v.stTeamQ || '')+'" '
+      + 'oninput="LAB.stTeamQ(this.value)" autocomplete="off"></span>'
     + '<span class="st-seg st-wins">'+TEAM_WINS.map(function(w){
         return '<button class="'+(tWin===w[0]?'on':'')+'" onclick="LAB.stTeamWin(\''+w[0]+'\')">'
           + esc(w[0] === 'prev' && winRows && winRows.prev ? winRows.prev
@@ -11264,6 +11283,17 @@ window.LAB = {
     if (!l) return;
     drawShare('Deep Dive', l, 'Model capped at his own record').then(function(c){ shareCanvas(c, 'jtt-deep-dive.png'); });
   },
+  cmbDeep: function(){
+    // the bet just checked, opened in the full breakdown
+    var r = state.view.cmbResult, l = r && r.leg;
+    if (!l) return;
+    var key = l.key || (l.p && l.p.key) || state.view.cmbSport;
+    var el = document.createElement('button');
+    el.setAttribute('data-d', JSON.stringify({ key:key, name:(l.p && l.p.name) || l.name, mkt:l.mkt,
+      line:l.line, side:l.side || 'over', odds:l.price || (l.od && l.od.price) || null,
+      book:l.book || (l.od && l.od.book) || '', opp:l.opp || '' }));
+    LAB.deep(el);
+  },
   cmbToCard: function(){
     // the bet just checked, onto the card - the same shape a signal row adds
     var r = state.view.cmbResult, l = r && r.leg;
@@ -11580,6 +11610,7 @@ window.LAB = {
     if (v.stSort === k) v.stDir = (v.stDir === 1 ? -1 : 1); else { v.stSort = k; v.stDir = -1; }
     render();
   },
+  stTeamQ: function(q){ state.view.stTeamQ = q; render(); },
   stTeamWin: function(w){ state.view.stTeamWin = w; state.view.stTeamSort = null; render(); },
   stTeamSort: function(k){ state.view.stTeamSort = k; render(); },
   stDvpSort: function(k){ state.view.stDvpSort = k; render(); },
