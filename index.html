@@ -685,6 +685,7 @@
   .mb-px span{display:block;font-family:var(--font-mono);font-size:8px;color:var(--text-3);margin-top:2px;}
   .mb-ev{color:var(--accent);}
   .st-bar{display:flex;flex-wrap:wrap;gap:4px;align-items:center;margin-bottom:8px;}
+  .st-wins button{padding:4px 8px;font-size:9px;}
   .st-seg{display:flex;gap:3px;background:var(--surface-2);padding:3px;border-radius:8px;margin-left:auto;}
   .st-seg button{background:transparent;border:0;color:var(--text-3);font-family:var(--font-display);
     font-weight:800;font-size:11px;padding:6px 11px;border-radius:6px;cursor:pointer;}
@@ -8930,13 +8931,118 @@ function scannerView(key){
     + '. Tap a row for the full read.</div>';
   return h;
 }
+
+/* TEAM WINDOWS ---------------------------------------------------------------------------------
+   teams.json is whatever the build decided (NFL falls back to last season, EPL and NHL span two)
+   and teams_form.json only exists for three sports - so "Last 5" did nothing on NBL and NHL.
+   These are computed from the gamelogs instead: sum each team's players per game, average over
+   the games in the window, and take "allowed" from what the opponent produced in those same games.
+   Same arithmetic the build uses, just windowed on demand.                                      */
+var TEAM_WINS = [['cur','This season'], ['prev','Last season'], ['l10','L10'], ['l5','L5'], ['week','Last week']];
+function teamWindowRows(key, win, cols){
+  var S = state.sports[key];
+  S.idx.twCache = S.idx.twCache || {};
+  var ck = win + '|' + cols.map(function(c){ return c[0]; }).join(',');
+  if (S.idx.twCache[ck]) return S.idx.twCache[ck];
+  var logs = asArray(S.data.gamelogs) || [];
+  if (!logs.length) return null;
+  var season = String(curSeason(key));
+  var years = {};
+  logs.forEach(function(r){ var y = String(r.Year || r.year || ''); if (y) years[y] = 1; });
+  var ordered = Object.keys(years).sort();
+  var prevSeason = ordered.filter(function(y){ return y < season; }).pop() || null;
+
+  // one entry per team-game, newest first, so a game window is easy to take
+  var games = {};
+  logs.forEach(function(r){
+    var team = r.Team || r.team, opp0 = r.Opp || r.opp || '';
+    var mid = r.MatchId != null ? r.MatchId : (r.matchId != null ? r.matchId : null);
+    if (mid == null){
+      // MLB's gamelogs carry no match id - derive one both sides of the game agree on, so the
+      // "allowed" side can still find the opponent's row
+      var day = String(r.Date || r.date || '').slice(0, 10)
+        || ((r.Year || r.year || '') + '-' + String(r.RoundName || r.Week || ''));
+      if (!day || !team || !opp0) return;
+      // one game per team per day. Spellings of the opponent vary between rows, so keying on the
+      // pairing split single games in two - 373 "games" in a 162-game season.
+      mid = day;
+    }
+    if (!team || mid == null) return;
+    var y = String(r.Year || r.year || '');
+    if (win === 'cur' && y !== season) return;
+    if (win === 'prev' && y !== prevSeason) return;
+    var k = team + '|' + mid;
+    var g = games[k] || (games[k] = { team:team, opp:r.Opp || r.opp || '', mid:mid, year:y,
+      when: String(r.Date || r.date || '') || (y + '-' + String(r.RoundName || r.Week || '').padStart(3, '0')),
+      vals:{} });
+    cols.forEach(function(c){
+      var v = +r[c[0]];
+      if (isFinite(v)) g.vals[c[0]] = (g.vals[c[0]] || 0) + v;
+    });
+  });
+  var all = Object.keys(games).map(function(k){ return games[k]; });
+  if (!all.length) return null;
+  all.sort(function(a, b){ return String(b.when).localeCompare(String(a.when)); });
+
+  var keep = {};
+  if (win === 'l10' || win === 'l5'){
+    var n = win === 'l10' ? 10 : 5, seen = {};
+    all.forEach(function(g){
+      seen[g.team] = (seen[g.team] || 0) + 1;
+      if (seen[g.team] <= n) keep[g.team + '|' + g.mid] = 1;
+    });
+  } else if (win === 'week'){
+    var newest = all[0].when, cut = null;
+    if (/^\d{4}-\d{2}-\d{2}/.test(newest)){
+      cut = new Date(Date.parse(newest.slice(0, 10)) - 7 * 864e5).toISOString().slice(0, 10);
+      all.forEach(function(g){ if (String(g.when).slice(0, 10) > cut) keep[g.team + '|' + g.mid] = 1; });
+    } else {                                    // no dates (AFL, NFL): the latest round only
+      var top = String(newest);
+      all.forEach(function(g){ if (String(g.when) === top) keep[g.team + '|' + g.mid] = 1; });
+    }
+  } else {
+    all.forEach(function(g){ keep[g.team + '|' + g.mid] = 1; });
+  }
+  var inWin = all.filter(function(g){ return keep[g.team + '|' + g.mid]; });
+  if (!inWin.length) return null;
+
+  // what each team produced, and what its opponents produced in those same games
+  var forT = {}, agT = {}, cnt = {};
+  var byMid = {};
+  inWin.forEach(function(g){ (byMid[g.mid] = byMid[g.mid] || []).push(g); });
+  inWin.forEach(function(g){
+    cnt[g.team] = (cnt[g.team] || 0) + 1;
+    var f = forT[g.team] || (forT[g.team] = {});
+    cols.forEach(function(c){ f[c[0]] = (f[c[0]] || 0) + (g.vals[c[0]] || 0); });
+    var other = games[(g.opp || '') + '|' + g.mid]
+             || (byMid[g.mid] || []).filter(function(x){ return normTeam(x.team) === normTeam(g.opp); })[0]
+             || (byMid[g.mid] || []).filter(function(x){ return x.team !== g.team; })[0];
+    if (other){
+      var a = agT[g.team] || (agT[g.team] = {});
+      cols.forEach(function(c){ a[c[0]] = (a[c[0]] || 0) + (other.vals[c[0]] || 0); });
+    }
+  });
+  var out = Object.keys(cnt).map(function(t){
+    var row = { team:t, matches:cnt[t] };
+    cols.forEach(function(c){
+      row[c[0]] = +( (forT[t][c[0]] || 0) / cnt[t] ).toFixed(2);
+      if (agT[t]) row[c[0] + '_a'] = +( (agT[t][c[0]] || 0) / cnt[t] ).toFixed(2);
+    });
+    return row;
+  });
+  S.idx.twCache[ck] = { rows:out, season:season, prev:prevSeason };
+  return S.idx.twCache[ck];
+}
 function teamsView(key){
   var S = state.sports[key], v = state.view;
   // The Teams tab was reading teams_form - a rolling last-five-games file - so "GP 5" looked like
   // a games-played count that disagreed with the round. Both are useful; say which you are seeing.
-  var tWin = v.stTeamWin || 'season';
-  var seasonT = asArray(S.data.teams) || [], formT = asArray(S.data.teams_form) || [];
-  var teams = (tWin === 'form' && formT.length) ? formT : (seasonT.length ? seasonT : formT);
+  var tWin = v.stTeamWin || 'cur';
+  var seasonT = asArray(S.data.teams) || [];
+  var cols0 = ((S.config || {}).teamCols || stCols(key)).slice(0, 10);
+  var winRows = teamWindowRows(key, tWin, cols0);
+  var teams = (winRows && winRows.rows.length) ? winRows.rows : seasonT;
+  var fellBack = !(winRows && winRows.rows.length);
   if (!teams.length) return secNote('Teams', 'teams.json returned nothing for '+SPORTS[key].name+'.');
   var cols = ((S.config || {}).teamCols || stCols(key)).slice(0, 10);
   var allowed = !!v.stAllowed, suf = allowed ? '_a' : '';
@@ -8951,26 +9057,40 @@ function teamsView(key){
   var h = '<div class="st-bar"><span class="st-seg">'
     + '<button class="'+(!allowed?'on':'')+'" onclick="LAB.stAllowed(false)">For</button>'
     + '<button class="'+(allowed?'on':'')+'" onclick="LAB.stAllowed(true)">Allowed</button></span>'
-    + (formT.length && seasonT.length ? '<span class="st-seg">'
-        + '<button class="'+(tWin==='season'?'on':'')+'" onclick="LAB.stTeamWin(\'season\')">Full sample</button>'
-        + '<button class="'+(tWin==='form'?'on':'')+'" onclick="LAB.stTeamWin(\'form\')">Last 5</button></span>' : '')
+    + '<span class="st-seg st-wins">'+TEAM_WINS.map(function(w){
+        return '<button class="'+(tWin===w[0]?'on':'')+'" onclick="LAB.stTeamWin(\''+w[0]+'\')">'
+          + esc(w[0] === 'prev' && winRows && winRows.prev ? winRows.prev
+               : w[0] === 'cur' && winRows ? winRows.season : w[1])+'</button>'; }).join('')+'</span>'
     + '</div>';
   if (allowed && !hasAllowed)
     return h + secNote('Teams', SPORTS[key].name+'\u2019s team file carries no \u201callowed\u201d columns, '
       + 'so only the team\u2019s own output can be shown.');
   h += '<div class="cmb-corr" style="margin:0 0 7px">'
-    + (allowed ? 'Average conceded to opponents \u2014 higher is a softer defence.'
-               : 'The team\u2019s own per-game output.')+'</div>'
+    + (function(){
+        var gps = rows.map(function(t){ return +t.matches || +t.games || 0; }).filter(Boolean);
+        var lo = gps.length ? Math.min.apply(null, gps) : 0, hi = gps.length ? Math.max.apply(null, gps) : 0;
+        var span = lo === hi ? (lo + ' game' + (lo === 1 ? '' : 's')) : (lo + '\u2013' + hi + ' games');
+        var what = fellBack ? 'the team file \u2014 this window has no games on record yet'
+          : tWin === 'cur' ? 'this season so far' : tWin === 'prev' ? 'last season'
+          : tWin === 'l10' ? 'the last 10 games' : tWin === 'l5' ? 'the last 5 games'
+          : 'the most recent round';
+        return (allowed ? 'Average conceded to opponents over ' : 'Per-game output over ')
+          + what + ' \u2014 ' + span + ' per team.'
+          + (allowed ? ' Higher is a softer defence.' : '');
+      })()+'</div>'
     + (function(){
         // Do not call it "this season" - it often is not. Each sport's team file covers whatever
         // its own build decided: NFL falls back to last season while this one is young, EPL and
         // NHL span two. State the games count and let GP speak for itself.
-        var gp = rows.length ? (+rows[0].matches || +rows[0].games || 0) : 0;
-        return '<div class="cmb-corr" style="margin:2px 0 6px">'
-          + (tWin === 'form' ? 'Per-game averages over each team\u2019s last 5 games.'
-             : 'Per-game averages over the ' + (gp ? gp + ' games' : 'games') + ' each team has on file. '
-               + 'Where this season is still young that will include last season.')
-          + '</div>';
+        var gps = rows.map(function(t){ return +t.matches || +t.games || 0; }).filter(Boolean);
+        var lo = gps.length ? Math.min.apply(null, gps) : 0, hi = gps.length ? Math.max.apply(null, gps) : 0;
+        var span = lo === hi ? (lo + ' game' + (lo === 1 ? '' : 's')) : (lo + '\u2013' + hi + ' games');
+        var what = fellBack ? 'the team file (this window has no games on record yet)'
+          : tWin === 'cur' ? 'this season so far' : tWin === 'prev' ? 'last season'
+          : tWin === 'l10' ? 'each team\u2019s last 10 games' : tWin === 'l5' ? 'each team\u2019s last 5 games'
+          : 'the most recent round';
+        return '<div class="cmb-corr" style="margin:2px 0 6px">Per-game averages over '
+          + esc(what) + ' \u2014 ' + span + ' per team.</div>';
       })()
     + '<div class="st-wrap"><table class="st-t"><thead><tr><th>Team</th><th>GP</th>'
     + cols.map(function(c){
@@ -11460,6 +11580,7 @@ window.LAB = {
     if (v.stSort === k) v.stDir = (v.stDir === 1 ? -1 : 1); else { v.stSort = k; v.stDir = -1; }
     render();
   },
+  stTeamWin: function(w){ state.view.stTeamWin = w; state.view.stTeamSort = null; render(); },
   stTeamSort: function(k){ state.view.stTeamSort = k; render(); },
   stDvpSort: function(k){ state.view.stDvpSort = k; render(); },
   stAllowed: function(a){ state.view.stAllowed = !!a; render(); },
