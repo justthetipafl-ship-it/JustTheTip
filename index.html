@@ -8900,8 +8900,11 @@ function scannerView(key){
         return '<button class="sl-chip'+(posF===p2?' on':'')+'" onclick="LAB.stPosF(\''+esc(p2)+'\')">'
           + esc(p2 || 'All')+'</button>'; }).join('')
       + '<span class="sl-win">'+ST_WINDOWS.map(function(w){
-          return '<button class="sl-chip'+(win===w[0]?' on':'')+'" onclick="LAB.stWin(\''+w[0]+'\')">'
-            + w[1]+'</button>'; }).join('')+'</span></div>';
+          // when the season chip has fallen back to every game on file, say so on the chip
+          var lab = (w[0] === 'season' && thin) ? 'All games' : w[1];
+          return '<button class="sl-chip'+(win===w[0]?' on':'')+'" onclick="LAB.stWin(\''+w[0]+'\')" '
+            + 'title="'+(w[0] === 'season' && thin ? 'This season has too few games to rank on, so every game on file is used' : '')+'">'
+            + lab+'</button>'; }).join('')+'</span></div>';
   if (!rows.length) return h + '<div class="empty"><i class="ti ti-search-off"></i>No players match.</div>';
   h += '<div class="st-wrap" id="stTbl"><table class="st-t"><thead><tr><th>Player</th>'
     + '<th class="'+(sortKey==='games'?'on':'')+'" onclick="LAB.stSort(\'games\')">GP</th>'
@@ -8920,8 +8923,9 @@ function scannerView(key){
             }).join('')+'</tr>';
       }).join('')+'</tbody></table></div>'
     + '<div class="cmb-corr">'+rows.length+' shown \u00b7 per-game from gamelogs \u00b7 '
-    + (win === 'season' ? (thin ? 'season is too young to rank on, so this is all games on file'
-                                : 'this season')
+    + (win === 'season' ? (thin ? 'this season is too young to rank on, so this is every game on file \u2014 '
+                                 + 'including last season'
+                                : 'this season only')
        : (win === 'all' ? 'all games on file' : 'last '+(win === 'l10' ? 10 : 5)+' games'))
     + '. Tap a row for the full read.</div>';
   return h;
@@ -8948,7 +8952,7 @@ function teamsView(key){
     + '<button class="'+(!allowed?'on':'')+'" onclick="LAB.stAllowed(false)">For</button>'
     + '<button class="'+(allowed?'on':'')+'" onclick="LAB.stAllowed(true)">Allowed</button></span>'
     + (formT.length && seasonT.length ? '<span class="st-seg">'
-        + '<button class="'+(tWin==='season'?'on':'')+'" onclick="LAB.stTeamWin(\'season\')">Season</button>'
+        + '<button class="'+(tWin==='season'?'on':'')+'" onclick="LAB.stTeamWin(\'season\')">Full sample</button>'
         + '<button class="'+(tWin==='form'?'on':'')+'" onclick="LAB.stTeamWin(\'form\')">Last 5</button></span>' : '')
     + '</div>';
   if (allowed && !hasAllowed)
@@ -8957,9 +8961,17 @@ function teamsView(key){
   h += '<div class="cmb-corr" style="margin:0 0 7px">'
     + (allowed ? 'Average conceded to opponents \u2014 higher is a softer defence.'
                : 'The team\u2019s own per-game output.')+'</div>'
-    + '<div class="cmb-corr" style="margin:2px 0 6px">'
-    + (tWin === 'form' ? 'Each team\u2019s last 5 games.' : 'The season these stats are built from \u2014 GP is how many games that is.')
-    + '</div>'
+    + (function(){
+        // Do not call it "this season" - it often is not. Each sport's team file covers whatever
+        // its own build decided: NFL falls back to last season while this one is young, EPL and
+        // NHL span two. State the games count and let GP speak for itself.
+        var gp = rows.length ? (+rows[0].matches || +rows[0].games || 0) : 0;
+        return '<div class="cmb-corr" style="margin:2px 0 6px">'
+          + (tWin === 'form' ? 'Per-game averages over each team\u2019s last 5 games.'
+             : 'Per-game averages over the ' + (gp ? gp + ' games' : 'games') + ' each team has on file. '
+               + 'Where this season is still young that will include last season.')
+          + '</div>';
+      })()
     + '<div class="st-wrap"><table class="st-t"><thead><tr><th>Team</th><th>GP</th>'
     + cols.map(function(c){
         return '<th class="'+(sortKey===c[0]?'on':'')+'" onclick="LAB.stTeamSort(\''+c[0]+'\')">'
