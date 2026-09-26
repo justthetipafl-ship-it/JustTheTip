@@ -9780,13 +9780,26 @@ function ladderCardFrom(L, label, k){
   var d = L.days[L.days.length - 1];
   var st = d.result === 'win' ? 'won' : d.result === 'loss' ? 'lost' : 'pending';
   var mk = k || d.sport || null;                  // a mixed day names its own sport
-  var legs = (d.legs || []).map(function(l){ return esc(String(l.name || '').split(' ').pop())+' '+(l.line != null ? Math.ceil(l.line)+'+' : '')+' '+esc(mk ? mktLabel(mk, l.market) : l.market); }).join(' \u00b7 ');
+  // A surname and a market is not a bet you can place. Show who, against whom, at what line and
+  // what price - the same detail the other Degenerates builds carry.
+  var legs = (d.legs || []).map(function(l){
+    var nm = l.name || l.pick_name || '';
+    var bet = (l.line != null ? Math.ceil(l.line) + '+ ' : '') + esc(mk ? mktLabel(mk, l.market) : l.market);
+    var vs = l.opp ? ' \u00b7 v ' + esc(mk ? abbrOf(mk, l.opp) : l.opp) : '';
+    var px = l.odds ? '<span class="lad-leg-p">$' + (+l.odds).toFixed(2) + '</span>' : '';
+    return '<div class="lad-leg">'
+      + (mk ? playerImgP(mk, nm, 22) : '')
+      + '<div class="lad-leg-m"><b>' + esc(nm) + '</b><span>' + bet + vs + '</span></div>'
+      + px + '</div>';
+  }).join('');
   return '<div class="deg-lad"><div class="deg-lad-h"><b>'+esc(label)+(d.sport && !k ? ' \u00b7 '+esc(String(d.sport).toUpperCase()) : '')+'</b><span>$'+start+' \u2192 $'+(target >= 1000 ? (target/1000)+'k' : target)
     + '</span><span class="deg-lad-bank">$'+bank.toFixed(2)+'</span></div>'
     + '<div class="lad-bar"><div class="lad-bar-fill" style="width:'+(prog*100).toFixed(1)+'%"></div></div>'
     + '<div class="deg-lad-sub">Rung '+(d.rung || '?')+(L.attempt ? ' \u00b7 attempt #'+L.attempt : '')+' \u00b7 '+esc(d.date || '')+' \u00b7 '
     + (d.type === 'sgm' ? 'SGM' : 'multi')+(d.odds ? ' @ $'+(+d.odds).toFixed(2) : '')+' \u00b7 <b>'+st+'</b></div>'
-    + (legs ? '<div class="deg-lad-legs">'+legs+'</div>' : '')+'</div>';
+    + (legs ? '<div class="deg-lad-legs">'+legs+'</div>' : '')
+    + (d.book ? '<div class="deg-note" style="padding:4px 2px 0">All legs at '+esc(d.book)+'.</div>' : '')
+    + '</div>';
 }
 // the mixed challenge lives at /data/ladder.json, outside any sport's folder
 function loadMixedLadder(){
