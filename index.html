@@ -686,6 +686,21 @@
   .mb-px span{display:block;font-family:var(--font-mono);font-size:8px;color:var(--text-3);margin-top:2px;}
   .mb-ev{color:var(--accent);}
   .st-bar{display:flex;flex-wrap:wrap;gap:4px;align-items:center;margin-bottom:8px;}
+  .wr-top{display:flex;align-items:center;gap:9px;font-family:var(--font-mono);font-size:11px;
+    color:var(--text-3);padding:2px 2px 8px;}
+  .wr-top button{margin-left:auto;}
+  .wr-note{font-size:10px;color:var(--text-3);margin:2px 2px 6px;}
+  .wr-row{display:flex;align-items:baseline;gap:8px;padding:5px 2px;border-top:1px solid var(--border);font-size:12px;}
+  .wr-nm{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .wr-nm i{font-style:normal;font-size:9px;color:var(--text-3);margin-left:6px;}
+  .wr-row b{font-family:var(--font-mono);font-size:13px;}
+  .wr-mk{font-size:10px;color:var(--text-3);width:84px;}
+  .wr-d{font-family:var(--font-mono);font-size:10px;width:132px;text-align:right;}
+  .wr-d.good{color:var(--accent);} .wr-d.bad{color:#f97316;}
+  .wr-rk{font-family:var(--font-mono);font-size:10px;color:var(--text-3);width:16px;}
+  .wr-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px;}
+  .wr-col{background:var(--surface);border:1px solid var(--border);border-radius:11px;padding:8px 11px;}
+  .wr-h{font-size:10px;font-weight:800;letter-spacing:.05em;text-transform:uppercase;color:var(--text-3);}
   .st-wins button{padding:4px 8px;font-size:9px;}
   .st-find{display:inline-flex;align-items:center;gap:6px;background:var(--surface-2);
     border:1px solid var(--border);border-radius:9px;padding:4px 9px;color:var(--text-3);}
@@ -7585,6 +7600,11 @@ var _cmbJointCache = {};
 function cmbJoint(legs){
   var k = legs.length;
   if (!k) return null;
+  // one leg the model cannot price makes the whole figure meaningless - better no number than NaN
+  for (var gi = 0; gi < k; gi++){
+    var pv = legs[gi] && legs[gi].prob;
+    if (pv == null || !isFinite(pv) || pv <= 0 || pv > 1) return null;
+  }
   if (k === 1) return legs[0].prob;
   // 8,000 simulations per call would re-roll on every render and make the headline number
   // flicker. Same legs, same answer.
@@ -8835,7 +8855,8 @@ function cmbFab(){
    with a search box and position pills; Teams is the for/allowed grid; DVP is a position's
    full column set per team. All read through statOf / leagueAvg / dvpBoard, so the numbers
    agree with every tile and the player card.                                                 */
-var STATS_SUBS = [['scanner','Scanner','ti-table'],['teams','Teams','ti-shield'],['dvp','DVP','ti-shield-half']];
+var STATS_SUBS = [['scanner','Scanner','ti-table'],['teams','Teams','ti-shield'],
+                  ['dvp','DVP','ti-shield-half'],['report','Report','ti-news']];
 
 /* Window filter for the Scanner. Defaults to the current season - that is the question
    people are actually asking - but a season two games old says almost nothing, so when the
@@ -9087,6 +9108,160 @@ function teamWindowRows(key, win, cols){
   S.idx.twCache[ck] = { rows:out, season:season, prev:prevSeason };
   return S.idx.twCache[ck];
 }
+
+/* WEEKLY REPORT ---------------------------------------------------------------------------------
+   What just happened, from the gamelogs: the round's biggest outputs, who beat their own form by
+   the most, who fell away, and the season's leaders. Everything is measured against the player's
+   OWN average rather than the league's, because "20 disposals" means nothing without knowing
+   whether he usually gets 15 or 30.                                                             */
+// A sortable key per game. Rounds are NAMED ("Round 9", "Preliminary Final"), so the number has to
+// be pulled out and padded - sorting the raw text put "Round 9" above "Round 26".
+function roundKeyOf(r){
+  var d = String(r.Date || r.date || '').slice(0, 10);
+  if (/^\d{4}-\d{2}-\d{2}$/.test(d)) return d;
+  var raw = String(r.RoundName || r.Week || '');
+  var num = (raw.match(/\d+/) || [])[0];
+  // Finals are named, not numbered, and come after every round. "Opening Round" is also named but
+  // comes FIRST - lumping every unnumbered round at the end made it outrank round 26.
+  var FINALS = /final|elimination|qualifying|semi|prelim|grand|wild ?card|divisional|conference|super ?bowl/i;
+  var ord = num != null ? String(num).padStart(3, '0')
+          : (FINALS.test(raw) ? '9' + String(raw).slice(0, 2) : '000');
+  return (r.Year || r.year || '') + '-' + ord;
+}
+function lastRoundKey(key){
+  var logs = asArray(state.sports[key].data.gamelogs) || [];
+  var best = null;
+  logs.forEach(function(r){
+    var k = roundKeyOf(r);
+    if (k && (!best || k > best)) best = k;
+  });
+  return best;
+}
+function weeklyReport(key){
+  var S = state.sports[key];
+  var logs = asArray(S.data.gamelogs) || [];
+  if (!logs.length) return '<div class="empty" style="padding:20px">No game logs for '+esc(SPORTS[key].name)+' yet.</div>';
+  var mkts = (((S.config || {}).oddsMkts) || []).slice(0, 6);
+  if (!mkts.length) return '<div class="empty" style="padding:20px">No markets configured.</div>';
+  var newest = lastRoundKey(key);
+  if (!newest) return '<div class="empty" style="padding:20px">Nothing dated in the logs.</div>';
+  // A finished season has nothing to report. AFL's last round was weeks ago and no game is
+  // scheduled, so the tab says so instead of re-reporting a grand final every week until March.
+  // "Season over" means no game ahead AND none in the last three weeks. Judging it on upcoming
+  // fixtures alone called a live season dead the moment the fixture file lagged.
+  var ahead = false, recent = false, now = Date.now();
+  (asArray(S.data.fixture) || []).forEach(function(g){
+    var ms = gameStart(g).ms;
+    if (!ms) return;
+    if (ms > now) ahead = true;
+    else if (now - ms < 21 * 864e5) recent = true;
+  });
+  var newestMs = /^\d{4}-\d{2}-\d{2}$/.test(newest) ? Date.parse(newest) : null;
+  if (newestMs && now - newestMs < 21 * 864e5) recent = true;
+  if (!ahead && !recent && !state.view.wrForce){
+    return '<div class="empty" style="padding:26px 20px;text-align:center">'
+      + '<i class="ti ti-calendar-off" style="font-size:22px;display:block;margin-bottom:8px"></i>'
+      + esc(SPORTS[key].name)+'\u2019s season is over \u2014 nothing new to report until it starts again.'
+      + '<div style="margin-top:12px"><button class="sl-chip" onclick="LAB.wrForce(1)">'
+      + 'Show the last round anyway</button></div></div>';
+  }
+  var keyOf = roundKeyOf;
+  // a round, not a day: for date-stamped sports take the week up to the newest game
+  var dated = /^\d{4}-\d{2}-\d{2}$/.test(newest);
+  var from = dated ? new Date(Date.parse(newest) - 6 * 864e5).toISOString().slice(0, 10) : newest;
+  var inRound = logs.filter(function(r){ var k = keyOf(r); return dated ? (k >= from && k <= newest) : k === newest; });
+  if (!inRound.length) return '<div class="empty" style="padding:20px">No games in the latest round.</div>';
+
+  var hist = S.idx.logsByName || {};
+  var perf = [], over = [], under = [];
+  inRound.forEach(function(r){
+    var nm = r.Player || r.player || r.name;
+    if (!nm) return;
+    mkts.forEach(function(m){
+      var v = statOf(key, r, m[0]);
+      if (v == null) return;
+      // his own baseline, excluding this game
+      var prior = [];
+      (hist[nm] || []).forEach(function(x){
+        if (keyOf(x) >= (dated ? from : newest)) return;
+        var pv = statOf(key, x, m[0]);
+        if (pv != null) prior.push(pv);
+      });
+      if (prior.length < 4) return;
+      var avg = mean(prior), sd = Math.sqrt(mean(prior.map(function(x){ return (x - avg) * (x - avg); })));
+      var z = sd > 0 ? (v - avg) / sd : 0;
+      var row = { name:nm, team:r.Team || r.team || '', mkt:m[0], label:m[1], v:v, avg:avg, z:z, n:prior.length };
+      perf.push(row);
+      if (z >= 1.5 && v > avg) over.push(row);
+      if (z <= -1.5 && prior.length >= 6) under.push(row);
+    });
+  });
+  if (!perf.length) return '<div class="empty" style="padding:20px">Not enough history behind the latest round yet.</div>';
+
+  var byZ = function(a, b){ return b.z - a.z; };
+  over.sort(byZ); under.sort(function(a, b){ return a.z - b.z; });
+  // one entry per player, so a monster game does not fill the list with his six markets
+  var onePer = function(list, n){
+    var seen = {}, out = [];
+    list.forEach(function(r){ if (seen[r.name]) return; seen[r.name] = 1; out.push(r); });
+    return out.slice(0, n || 6);
+  };
+  var line = function(r, sign){
+    var d = r.v - r.avg;
+    return '<div class="wr-row"><span class="wr-nm">'+esc(r.name)+'<i>'+esc(abbrOf(key, r.team))+'</i></span>'
+      + '<b>'+(r.v % 1 ? r.v.toFixed(1) : r.v)+'</b>'
+      + '<span class="wr-mk">'+esc(r.label)+'</span>'
+      + '<span class="wr-d '+(sign > 0 ? 'good' : 'bad')+'">'+(d >= 0 ? '+' : '')+(Math.abs(d) < 10 ? d.toFixed(1) : d.toFixed(0))
+      + ' v his '+(r.avg % 1 ? r.avg.toFixed(1) : r.avg)+'</span></div>';
+  };
+  // the round's biggest raw outputs, per market
+  var big = mkts.map(function(m){
+    var rows = perf.filter(function(r){ return r.mkt === m[0]; }).sort(function(a, b){ return b.v - a.v; }).slice(0, 3);
+    if (!rows.length) return '';
+    return '<div class="wr-col"><div class="wr-h">'+esc(m[1])+'</div>'
+      + rows.map(function(r){ return '<div class="wr-row"><span class="wr-nm">'+esc(r.name)
+          + '<i>'+esc(abbrOf(key, r.team))+'</i></span><b>'+(r.v % 1 ? r.v.toFixed(1) : r.v)+'</b></div>'; }).join('')
+      + '</div>';
+  }).join('');
+  // season leaders, per market
+  var season = String(curSeason(key));
+  var lead = mkts.map(function(m){
+    var tot = {};
+    logs.forEach(function(r){
+      if (String(r.Year || r.year) !== season) return;
+      var nm = r.Player || r.player || r.name, v = statOf(key, r, m[0]);
+      if (!nm || v == null) return;
+      var t = tot[nm] || (tot[nm] = { n:0, s:0, team:r.Team || r.team || '' });
+      t.n++; t.s += v;
+    });
+    var rows = Object.keys(tot).filter(function(nm){ return tot[nm].n >= 3; })
+      .map(function(nm){ return { name:nm, team:tot[nm].team, avg:tot[nm].s / tot[nm].n, n:tot[nm].n }; })
+      .sort(function(a, b){ return b.avg - a.avg; }).slice(0, 10);
+    if (!rows.length) return '';
+    return '<div class="wr-col"><div class="wr-h">'+esc(m[1])+' \u00b7 per game</div>'
+      + rows.map(function(r, i){ return '<div class="wr-row"><span class="wr-rk">'+(i + 1)+'</span>'
+          + '<span class="wr-nm">'+esc(r.name)+'<i>'+esc(abbrOf(key, r.team))+'</i></span>'
+          + '<b>'+r.avg.toFixed(1)+'</b></div>'; }).join('')+'</div>';
+  }).join('');
+
+  var tail = String(newest).split('-').pop().replace(/^0+/, '');
+  var when = dated ? (from + ' to ' + newest) : ('round ' + tail);
+  return '<div class="wr">'
+    + '<div class="wr-top">'+esc(SPORTS[key].name)+' \u00b7 '+esc(when)
+    + '<button class="sl-chip" onclick="LAB.wrShare(\''+key+'\')"><i class="ti ti-share"></i> Share</button></div>'
+    + (onePer(over).length ? '<div class="dayband"><span>Over-achievers</span></div>'
+        + '<div class="wr-note">Most above their own average, measured in standard deviations.</div>'
+        + onePer(over).map(function(r){ return line(r, 1); }).join('') : '')
+    + (onePer(under).length ? '<div class="dayband"><span>Drop-offs</span></div>'
+        + '<div class="wr-note">Furthest below their own average, on six games or more of history.</div>'
+        + onePer(under).map(function(r){ return line(r, -1); }).join('') : '')
+    + '<div class="dayband"><span>Biggest outputs</span></div><div class="wr-grid">'+big+'</div>'
+    + '<div class="dayband"><span>Season leaders</span></div>'
+    + (lead ? '<div class="wr-grid">'+lead+'</div>'
+            : '<div class="wr-note">Nobody has three games on record this season yet, so there is '
+              + 'nothing to rank. This fills in as the season goes.</div>')
+    + '</div>';
+}
 function teamsView(key){
   var S = state.sports[key], v = state.view;
   // The Teams tab was reading teams_form - a rolling last-five-games file - so "GP 5" looked like
@@ -9250,6 +9425,7 @@ function statsPage(){
     return h + '<div class="empty"><i class="ti ti-loader"></i>Loading '+esc(SPORTS[key].name)+' history\u2026</div>';
   }
   if (sub === 'teams') return h + teamsView(key);
+  if (sub === 'report') return h + weeklyReport(key);
   if (sub === 'dvp') return h + dvpView(key);
   return h + scannerView(key);
 }
@@ -11471,6 +11647,34 @@ window.LAB = {
     LAB.cardAddMulti({ title:legs.length + '-leg multi', legs:legs, odds:comb > 1 ? comb : null,
                        book:legs[0].book || '', src:'Check My Multi' });
     state.view.cardOpen = true; render();
+  },
+  wrForce: function(on){ state.view.wrForce = !!on; render(); },
+  wrShare: function(key){
+    var S = state.sports[key];
+    var mkts = (((S.config || {}).oddsMkts) || []).slice(0, 3);
+    var logs = asArray(S.data.gamelogs) || [];
+    var newest = lastRoundKey(key);
+    var lines = [];
+    mkts.forEach(function(m){
+      var best = null;
+      logs.forEach(function(r){
+        var k = String(r.Date || r.date || '').slice(0, 10)
+          || ((r.Year || r.year || '') + '-' + String(r.RoundName || r.Week || '').padStart(3, '0'));
+        if (!newest) return;
+        var within = /^\d{4}-\d{2}-\d{2}$/.test(newest)
+          ? (k >= new Date(Date.parse(newest) - 6 * 864e5).toISOString().slice(0, 10) && k <= newest)
+          : k === newest;
+        if (!within) return;
+        var v = statOf(key, r, m[0]);
+        if (v == null) return;
+        if (!best || v > best.v) best = { name:r.Player || r.player || r.name, team:r.Team || r.team || '', v:v };
+      });
+      if (best) lines.push({ title:best.name, sub:m[1] + '  \u00b7  ' + esc(abbrOf(key, best.team)),
+                             right:String(best.v % 1 ? best.v.toFixed(1) : best.v) });
+    });
+    if (!lines.length) return;
+    drawShare(SPORTS[key].name + ' \u00b7 the round', lines, 'Biggest outputs of the round')
+      .then(function(c){ shareCanvas(c, 'jtt-round.png'); });
   },
   cmbShare: function(){
     var l = shareCmbLines();
