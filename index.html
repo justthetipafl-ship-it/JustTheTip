@@ -11658,21 +11658,18 @@ function usageLeaders(key, team, n){
   var set = USAGE[key];
   if (!set) return '';
   var S = state.sports[key], logs = asArray(S.data.gamelogs) || [];
-  // this season if there is one, otherwise last - usage from two weeks ago beats nothing, and
-  // early in a season nobody has the two games this needs
-  var season = String(curSeason(key));
-  var have = 0;
-  logs.forEach(function(r){ if (String(r.Year || r.year) === season && normTeam(r.Team || r.team) === normTeam(team)) have++; });
-  if (have < 20){
-    var years = {};
-    logs.forEach(function(r){ var y = String(r.Year || r.year || ''); if (y && y < season) years[y] = 1; });
-    var prev = Object.keys(years).sort().pop();
-    if (prev) season = prev;
-  }
+  // their LAST GAME, not the season: this panel answers "who was on the field last time out"
+  var lastK = null;
+  logs.forEach(function(r){
+    if (normTeam(r.Team || r.team) !== normTeam(team)) return;
+    var k = roundKeyOf(r);
+    if (k && (!lastK || k > lastK)) lastK = k;
+  });
+  if (!lastK) return '';
   var tot = {};
   logs.forEach(function(r){
     if (normTeam(r.Team || r.team) !== normTeam(team)) return;
-    if (String(r.Year || r.year) !== season) return;
+    if (roundKeyOf(r) !== lastK) return;
     var nm = r.Player || r.player || r.name;
     if (!nm) return;
     var t = tot[nm] || (tot[nm] = { n:0, v:{} });
@@ -11684,8 +11681,7 @@ function usageLeaders(key, team, n){
   });
   // two games is the bar worth ranking on, but one game into a season nobody has two - then a
   // single game is still better than an empty panel, and the header says which season it is from
-  var names = Object.keys(tot).filter(function(nm){ return tot[nm].n >= 2; });
-  if (!names.length) names = Object.keys(tot).filter(function(nm){ return tot[nm].n >= 1; });
+  var names = Object.keys(tot);
   if (!names.length) return '';
   var cols = set.filter(function(c){ return names.some(function(nm){ return tot[nm].v[c[0]] != null; }); }).slice(0, 4);
   if (!cols.length) return '';
@@ -11700,7 +11696,7 @@ function usageLeaders(key, team, n){
           + fmt(r.v)+'</b></div>'; }).join('')+'</div>';
   }).join('');
   return body ? '<div class="lg-hd" style="margin-top:6px"><b>'+esc(abbrOf(key, team))+'</b>'
-    + '<span>&nbsp;who gets the work \u00b7 '+esc(season)+'</span></div><div class="wr-grid">'+body+'</div>' : '';
+    + '<span>&nbsp;who got the work last time out</span></div><div class="wr-grid">'+body+'</div>' : '';
 }
 function mrPanel(){
   var f = state.view.focus;
@@ -11801,13 +11797,35 @@ function lastGameCard(key, team, cols){
   if (!g0) return '';
   var S = state.sports[key], hist = S.idx.logsByName || {};
   var sum = function(rows, c){
-    var t = null;
-    rows.forEach(function(r){ var v = statOf(key, r, c); if (v != null) t = (t || 0) + v; });
-    return t;
+    var t = null, seen = false;
+    rows.forEach(function(r){
+      if (r[c] == null) return;                 // the gamelogs do not carry this column at all
+      seen = true;
+      var v = statOf(key, r, c);
+      if (v != null) t = (t || 0) + v;
+    });
+    return seen ? t : null;
   };
   var tot = cols.map(function(c){
     return { label:c[1], mine:sum(g0.mine, c[0]), theirs:sum(g0.theirs, c[0]) };
   }).filter(function(x){ return x.mine != null || x.theirs != null; }).slice(0, 6);
+  // Points are not in the gamelogs for every sport - NFL keeps the score in results.json. Take it
+  // from there so the card leads with the scoreline rather than omitting it.
+  var res = asArray(S.data.results) || [];
+  var score = null;
+  res.forEach(function(r){
+    if (score) return;
+    var h = r.home || r.homeTeam, a = r.away || r.awayTeam;
+    var hs = r.hs != null ? r.hs : r.homeScore, as = r.as != null ? r.as : r.awayScore;
+    if (hs == null || as == null) return;
+    var d = String(r.date || r.Date || '').slice(0, 10);
+    var sameGame = (/^\d{4}-\d{2}-\d{2}$/.test(g0.when) ? d === g0.when : true)
+      && ((normTeam(h) === normTeam(team) && normTeam(a) === normTeam(g0.opp))
+       || (normTeam(a) === normTeam(team) && normTeam(h) === normTeam(g0.opp)));
+    if (!sameGame) return;
+    score = normTeam(h) === normTeam(team) ? { mine:hs, theirs:as } : { mine:as, theirs:hs };
+  });
+  if (score) tot.unshift({ label:'Score', mine:score.mine, theirs:score.theirs });
   // who hurt them, and who they stopped - opposition players against their own form
   var judged = [];
   g0.theirs.forEach(function(r){
