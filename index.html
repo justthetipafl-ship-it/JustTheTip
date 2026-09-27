@@ -9210,6 +9210,41 @@ function lastRoundKey(key){
   });
   return best;
 }
+
+/* KNOCKING ON THE DOOR ---------------------------------------------------------------------------
+   Red-zone usage that has not turned into a touchdown yet. Usage is the stable part and scoring is
+   the lumpy part, so a player getting the ball inside the 20 without finding the end zone is the
+   shape of a price that may be longer than it should be. It is a candidate list, not a signal:
+   sometimes there is a reason nobody is paying him off, and the board says how close he came. */
+function unrewardedBoard(key, logs, season){
+  if (key !== 'nfl') return '';
+  var tot = {};
+  logs.forEach(function(r){
+    if (String(r.Year || r.year) !== String(season)) return;
+    var nm = r.Player || r.player;
+    if (!nm) return;
+    var t = tot[nm] || (tot[nm] = { team:r.Team || r.team || '', n:0, use:0, inside10:0, tds:0 });
+    t.n++;
+    t.use += (+r.rzTgt_g || 0) + (+r.rzAtt_g || 0);
+    t.inside10 += (+r.i10Tgt_g || 0) + (+r.i5Att_g || 0);
+    t.tds += (+r.totalTds || 0) || (+r.anytimeTd || 0) || (+r.recTds || 0) + (+r.rushTds || 0);
+  });
+  var rows = Object.keys(tot).map(function(nm){
+    var t = tot[nm];
+    return { name:nm, team:t.team, use:t.use, i10:t.inside10, tds:t.tds, n:t.n };
+  }).filter(function(r){ return r.tds === 0 && r.use >= 3; })
+    .sort(function(a, b){ return b.use - a.use || b.i10 - a.i10; }).slice(0, 10);
+  if (!rows.length) return '';
+  return '<div class="dayband"><span>Knocking on the door</span></div>'
+    + '<div class="wr-note">Most red-zone touches and targets this season with no touchdown yet. '
+    + 'Usage is what carries over; the scoring has not caught up.</div>'
+    + '<div class="wr-grid"><div class="wr-col"><div class="wr-h">Red-zone usage \u00b7 no TD</div>'
+    + rows.map(function(r, i){
+        return '<div class="wr-row"><span class="wr-rk">'+(i + 1)+'</span>'
+          + '<span class="wr-nm">'+esc(r.name)+'<i>'+esc(abbrOf(key, r.team))+'</i></span>'
+          + '<b>'+r.use+'</b><span class="wr-mk">'+(r.i10 ? r.i10 + ' inside 10' : '\u2014')+'</span></div>';
+      }).join('')+'</div></div>';
+}
 function weeklyReport(key){
   var S = state.sports[key];
   var logs = asArray(S.data.gamelogs) || [];
@@ -9357,6 +9392,7 @@ function weeklyReport(key){
         + '<div class="wr-note">Furthest below their own average, on six games or more of history.</div>'
         + onePer(under).map(function(r){ return line(r, -1); }).join('') : '')
     + '<div class="dayband"><span>Biggest outputs</span></div><div class="wr-grid">'+big+'</div>'
+    + unrewardedBoard(key, logs, season)
     + '<div class="dayband"><span>Season leaders</span></div>'
     + (lead ? '<div class="wr-grid">'+lead+'</div>'
             : '<div class="wr-note">Nobody has three games on record this season yet, so there is '
