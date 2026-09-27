@@ -975,6 +975,20 @@
   i.nb-dot.nb-paintPts{background:#22c55e;} i.nb-dot.nb-fastBreakPts{background:#38bdf8;}
   i.nb-dot.nb-secondChancePts{background:#a78bfa;} i.nb-dot.nb-three{background:#f97316;}
   i.nb-dot.nb-ft{background:#eab308;} i.nb-dot.nb-mid{background:#64748b;}
+  .lg-wrap{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:10px;}
+  .lg-card{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:10px 12px;}
+  .lg-hd{display:flex;align-items:baseline;gap:8px;margin-bottom:6px;}
+  .lg-hd b{font-size:14px;} .lg-hd span{font-size:10px;color:var(--text-3);font-family:var(--font-mono);}
+  .lg-t{width:100%;border-collapse:collapse;font-family:var(--font-mono);font-size:11px;}
+  .lg-t th{font-size:8px;letter-spacing:.06em;text-transform:uppercase;color:var(--text-3);text-align:right;padding:2px 4px;}
+  .lg-t td{padding:3px 4px;text-align:right;border-top:1px solid var(--border);}
+  .lg-t td:first-child,.lg-t th:first-child{text-align:left;color:var(--text-2);}
+  .lg-h{font-size:9px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;margin:9px 0 3px;}
+  .lg-h.bad{color:#f97316;} .lg-h.good{color:var(--accent);}
+  .lg-p{display:flex;align-items:baseline;gap:7px;font-size:11px;padding:2px 0;}
+  .lg-p span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .lg-p b{font-family:var(--font-mono);}
+  .lg-p i{font-style:normal;font-size:9px;color:var(--text-3);}
   .rdr-wrap{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:10px;}
   .rdr{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:8px;}
   .rdr-hd{display:flex;align-items:center;justify-content:center;gap:7px;font-size:10px;margin-bottom:2px;}
@@ -6997,6 +7011,7 @@ function focusPage(){
     + (S.t3==='ready' ? subsSection(key, g) : '')
     + (S.t3==='ready' ? firstLastSection(key, g) : '')
     + (S.status === 'ready' && !state.view.nerd ? matchRadar(key, g) : '')
+    + (S.t3 === 'ready' && !state.view.nerd ? lastGameSection(key, g) : '')
     // Nerd Mode replaces the signals rather than adding to them: it is a different read of the
     // same fixture (the market against itself), and stacking both made the page enormous.
     + (S.t3==='ready' && !state.view.nerd ? signalsSection(key, g) : '')
@@ -11519,6 +11534,118 @@ function radarPanel(key, rows, off, def, cols, title){
     + '<span>v</span><b style="color:#5eead4">' + esc(abbrOf(key, def)) + ' defence</b></div>'
     + '<svg viewBox="0 0 192 192" class="rdr-svg">' + web
     + shape(def, true, '#5eead4', true) + shape(off, false, '#ef4444', false) + axes + '</svg></div>';
+}
+
+/* LAST TIME OUT ---------------------------------------------------------------------------------
+   Each side's most recent game: what they produced, what they conceded, and - the part a team
+   page never tells you - which opposition players hurt them and which they shut down. A defence
+   that conceded 90 points is one thing; a defence that let one man have 34 of them is another.
+   Opposition players are measured against their OWN averages, so "hurt them" means he beat his
+   own form here, not that he is simply a good player.                                          */
+function lastGameFor(key, team){
+  var S = state.sports[key];
+  var logs = asArray(S.data.gamelogs) || [];
+  var best = null;
+  logs.forEach(function(r){
+    if (normTeam(r.Team || r.team) !== normTeam(team)) return;
+    var k = roundKeyOf(r);
+    if (k && (!best || k > best)) best = k;
+  });
+  if (!best) return null;
+  var mine = [], theirs = [], opp = '', mids = {};
+  logs.forEach(function(r){
+    if (roundKeyOf(r) !== best) return;
+    var t = r.Team || r.team, o = r.Opp || r.opp || '';
+    if (normTeam(t) === normTeam(team)){
+      mine.push(r);
+      if (!opp && o) opp = o;
+      if (r.MatchId != null) mids[r.MatchId] = 1;          // AFL carries no Opp - use the match id
+    }
+  });
+  if (!mine.length) return null;
+  if (!opp){
+    logs.forEach(function(r){
+      if (opp || roundKeyOf(r) !== best) return;
+      if (r.MatchId != null && mids[r.MatchId] && normTeam(r.Team || r.team) !== normTeam(team)){
+        opp = r.Team || r.team;
+      }
+    });
+  }
+  if (!opp) return null;
+  logs.forEach(function(r){
+    if (roundKeyOf(r) !== best) return;
+    if (normTeam(r.Team || r.team) !== normTeam(opp)) return;
+    var o2 = r.Opp || r.opp || '';
+    if (o2 ? normTeam(o2) === normTeam(team) : (r.MatchId != null && mids[r.MatchId])) theirs.push(r);
+  });
+  return { when:best, opp:opp, mine:mine, theirs:theirs };
+}
+function lastGameCard(key, team, cols){
+  var g0 = lastGameFor(key, team);
+  if (!g0) return '';
+  var S = state.sports[key], hist = S.idx.logsByName || {};
+  var sum = function(rows, c){
+    var t = null;
+    rows.forEach(function(r){ var v = statOf(key, r, c); if (v != null) t = (t || 0) + v; });
+    return t;
+  };
+  var tot = cols.map(function(c){
+    return { label:c[1], mine:sum(g0.mine, c[0]), theirs:sum(g0.theirs, c[0]) };
+  }).filter(function(x){ return x.mine != null || x.theirs != null; }).slice(0, 6);
+  // who hurt them, and who they stopped - opposition players against their own form
+  var judged = [];
+  g0.theirs.forEach(function(r){
+    var nm = r.Player || r.player || r.name;
+    if (!nm) return;
+    cols.forEach(function(c){
+      var v = statOf(key, r, c[0]);
+      if (v == null) return;
+      var prior = [];
+      (hist[nm] || []).forEach(function(x){
+        if (roundKeyOf(x) >= g0.when) return;
+        var pv = statOf(key, x, c[0]);
+        if (pv != null) prior.push(pv);
+      });
+      if (prior.length < 4) return;
+      var avg = mean(prior), sd = Math.sqrt(mean(prior.map(function(q){ return (q - avg) * (q - avg); })));
+      if (!(sd > 0)) return;
+      judged.push({ name:nm, label:c[1], v:v, avg:avg, z:(v - avg) / sd });
+    });
+  });
+  var pick = function(list, n){
+    var seen = {}, out = [];
+    list.forEach(function(r){ if (seen[r.name]) return; seen[r.name] = 1; out.push(r); });
+    return out.slice(0, n);
+  };
+  var hurt = pick(judged.slice().sort(function(a, b){ return b.z - a.z; }).filter(function(r){ return r.z >= 1; }), 3);
+  var held = pick(judged.slice().sort(function(a, b){ return a.z - b.z; }).filter(function(r){ return r.z <= -1; }), 3);
+  var pr = function(r){
+    return '<div class="lg-p"><span>'+esc(r.name)+'</span><b>'+(r.v % 1 ? r.v.toFixed(1) : r.v)+'</b>'
+      + '<i>'+esc(r.label)+' \u00b7 his avg '+(r.avg % 1 ? r.avg.toFixed(1) : r.avg)+'</i></div>';
+  };
+  var when = /^\d{4}-\d{2}-\d{2}$/.test(g0.when) ? g0.when : ('round ' + String(g0.when).split('-').pop().replace(/^0+/, ''));
+  return '<div class="lg-card"><div class="lg-hd"><b>'+esc(abbrOf(key, team))+'</b>'
+    + '<span>&nbsp;v '+esc(abbrOf(key, g0.opp))+' \u00b7 '+esc(when)+'</span></div>'
+    + '<table class="lg-t"><tr><th></th><th>For</th><th>Conceded</th></tr>'
+    + tot.map(function(x){
+        return '<tr><td>'+esc(x.label)+'</td><td>'+(x.mine == null ? '\u2014' : (x.mine % 1 ? x.mine.toFixed(1) : x.mine))
+          + '</td><td>'+(x.theirs == null ? '\u2014' : (x.theirs % 1 ? x.theirs.toFixed(1) : x.theirs))+'</td></tr>';
+      }).join('')+'</table>'
+    + (hurt.length ? '<div class="lg-h bad">Hurt them</div>'+hurt.map(pr).join('') : '')
+    + (held.length ? '<div class="lg-h good">Held</div>'+held.map(pr).join('') : '')
+    + (!hurt.length && !held.length ? '<div class="deg-note">No opposition player was far off his own form.</div>' : '')
+    + '</div>';
+}
+function lastGameSection(key, g){
+  var S = state.sports[key];
+  var cols = (((S.config || {}).teamCols) || []).slice(0, 6);
+  if (!cols.length) return '';
+  var a = lastGameCard(key, g.home, cols), b = lastGameCard(key, g.away, cols);
+  if (!a && !b) return '';
+  return '<div class="dayband"><span>Last time out</span></div><div class="lg-wrap">'+a+b+'</div>'
+    + '<div class="deg-note" style="padding:2px 2px 8px">Each side\u2019s most recent game. '
+    + '\u201cHurt them\u201d and \u201cHeld\u201d are opposition players measured against their own averages, '
+    + 'not the league\u2019s \u2014 one game, so read it as a note rather than a pattern.</div>';
 }
 function matchRadar(key, g){
   var S = state.sports[key];
