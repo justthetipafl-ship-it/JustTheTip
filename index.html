@@ -991,11 +991,13 @@
   .lg-p span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
   .lg-p b{font-family:var(--font-mono);}
   .lg-p i{font-style:normal;font-size:9px;color:var(--text-3);}
-  .rdr-wrap{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:10px;}
-  .rdr{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:8px;}
-  .rdr-hd{display:flex;align-items:center;justify-content:center;gap:7px;font-size:10px;margin-bottom:2px;}
-  .rdr-hd span{color:var(--text-3);font-size:9px;}
-  .rdr-svg{width:100%;height:auto;display:block;}
+  /* NOTE: .rdr / .rdr-hd belong to the NFL Matchup Radar. These are the attack-v-defence panels
+     and must keep their own names - reusing .rdr restyled that section and broke its layout. */
+  .avd-wrap{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:10px;}
+  .avd{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:8px;}
+  .avd-hd{display:flex;align-items:center;justify-content:center;gap:7px;font-size:10px;margin-bottom:2px;}
+  .avd-hd span{color:var(--text-3);font-size:9px;}
+  .avd-svg{width:100%;height:auto;display:block;}
   .dd-teams{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:10px;}
   .dd-team{background:var(--surface-2);border:1px solid var(--border);border-radius:10px;padding:9px 11px;}
   .dd-th{font-size:10px;font-weight:800;letter-spacing:.05em;text-transform:uppercase;color:var(--text-2);margin-bottom:4px;}
@@ -10329,13 +10331,12 @@ function loadMixedLadder(){
 }
 function degLadder(sc){
   loadMixedLadder();
-  var cards = sc.sports.map(degLadderCard).filter(Boolean);
-  var mixed = (sc.sc === 'mixed' && state.mixedLadder) ? ladderCardFrom(state.mixedLadder, 'Mixed', null) : '';
-  var missing = sc.sports.filter(function(k){ var L = state.sports[k].data.ladder; return !L || !(L.days || []).length; })
-    .map(function(k){ return SPORTS[k].name; });
-  return degSec('The Ladder', 'ti-stairs-up', '', (mixed + cards.join(''))
-    || '<div class="sig-empty">No ladder challenge is running for '+esc(sc.sc === 'mixed' ? 'these sports' : SPORTS[sc.sc].name)+'.</div>')
-    + (missing.length ? '<div class="deg-note">No challenge running yet for '+esc(missing.join(', '))+'.</div>' : '');
+  // One challenge, not six. The per-sport ladders were six separate $10 runs, most of them sitting
+  // pending on whichever sport was between seasons; the mixed one takes the best build of the day
+  // from whatever is playing.
+  var mixed = state.mixedLadder ? ladderCardFrom(state.mixedLadder, 'Mixed', null) : '';
+  return degSec('The Ladder', 'ti-stairs-up', '', mixed
+    || '<div class="sig-empty">The ladder challenge has not picked a rung yet today.</div>');
 }
 function degPage(){
   var sc = degScope();
@@ -11652,9 +11653,9 @@ function radarPanel(key, rows, off, def, cols, title){
     return '<text x="' + q[0].toFixed(1) + '" y="' + q[1].toFixed(1) + '" fill="var(--text-3)" font-size="7.5" '
       + 'text-anchor="middle">' + esc(c[1]) + '</text>';
   }).join('');
-  return '<div class="rdr"><div class="rdr-hd"><b style="color:#ef4444">' + esc(abbrOf(key, off)) + ' attack</b>'
+  return '<div class="avd"><div class="avd-hd"><b style="color:#ef4444">' + esc(abbrOf(key, off)) + ' attack</b>'
     + '<span>v</span><b style="color:#5eead4">' + esc(abbrOf(key, def)) + ' defence</b></div>'
-    + '<svg viewBox="0 0 192 192" class="rdr-svg">' + web
+    + '<svg viewBox="0 0 192 192" class="avd-svg">' + web
     + shape(def, true, '#5eead4', true) + shape(off, false, '#ef4444', false) + axes + '</svg></div>';
 }
 
@@ -12004,7 +12005,7 @@ function matchRadar(key, g){
        + ' a side' + (hi <= 4 ? ', so treat it as a rough reference' : ''))
     : 'the team file, because no games are on record for this season yet';
   return '<div class="dayband"><span>Attack v defence</span></div>'
-    + '<div class="rdr-wrap">'
+    + '<div class="avd-wrap">'
     + radarPanel(key, rows, g.home, g.away, cols)
     + radarPanel(key, rows, g.away, g.home, cols)
     + '</div>'
