@@ -11643,7 +11643,9 @@ function squadMovers(key, team, cols){
    usage its own feed records - NFL's snap and target share, basketball's minutes and shot volume,
    a possession count where that is the currency.                                                */
 var USAGE = {
-  nfl: [['snapPct','Snap share','%'], ['tgtShare','Target share','pct'], ['rushAtt','Carries',''],
+  // tgtShare is stored as a percentage already (1.8 to 66.7), not a fraction - multiplying it
+  // again produced "2857%" target shares
+  nfl: [['snapPct','Snap share','%'], ['tgtShare','Target share','%'], ['rushAtt','Carries',''],
         ['airYds','Air yards',''], ['receptions','Catches','']],
   nbl: [['minutes','Minutes',''], ['fga','Shots',''], ['threesAtt','Threes taken',''],
         ['fta','Free throws',''], ['plusMinus','Plus/minus','']],
@@ -11690,7 +11692,14 @@ function usageLeaders(key, team, n){
       .filter(function(r){ return r.v > 0; })
       .sort(function(a, b){ return b.v - a.v; }).slice(0, n || 4);
     if (!rows.length) return '';
-    var fmt = function(v){ return c[2] === 'pct' ? Math.round(v * 100) + '%' : (c[2] === '%' ? v.toFixed(0) + '%' : (v % 1 ? v.toFixed(1) : v)); };
+    var fmt = function(v){
+      // a share can be stored either way; anything above 1.5 is plainly already a percentage
+      if (c[2] === 'pct' || c[2] === '%'){
+        var pc = (c[2] === 'pct' && v <= 1.5) ? v * 100 : v;
+        return (pc >= 10 ? Math.round(pc) : pc.toFixed(1)) + '%';
+      }
+      return v % 1 ? v.toFixed(1) : v;
+    };
     return '<div class="wr-col"><div class="wr-h">'+esc(c[1])+'</div>'
       + rows.map(function(r){ return '<div class="wr-row"><span class="wr-nm">'+esc(r.name)+'</span><b>'
           + fmt(r.v)+'</b></div>'; }).join('')+'</div>';
