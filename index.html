@@ -6968,6 +6968,8 @@ function focusPage(){
   var key = f.sport, g = f.g, S = state.sports[key];
   var st = gameStart(g);
   var head = '<div class="fx-top"><button class="fx-back" onclick="LAB.focus(null)"><i class="ti ti-arrow-left"></i>All fixtures</button>'
+    + (S.t3 === 'ready' ? '<button class="fx-build" onclick="LAB.mrOpen()">'
+        + '<i class="ti ti-report"></i>Match report</button>' : '')
     + '<button class="fx-nerd'+(state.view.nerd ? ' on' : '')+'" onclick="LAB.nerd()" title="Arbs, middles and line value across books">'
     + '<i class="ti ti-math-symbols"></i>Nerd Mode</button></div>'
     + ''
@@ -7013,13 +7015,7 @@ function focusPage(){
     + (S.t3==='ready' ? subsSection(key, g) : '')
     + (S.t3==='ready' ? firstLastSection(key, g) : '')
     + (S.status === 'ready' && !state.view.nerd ? matchRadar(key, g) : '')
-    + (S.t3 === 'ready' && !state.view.nerd
-        ? (state.view.mrOpen
-            ? '<div class="dayband"><span>Match report</span></div>' + matchReport(key, g)
-            : '<div class="mr-open"><button class="sl-chip" onclick="LAB.mrOpen()">'
-              + '<i class="ti ti-report"></i> Match report</button>'
-              + '<span class="deg-note">Recent form, last time out, and who is rising or falling in each squad.</span></div>')
-        : '')
+
     // Nerd Mode replaces the signals rather than adding to them: it is a different read of the
     // same fixture (the market against itself), and stacking both made the page enormous.
     + (S.t3==='ready' && !state.view.nerd ? signalsSection(key, g) : '')
@@ -9120,9 +9116,16 @@ function teamWindowRows(key, win, cols){
       cols.forEach(function(c){ a[c[0]] = (a[c[0]] || 0) + (other.vals[c[0]] || 0); });
     }
   });
+  // Some team columns are not in the gamelogs at all - NFL keeps points and plays at team level,
+  // from results - and summing player rows for those gives a confident 0. Drop them instead.
+  var carried = {};
+  cols.forEach(function(c){
+    carried[c[0]] = inWin.some(function(g){ return g.vals[c[0]] != null; });
+  });
   var out = Object.keys(cnt).map(function(t){
     var row = { team:t, matches:cnt[t] };
     cols.forEach(function(c){
+      if (!carried[c[0]]) return;                    // absent, not zero
       row[c[0]] = +( (forT[t][c[0]] || 0) / cnt[t] ).toFixed(2);
       if (agT[t]) row[c[0] + '_a'] = +( (agT[t][c[0]] || 0) / cnt[t] ).toFixed(2);
     });
@@ -9168,6 +9171,28 @@ function weeklyReport(key){
   if (!mkts.length) return '<div class="empty" style="padding:20px">No markets configured.</div>';
   var newest = lastRoundKey(key);
   if (!newest) return '<div class="empty" style="padding:20px">Nothing dated in the logs.</div>';
+  // Report the round that FINISHED, not the one that just started. Week 3 with one game played is
+  // not a week in review - a round counts once most of the league has played it.
+  var roundSize = {};
+  logs.forEach(function(r){
+    var k = roundKeyOf(r), t = r.Team || r.team;
+    if (!k || !t) return;
+    (roundSize[k] = roundSize[k] || {})[normTeam(t)] = 1;
+  });
+  var teamsIn = function(k){ return Object.keys(roundSize[k] || {}).length; };
+  var isFinal = function(k){ return /-9[A-Za-z]/.test(String(k)); };   // named rounds: finals
+  var typical = Object.keys(roundSize).map(teamsIn).sort(function(a, b){ return b - a; })[0] || 0;
+  // A final is a complete round with two teams in it, so the size rule must not throw it away.
+  var moreToCome = (asArray(S.data.fixture) || []).some(function(gx){
+    var ms = gameStart(gx).ms; return ms && ms > Date.now();
+  });
+  // With nothing left to play, the newest round IS the last round - a grand final has two teams
+  // and is not "in progress".
+  if (moreToCome && typical && !isFinal(newest) && teamsIn(newest) < typical * 0.6){
+    var done = Object.keys(roundSize).sort().filter(function(k){
+      return k < newest && (isFinal(k) || teamsIn(k) >= typical * 0.6); });
+    if (done.length) newest = done[done.length - 1];
+  }
   // A finished season has nothing to report. AFL's last round was weeks ago and no game is
   // scheduled, so the tab says so instead of re-reporting a grand final every week until March.
   // "Season over" means no game ahead AND none in the last three weeks. Judging it on upcoming
@@ -11611,6 +11636,83 @@ function squadMovers(key, team, cols){
   return { up:pick(rows.slice().sort(function(a, b){ return b.z - a.z; }).filter(function(r){ return r.z >= 1; })),
            down:pick(rows.slice().sort(function(a, b){ return a.z - b.z; }).filter(function(r){ return r.z <= -1; })) };
 }
+
+/* USAGE LEADERS ---------------------------------------------------------------------------------
+   Who gets the work, per squad. Volume is what a prop is built on: a receiver with a 28% target
+   share is a different bet from one at 9% however alike their yards look. Each sport shows the
+   usage its own feed records - NFL's snap and target share, basketball's minutes and shot volume,
+   a possession count where that is the currency.                                                */
+var USAGE = {
+  nfl: [['snapPct','Snap share','%'], ['tgtShare','Target share','pct'], ['rushAtt','Carries',''],
+        ['airYds','Air yards',''], ['receptions','Catches','']],
+  nbl: [['minutes','Minutes',''], ['fga','Shots',''], ['threesAtt','Threes taken',''],
+        ['fta','Free throws',''], ['plusMinus','Plus/minus','']],
+  nhl: [['toiMin','Ice time',''], ['shots','Shots',''], ['ppToi','Power-play time','']],
+  afl: [['tog','Time on ground','%'], ['cba','Centre bounces',''], ['disposals','Disposals',''],
+        ['contested','Contested',''], ['shotsAtGoal','Shots at goal','']],
+  epl: [['min','Minutes',''], ['shots','Shots',''], ['keyPasses','Key passes','']],
+  // MLB's gamelogs carry no at-bats or plate appearances, so usage is shown by what they do record
+  mlb: [['H','Hits',''], ['TB','Total bases',''], ['IP','Innings',''], ['K','Strikeouts','']]
+};
+function usageLeaders(key, team, n){
+  var set = USAGE[key];
+  if (!set) return '';
+  var S = state.sports[key], logs = asArray(S.data.gamelogs) || [];
+  // this season if there is one, otherwise last - usage from two weeks ago beats nothing, and
+  // early in a season nobody has the two games this needs
+  var season = String(curSeason(key));
+  var have = 0;
+  logs.forEach(function(r){ if (String(r.Year || r.year) === season && normTeam(r.Team || r.team) === normTeam(team)) have++; });
+  if (have < 20){
+    var years = {};
+    logs.forEach(function(r){ var y = String(r.Year || r.year || ''); if (y && y < season) years[y] = 1; });
+    var prev = Object.keys(years).sort().pop();
+    if (prev) season = prev;
+  }
+  var tot = {};
+  logs.forEach(function(r){
+    if (normTeam(r.Team || r.team) !== normTeam(team)) return;
+    if (String(r.Year || r.year) !== season) return;
+    var nm = r.Player || r.player || r.name;
+    if (!nm) return;
+    var t = tot[nm] || (tot[nm] = { n:0, v:{} });
+    t.n++;
+    set.forEach(function(c){
+      var v = +r[c[0]];
+      if (isFinite(v)) t.v[c[0]] = (t.v[c[0]] || 0) + v;
+    });
+  });
+  // two games is the bar worth ranking on, but one game into a season nobody has two - then a
+  // single game is still better than an empty panel, and the header says which season it is from
+  var names = Object.keys(tot).filter(function(nm){ return tot[nm].n >= 2; });
+  if (!names.length) names = Object.keys(tot).filter(function(nm){ return tot[nm].n >= 1; });
+  if (!names.length) return '';
+  var cols = set.filter(function(c){ return names.some(function(nm){ return tot[nm].v[c[0]] != null; }); }).slice(0, 4);
+  if (!cols.length) return '';
+  var body = cols.map(function(c){
+    var rows = names.map(function(nm){ return { name:nm, v:(tot[nm].v[c[0]] || 0) / tot[nm].n }; })
+      .filter(function(r){ return r.v > 0; })
+      .sort(function(a, b){ return b.v - a.v; }).slice(0, n || 4);
+    if (!rows.length) return '';
+    var fmt = function(v){ return c[2] === 'pct' ? Math.round(v * 100) + '%' : (c[2] === '%' ? v.toFixed(0) + '%' : (v % 1 ? v.toFixed(1) : v)); };
+    return '<div class="wr-col"><div class="wr-h">'+esc(c[1])+'</div>'
+      + rows.map(function(r){ return '<div class="wr-row"><span class="wr-nm">'+esc(r.name)+'</span><b>'
+          + fmt(r.v)+'</b></div>'; }).join('')+'</div>';
+  }).join('');
+  return body ? '<div class="lg-hd" style="margin-top:6px"><b>'+esc(abbrOf(key, team))+'</b>'
+    + '<span>&nbsp;who gets the work \u00b7 '+esc(season)+'</span></div><div class="wr-grid">'+body+'</div>' : '';
+}
+function mrPanel(){
+  var f = state.view.focus;
+  if (!state.view.mrOpen || !f) return '';
+  var S = state.sports[f.sport];
+  var body = S.t3 === 'ready' ? matchReport(f.sport, f.g)
+    : '<div class="empty" style="padding:22px">Loading '+esc(SPORTS[f.sport].name)+' history\u2026</div>';
+  return '<div class="cmb-overlay open" onclick="if(event.target===this)LAB.mrClose()">'
+    + '<div class="cmb-modal dd-modal"><div class="cmb-hdr"><i class="ti ti-report"></i><h2>Match report</h2>'
+    + '<button class="cmb-close" onclick="LAB.mrClose()">&times;</button></div>'
+    + '<div class="cmb-body">'+body+'</div></div></div>';
+}
 function matchReport(key, g){
   var S = state.sports[key];
   var cols = (((S.config || {}).teamCols) || []).slice(0, 6);
@@ -11642,10 +11744,15 @@ function matchReport(key, g){
       + '</div>';
   }).join('');
   return '<div class="mr">'
-    + '<div class="wr-top">'+esc(abbrOf(key, g.away))+' at '+esc(abbrOf(key, g.home))
-    + '<button class="sl-chip" onclick="LAB.mrClose()">Close</button></div>'
+    + '<div class="wr-top">'+esc(abbrOf(key, g.away))+' at '+esc(abbrOf(key, g.home))+'</div>'
     + (formTable ? '<div class="dayband"><span>Recent form</span></div>'+formTable : '')
     + lastGameSection(key, g)
+    + (function(){
+        var u = sides.map(function(t){ return usageLeaders(key, t, 4); }).filter(Boolean).join('');
+        return u ? '<div class="dayband"><span>Usage leaders</span></div>' + u
+          + '<div class="deg-note" style="padding:2px 2px 8px">Per game this season. Volume is what a '
+          + 'prop is built on - the same output on half the usage is a different bet.</div>' : '';
+      })()
     + (squad ? '<div class="dayband"><span>Squad movers</span></div><div class="lg-wrap">'+squad+'</div>'
        + '<div class="deg-note" style="padding:2px 2px 8px">Each side\u2019s own players in their last game, '
        + 'against their own averages. One game \u2014 a note, not a pattern.</div>' : '')
@@ -11802,7 +11909,7 @@ function render(){
 
   if (state.view.focus){
     h = '' + focusPage();                       // focused fixture replaces the page
-    $('app').innerHTML = configBanner() + h + playerPanel() + booksPanel() + cmbFab() + cmbPanel() + cardFab() + cardPanel() + livePanel() + deepPanel();
+    $('app').innerHTML = configBanner() + h + playerPanel() + booksPanel() + cmbFab() + cmbPanel() + cardFab() + cardPanel() + livePanel() + deepPanel() + mrPanel();
     return;
   }
   if (state.view.tab === 'results'){
@@ -12089,7 +12196,7 @@ window.LAB = {
   match: function(k, id){ state.view.match[k] = id; render(); },
   player: function(k, name){ state.view.player = k ? {sport:k, name:name} : null; render(); },
   focus: function(k, i){
-    if (!k){ state.view.focus = null; render(); return; }
+    if (!k){ state.view.focus = null; state.view.mrOpen = false; render(); return; }
     var fx = asArray(state.sports[k].data.fixture) || [];
     var g = fx[i];
     if (!g) return;
