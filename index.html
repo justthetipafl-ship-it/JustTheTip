@@ -2210,6 +2210,20 @@ function h2hSection(key, g){
   if (!th || !ta) return '';
   var keys = cfg.h2hKeys || [];
   if (!keys.length) return '';
+  // The team file is whatever the build chose - for NFL that is last season, so Carolina read 18
+  // points a game while scoring 30+ twice this year. Use this season's own numbers where they
+  // exist, and say which is on show.
+  var curW = teamWindowRows(key, 'cur', keys.map(function(kv){ return [kv[0], kv[1] || kv[0]]; }));
+  var basisH2H = 'the team file';
+  if (curW && curW.rows.length >= 4){
+    var byTeam = {};
+    curW.rows.forEach(function(t){ byTeam[normTeam(t.team)] = t; });
+    var h2 = byTeam[normTeam(g.home)], a2 = byTeam[normTeam(g.away)];
+    if (h2 && a2 && (+h2.matches || 0) >= 1){
+      th = h2; ta = a2;
+      basisH2H = 'this season \u2014 ' + (+h2.matches) + ' and ' + (+a2.matches) + ' games';
+    }
+  }
 
   var mode = state.view.h2hMode || 'for';          // 'for' = own output, 'allowed' = conceded
   var suf  = mode === 'allowed' ? '_a' : '';
@@ -2259,7 +2273,8 @@ function h2hSection(key, g){
     + '<div class="h2h-tabs">'+tab('for','For')+tab('allowed','Allowed')
       + '<span class="h2h-note">'+(mode==='allowed'?'conceded per game':'own output per game')+' \u00b7 % vs league</span></div>'
     + '<div class="h2h-head"><span>'+esc(abbrOf(key,g.home))+'</span>'
-    + '<span class="h2h-gp">per game</span><span>'+esc(abbrOf(key,g.away))+'</span></div>'+rows+'</div>';
+    + '<span class="h2h-gp">per game</span><span>'+esc(abbrOf(key,g.away))+'</span></div>'+rows
+    + '<div class="deg-note" style="padding:6px 2px 0">Ranked on '+esc(basisH2H)+'.</div></div>';
 }
 
 /* ---- ported: Last Time They Met ------------------------------------------ */
@@ -9074,6 +9089,32 @@ function teamWindowRows(key, win, cols){
       if (isFinite(v)) g.vals[c[0]] = (g.vals[c[0]] || 0) + v;
     });
   });
+  // Points live in results.json, not the gamelogs, for the sports that keep a scoreline. Fill them
+  // in per game so "Points" is a real number rather than an absent column.
+  var wantPts = cols.some(function(c){ return c[0] === 'points'; });
+  if (wantPts){
+    var byDate = {}, byWeek = {};
+    (asArray(S.data.results) || []).forEach(function(r){
+      var h = r.home || r.homeTeam, a = r.away || r.awayTeam;
+      var hs = r.hs != null ? r.hs : r.homeScore, as = r.as != null ? r.as : r.awayScore;
+      if (h == null || a == null || hs == null || as == null) return;
+      var d = String(r.date || r.Date || '').slice(0, 10);
+      if (d){ byDate[normTeam(h) + '|' + d] = +hs; byDate[normTeam(a) + '|' + d] = +as; }
+      if (r.season != null && r.week != null){
+        // results keep the season as a number, gamelogs as a string - key both the same way
+        byWeek[normTeam(h) + '|' + String(r.season) + '|' + String(r.week)] = +hs;
+        byWeek[normTeam(a) + '|' + String(r.season) + '|' + String(r.week)] = +as;
+      }
+    });
+    Object.keys(games).forEach(function(k){
+      var g2 = games[k];
+      if (g2.vals.points != null) return;
+      var d = String(g2.when).slice(0, 10);
+      var v = byDate[normTeam(g2.team) + '|' + d];
+      if (v == null && g2.week != null) v = byWeek[normTeam(g2.team) + '|' + String(g2.year) + '|' + String(g2.week)];
+      if (v != null) g2.vals.points = v;
+    });
+  }
   var all = Object.keys(games).map(function(k){ return games[k]; });
   if (!all.length) return null;
   all.sort(function(a, b){ return String(b.when).localeCompare(String(a.when)); });
