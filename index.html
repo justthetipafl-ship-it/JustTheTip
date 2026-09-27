@@ -11698,12 +11698,12 @@ function squadMovers(key, team, cols){
     if (k && (!last || k > last)) last = k;
   });
   if (!last) return { up:[], down:[] };
-  var rows = [];
+  var rows = [], pcols = playerCols(key, cols);
   logs.forEach(function(r){
     if (roundKeyOf(r) !== last || normTeam(r.Team || r.team) !== normTeam(team)) return;
     var nm = r.Player || r.player || r.name;
     if (!nm) return;
-    cols.forEach(function(c){
+    pcols.forEach(function(c){
       var v = statOf(key, r, c[0]);
       if (v == null) return;
       var prior = [];
@@ -11891,6 +11891,12 @@ function lastGameFor(key, team){
   });
   return { when:best, opp:opp, mine:mine, theirs:theirs };
 }
+function playerCols(key, cols){
+  // Team columns are team totals - for NFL they are all passing, so only quarterbacks could ever
+  // appear in "Hurt them" or "Squad movers". The player sections use the sport's own markets.
+  var mk = (((state.sports[key].config || {}).oddsMkts) || []).slice(0, 8);
+  return mk.length ? mk : cols;
+}
 function lastGameCard(key, team, cols){
   var g0 = lastGameFor(key, team);
   if (!g0) return '';
@@ -11918,19 +11924,36 @@ function lastGameCard(key, team, cols){
     var hs = r.hs != null ? r.hs : r.homeScore, as = r.as != null ? r.as : r.awayScore;
     if (hs == null || as == null) return;
     var d = String(r.date || r.Date || '').slice(0, 10);
-    var sameGame = (/^\d{4}-\d{2}-\d{2}$/.test(g0.when) ? d === g0.when : true)
-      && ((normTeam(h) === normTeam(team) && normTeam(a) === normTeam(g0.opp))
-       || (normTeam(a) === normTeam(team) && normTeam(h) === normTeam(g0.opp)));
-    if (!sameGame) return;
+    var pair = (normTeam(h) === normTeam(team) && normTeam(a) === normTeam(g0.opp))
+            || (normTeam(a) === normTeam(team) && normTeam(h) === normTeam(g0.opp));
+    if (!pair) return;
+    // Rounds are not dates, so "same teams" alone matched an earlier season's meeting - Buffalo v
+    // Detroit came back 48-42 from another year instead of 41-31. Pin it to season and week.
+    var when = String(g0.when);
+    if (/^\d{4}-\d{2}-\d{2}$/.test(when)){
+      if (d !== when) return;
+    } else {
+      // season/round naming differs by sport: NFL keeps season+week, AFL year+round
+      var yr = when.split('-')[0];
+      var m0 = g0.mine[0] || {};
+      var wk = m0.Week != null ? m0.Week : (m0.week != null ? m0.week : null);
+      var rd = (String(m0.RoundName || '').match(/\d+/) || [])[0];
+      var rYear = r.season != null ? r.season : r.year;
+      var rRound = r.week != null ? r.week : r.round;
+      if (rYear != null && String(rYear) !== String(yr)) return;
+      var mine = wk != null ? String(wk) : (rd != null ? String(rd) : null);
+      if (mine != null && rRound != null && String(rRound) !== mine) return;
+      if (rYear == null && rRound == null) return;         // cannot tell which meeting this was
+    }
     score = normTeam(h) === normTeam(team) ? { mine:hs, theirs:as } : { mine:as, theirs:hs };
   });
   if (score) tot.unshift({ label:'Score', mine:score.mine, theirs:score.theirs });
   // who hurt them, and who they stopped - opposition players against their own form
-  var judged = [];
+  var judged = [], pcols = playerCols(key, cols);
   g0.theirs.forEach(function(r){
     var nm = r.Player || r.player || r.name;
     if (!nm) return;
-    cols.forEach(function(c){
+    pcols.forEach(function(c){
       var v = statOf(key, r, c[0]);
       if (v == null) return;
       var prior = [];
