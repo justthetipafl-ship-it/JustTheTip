@@ -975,6 +975,8 @@
   i.nb-dot.nb-paintPts{background:#22c55e;} i.nb-dot.nb-fastBreakPts{background:#38bdf8;}
   i.nb-dot.nb-secondChancePts{background:#a78bfa;} i.nb-dot.nb-three{background:#f97316;}
   i.nb-dot.nb-ft{background:#eab308;} i.nb-dot.nb-mid{background:#64748b;}
+  .mr-open{display:flex;align-items:center;gap:9px;flex-wrap:wrap;padding:4px 2px 10px;}
+  .lg-p i.good{color:var(--accent);} .lg-p i.bad{color:#f97316;}
   .lg-wrap{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:10px;}
   .lg-card{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:10px 12px;}
   .lg-hd{display:flex;align-items:baseline;gap:8px;margin-bottom:6px;}
@@ -7011,7 +7013,13 @@ function focusPage(){
     + (S.t3==='ready' ? subsSection(key, g) : '')
     + (S.t3==='ready' ? firstLastSection(key, g) : '')
     + (S.status === 'ready' && !state.view.nerd ? matchRadar(key, g) : '')
-    + (S.t3 === 'ready' && !state.view.nerd ? lastGameSection(key, g) : '')
+    + (S.t3 === 'ready' && !state.view.nerd
+        ? (state.view.mrOpen
+            ? '<div class="dayband"><span>Match report</span></div>' + matchReport(key, g)
+            : '<div class="mr-open"><button class="sl-chip" onclick="LAB.mrOpen()">'
+              + '<i class="ti ti-report"></i> Match report</button>'
+              + '<span class="deg-note">Recent form, last time out, and who is rising or falling in each squad.</span></div>')
+        : '')
     // Nerd Mode replaces the signals rather than adding to them: it is a different read of the
     // same fixture (the market against itself), and stacking both made the page enormous.
     + (S.t3==='ready' && !state.view.nerd ? signalsSection(key, g) : '')
@@ -11542,6 +11550,107 @@ function radarPanel(key, rows, off, def, cols, title){
    that conceded 90 points is one thing; a defence that let one man have 34 of them is another.
    Opposition players are measured against their OWN averages, so "hurt them" means he beat his
    own form here, not that he is simply a good player.                                          */
+
+/* MATCH REPORT ----------------------------------------------------------------------------------
+   The weekly report, narrowed to these two sides: recent form, last time out with the defensive
+   half, who is rising and falling in each squad, and each side's leaders. Behind a button because
+   it is a read you go looking for, not something to scroll past on the way to the signals.      */
+function teamFormLine(key, team, cols, n){
+  var S = state.sports[key], logs = asArray(S.data.gamelogs) || [];
+  var games = {};
+  logs.forEach(function(r){
+    if (normTeam(r.Team || r.team) !== normTeam(team)) return;
+    var k = roundKeyOf(r);
+    if (!k) return;
+    var g = games[k] || (games[k] = { k:k, mid:r.MatchId, vals:{} });
+    cols.forEach(function(c){ var v = statOf(key, r, c[0]); if (v != null) g.vals[c[0]] = (g.vals[c[0]] || 0) + v; });
+  });
+  var list = Object.keys(games).sort().reverse().slice(0, n || 5).map(function(k){ return games[k]; });
+  if (!list.length) return null;
+  var out = { n:list.length, avg:{} };
+  cols.forEach(function(c){
+    var vs = list.map(function(g){ return g.vals[c[0]]; }).filter(function(v){ return v != null; });
+    if (vs.length) out.avg[c[0]] = mean(vs);
+  });
+  return out;
+}
+function squadMovers(key, team, cols){
+  var S = state.sports[key], logs = asArray(S.data.gamelogs) || [], hist = S.idx.logsByName || {};
+  var last = null;
+  logs.forEach(function(r){
+    if (normTeam(r.Team || r.team) !== normTeam(team)) return;
+    var k = roundKeyOf(r);
+    if (k && (!last || k > last)) last = k;
+  });
+  if (!last) return { up:[], down:[] };
+  var rows = [];
+  logs.forEach(function(r){
+    if (roundKeyOf(r) !== last || normTeam(r.Team || r.team) !== normTeam(team)) return;
+    var nm = r.Player || r.player || r.name;
+    if (!nm) return;
+    cols.forEach(function(c){
+      var v = statOf(key, r, c[0]);
+      if (v == null) return;
+      var prior = [];
+      (hist[nm] || []).forEach(function(x){
+        if (roundKeyOf(x) >= last) return;
+        var pv = statOf(key, x, c[0]);
+        if (pv != null) prior.push(pv);
+      });
+      if (prior.length < 4) return;
+      var avg = mean(prior), sd = Math.sqrt(mean(prior.map(function(q){ return (q - avg) * (q - avg); })));
+      if (!(sd > 0)) return;
+      rows.push({ name:nm, label:c[1], v:v, avg:avg, z:(v - avg) / sd });
+    });
+  });
+  var pick = function(list){
+    var seen = {}, out = [];
+    list.forEach(function(r){ if (seen[r.name]) return; seen[r.name] = 1; out.push(r); });
+    return out.slice(0, 3);
+  };
+  return { up:pick(rows.slice().sort(function(a, b){ return b.z - a.z; }).filter(function(r){ return r.z >= 1; })),
+           down:pick(rows.slice().sort(function(a, b){ return a.z - b.z; }).filter(function(r){ return r.z <= -1; })) };
+}
+function matchReport(key, g){
+  var S = state.sports[key];
+  var cols = (((S.config || {}).teamCols) || []).slice(0, 6);
+  if (!cols.length) return '<div class="empty" style="padding:18px">No team stats for this sport.</div>';
+  var sides = [g.home, g.away];
+  var form = sides.map(function(t){ return teamFormLine(key, t, cols, 5); });
+  var mv = sides.map(function(t){ return squadMovers(key, t, cols); });
+  var pr = function(r, good){
+    return '<div class="lg-p"><span>'+esc(r.name)+'</span><b>'+(r.v % 1 ? r.v.toFixed(1) : r.v)+'</b>'
+      + '<i class="'+(good ? 'good' : 'bad')+'">'+esc(r.label)+' \u00b7 his avg '
+      + (r.avg % 1 ? r.avg.toFixed(1) : r.avg)+'</i></div>';
+  };
+  var formTable = (form[0] || form[1]) ? '<table class="lg-t"><tr><th></th><th>'
+      + esc(abbrOf(key, g.home))+'</th><th>'+esc(abbrOf(key, g.away))+'</th></tr>'
+      + cols.map(function(c){
+          var a = form[0] && form[0].avg[c[0]], b = form[1] && form[1].avg[c[0]];
+          if (a == null && b == null) return '';
+          return '<tr><td>'+esc(c[1])+'</td><td>'+(a == null ? '\u2014' : a.toFixed(1))
+            + '</td><td>'+(b == null ? '\u2014' : b.toFixed(1))+'</td></tr>';
+        }).join('')+'</table>'
+      + '<div class="deg-note">Per game over each side\u2019s last '
+      + ((form[0] && form[0].n) || (form[1] && form[1].n) || 5)+' games.</div>' : '';
+  var squad = sides.map(function(t, i){
+    var m = mv[i];
+    if (!m.up.length && !m.down.length) return '';
+    return '<div class="lg-card"><div class="lg-hd"><b>'+esc(abbrOf(key, t))+'</b><span>&nbsp;last time out</span></div>'
+      + (m.up.length ? '<div class="lg-h good">Rising</div>'+m.up.map(function(r){ return pr(r, true); }).join('') : '')
+      + (m.down.length ? '<div class="lg-h bad">Falling</div>'+m.down.map(function(r){ return pr(r, false); }).join('') : '')
+      + '</div>';
+  }).join('');
+  return '<div class="mr">'
+    + '<div class="wr-top">'+esc(abbrOf(key, g.away))+' at '+esc(abbrOf(key, g.home))
+    + '<button class="sl-chip" onclick="LAB.mrClose()">Close</button></div>'
+    + (formTable ? '<div class="dayband"><span>Recent form</span></div>'+formTable : '')
+    + lastGameSection(key, g)
+    + (squad ? '<div class="dayband"><span>Squad movers</span></div><div class="lg-wrap">'+squad+'</div>'
+       + '<div class="deg-note" style="padding:2px 2px 8px">Each side\u2019s own players in their last game, '
+       + 'against their own averages. One game \u2014 a note, not a pattern.</div>' : '')
+    + '</div>';
+}
 function lastGameFor(key, team){
   var S = state.sports[key];
   var logs = asArray(S.data.gamelogs) || [];
@@ -11775,6 +11884,8 @@ window.LAB = {
                        book:legs[0].book || '', src:'Check My Multi' });
     state.view.cardOpen = true; render();
   },
+  mrOpen: function(){ state.view.mrOpen = true; render(); },
+  mrClose: function(){ state.view.mrOpen = false; render(); },
   wrForce: function(on){ state.view.wrForce = !!on; render(); },
   wrShare: function(key){
     var S = state.sports[key];
