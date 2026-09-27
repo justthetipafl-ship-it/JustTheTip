@@ -11346,20 +11346,36 @@ function radarPanel(key, rows, off, def, cols, title){
 }
 function matchRadar(key, g){
   var S = state.sports[key];
-  var rows = teamRowsFor(key);
-  if (rows.length < 4) return '';
+  var fileRows = teamRowsFor(key);
+  if (fileRows.length < 4) return '';
   var cols = (((S.config || {}).teamCols) || []).filter(function(c){
-    return rows.some(function(t){ return isFinite(+t[c[0]]) && isFinite(+t[c[0] + '_a']); });
+    return fileRows.some(function(t){ return isFinite(+t[c[0]]) && isFinite(+t[c[0] + '_a']); });
   }).slice(0, 8);
   if (cols.length < 3) return '';
+  // Rank this season where there is a season to rank - the team file is whatever the build chose,
+  // which for NFL is last season and for EPL and NHL is two of them. A handful of games is not a
+  // ranking though, so below four games a side it stays on the file and says so.
+  var cur = teamWindowRows(key, 'cur', cols);
+  var gps = cur ? cur.rows.map(function(t){ return +t.matches || 0; }) : [];
+  // Any games this season beats last season's shape: this is a reference point, not a projection,
+  // and a side that has changed over the off-season is better described by two current games than
+  // by seventeen old ones. The games count is stated so a thin sample is never mistaken for a
+  // settled one.
+  var enough = cur && cur.rows.length >= 4 && gps.length && Math.max.apply(null, gps) >= 1;
+  var rows = enough ? cur.rows : fileRows;
+  var lo = gps.length ? Math.min.apply(null, gps) : 0, hi = gps.length ? Math.max.apply(null, gps) : 0;
+  var basis = enough
+    ? ('this season \u2014 ' + (lo === hi ? lo + ' game' + (lo === 1 ? '' : 's') : lo + '\u2013' + hi + ' games')
+       + ' a side' + (hi <= 4 ? ', so treat it as a rough reference' : ''))
+    : 'the team file, because no games are on record for this season yet';
   return '<div class="dayband"><span>Attack v defence</span></div>'
     + '<div class="rdr-wrap">'
     + radarPanel(key, rows, g.home, g.away, cols)
     + radarPanel(key, rows, g.away, g.home, cols)
     + '</div>'
-    + '<div class="deg-note" style="padding:2px 2px 8px">Every point is a league rank \u2014 1st on the rim, '
-    + 'last in the middle. Solid red is that side\u2019s attack, dashed teal is what the opponent concedes. '
-    + 'Further out is better for the team named, on both.</div>';
+    + '<div class="deg-note" style="padding:2px 2px 8px">Ranked on ' + esc(basis) + '. '
+    + 'Every point is a league rank \u2014 1st on the rim, last in the middle. Solid red is that side\u2019s '
+    + 'attack, dashed teal is what the opponent concedes. Further out is better for the team named, on both.</div>';
 }
 
 function render(){
