@@ -7634,11 +7634,17 @@ var _cmbJointCache = {};
 function cmbJoint(legs){
   var k = legs.length;
   if (!k) return null;
-  // one leg the model cannot price makes the whole figure meaningless - better no number than NaN
-  for (var gi = 0; gi < k; gi++){
-    var pv = legs[gi] && legs[gi].prob;
-    if (pv == null || !isFinite(pv) || pv <= 0 || pv > 1) return null;
-  }
+  // One leg the model cannot price at all makes the figure meaningless - better no number than
+  // NaN. A figure that is merely out of range is a rounding artefact, so clamp rather than drop.
+  legs = legs.map(function(l){
+    var pv = l && l.prob;
+    if (pv == null || !isFinite(pv)) return null;
+    if (pv > 0 && pv <= 1) return l;
+    var c = {}; for (var kk in l) c[kk] = l[kk];
+    c.prob = Math.min(0.999, Math.max(0.001, pv));
+    return c;
+  });
+  if (legs.some(function(l){ return !l; })) return null;
   if (k === 1) return legs[0].prob;
   // 8,000 simulations per call would re-roll on every render and make the headline number
   // flicker. Same legs, same answer.
@@ -9323,7 +9329,13 @@ function weeklyReport(key){
       var t = tot[nm] || (tot[nm] = { n:0, s:0, team:r.Team || r.team || '' });
       t.n++; t.s += v;
     });
-    var rows = Object.keys(tot).filter(function(nm){ return tot[nm].n >= 3; })
+    // A fixed three-game minimum wrecks a young season: in week 3 only the two clubs who have
+    // played three games qualify, so every leaderboard reads GB and ATL. Scale the bar to what
+    // the league has actually played instead.
+    var played = Object.keys(tot).map(function(nm){ return tot[nm].n; }).sort(function(a, b){ return b - a; });
+    var typical = played.length ? played[Math.floor(played.length * 0.5)] : 0;
+    var minG = Math.max(1, Math.min(3, typical));
+    var rows = Object.keys(tot).filter(function(nm){ return tot[nm].n >= minG; })
       .map(function(nm){ return { name:nm, team:tot[nm].team, avg:tot[nm].s / tot[nm].n, n:tot[nm].n }; })
       .sort(function(a, b){ return b.avg - a.avg; }).slice(0, 10);
     if (!rows.length) return '';
