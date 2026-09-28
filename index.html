@@ -993,8 +993,9 @@
   .lg-p i{font-style:normal;font-size:9px;color:var(--text-3);}
   .lg-pos, .wr-nm .lg-pos{font-style:normal;font-size:8px;font-weight:800;letter-spacing:.04em;
     color:var(--text-3);border:1px solid var(--border);border-radius:4px;padding:1px 4px;margin-left:6px;}
-  /* NOTE: .rdr / .rdr-hd belong to the NFL Matchup Radar. These are the attack-v-defence panels
-     and must keep their own names - reusing .rdr restyled that section and broke its layout. */
+  /* NOTE: .rdr / .rdr-hd belong to the NFL player-matchup section above. These are the
+     attack-v-defence panels and must keep their own names - reusing .rdr restyled that section
+     and broke its layout. */
   .avd-wrap{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:10px;}
   .avd{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:8px;}
   .avd-hd{display:flex;align-items:center;justify-content:center;gap:7px;font-size:10px;margin-bottom:2px;}
@@ -12087,13 +12088,42 @@ function lastGameSection(key, g){
     + '\u201cHurt them\u201d and \u201cHeld\u201d are opposition players measured against their own averages, '
     + 'not the league\u2019s \u2014 one game, so read it as a note rather than a pattern.</div>';
 }
+
+/* The radar took the first eight team columns, and NFL lists all its passing columns first - so
+   the web was eight shades of the same thing and no rushing at all. These are curated axes: one
+   per idea, spread across how a side actually scores. Anything a sport does not record is dropped,
+   and a sport with no entry here falls back to its own column order.                            */
+var AVD_AXES = {
+  nfl: [['points','Pts'], ['plays','Plays'], ['passYds','Pass Yds'], ['passTds','Pass TDs'],
+        ['rushYds','Rush Yds'], ['rushAtt','Rush Att'], ['rushTds','Rush TDs'], ['sacks','Sacks']],
+  afl: [['disposals','Disp'], ['kicks','Kick'], ['marks','Mark'], ['tackles','Tkl'],
+        ['goals','Goal'], ['shotsAtGoal','Shot'], ['clearances','Clr'], ['inside50s','I50']],
+  nbl: [['points','Pts'], ['rebounds','Reb'], ['assists','Ast'], ['threes','3PM'],
+        ['fgm','FGM'], ['ftm','FTM'], ['steals','Stl'], ['turnovers','TO']],
+  epl: [['goals','G'], ['shots','Sh'], ['shotsOn','SoT'], ['corners','Cor'],
+        ['tackles','Tkl'], ['foulsCommitted','Fls'], ['cards','Crd']],
+  mlb: [['R','R'], ['H','H'], ['HR','HR'], ['TB','TB'], ['BB','BB'], ['SO','SO'], ['SB','SB']]
+};
+function radarCols(key, rows){
+  // NOT RADAR_AXES - that one is keyed by player position and belongs to the NFL player radar.
+  // Defining a second constant with the same name silently emptied it and the section vanished.
+  var want = AVD_AXES[key] || (((state.sports[key].config || {}).teamCols) || []);
+  var have = want.filter(function(c){
+    return rows.some(function(t){ return isFinite(+t[c[0]]) && isFinite(+t[c[0] + '_a']); });
+  });
+  // if a curated set leaves too little, fall back to whatever the sport does carry
+  if (have.length < 3){
+    have = (((state.sports[key].config || {}).teamCols) || []).filter(function(c){
+      return rows.some(function(t){ return isFinite(+t[c[0]]) && isFinite(+t[c[0] + '_a']); });
+    });
+  }
+  return have.slice(0, 8);
+}
 function matchRadar(key, g){
   var S = state.sports[key];
   var fileRows = teamRowsFor(key);
   if (fileRows.length < 4) return '';
-  var cols = (((S.config || {}).teamCols) || []).filter(function(c){
-    return fileRows.some(function(t){ return isFinite(+t[c[0]]) && isFinite(+t[c[0] + '_a']); });
-  }).slice(0, 8);
+  var cols = radarCols(key, fileRows);
   if (cols.length < 3) return '';
   // Rank this season where there is a season to rank - the team file is whatever the build chose,
   // which for NFL is last season and for EPL and NHL is two of them. A handful of games is not a
