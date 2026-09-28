@@ -873,7 +873,10 @@ def build_teams(gamelogs, results, current, divisions, form_n=None):
         by_team[team].append((m["week"], row, m["opp"], mid))
     out = []
     for team, games in sorted(by_team.items()):
-        games.sort(key=lambda x: x[0])
+        # Sort by season THEN week. Sorting on the week alone put week 1 of this season before
+        # week 17 of last, so any window spanning two seasons took the wrong games. It does not
+        # bite while each build uses a single season, but it is wrong the moment one does not.
+        games.sort(key=lambda x: (str(meta[(team, x[3])].get("year", "")), x[0]))
         if form_n:
             games = games[-form_n:]
         n = len(games)
