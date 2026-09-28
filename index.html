@@ -991,6 +991,8 @@
   .lg-p span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
   .lg-p b{font-family:var(--font-mono);}
   .lg-p i{font-style:normal;font-size:9px;color:var(--text-3);}
+  .lg-pos, .wr-nm .lg-pos{font-style:normal;font-size:8px;font-weight:800;letter-spacing:.04em;
+    color:var(--text-3);border:1px solid var(--border);border-radius:4px;padding:1px 4px;margin-left:6px;}
   /* NOTE: .rdr / .rdr-hd belong to the NFL Matchup Radar. These are the attack-v-defence panels
      and must keep their own names - reusing .rdr restyled that section and broke its layout. */
   .avd-wrap{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:10px;}
@@ -9090,6 +9092,9 @@ function teamWindowRows(key, win, cols){
     if (win === 'prev' && y !== prevSeason) return;
     var k = team + '|' + mid;
     var g = games[k] || (games[k] = { team:team, opp:r.Opp || r.opp || '', mid:mid, year:y,
+      // the round this game belongs to, so a score can be looked up in results.json
+      week: (r.Week != null ? r.Week : (r.week != null ? r.week
+             : (String(r.RoundName || '').match(/\d+/) || [])[0])),
       when: String(r.Date || r.date || '') || (y + '-' + String(r.RoundName || r.Week || '').padStart(3, '0')),
       vals:{} });
     cols.forEach(function(c){
@@ -9097,6 +9102,17 @@ function teamWindowRows(key, win, cols){
       if (isFinite(v)) g.vals[c[0]] = (g.vals[c[0]] || 0) + v;
     });
   });
+  // Plays are in no feed at all, but they are simply what the offence ran: pass attempts, rushes,
+  // and the sacks that ended a dropback. Derive it rather than show an empty column.
+  if (cols.some(function(c){ return c[0] === 'plays'; })){
+    Object.keys(games).forEach(function(k){
+      var v = games[k].vals;
+      if (v.plays != null) return;
+      var pa = v.passAtt, ra = v.rushAtt, sk = v.sacks;
+      if (pa == null && ra == null) return;
+      v.plays = (+pa || 0) + (+ra || 0) + (+sk || 0);
+    });
+  }
   // Points live in results.json, not the gamelogs, for the sports that keep a scoreline. Fill them
   // in per game so "Points" is a real number rather than an absent column.
   var wantPts = cols.some(function(c){ return c[0] === 'points'; });
@@ -9108,10 +9124,12 @@ function teamWindowRows(key, win, cols){
       if (h == null || a == null || hs == null || as == null) return;
       var d = String(r.date || r.Date || '').slice(0, 10);
       if (d){ byDate[normTeam(h) + '|' + d] = +hs; byDate[normTeam(a) + '|' + d] = +as; }
-      if (r.season != null && r.week != null){
-        // results keep the season as a number, gamelogs as a string - key both the same way
-        byWeek[normTeam(h) + '|' + String(r.season) + '|' + String(r.week)] = +hs;
-        byWeek[normTeam(a) + '|' + String(r.season) + '|' + String(r.week)] = +as;
+      // season/round are named differently by sport: NFL season+week, AFL year+round
+      var ry = r.season != null ? r.season : r.year;
+      var rr = r.week != null ? r.week : r.round;
+      if (ry != null && rr != null){
+        byWeek[normTeam(h) + '|' + String(ry) + '|' + String(rr)] = +hs;
+        byWeek[normTeam(a) + '|' + String(ry) + '|' + String(rr)] = +as;
       }
     });
     Object.keys(games).forEach(function(k){
@@ -9165,8 +9183,8 @@ function teamWindowRows(key, win, cols){
       cols.forEach(function(c){ a[c[0]] = (a[c[0]] || 0) + (other.vals[c[0]] || 0); });
     }
   });
-  // Some team columns are not in the gamelogs at all - NFL keeps points and plays at team level,
-  // from results - and summing player rows for those gives a confident 0. Drop them instead.
+  // Some team columns are not in the gamelogs at all - NFL keeps points at team level, from
+  // results - and summing player rows for those gives a confident 0. Drop them instead.
   var carried = {};
   cols.forEach(function(c){
     carried[c[0]] = inWin.some(function(g){ return g.vals[c[0]] != null; });
@@ -9340,7 +9358,8 @@ function weeklyReport(key){
   };
   var line = function(r, sign){
     var d = r.v - r.avg;
-    return '<div class="wr-row"><span class="wr-nm">'+esc(r.name)+'<i>'+esc(abbrOf(key, r.team))+'</i></span>'
+    return '<div class="wr-row"><span class="wr-nm">'+esc(r.name)+posTag(key, r.name)
+      + '<i>'+esc(abbrOf(key, r.team))+'</i></span>'
       + '<b>'+(r.v % 1 ? r.v.toFixed(1) : r.v)+'</b>'
       + '<span class="wr-mk">'+esc(r.label)+'</span>'
       + '<span class="wr-d '+(sign > 0 ? 'good' : 'bad')+'">'+(d >= 0 ? '+' : '')+(Math.abs(d) < 10 ? d.toFixed(1) : d.toFixed(0))
@@ -11791,8 +11810,8 @@ function usageLeaders(key, team, n){
       return v % 1 ? v.toFixed(1) : v;
     };
     return '<div class="wr-col"><div class="wr-h">'+esc(c[1])+'</div>'
-      + rows.map(function(r){ return '<div class="wr-row"><span class="wr-nm">'+esc(r.name)+'</span><b>'
-          + fmt(r.v)+'</b></div>'; }).join('')+'</div>';
+      + rows.map(function(r){ return '<div class="wr-row"><span class="wr-nm">'+esc(r.name)
+          + posTag(key, r.name)+'</span><b>'+fmt(r.v)+'</b></div>'; }).join('')+'</div>';
   }).join('');
   return body ? '<div class="lg-hd" style="margin-top:6px"><b>'+esc(abbrOf(key, team))+'</b>'
     + '<span>&nbsp;who got the work last time out</span></div><div class="wr-grid">'+body+'</div>' : '';
@@ -11816,7 +11835,8 @@ function matchReport(key, g){
   var form = sides.map(function(t){ return teamFormLine(key, t, cols, 5); });
   var mv = sides.map(function(t){ return squadMovers(key, t, cols); });
   var pr = function(r, good){
-    return '<div class="lg-p"><span>'+esc(r.name)+'</span><b>'+(r.v % 1 ? r.v.toFixed(1) : r.v)+'</b>'
+    return '<div class="lg-p"><span>'+esc(r.name)+posTag(key, r.name)+'</span><b>'
+      + (r.v % 1 ? r.v.toFixed(1) : r.v)+'</b>'
       + '<i class="'+(good ? 'good' : 'bad')+'">'+esc(r.label)+' \u00b7 his avg '
       + (r.avg % 1 ? r.avg.toFixed(1) : r.avg)+'</i></div>';
   };
@@ -11890,6 +11910,13 @@ function lastGameFor(key, team){
     if (o2 ? normTeam(o2) === normTeam(team) : (r.MatchId != null && mids[r.MatchId])) theirs.push(r);
   });
   return { when:best, opp:opp, mine:mine, theirs:theirs };
+}
+/* A position beside a name, where the sport records one. "Hurt them" reads very differently when
+   the man is a running back rather than a quarterback, and the lists mix positions now.        */
+function posTag(key, name){
+  var p = ((state.sports[key].idx.byName || {})[name]) || {};
+  var pos = posShortP(p) || p.pos || p.position || '';
+  return pos ? '<i class="lg-pos">'+esc(String(pos).toUpperCase())+'</i>' : '';
 }
 function playerCols(key, cols){
   // Team columns are team totals - for NFL they are all passing, so only quarterbacks could ever
@@ -11976,7 +12003,8 @@ function lastGameCard(key, team, cols){
   var hurt = pick(judged.slice().sort(function(a, b){ return b.z - a.z; }).filter(function(r){ return r.z >= 1; }), 3);
   var held = pick(judged.slice().sort(function(a, b){ return a.z - b.z; }).filter(function(r){ return r.z <= -1; }), 3);
   var pr = function(r){
-    return '<div class="lg-p"><span>'+esc(r.name)+'</span><b>'+(r.v % 1 ? r.v.toFixed(1) : r.v)+'</b>'
+    return '<div class="lg-p"><span>'+esc(r.name)+posTag(key, r.name)+'</span><b>'
+      + (r.v % 1 ? r.v.toFixed(1) : r.v)+'</b>'
       + '<i>'+esc(r.label)+' \u00b7 his avg '+(r.avg % 1 ? r.avg.toFixed(1) : r.avg)+'</i></div>';
   };
   var when = /^\d{4}-\d{2}-\d{2}$/.test(g0.when) ? g0.when : ('round ' + String(g0.when).split('-').pop().replace(/^0+/, ''));
