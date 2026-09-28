@@ -11696,11 +11696,52 @@ function teamFormLine(key, team, cols, n){
     if (normTeam(r.Team || r.team) !== normTeam(team)) return;
     var k = roundKeyOf(r);
     if (!k) return;
-    var g = games[k] || (games[k] = { k:k, mid:r.MatchId, vals:{} });
-    cols.forEach(function(c){ var v = statOf(key, r, c[0]); if (v != null) g.vals[c[0]] = (g.vals[c[0]] || 0) + v; });
+    var g = games[k] || (games[k] = { k:k, mid:r.MatchId, vals:{}, raw:{},
+      round:(r.Week != null ? r.Week : (r.week != null ? r.week
+             : (String(r.RoundName || '').match(/\d+/) || [])[0])) });
+    // statOf returns 0 for a column the row does not carry, which looked like a real zero and
+    // blocked the points/plays fill below. Only count a column the row actually has.
+    // plays are pass attempts + rushes + sacks, whether or not those columns are on show
+    ['passAtt', 'rushAtt', 'sacks'].forEach(function(f){
+      if (r[f] != null && isFinite(+r[f])) g.raw[f] = (g.raw[f] || 0) + (+r[f]);
+    });
+    cols.forEach(function(c){
+      if (r[c[0]] == null) return;
+      var v = statOf(key, r, c[0]);
+      if (v != null) g.vals[c[0]] = (g.vals[c[0]] || 0) + v;
+    });
   });
   var list = Object.keys(games).sort().reverse().slice(0, n || 5).map(function(k){ return games[k]; });
   if (!list.length) return null;
+  // Same two gaps as the team windows: points are only in results.json, and plays are in no feed
+  // at all - they are what the offence ran. Without this, Recent form showed 0.0 for both.
+  var res = asArray(S.data.results) || [];
+  list.forEach(function(g){
+    if (g.vals.plays == null && (g.raw.passAtt != null || g.raw.rushAtt != null)){
+      g.vals.plays = (+g.raw.passAtt || 0) + (+g.raw.rushAtt || 0) + (+g.raw.sacks || 0);
+    }
+    if (g.vals.points != null) return;
+    var d = String(g.k).slice(0, 10), dated = /^\d{4}-\d{2}-\d{2}$/.test(d);
+    var yr = String(g.k).split('-')[0], rd = g.round;
+    res.forEach(function(r){
+      if (g.vals.points != null) return;
+      var h = r.home || r.homeTeam, a = r.away || r.awayTeam;
+      var hs = r.hs != null ? r.hs : r.homeScore, as = r.as != null ? r.as : r.awayScore;
+      if (hs == null || as == null) return;
+      var isHome = normTeam(h) === normTeam(team), isAway = normTeam(a) === normTeam(team);
+      if (!isHome && !isAway) return;
+      if (dated){
+        if (String(r.date || r.Date || '').slice(0, 10) !== d) return;
+      } else {
+        var ry = r.season != null ? r.season : r.year;
+        var rr = r.week != null ? r.week : r.round;
+        if (ry != null && String(ry) !== yr) return;
+        if (rd != null && rr != null && String(rr) !== String(rd)) return;
+        if (ry == null && rr == null) return;
+      }
+      g.vals.points = isHome ? +hs : +as;
+    });
+  });
   var out = { n:list.length, avg:{} };
   cols.forEach(function(c){
     var vs = list.map(function(g){ return g.vals[c[0]]; }).filter(function(v){ return v != null; });
@@ -11755,7 +11796,9 @@ var USAGE = {
   // tgtShare is stored as a percentage already (1.8 to 66.7), not a fraction - multiplying it
   // again produced "2857%" target shares
   nfl: [['snapPct','Snap share','%'], ['tgtShare','Target share','%'], ['rushAtt','Carries',''],
-        ['airYds','Air yards',''], ['receptions','Catches','']],
+        ['rzTgt_g','Red-zone targets',''], ['rzAtt_g','Red-zone carries',''],
+        ['i10Tgt_g','Inside-10 targets',''], ['i5Att_g','Inside-5 carries',''],
+        ['airYds','Air yards','']],
   nbl: [['minutes','Minutes',''], ['fga','Shots',''], ['threesAtt','Threes taken',''],
         ['fta','Free throws',''], ['plusMinus','Plus/minus','']],
   nhl: [['toiMin','Ice time',''], ['shots','Shots',''], ['ppToi','Power-play time','']],
@@ -11765,9 +11808,13 @@ var USAGE = {
   // MLB's gamelogs carry no at-bats or plate appearances, so usage is shown by what they do record
   mlb: [['H','Hits',''], ['TB','Total bases',''], ['IP','Innings',''], ['K','Strikeouts','']]
 };
+var OFFENCE = { nfl:['QB','RB','FB','WR','TE'] };
 function usageLeaders(key, team, n){
   var set = USAGE[key];
   if (!set) return '';
+  // Snap share was topped by linebackers. These are usage boards for props, so the list is the
+  // offence - the positions the markets are priced on.
+  var offOnly = OFFENCE[key] || null;
   var S = state.sports[key], logs = asArray(S.data.gamelogs) || [];
   // their LAST GAME, not the season: this panel answers "who was on the field last time out"
   var lastK = null;
@@ -11783,6 +11830,11 @@ function usageLeaders(key, team, n){
     if (roundKeyOf(r) !== lastK) return;
     var nm = r.Player || r.player || r.name;
     if (!nm) return;
+    if (offOnly){
+      var pp = ((S.idx.byName || {})[nm]) || {};
+      var pos = String(posShortP(pp) || pp.pos || pp.position || '').toUpperCase();
+      if (pos && offOnly.indexOf(pos) < 0) return;
+    }
     var t = tot[nm] || (tot[nm] = { n:0, v:{} });
     t.n++;
     set.forEach(function(c){
