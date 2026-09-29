@@ -4655,6 +4655,91 @@ var SM_MIN_GAMES = 8, SM_MIN_HIT = 0.55, SM_SOFT_PCT = 0.55;
    already collects ppToi from the boxscore, but it only lands once the season is under way, so
    this waits quietly rather than pretending. Until then it falls back to power-play POINTS, which
    is the same idea measured by output instead of opportunity.                                  */
+
+/* DUE TO SCORE (NHL) -----------------------------------------------------------------------------
+   Finishers ranks on goals, which rewards whoever has been lucky. This does the opposite: a shooter
+   getting his chances whose puck luck has dried up. Shot volume carries over from game to game;
+   shooting percentage does not - it swings wildly in the short run and drifts back to a player's
+   own level. So the shape is high shots per 60, a cold spell relative to HIS OWN rate, and a
+   defence that concedes goals. It is a regression bet, and the row says so.                    */
+var DUE_MIN_SHOTS60 = 6, DUE_MIN_GAMES = 12, DUE_COLD = 0.65;
+function dueToScore(key, g){
+  if (key !== 'nhl') return { rows:[], why:'' };
+  var S = state.sports[key], out = [];
+  var teams = asArray(S.data.teams) || [];
+  var ga = teams.map(function(t){ return +t.goalsAgainst; }).filter(isFinite).sort(function(a, b){ return a - b; });
+  if (ga.length < 8) return { rows:[], why:'No team file yet, so nothing to judge a defence on.' };
+  var med = ga[Math.floor(ga.length / 2)];
+  var od = oddsRowsAll(key) || [];
+  var byPlayer = {};
+  od.forEach(function(r){ if (r.player && r.market === 'goals' && r.over > 0) (byPlayer[r.player] = byPlayer[r.player] || []).push(r); });
+  (S.idx.players || []).forEach(function(p){
+    if (!p || !p.name || String(p.position || '').toUpperCase() === 'G') return;
+    var isHome = normTeam(p.team) === normTeam(g.home), isAway = normTeam(p.team) === normTeam(g.away);
+    if (!isHome && !isAway) return;
+    var opp = isHome ? g.away : g.home;
+    var oppRow = teams.filter(function(t){ return normTeam(t.team) === normTeam(opp); })[0];
+    if (!oppRow || !(+oppRow.goalsAgainst >= med)) return;      // a mean defence kills the idea
+    var lines = byPlayer[p.name] || [];
+    if (!lines.length) return;
+    var logs = sortLogsDesc(((S.idx.logsByName || {})[p.name] || []).slice())
+      .filter(function(r){ return r.shots != null && r.goals != null && r.toiMin != null; });
+    if (logs.length < DUE_MIN_GAMES) return;
+    var recent = logs.slice(0, 10), rest = logs.slice(10);
+    if (rest.length < 5) return;
+    var per60 = mean(recent.map(function(r){ return (+r.shots || 0) / Math.max(1, +r.toiMin) * 60; }));
+    if (per60 < DUE_MIN_SHOTS60) return;                        // not shooting enough to be unlucky
+    var shOf = function(rows){
+      var sh = rows.reduce(function(a, r){ return a + (+r.shots || 0); }, 0);
+      var gl = rows.reduce(function(a, r){ return a + (+r.goals || 0); }, 0);
+      return sh > 0 ? gl / sh : null;
+    };
+    var nowPct = shOf(recent), basePct = shOf(rest);
+    if (nowPct == null || basePct == null || basePct <= 0) return;
+    if (nowPct / basePct > DUE_COLD) return;                    // not actually cold
+    var best = null;
+    lines.forEach(function(r){
+      // his own long-run rate says how often he clears this line, not the cold spell
+      var rate = logs.filter(function(x){ return (+x.goals) > r.line; }).length / logs.length;
+      var ev = rate * (+r.over) - 1;
+      if (!best || ev > best.ev) best = { line:r.line, price:+r.over, book:r.book, rate:rate, ev:ev };
+    });
+    // cold is the filter, not the case: his long-run rate still has to beat the price, or the
+    // row is just a losing bet with a story attached
+    if (!best || best.ev <= 0) return;
+    out.push({ name:p.name, p:p, team:p.team, opp:opp, per60:per60,
+               nowPct:nowPct * 100, basePct:basePct * 100,
+               dry:recent.filter(function(r){ return (+r.goals) > 0; }).length,
+               games:logs.length, oppGA:+oppRow.goalsAgainst, bet:best });
+  });
+  out.sort(function(a, b){ return b.bet.ev - a.bet.ev; });
+  return { rows:out.slice(0, SIG_MAX_ROWS),
+           why:'No shooter here is getting ' + DUE_MIN_SHOTS60 + '+ shots per 60 through a cold spell '
+             + 'against a defence that concedes goals, at a price that pays.' };
+}
+function dueRow(key, r){
+  var b = r.bet;
+  var btns = rowBtns(key, { name:r.name, mkt:'goals', line:b.line, side:'over',
+                            odds:b.price, book:b.book, opp:r.opp, team:r.team, label:'Goals' });
+  return '<div class="gl-row" onclick="LAB.player(\'' + key + '\',\''
+      + esc(r.name).replace(/'/g, "\\'") + '\')">'
+    + btns + playerImgP(key, r.name, 28)
+    + '<div class="gl-left"><div class="gl-nm"><b>' + esc(r.name) + '</b>'
+      + '<span class="gl-tag">' + esc((posShortP(r.p) ? posShortP(r.p) + ' \u00b7 ' : '') + abbrOf(key, r.team))
+      + ' v ' + esc(abbrOf(key, r.opp)) + '</span></div>'
+    + '<div class="gl-bet">' + Math.ceil(b.line) + '+ Goals</div>'
+    + '<div class="gl-why">'
+      + '<span class="gl-chip bad">' + r.nowPct.toFixed(1) + '% shooting, his own rate is '
+      + r.basePct.toFixed(1) + '%</span>'
+      + '<span class="gl-chip good">' + r.per60.toFixed(1) + ' shots/60</span>'
+      + '<span class="gl-chip">' + r.dry + ' of his last 10 with a goal</span>'
+      + '<span class="gl-chip good">' + esc(abbrOf(key, r.opp)) + ' concede ' + r.oppGA.toFixed(2) + '</span>'
+    + '</div></div>'
+    + '<div class="gl-right"><div class="gl-odds"><b>$' + b.price.toFixed(2) + '</b>'
+      + '<span>' + esc(b.book) + '</span></div>'
+      + '<div class="gl-ev ' + (b.ev >= 0 ? 'good' : 'bad') + '">' + (b.ev >= 0 ? '+' : '')
+      + Math.round(b.ev * 100) + '%</div></div></div>';
+}
 function ppMerchants(key, g){
   if (key !== 'nhl') return { rows:[], why:'' };
   var S = state.sports[key], out = [];
@@ -6975,8 +7060,11 @@ function nhlSignals(key, g){
       pm = nblSpecialist(key, g, 'assists'), fi = nblSpecialist(key, g, 'goals'), pp = nhlPowerPlay(key, g);
   var why = function(st){ return 'None of the league\u2019s top 15 at '+st+' faces a defence conceding 4%+ above average to his position at a price the model and his record back.'; };
   // NOT pm - that name already holds the Playmakers rows in this function
-  var sm = shotMachines(key, g), ppm = ppMerchants(key, g);
+  var sm = shotMachines(key, g), ppm = ppMerchants(key, g), due = dueToScore(key, g);
   return sigBand('NHL Signals',
+    sigTile('ti-flame-off', 'Due To Score', 'Shooting his way out of a cold spell',
+            due.rows.map(function(r){ return dueRow(key, r); }), due.why)
+    +
     sigTile('ti-bolt', 'Power Play Merchants', 'Power-play role into a penalty kill that leaks',
             ppm.rows.map(function(r){ return ppMerchantRow(key, r); }), ppm.why)
     +
@@ -11829,6 +11917,80 @@ function nblConceded(key, opp, n){
   return { games:n2, pts:sum.pts / n2, paintPts:sum.paintPts / n2,
            fastBreakPts:sum.fastBreakPts / n2, secondChancePts:sum.secondChancePts / n2 };
 }
+
+/* NHL SCORING PROFILE ----------------------------------------------------------------------------
+   Two skaters on the same points line are rarely the same bet. One gets his from goals at even
+   strength, one is a power-play passer, and a third is riding a shooting percentage that will not
+   last. This splits his output four ways - goals and assists, power play and even strength - shows
+   his shooting percentage against the league, and says what the opponent concedes.             */
+function nhlProfile(key, name, n){
+  var S = state.sports[key];
+  var logs = sortLogsDesc(((S.idx.logsByName || {})[name] || []).slice())
+    .filter(function(r){ return r.points != null; }).slice(0, n || 20);
+  if (logs.length < 5) return null;
+  var sum = function(f){ return logs.reduce(function(a, r){ return a + (+r[f] || 0); }, 0); };
+  var g = sum('goals'), a = sum('assists'), ppP = sum('ppPoints'), ppG = sum('ppGoals'), sh = sum('shots');
+  var pts = g + a;
+  if (!pts) return null;
+  var evP = Math.max(0, pts - ppP);
+  return { n:logs.length, games:logs.length,
+           goals:g, assists:a, pts:pts, ppPoints:ppP, ppGoals:ppG, evPoints:evP, shots:sh,
+           shotPct:sh > 0 ? g / sh * 100 : null,
+           perGame:{ goals:g / logs.length, assists:a / logs.length, pp:ppP / logs.length,
+                     shots:sh / logs.length } };
+}
+function ddNhlScoring(key, p, opp, mkt){
+  if (key !== 'nhl' || !p) return '';
+  if (['points', 'goals', 'assists', 'shots', 'ppPoints'].indexOf(mkt) < 0) return '';
+  var pr = nhlProfile(key, p.name, 20);
+  if (!pr) return '';
+  // the league's own shooting percentage, so "hot" means hot against someone
+  // idx.players is the normalised array; data.players is not always one
+  var all = (state.sports[key].idx.players || []).length
+    ? state.sports[key].idx.players : (asArray(state.sports[key].data.players) || []);
+  // players.json carries PER-GAME averages (2.1 shots, 0.34 goals), not totals - filtering on
+  // "20+ shots" excluded all 1,371 of them. The ratio is the same either way.
+  var lg = all.filter(function(x){ return +x.shots >= 1 && +x.games >= 20 && x.goals != null; })
+              .map(function(x){ return +x.goals / +x.shots * 100; });
+  var lgPct = lg.length ? mean(lg) : null;
+  var parts = [
+    { k:'evG', lab:'Even-strength goals', v:Math.max(0, pr.goals - pr.ppGoals), col:'#22c55e' },
+    { k:'ppG', lab:'Power-play goals',    v:pr.ppGoals,                          col:'#eab308' },
+    { k:'evA', lab:'Even-strength assists', v:Math.max(0, pr.assists - Math.max(0, pr.ppPoints - pr.ppGoals)), col:'#38bdf8' },
+    { k:'ppA', lab:'Power-play assists',  v:Math.max(0, pr.ppPoints - pr.ppGoals), col:'#a78bfa' }
+  ].filter(function(x){ return x.v > 0; });
+  var total = parts.reduce(function(a2, x){ return a2 + x.v; }, 0) || 1;
+  var bar = '<div class="nb-bar">' + parts.map(function(x){
+    return '<span style="width:' + (x.v / total * 100).toFixed(1) + '%;background:' + x.col + '"></span>';
+  }).join('') + '</div>';
+  var legend = '<div class="nb-legend">' + parts.map(function(x){
+    return '<span><i class="nb-dot" style="background:' + x.col + '"></i>' + esc(x.lab) + ' '
+      + Math.round(x.v / total * 100) + '%</span>';
+  }).join('') + '</div>';
+  var hot = '';
+  if (pr.shotPct != null && lgPct){
+    var d = (pr.shotPct - lgPct) / lgPct * 100;
+    hot = '<div class="dd-note">Shooting ' + pr.shotPct.toFixed(1) + '% against a league '
+      + lgPct.toFixed(1) + '%'
+      + (Math.abs(d) < 15 ? ' \u2014 about normal.'
+         : d > 0 ? ' \u2014 ' + Math.round(d) + '% hot, which usually comes back.'
+                 : ' \u2014 ' + Math.round(-d) + '% cold, and shots tend to start going in again.')
+      + '</div>';
+  }
+  var oppLine = '';
+  if (opp){
+    var teams = asArray(state.sports[key].data.teams) || [];
+    var row = teams.filter(function(t){ return normTeam(t.team) === normTeam(opp); })[0];
+    if (row && row.goalsAgainst != null && row.shotsAgainst != null){
+      oppLine = '<div class="dd-note">' + esc(abbrOf(key, opp)) + ' concede '
+        + (+row.goalsAgainst).toFixed(2) + ' goals on ' + (+row.shotsAgainst).toFixed(1) + ' shots a game.</div>';
+    }
+  }
+  return '<div class="dd-sec"><div class="dd-h">Scoring profile</div>'
+    + '<div class="dd-note">His last ' + pr.games + ' games: ' + pr.perGame.goals.toFixed(2) + ' goals, '
+    + pr.perGame.assists.toFixed(2) + ' assists, ' + pr.perGame.shots.toFixed(1) + ' shots a game.</div>'
+    + bar + legend + hot + oppLine + '</div>';
+}
 function ddNblScoring(key, p, opp, mkt){
   if (key !== 'nbl' || !p) return '';
   if (['points', 'pra', 'pr', 'pa', 'threes'].indexOf(mkt) < 0) return '';
@@ -12014,7 +12176,7 @@ function deepPanel(){
 
   var drivers = ddDriverSection(key, name, mkt, d.opp);
   var teams = ddTeamSection(key, p.team || d.team, d.opp, mkt);
-  var mlbAdv = ddMlbSection(key, p, d.opp, mkt) + ddNblScoring(key, p, d.opp, mkt)
+  var mlbAdv = ddMlbSection(key, p, d.opp, mkt) + ddNblScoring(key, p, d.opp, mkt) + ddNhlScoring(key, p, d.opp, mkt)
              + ddNgsSection(key, p, mkt);
   var script = ddScript(key, p.team, d.opp);
   return '<div class="cmb-overlay open" onclick="if(event.target===this)LAB.deepClose()">'
@@ -12959,6 +13121,7 @@ window.LAB = {
   countProbe: function(key){ return countGames(key); },
   umProbe: function(key, i){ var f = (state.sports[key].data.fixture || [])[i]; return f ? umRows(key, f) : []; },
   avdProbe: function(key){ return radarCols(key, teamRowsFor(key)).map(function(c){ return c[1]; }); },
+  dueProbe: function(key, i){ var f = (state.sports[key].data.fixture || [])[i]; return f ? dueToScore(key, f) : null; },
   pmProbe: function(key, i){ var f = (state.sports[key].data.fixture || [])[i]; return f ? ppMerchants(key, f) : null; },
   smProbe: function(key, i){ var f = (state.sports[key].data.fixture || [])[i]; return f ? shotMachines(key, f) : null; },
   shareProbe: function(){ return shareLines(); },
