@@ -4940,7 +4940,10 @@ function shotMachineRow(key, r){
    player getting the ball inside the 20 whose conversion has dried up, against a defence that
    concedes touchdowns to his position. Tuddy Targets asks who has the usage; this asks who has the
    usage and has been getting nothing for it, which is where the price drifts.                  */
-var NDUE_MIN_USE = 1.2, NDUE_MIN_GAMES = 6, NDUE_MIN_PRICE = 1.6;
+var NDUE_MIN_USE = 1.2;      // red-zone touches and targets a game, over the recent window
+var NDUE_RECENT = 3;         // "recent" is his last three games
+var NDUE_DROUGHT = 2;        // and he must have gone at least this many without a touchdown
+var NDUE_MIN_GAMES = 6, NDUE_MIN_PRICE = 1.6;
 function nflDueToScore(key, g){
   if (key !== 'nfl') return { rows:[], why:'' };
   var S = state.sports[key], out = [];
@@ -4969,20 +4972,19 @@ function nflDueToScore(key, g){
     var logs = sortLogsDesc(((S.idx.logsByName || {})[p.name] || []).slice())
       .filter(function(r){ return r.rzTgt_g != null || r.rzAtt_g != null; });
     if (logs.length < NDUE_MIN_GAMES) return;
-    var recent = logs.slice(0, 5), rest = logs.slice(5);
-    if (rest.length < 3) return;
+    // Two plain conditions, which is the whole idea: he is getting the ball inside the 20 RIGHT
+    // NOW, and he has not scored in his last couple of games. The old per-touch rate comparison
+    // was doing neither cleanly - it let through players who had scored twice in five.
+    var recent = logs.slice(0, NDUE_RECENT);
+    if (recent.length < NDUE_RECENT) return;
     var use = mean(recent.map(useOf));
-    if (use < NDUE_MIN_USE) return;                       // he is not getting the ball down there
-    var rateOf = function(rows){
-      var u = rows.reduce(function(a, r){ return a + useOf(r); }, 0);
-      var t = rows.reduce(function(a, r){ return a + tdOf(r); }, 0);
-      return u > 0 ? t / u : null;
-    };
-    var nowRate = rateOf(recent), baseRate = rateOf(rest);
-    if (nowRate == null || baseRate == null || baseRate <= 0) return;
-    if (nowRate / baseRate > 0.65) return;                // not actually cold
-    var recentScores = recent.filter(function(r){ return tdOf(r) > 0; }).length;
-    if (recentScores >= 3) return;                        // scoring fine; the per-touch rate is noise
+    if (use < NDUE_MIN_USE) return;                       // not getting chances now
+    var drought = logs.slice(0, NDUE_DROUGHT);
+    if (drought.length < NDUE_DROUGHT) return;
+    if (drought.some(function(r){ return tdOf(r) > 0; })) return;   // he has scored recently
+    // how far back the last one was, for the row to say
+    var since = 0;
+    for (var qi = 0; qi < logs.length; qi++){ if (tdOf(logs[qi]) > 0) break; since++; }
     // how freely the opponent concedes touchdowns to his position
     var soft = null;
     var dv = (asArray(S.data.dvp) || []).filter(function(r){
@@ -4990,23 +4992,28 @@ function nflDueToScore(key, g){
     })[0];
     if (dv) soft = +dv.tds != null ? +dv.tds : null;
     var scored = logs.filter(function(r){ return tdOf(r) > 0; }).length / logs.length;
+    // His career rate can flatter a player whose role has changed - a backup who scored twice as a
+    // starter last year reads 24% while the market prices him at 11%. On long prices, require a
+    // real number of scoring games behind the rate.
+    var scoreGames = logs.filter(function(r){ return tdOf(r) > 0; }).length;
     var best = null;
     lines.forEach(function(r){
       if (+r.over < NDUE_MIN_PRICE) return;
+      if (+r.over >= 5 && scoreGames < 4) return;
       var ev = scored * (+r.over) - 1;
       if (ev <= 0) return;
       if (!best || ev > best.ev) best = { price:+r.over, book:r.book, ev:ev };
     });
     if (!best) return;
     out.push({ name:p.name, p:p, team:p.team, opp:opp, use:use, last3:logs.slice(0, 3),
-               nowRate:nowRate * 100, baseRate:baseRate * 100,
-               dry:recent.filter(function(r){ return tdOf(r) > 0; }).length,
+               since:since,
                scored:scored, games:logs.length, soft:soft, bet:best });
   });
   out.sort(function(a, b){ return b.bet.ev - a.bet.ev; });
   return { rows:out.slice(0, SIG_MAX_ROWS),
-           why:'No one here is getting ' + NDUE_MIN_USE + '+ red-zone touches a game through a '
-             + 'scoreless spell, at an anytime price that pays.' };
+           why:'No one here is getting ' + NDUE_MIN_USE + '+ red-zone touches a game over his last '
+             + NDUE_RECENT + ', while going ' + NDUE_DROUGHT + '+ games without a touchdown, at an '
+             + 'anytime price that pays.' };
 }
 
 /* The red-zone box for his last three games. A receiver has no carries inside the 20 and a runner
@@ -5051,8 +5058,9 @@ function nflDueRow(key, r){
       + ' v ' + esc(abbrOf(key, r.opp)) + '</span></div>'
     + '<div class="gl-bet">Anytime TD</div>'
     + '<div class="gl-why">'
-      + '<span class="gl-chip good">' + r.use.toFixed(1) + ' red-zone touches a game</span>'
-      + '<span class="gl-chip bad">' + r.dry + ' of his last 5 with a TD</span>'
+      + '<span class="gl-chip good">' + r.use.toFixed(1) + ' red-zone touches a game, last '
+      + NDUE_RECENT + '</span>'
+      + '<span class="gl-chip bad">no TD in ' + r.since + ' game' + (r.since === 1 ? '' : 's') + '</span>'
       + '<span class="gl-chip">scores in ' + Math.round(r.scored * 100) + '% of his games</span>'
       + (r.soft != null ? '<span class="gl-chip">' + esc(abbrOf(key, r.opp)) + ' concede '
          + (+r.soft).toFixed(1) + ' TDs to his spot</span>' : '')
