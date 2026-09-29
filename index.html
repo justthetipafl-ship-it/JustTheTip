@@ -466,6 +466,18 @@
   .h2h-sig-l{font-family:var(--font-mono);font-size:7px;color:var(--text-3);letter-spacing:.06em;margin-top:3px;}
   .h2h-sig-odds{margin-top:7px;display:inline-block;font-family:var(--font-mono);font-size:10px;color:var(--text);
     border:1px solid var(--border);border-radius:5px;padding:3px 7px;}
+  .rz-more{margin-top:7px;}
+  .rz-more summary{font-size:10px;color:var(--text-3);cursor:pointer;list-style:none;}
+  .rz-more summary::-webkit-details-marker{display:none;}
+  .rz-more summary:before{content:'\25b8 ';}
+  .rz-more[open] summary:before{content:'\25be ';}
+  .rz-t{width:100%;border-collapse:collapse;font-family:var(--font-mono);font-size:10px;margin-top:5px;}
+  .rz-t th{font-size:8px;letter-spacing:.05em;text-transform:uppercase;color:var(--text-3);
+    text-align:right;padding:2px 5px;font-weight:700;}
+  .rz-t td{text-align:right;padding:3px 5px;border-top:1px solid var(--border);color:var(--text-2);}
+  .rz-t td.rz-g{text-align:left;color:var(--text);white-space:nowrap;}
+  .rz-t td.rz-g span{color:var(--text-3);}
+  .rz-t td.rz-td{color:var(--accent);font-weight:700;}
   .um-row{display:flex;align-items:center;gap:10px;padding:10px 12px;border-top:1px solid var(--border);cursor:pointer;}
   .um-row .gl-left{flex:1;min-width:0;}
   .gl-row{display:flex;gap:10px;padding:10px 12px;border-top:1px solid var(--border);align-items:center;cursor:pointer;}
@@ -4986,7 +4998,7 @@ function nflDueToScore(key, g){
       if (!best || ev > best.ev) best = { price:+r.over, book:r.book, ev:ev };
     });
     if (!best) return;
-    out.push({ name:p.name, p:p, team:p.team, opp:opp, use:use,
+    out.push({ name:p.name, p:p, team:p.team, opp:opp, use:use, last3:logs.slice(0, 3),
                nowRate:nowRate * 100, baseRate:baseRate * 100,
                dry:recent.filter(function(r){ return tdOf(r) > 0; }).length,
                scored:scored, games:logs.length, soft:soft, bet:best });
@@ -4995,6 +5007,36 @@ function nflDueToScore(key, g){
   return { rows:out.slice(0, SIG_MAX_ROWS),
            why:'No one here is getting ' + NDUE_MIN_USE + '+ red-zone touches a game through a '
              + 'scoreless spell, at an anytime price that pays.' };
+}
+
+/* The red-zone box for his last three games. A receiver has no carries inside the 20 and a runner
+   often has both, so the columns follow the position rather than showing empty ones. */
+function nflRzBox(key, r){
+  var pos = String((r.p && r.p.position) || '').toUpperCase();
+  var wantTgt = ['WR', 'TE', 'RB', 'FB'].indexOf(pos) >= 0;
+  var wantRush = ['RB', 'FB', 'QB'].indexOf(pos) >= 0;
+  var cols = [];
+  if (wantTgt) cols.push(['rzTgt_g', 'RZ tgt'], ['i10Tgt_g', 'In 10']);
+  if (wantRush) cols.push(['rzAtt_g', 'RZ car'], ['i5Att_g', 'In 5']);
+  cols.push(['rzTd_g', 'RZ TD']);
+  var rows = (r.last3 || []).map(function(x){
+    var when = String(x.Date || x.date || '').slice(5, 10)
+      || ('Wk ' + (x.Week != null ? x.Week : (x.RoundName || '')));
+    var opp = oppOf(key, x);
+    var td = (+x.totalTds || 0) || ((+x.recTds || 0) + (+x.rushTds || 0));
+    return '<tr><td class="rz-g">' + esc(when) + (opp ? ' <span>v ' + esc(abbrOf(key, opp)) + '</span>' : '') + '</td>'
+      + cols.map(function(c){
+          var v = x[c[0]];
+          return '<td>' + (v == null ? '\u2014' : (+v || 0)) + '</td>';
+        }).join('')
+      + '<td class="' + (td > 0 ? 'rz-td' : '') + '">' + td + '</td></tr>';
+  }).join('');
+  if (!rows) return '';
+  return '<details class="rz-more" onclick="event.stopPropagation()">'
+    + '<summary>Last 3 in the red zone</summary>'
+    + '<table class="rz-t"><tr><th></th>'
+    + cols.map(function(c){ return '<th>' + esc(c[1]) + '</th>'; }).join('')
+    + '<th>TD</th></tr>' + rows + '</table></details>';
 }
 function nflDueRow(key, r){
   var b = r.bet;
@@ -5014,7 +5056,7 @@ function nflDueRow(key, r){
       + '<span class="gl-chip">scores in ' + Math.round(r.scored * 100) + '% of his games</span>'
       + (r.soft != null ? '<span class="gl-chip">' + esc(abbrOf(key, r.opp)) + ' concede '
          + (+r.soft).toFixed(1) + ' TDs to his spot</span>' : '')
-    + '</div></div>'
+    + '</div>' + nflRzBox(key, r) + '</div>'
     + '<div class="gl-right"><div class="gl-odds"><b>$' + b.price.toFixed(2) + '</b>'
       + '<span>' + esc(b.book) + '</span></div>'
       + '<div class="gl-ev good">+' + Math.round(b.ev * 100) + '%</div></div></div>';
