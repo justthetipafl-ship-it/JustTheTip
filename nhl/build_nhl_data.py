@@ -95,10 +95,18 @@ def fetch_rosters(seasons):
 
 def fetch_gamelogs(roster, seasons):
     by_season = defaultdict(list)
+    # A player appears in a team's roster once per season fetched, so the same player-season was
+    # requested up to three times and its rows appended each time: 27,314 duplicate rows, a 15 MB
+    # gamelog file, and every "last 10 games" window covering three real games. Fetch each
+    # player-season once, and refuse to append a game already recorded.
+    done, seen_rows, dupes = set(), set(), 0
     for tm, players in roster.items():
         for pid, name, poscode, goalie in players:
             pos = "G" if goalie else pos_of(poscode)
             for season in seasons:
+                if (pid, season) in done:
+                    continue
+                done.add((pid, season))
                 j = api(f"{WEB}/player/{pid}/game-log/{season}/2"); time.sleep(PACE)
                 if not j:
                     continue
@@ -120,7 +128,14 @@ def fetch_gamelogs(roster, seasons):
                                     "ppPoints": num(g.get("powerPlayPoints")), "ppGoals": num(g.get("powerPlayGoals")),
                                     "pim": num(g.get("pim")), "plusMinus": num(g.get("plusMinus"))})
                     if row["Date"]:
-                        by_season[yr].append(row)
+                        key = (pid, row["MatchId"])
+                    if key in seen_rows:
+                        dupes += 1
+                        continue
+                    seen_rows.add(key)
+                    by_season[yr].append(row)
+    if dupes:
+        print(f"  gamelogs: skipped {dupes} duplicate player-games")
     return by_season
 
 def fetch_boxscores(game_ids):
