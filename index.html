@@ -2070,6 +2070,7 @@ function modelProb(key, p, stat, line){
 function valueBets(key, g){
   var S = state.sports[key];
   if (!S.scoring) return '';
+  var oppOfFixture = null;
   var mkts = betStats(key), bets = [];
   var pool = playersOnTeam(key, g.home).concat(playersOnTeam(key, g.away));
   pool.forEach(function(p){
@@ -2080,19 +2081,37 @@ function valueBets(key, g){
       if (od.over < 1.2 || od.over > 6) return;
       var m = modelProb(key, p, stat, od.line);
       if (!m) return;
-      var mp = m.p;
+      // Cap the model at his own record, exactly as the Deep Dive does. Without this the tile
+      // advertised +17% on a bet the dive then read as -28%, because the dive capped and the tile
+      // did not. The cap is the safeguard; the tile was the side that was wrong.
+      // Use the SAME model the Deep Dive uses. The tile called scoring.prob()/getHitRate() while
+      // the dive called modelProbAt(), so the two could differ by 10 points on the same bet before
+      // any capping. The sport's own scoring stays as the fallback.
+      var oppNow = normTeam(p.team) === normTeam(g.home) ? g.away : g.home;
+      var mRaw = modelProbAt(key, p, stat, od.line, oppNow);
+      if (mRaw == null || !isFinite(mRaw)) mRaw = m.p;
+      var mp = recordCap(key, p, stat, od.line, 'over', mRaw);
+      if (mp == null || !isFinite(mp)) mp = mRaw;
       var imp = (od.under != null && od.under > 0)
         ? (1/od.over) / ((1/od.over) + (1/od.under))    // de-vig when a two-way price exists
         : (1/od.over);
+      // Two numbers, and they answer different questions: `edge` is the model against the DE-VIGGED
+      // fair price - it says the market is mispriced - while `ev` is what a dollar returns at the
+      // price you can actually get. A bet can be mispriced and still lose to the margin, which is
+      // why a tile showing +6% sat beside a dive showing -10%. List it only when it pays, and show
+      // the number that pays, so the two agree.
       var edge = mp - imp;
-      if (edge >= 0.06) bets.push({p:p, stat:stat, line:od.line, over:od.over, book:od.book, mp:mp, imp:imp, edge:edge, src:m.src, n:m.n});
+      var ev = mp * od.over - 1;
+      if (edge >= 0.06 && ev > 0)
+        bets.push({p:p, stat:stat, line:od.line, over:od.over, book:od.book, mp:mp, imp:imp,
+                   edge:edge, ev:ev, src:m.src, n:m.n});
     });
   });
   if (!bets.length) return '';
-  bets.sort(function(a,b){ return b.edge - a.edge; });
+  bets.sort(function(a,b){ return b.ev - a.ev; });
   var cards = bets.slice(0,8).map(function(b){
     return '<div class="vb-card" onclick="LAB.player(\''+key+'\',\''+esc(b.p.name).replace(/'/g,"\\'")+'\')">'
-      + '<div class="vb-edge">+'+Math.round(b.edge*100)+'%</div>'
+      + '<div class="vb-edge">+'+Math.round(b.ev*100)+'%</div>'
       + '<div class="vb-main"><div class="vb-nm">'+esc(b.p.name)+'</div>'
       + '<div class="vb-ln">'+esc(mktLbl(key,b.stat))+' O'+b.line+' \u00b7 $'+b.over.toFixed(2)+(b.book?' '+esc(b.book):'')+'</div>'
       + '<div class="vb-sub">'+esc(posShortP(b.p))+' \u00b7 '+esc(abbrOf(key,b.p.team))
@@ -11029,8 +11048,29 @@ function ddBar(label, r, extra){
     + '<div class="dd-track"><div class="dd-fill'+(pc >= 60 ? ' good' : pc <= 40 ? ' bad' : '')+'" style="width:'+pc+'%"></div></div>'
     + '<b>'+pc+'%</b><i>'+r.hits+'/'+r.n+(extra ? ' \u00b7 '+extra : '')+'</i></div>';
 }
+/* The dive looked its player up by exact name. A row whose name is spelled even slightly
+   differently - an initial, a suffix, an accent - found no player and no logs, so the history was
+   blank AND the model scored the bet off nothing, which is why the edge came out negative on bets
+   the value tile had just called positive. Fall back to a normalised match, then a unique surname. */
+function deepResolveName(key, name){
+  var S = state.sports[key];
+  var byName = S.idx.byName || {}, byLogs = S.idx.logsByName || {};
+  if (byName[name] || byLogs[name]) return name;
+  var want = cmbNameKey(name);
+  if (!want) return name;
+  var keys = Object.keys(byLogs).length ? Object.keys(byLogs) : Object.keys(byName);
+  var exact = keys.filter(function(k){ return cmbNameKey(k) === want; });
+  if (exact.length === 1) return exact[0];
+  var lastWant = cmbNameKey(String(name).trim().split(/\s+/).pop());
+  var bySurname = keys.filter(function(k){
+    return cmbNameKey(String(k).trim().split(/\s+/).pop()) === lastWant;
+  });
+  return bySurname.length === 1 ? bySurname[0] : name;   // ambiguous surname: leave it alone
+}
 function deepData(key, name, mkt, line, side, opp){
-  var S = state.sports[key], p = (S.idx.byName || {})[name] || {};
+  var S = state.sports[key];
+  name = deepResolveName(key, name);
+  var p = (S.idx.byName || {})[name] || {};
   var logs = sortLogsDesc(((S.idx.logsByName || {})[name] || []).slice());
   var season = curSeason(key);
   var all = [], l5 = [], l10 = [], l20 = [], seas = [], vsOpp = [], home = [], away = [];
