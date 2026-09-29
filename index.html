@@ -4706,7 +4706,9 @@ function dueToScore(key, g){
     var opp = isHome ? g.away : g.home;
     var oppRow = teams.filter(function(t){ return normTeam(t.team) === normTeam(opp); })[0];
     if (!oppRow || !(+oppRow.goalsAgainst >= med)) return;      // a mean defence kills the idea
-    var lines = byPlayer[p.name] || [];
+    // books spell names their own way - the roster's "Khalil Shakir" may be "K. Shakir" on the
+    // board - so resolve through the same mapper the rest of the tool uses
+    var lines = byPlayer[p.name] || byPlayer[oddsPlayer(key, p.name)] || [];
     if (!lines.length) return;
     var logs = sortLogsDesc(((S.idx.logsByName || {})[p.name] || []).slice())
       .filter(function(r){ return r.shots != null && r.goals != null && r.toiMin != null; });
@@ -4943,10 +4945,27 @@ function shotMachineRow(key, r){
 var NDUE_MIN_USE = 1.2;      // red-zone touches and targets a game, over the recent window
 var NDUE_RECENT = 3;         // "recent" is his last three games
 var NDUE_DROUGHT = 2;        // and he must have gone at least this many without a touchdown
-var NDUE_MIN_GAMES = 6, NDUE_MIN_PRICE = 1.6;
+var NDUE_MIN_SEASON = 2;     // games THIS season before the drought means anything
+var NDUE_MIN_GAMES = 6, NDUE_MIN_PRICE = 1.6;   // games of history behind the scoring rate
+// How often a red-zone touch becomes a touchdown, league-wide, this season. The whole premise is
+// that usage predicts scoring, so the probability should come from HIS CURRENT usage rather than a
+// career rate that still averages in the years he was not the man getting the ball down there.
+function rzConversion(key){
+  var S = state.sports[key];
+  if (S.idx.rzConv != null) return S.idx.rzConv;
+  var season = String(curSeason(key)), use = 0, td = 0;
+  (asArray(S.data.gamelogs) || []).forEach(function(r){
+    if (String(r.Year || r.year) !== season) return;
+    use += (+r.rzTgt_g || 0) + (+r.rzAtt_g || 0) + (+r.i10Tgt_g || 0) + (+r.i5Att_g || 0);
+    td += (+r.totalTds || 0) || ((+r.recTds || 0) + (+r.rushTds || 0));
+  });
+  S.idx.rzConv = use > 20 ? td / use : null;
+  return S.idx.rzConv;
+}
 function nflDueToScore(key, g){
   if (key !== 'nfl') return { rows:[], why:'' };
   var S = state.sports[key], out = [];
+  var conv = rzConversion(key);
   var od = oddsRowsAll(key) || [];
   var byPlayer = {};
   // The touchdown ladder carries 1+, 2+ and 3+ rungs under the same market name, so "best price"
@@ -4969,33 +4988,57 @@ function nflDueToScore(key, g){
     var opp = isHome ? g.away : g.home;
     var lines = byPlayer[p.name] || [];
     if (!lines.length) return;
-    var logs = sortLogsDesc(((S.idx.logsByName || {})[p.name] || []).slice())
+    // THIS SEASON only. Spanning seasons let a player with one game this year qualify on last
+    // year's usage, and "no TD in 7" could reach back into a different role on a different team.
+    var season = String(curSeason(key));
+    var all = sortLogsDesc(((S.idx.logsByName || {})[p.name] || []).slice())
       .filter(function(r){ return r.rzTgt_g != null || r.rzAtt_g != null; });
-    if (logs.length < NDUE_MIN_GAMES) return;
+    // Usage and the drought come from THIS season - a player with one game this year should not
+    // qualify on last year's role. The scoring RATE needs a sample, so it keeps his full history:
+    // three weeks is not enough to know how often a man scores, but it is enough to know he has
+    // the ball inside the 20 and has not scored.
+    var logs = all.filter(function(r){ return String(r.Year || r.year) === season; });
+    if (logs.length < NDUE_MIN_SEASON || all.length < NDUE_MIN_GAMES) return;
     // Two plain conditions, which is the whole idea: he is getting the ball inside the 20 RIGHT
     // NOW, and he has not scored in his last couple of games. The old per-touch rate comparison
     // was doing neither cleanly - it let through players who had scored twice in five.
-    var recent = logs.slice(0, NDUE_RECENT);
-    if (recent.length < NDUE_RECENT) return;
+    var recent = logs.slice(0, Math.min(NDUE_RECENT, logs.length));
+    if (recent.length < NDUE_MIN_SEASON) return;
     var use = mean(recent.map(useOf));
     if (use < NDUE_MIN_USE) return;                       // not getting chances now
     var drought = logs.slice(0, NDUE_DROUGHT);
-    if (drought.length < NDUE_DROUGHT) return;
+    if (drought.length < NDUE_DROUGHT) return;            // needs at least the drought's worth
     if (drought.some(function(r){ return tdOf(r) > 0; })) return;   // he has scored recently
     // how far back the last one was, for the row to say
     var since = 0;
     for (var qi = 0; qi < logs.length; qi++){ if (tdOf(logs[qi]) > 0) break; since++; }
+    var seasonGames = logs.length;
     // how freely the opponent concedes touchdowns to his position
     var soft = null;
     var dv = (asArray(S.data.dvp) || []).filter(function(r){
       return normTeam(r.team) === normTeam(opp) && String(r.pos || '').toUpperCase() === String(p.position || '').toUpperCase();
     })[0];
-    if (dv) soft = +dv.tds != null ? +dv.tds : null;
-    var scored = logs.filter(function(r){ return tdOf(r) > 0; }).length / logs.length;
+    // the DVP file calls it totalTds / anytimeTd - reading dv.tds gave NaN on every row
+    if (dv){
+      var cand = [dv.totalTds, dv.anytimeTd, dv.recTds, dv.rushTds];
+      for (var ci = 0; ci < cand.length; ci++){
+        if (cand[ci] != null && isFinite(+cand[ci])){ soft = +cand[ci]; break; }
+      }
+    }
+    // his chance of scoring, from the chances he is actually getting: expected touchdowns from
+    // this season's usage at the league's conversion rate, then Poisson for "at least one"
+    var career = all.filter(function(r){ return tdOf(r) > 0; }).length / all.length;
+    var scored = career;
+    if (conv){
+      var expTd = use * conv;
+      var fromUse = 1 - Math.exp(-expTd);
+      // blend: usage is current but noisy over three games, the career rate is stable but stale
+      scored = (fromUse * 2 + career) / 3;
+    }
     // His career rate can flatter a player whose role has changed - a backup who scored twice as a
     // starter last year reads 24% while the market prices him at 11%. On long prices, require a
     // real number of scoring games behind the rate.
-    var scoreGames = logs.filter(function(r){ return tdOf(r) > 0; }).length;
+    var scoreGames = all.filter(function(r){ return tdOf(r) > 0; }).length;
     var best = null;
     lines.forEach(function(r){
       if (+r.over < NDUE_MIN_PRICE) return;
@@ -5006,7 +5049,7 @@ function nflDueToScore(key, g){
     });
     if (!best) return;
     out.push({ name:p.name, p:p, team:p.team, opp:opp, use:use, last3:logs.slice(0, 3),
-               since:since,
+               since:since, seasonGames:seasonGames,
                scored:scored, games:logs.length, soft:soft, bet:best });
   });
   out.sort(function(a, b){ return b.bet.ev - a.bet.ev; });
@@ -5060,8 +5103,9 @@ function nflDueRow(key, r){
     + '<div class="gl-why">'
       + '<span class="gl-chip good">' + r.use.toFixed(1) + ' red-zone touches a game, last '
       + NDUE_RECENT + '</span>'
-      + '<span class="gl-chip bad">no TD in ' + r.since + ' game' + (r.since === 1 ? '' : 's') + '</span>'
-      + '<span class="gl-chip">scores in ' + Math.round(r.scored * 100) + '% of his games</span>'
+      + '<span class="gl-chip bad">no TD in ' + r.since + ' game' + (r.since === 1 ? '' : 's')
+      + ' this season</span>'
+      + '<span class="gl-chip">' + Math.round(r.scored * 100) + '% to score, on this usage</span>'
       + (r.soft != null ? '<span class="gl-chip">' + esc(abbrOf(key, r.opp)) + ' concede '
          + (+r.soft).toFixed(1) + ' TDs to his spot</span>' : '')
     + '</div>' + nflRzBox(key, r) + '</div>'
