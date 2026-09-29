@@ -4648,6 +4648,97 @@ var UM_NEAR = null;
    what he does with them - against a team that concedes shots, and then checks he has actually
    been clearing the posted line.                                                                */
 var SM_MIN_GAMES = 8, SM_MIN_HIT = 0.55, SM_SOFT_PCT = 0.55;
+
+/* POWER PLAY MERCHANTS (NHL) ---------------------------------------------------------------------
+   Power-play time is the most predictive thing a scorer has: it is assigned by the coach, it
+   barely moves week to week, and points come far faster on it than at even strength. The build
+   already collects ppToi from the boxscore, but it only lands once the season is under way, so
+   this waits quietly rather than pretending. Until then it falls back to power-play POINTS, which
+   is the same idea measured by output instead of opportunity.                                  */
+function ppMerchants(key, g){
+  if (key !== 'nhl') return { rows:[], why:'' };
+  var S = state.sports[key], out = [];
+  var teams = asArray(S.data.teams) || [];
+  var od = oddsRowsAll(key) || [];
+  var byPlayer = {};
+  od.forEach(function(r){
+    if (r.player && (r.market === 'points' || r.market === 'assists' || r.market === 'goals'))
+      (byPlayer[r.player] = byPlayer[r.player] || []).push(r);
+  });
+  // how freely the opponent concedes power-play points, from the gamelogs themselves
+  var conceded = {}, games = {};
+  (asArray(S.data.gamelogs) || []).forEach(function(r){
+    var opp = r.Opp || r.opp;
+    if (!opp) return;
+    var k2 = normTeam(opp);
+    conceded[k2] = (conceded[k2] || 0) + (+r.ppPoints || 0);
+    games[k2] = games[k2] || {};
+    games[k2][r.MatchId] = 1;
+  });
+  var rate = {};
+  Object.keys(conceded).forEach(function(t){
+    var n = Object.keys(games[t] || {}).length;
+    if (n >= 10) rate[t] = conceded[t] / n;
+  });
+  var vals = Object.keys(rate).map(function(t){ return rate[t]; }).sort(function(a, b){ return a - b; });
+  if (vals.length < 8) return { rows:[], why:'Not enough games on file yet to judge a penalty kill.' };
+  var med = vals[Math.floor(vals.length / 2)];
+  var anyPpToi = false;
+  (S.idx.players || []).forEach(function(p){
+    if (!p || !p.name || String(p.position || '').toUpperCase() === 'G') return;
+    var isHome = normTeam(p.team) === normTeam(g.home), isAway = normTeam(p.team) === normTeam(g.away);
+    if (!isHome && !isAway) return;
+    var opp = isHome ? g.away : g.home;
+    var soft = rate[normTeam(opp)];
+    if (soft == null || soft < med) return;              // a good penalty kill kills the idea
+    var logs = sortLogsDesc(((S.idx.logsByName || {})[p.name] || []).slice())
+      .filter(function(r){ return r.ppPoints != null; });
+    if (logs.length < 10) return;
+    var ppTime = null;
+    var withToi = logs.filter(function(r){ return r.ppToi != null; });
+    if (withToi.length >= 5){ anyPpToi = true; ppTime = mean(withToi.slice(0, 10).map(function(r){ return +r.ppToi || 0; })); }
+    var ppRate = mean(logs.slice(0, 20).map(function(r){ return +r.ppPoints || 0; }));
+    if (ppRate < 0.25 && !(ppTime >= 2.5)) return;       // not on the unit that matters
+    var lines = (byPlayer[p.name] || []).filter(function(r){ return r.over > 0; });
+    var best = null;
+    lines.forEach(function(r){
+      var hits = logs.filter(function(x){ return (+statOf(key, x, r.market)) > r.line; }).length;
+      var hr = hits / logs.length;
+      if (hr < 0.5) return;
+      var ev = hr * (+r.over) - 1;
+      if (!best || ev > best.ev) best = { mkt:r.market, line:r.line, price:+r.over, book:r.book, hits:hits, rate:hr, ev:ev };
+    });
+    if (!best || best.ev <= 0) return;
+    out.push({ name:p.name, p:p, team:p.team, opp:opp, ppTime:ppTime, ppRate:ppRate,
+               oppPP:soft, games:logs.length, bet:best });
+  });
+  out.sort(function(a, b){ return b.bet.ev - a.bet.ev; });
+  return { rows:out.slice(0, SIG_MAX_ROWS),
+           why:'No scorer here is on a power play worth backing into a penalty kill that leaks.'
+             + (anyPpToi ? '' : ' Power-play ice time starts landing once this season\u2019s games are played;'
+               + ' until then this reads power-play points instead.') };
+}
+function ppMerchantRow(key, r){
+  var b = r.bet, lab = mktLabel(key, b.mkt);
+  var btns = rowBtns(key, { name:r.name, mkt:b.mkt, line:b.line, side:'over',
+                            odds:b.price, book:b.book, opp:r.opp, team:r.team, label:lab });
+  return '<div class="gl-row" onclick="LAB.player(\'' + key + '\',\''
+      + esc(r.name).replace(/'/g, "\\'") + '\')">'
+    + btns + playerImgP(key, r.name, 28)
+    + '<div class="gl-left"><div class="gl-nm"><b>' + esc(r.name) + '</b>'
+      + '<span class="gl-tag">' + esc((posShortP(r.p) ? posShortP(r.p) + ' \u00b7 ' : '') + abbrOf(key, r.team))
+      + ' v ' + esc(abbrOf(key, r.opp)) + '</span></div>'
+    + '<div class="gl-bet">' + Math.ceil(b.line) + '+ ' + esc(lab) + '</div>'
+    + '<div class="gl-why">'
+      + '<span class="gl-chip' + (b.rate >= 0.6 ? ' good' : '') + '">' + b.hits + '/' + r.games + ' cleared</span>'
+      + (r.ppTime != null ? '<span class="gl-chip good">' + r.ppTime.toFixed(1) + ' min PP time</span>' : '')
+      + '<span class="gl-chip">' + r.ppRate.toFixed(2) + ' PP pts/gm</span>'
+      + '<span class="gl-chip good">' + esc(abbrOf(key, r.opp)) + ' concede ' + r.oppPP.toFixed(2) + ' PP pts</span>'
+    + '</div></div>'
+    + '<div class="gl-right"><div class="gl-odds"><b>$' + b.price.toFixed(2) + '</b>'
+      + '<span>' + esc(b.book) + '</span></div>'
+      + '<div class="gl-ev good">+' + Math.round(b.ev * 100) + '%</div></div></div>';
+}
 function shotMachines(key, g){
   if (key !== 'nhl') return { rows:[], why:'' };
   var S = state.sports[key], out = [];
@@ -6883,8 +6974,12 @@ function nhlSignals(key, g){
   var sn = nblSpecialist(key, g, 'shots'), pr = nblSpecialist(key, g, 'points'),
       pm = nblSpecialist(key, g, 'assists'), fi = nblSpecialist(key, g, 'goals'), pp = nhlPowerPlay(key, g);
   var why = function(st){ return 'None of the league\u2019s top 15 at '+st+' faces a defence conceding 4%+ above average to his position at a price the model and his record back.'; };
-  var sm = shotMachines(key, g);
+  // NOT pm - that name already holds the Playmakers rows in this function
+  var sm = shotMachines(key, g), ppm = ppMerchants(key, g);
   return sigBand('NHL Signals',
+    sigTile('ti-bolt', 'Power Play Merchants', 'Power-play role into a penalty kill that leaks',
+            ppm.rows.map(function(r){ return ppMerchantRow(key, r); }), ppm.why)
+    +
     sigTile('ti-activity', 'Shot Machines', 'Shot rate per 60 into a team that concedes shots',
             sm.rows.map(function(r){ return shotMachineRow(key, r); }), sm.why)
     + sigTile('ti-target-arrow', 'Snipers', 'Top shot volume into a soft defence', sn.map(function(r){ return nblSpecRow(key, r, 'Shots on goal'); }), why('shots'))
@@ -12864,6 +12959,7 @@ window.LAB = {
   countProbe: function(key){ return countGames(key); },
   umProbe: function(key, i){ var f = (state.sports[key].data.fixture || [])[i]; return f ? umRows(key, f) : []; },
   avdProbe: function(key){ return radarCols(key, teamRowsFor(key)).map(function(c){ return c[1]; }); },
+  pmProbe: function(key, i){ var f = (state.sports[key].data.fixture || [])[i]; return f ? ppMerchants(key, f) : null; },
   smProbe: function(key, i){ var f = (state.sports[key].data.fixture || [])[i]; return f ? shotMachines(key, f) : null; },
   shareProbe: function(){ return shareLines(); },
   shareDeepProbe: function(){ return shareDeepLines(); },
