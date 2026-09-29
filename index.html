@@ -1735,10 +1735,23 @@ function buildIndexes(key){
   ix.pricedSet = null; ix.oddsName = null; ix.oddsIni = null; ix.vac = null; ix.bookList = null; ix.resIdx = null; ix.mlbLg = null; ix.lgRate = null; ix.scState = null; ix.nhlPim = null; ix.injIdx = null; ix.luRows = null; ix.foldName = null;
   var logs = asArray(d.gamelogs) || [];
   ix.logsByName = {};
+  // One row per player per game. NHL's build emits each game three times - Matias Maccelli had 213
+  // rows for 71 games - which leaves averages right but every recency window three times too
+  // short: "his last 10" was really his last three. Dedupe on the game id, or the date where a
+  // sport has no id, and count what was dropped so it cannot go unnoticed again.
+  var seenRow = {}, dropped = 0;
   logs.forEach(function(r){
     var n = r && (r.Player || r.player); if (!n) return;
+    var gid = r.MatchId != null ? r.MatchId : (r.matchId != null ? r.matchId
+              : (String(r.Date || r.date || '') || null));
+    if (gid != null && gid !== ''){
+      var k = n + '|' + gid;
+      if (seenRow[k]) { dropped++; return; }
+      seenRow[k] = 1;
+    }
     (ix.logsByName[n] = ix.logsByName[n] || []).push(r);
   });
+  ix.dupLogRows = dropped;
 
   var od = d.odds || {};
   ix.oddsIdx = {}; ix.bookIdx = {};
@@ -4648,6 +4661,7 @@ var UM_NEAR = null;
    what he does with them - against a team that concedes shots, and then checks he has actually
    been clearing the posted line.                                                                */
 var SM_MIN_GAMES = 8, SM_MIN_HIT = 0.55, SM_SOFT_PCT = 0.55;
+var SM_MIN_PRICE = 1.35;     // below this the margin eats any edge a shot line can have
 
 /* POWER PLAY MERCHANTS (NHL) ---------------------------------------------------------------------
    Power-play time is the most predictive thing a scorer has: it is assigned by the coach, it
@@ -4700,9 +4714,13 @@ function dueToScore(key, g){
     var best = null;
     lines.forEach(function(r){
       // his own long-run rate says how often he clears this line, not the cold spell
-      var rate = logs.filter(function(x){ return (+x.goals) > r.line; }).length / logs.length;
+      var hits = logs.filter(function(x){ return (+x.goals) > r.line; }).length;
+      var rate = hits / logs.length;
+      // A long price on two lucky games is not an edge, it is a small sample. One hit in a
+      // 25-game history reads as 4% and turns a $19 line into "+51%", which is noise.
+      if (+r.over >= 5 && hits < 3) return;
       var ev = rate * (+r.over) - 1;
-      if (!best || ev > best.ev) best = { line:r.line, price:+r.over, book:r.book, rate:rate, ev:ev };
+      if (!best || ev > best.ev) best = { line:r.line, price:+r.over, book:r.book, rate:rate, hits:hits, ev:ev };
     });
     // cold is the filter, not the case: his long-run rate still has to beat the price, or the
     // row is just a losing bet with a story attached
@@ -4856,25 +4874,30 @@ function shotMachines(key, g){
     var toi = mean(logs.map(function(r){ return +r.toiMin || 0; }));
     var per60 = toi > 0 ? mean(logs.map(function(r){ return (+r.shots || 0) / Math.max(1, +r.toiMin) * 60; })) : 0;
     // his best posted line: the one he clears most often, longest line breaking a tie
+    // Pick the line that PAYS, not the one he clears most. Choosing on hit rate always landed on
+    // the shortest line on the board - 1+ shots at $1.01 clears 96% of the time and still loses
+    // three cents a dollar. A price floor keeps the tile to bets worth placing.
     var best = null;
     lines.forEach(function(r){
+      if (+r.over < SM_MIN_PRICE) return;
       var hits = logs.filter(function(x){ return (+x.shots) > r.line; }).length;
       var rate = hits / logs.length;
       if (rate < SM_MIN_HIT) return;
-      if (!best || rate > best.rate || (rate === best.rate && r.line > best.line)) {
-        best = { line:r.line, price:+r.over, book:r.book, hits:hits, rate:rate };
-      }
+      var ev = rate * (+r.over) - 1;
+      if (ev <= 0) return;
+      if (!best || ev > best.ev) best = { line:r.line, price:+r.over, book:r.book, hits:hits, rate:rate, ev:ev };
     });
     if (!best) return;
     out.push({ name:p.name, p:p, team:p.team, opp:opp, toi:toi, per60:per60,
                line:best.line, price:best.price, book:best.book, hits:best.hits,
                games:logs.length, rate:best.rate, soft:soft,
-               oppSA:+oppRow.shotsAgainst, ev:best.rate * best.price - 1 });
+               oppSA:+oppRow.shotsAgainst, ev:best.ev });
   });
   out.sort(function(a, b){ return b.ev - a.ev || b.rate - a.rate; });
   return { rows:out.slice(0, SIG_MAX_ROWS),
-           why:'No skater here clears a posted shots line ' + Math.round(SM_MIN_HIT * 100)
-             + '%+ of the time against a defence in the leakiest half of the league.' };
+           why:'No skater here clears a shots line of $' + SM_MIN_PRICE.toFixed(2) + ' or better '
+             + Math.round(SM_MIN_HIT * 100) + '%+ of the time, against a defence in the leakiest '
+             + 'half of the league, at a price that pays.' };
 }
 function shotMachineRow(key, r){
   var btns = rowBtns(key, { name:r.name, mkt:'shots', line:r.line, side:'over',
