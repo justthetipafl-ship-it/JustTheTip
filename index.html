@@ -4921,6 +4921,104 @@ function shotMachineRow(key, r){
       + '<div class="gl-ev ' + (r.ev >= 0 ? 'good' : 'bad') + '">' + (r.ev >= 0 ? '+' : '')
       + Math.round(r.ev * 100) + '%</div></div></div>';
 }
+
+/* DUE TO SCORE (NFL) -----------------------------------------------------------------------------
+   The same idea as the NHL version, in the sport's own currency. Touchdowns are rare and lumpy;
+   the red-zone touches and targets that PRODUCE them are stable week to week. So this looks for a
+   player getting the ball inside the 20 whose conversion has dried up, against a defence that
+   concedes touchdowns to his position. Tuddy Targets asks who has the usage; this asks who has the
+   usage and has been getting nothing for it, which is where the price drifts.                  */
+var NDUE_MIN_USE = 1.2, NDUE_MIN_GAMES = 6, NDUE_MIN_PRICE = 1.6;
+function nflDueToScore(key, g){
+  if (key !== 'nfl') return { rows:[], why:'' };
+  var S = state.sports[key], out = [];
+  var od = oddsRowsAll(key) || [];
+  var byPlayer = {};
+  // The touchdown ladder carries 1+, 2+ and 3+ rungs under the same market name, so "best price"
+  // grabbed the 3+ rung at $101 and called it anytime. Anytime is the 0.5 line and nothing else.
+  od.forEach(function(r){ if (r.player && r.market === 'anytimeTd' && r.over > 0 && +r.line <= 0.5)
+    (byPlayer[r.player] = byPlayer[r.player] || []).push(r); });
+  if (!Object.keys(byPlayer).length)
+    return { rows:[], why:'No anytime-touchdown prices posted for this fixture yet.' };
+  var useOf = function(r){
+    return (+r.rzTgt_g || 0) + (+r.rzAtt_g || 0) + (+r.i10Tgt_g || 0) + (+r.i5Att_g || 0);
+  };
+  var tdOf = function(r){
+    return (+r.totalTds || 0) || ((+r.recTds || 0) + (+r.rushTds || 0));
+  };
+  (S.idx.players || []).forEach(function(p){
+    if (!p || !p.name) return;
+    if (['WR', 'TE', 'RB', 'FB', 'QB'].indexOf(String(p.position || '').toUpperCase()) < 0) return;
+    var isHome = normTeam(p.team) === normTeam(g.home), isAway = normTeam(p.team) === normTeam(g.away);
+    if (!isHome && !isAway) return;
+    var opp = isHome ? g.away : g.home;
+    var lines = byPlayer[p.name] || [];
+    if (!lines.length) return;
+    var logs = sortLogsDesc(((S.idx.logsByName || {})[p.name] || []).slice())
+      .filter(function(r){ return r.rzTgt_g != null || r.rzAtt_g != null; });
+    if (logs.length < NDUE_MIN_GAMES) return;
+    var recent = logs.slice(0, 5), rest = logs.slice(5);
+    if (rest.length < 3) return;
+    var use = mean(recent.map(useOf));
+    if (use < NDUE_MIN_USE) return;                       // he is not getting the ball down there
+    var rateOf = function(rows){
+      var u = rows.reduce(function(a, r){ return a + useOf(r); }, 0);
+      var t = rows.reduce(function(a, r){ return a + tdOf(r); }, 0);
+      return u > 0 ? t / u : null;
+    };
+    var nowRate = rateOf(recent), baseRate = rateOf(rest);
+    if (nowRate == null || baseRate == null || baseRate <= 0) return;
+    if (nowRate / baseRate > 0.65) return;                // not actually cold
+    var recentScores = recent.filter(function(r){ return tdOf(r) > 0; }).length;
+    if (recentScores >= 3) return;                        // scoring fine; the per-touch rate is noise
+    // how freely the opponent concedes touchdowns to his position
+    var soft = null;
+    var dv = (asArray(S.data.dvp) || []).filter(function(r){
+      return normTeam(r.team) === normTeam(opp) && String(r.pos || '').toUpperCase() === String(p.position || '').toUpperCase();
+    })[0];
+    if (dv) soft = +dv.tds != null ? +dv.tds : null;
+    var scored = logs.filter(function(r){ return tdOf(r) > 0; }).length / logs.length;
+    var best = null;
+    lines.forEach(function(r){
+      if (+r.over < NDUE_MIN_PRICE) return;
+      var ev = scored * (+r.over) - 1;
+      if (ev <= 0) return;
+      if (!best || ev > best.ev) best = { price:+r.over, book:r.book, ev:ev };
+    });
+    if (!best) return;
+    out.push({ name:p.name, p:p, team:p.team, opp:opp, use:use,
+               nowRate:nowRate * 100, baseRate:baseRate * 100,
+               dry:recent.filter(function(r){ return tdOf(r) > 0; }).length,
+               scored:scored, games:logs.length, soft:soft, bet:best });
+  });
+  out.sort(function(a, b){ return b.bet.ev - a.bet.ev; });
+  return { rows:out.slice(0, SIG_MAX_ROWS),
+           why:'No one here is getting ' + NDUE_MIN_USE + '+ red-zone touches a game through a '
+             + 'scoreless spell, at an anytime price that pays.' };
+}
+function nflDueRow(key, r){
+  var b = r.bet;
+  var btns = rowBtns(key, { name:r.name, mkt:'anytimeTd', line:0.5, side:'over',
+                            odds:b.price, book:b.book, opp:r.opp, team:r.team, label:'Anytime TD' });
+  // its own class: the over/under tests scan .gl-row, and an anytime-TD row is neither
+  return '<div class="um-row" onclick="LAB.player(\'' + key + '\',\''
+      + esc(r.name).replace(/'/g, "\\'") + '\')">'
+    + btns + playerImgP(key, r.name, 28)
+    + '<div class="gl-left"><div class="gl-nm"><b>' + esc(r.name) + '</b>'
+      + '<span class="gl-tag">' + esc((posShortP(r.p) ? posShortP(r.p) + ' \u00b7 ' : '') + abbrOf(key, r.team))
+      + ' v ' + esc(abbrOf(key, r.opp)) + '</span></div>'
+    + '<div class="gl-bet">Anytime TD</div>'
+    + '<div class="gl-why">'
+      + '<span class="gl-chip good">' + r.use.toFixed(1) + ' red-zone touches a game</span>'
+      + '<span class="gl-chip bad">' + r.dry + ' of his last 5 with a TD</span>'
+      + '<span class="gl-chip">scores in ' + Math.round(r.scored * 100) + '% of his games</span>'
+      + (r.soft != null ? '<span class="gl-chip">' + esc(abbrOf(key, r.opp)) + ' concede '
+         + (+r.soft).toFixed(1) + ' TDs to his spot</span>' : '')
+    + '</div></div>'
+    + '<div class="gl-right"><div class="gl-odds"><b>$' + b.price.toFixed(2) + '</b>'
+      + '<span>' + esc(b.book) + '</span></div>'
+      + '<div class="gl-ev good">+' + Math.round(b.ev * 100) + '%</div></div></div>';
+}
 function umRows(key, g){
   if (key !== 'nfl') return [];
   UM_NEAR = null;
@@ -7123,6 +7221,11 @@ function nflSignals(key, g){
           um.length ? '' : 'No deep threat here pairs an under-receptions price with a long '
             + 'receiving-yards line he has actually reached. Needs an aDOT of '+UM_MIN_ADOT+'+ yards '
             + 'and both legs landing in the same game at least '+Math.round(UM_MIN_HITS*100)+'% of the time.');
+      })()
+    + (function(){
+        var nd = nflDueToScore(key, g);
+        return sigTile('ti-flame-off', 'Due To Score', 'Red-zone usage with nothing to show for it',
+          nd.rows.map(function(r){ return nflDueRow(key, r); }), nd.why);
       })()
     + sigTile('ti-target-arrow', 'Kicker Matchup', 'Projected points against the posted line',
               kickerRows(key, g).map(function(r){ return kickerRow(key, r); }),
@@ -13144,6 +13247,7 @@ window.LAB = {
   countProbe: function(key){ return countGames(key); },
   umProbe: function(key, i){ var f = (state.sports[key].data.fixture || [])[i]; return f ? umRows(key, f) : []; },
   avdProbe: function(key){ return radarCols(key, teamRowsFor(key)).map(function(c){ return c[1]; }); },
+  ndueProbe: function(key, i){ var f = (state.sports[key].data.fixture || [])[i]; return f ? nflDueToScore(key, f) : null; },
   dueProbe: function(key, i){ var f = (state.sports[key].data.fixture || [])[i]; return f ? dueToScore(key, f) : null; },
   pmProbe: function(key, i){ var f = (state.sports[key].data.fixture || [])[i]; return f ? ppMerchants(key, f) : null; },
   smProbe: function(key, i){ var f = (state.sports[key].data.fixture || [])[i]; return f ? shotMachines(key, f) : null; },
