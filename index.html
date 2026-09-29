@@ -466,6 +466,8 @@
   .h2h-sig-l{font-family:var(--font-mono);font-size:7px;color:var(--text-3);letter-spacing:.06em;margin-top:3px;}
   .h2h-sig-odds{margin-top:7px;display:inline-block;font-family:var(--font-mono);font-size:10px;color:var(--text);
     border:1px solid var(--border);border-radius:5px;padding:3px 7px;}
+  .um-row{display:flex;align-items:center;gap:10px;padding:10px 12px;border-top:1px solid var(--border);cursor:pointer;}
+  .um-row .gl-left{flex:1;min-width:0;}
   .gl-row{display:flex;gap:10px;padding:10px 12px;border-top:1px solid var(--border);align-items:center;cursor:pointer;}
   .gl-left{flex:1;min-width:0;}
   .gl-nm{font-size:12px;font-weight:700;display:flex;align-items:center;gap:6px;min-width:0;}
@@ -4568,6 +4570,116 @@ function tuddyProfile(key, r){
         (h2h.filter(function(x){ return (+x.totalTds||0) > 0; }).length / h2h.length) * 100, true) : '');
   return h;
 }
+
+/* UNCORRELATED MADNESS (NFL) --------------------------------------------------------------------
+   Under his receptions line AND over a long receiving-yards line. It reads like a contradiction,
+   which is the point: books price the two as if they move together, but a deep threat on few
+   targets gets his yards in one catch, not five. The shape that produces it is low targets and a
+   high average depth of target - three catches for 70 beats six for 45 on this ticket.
+   Every row is judged on how often HE has actually done both in the same game, never on theory. */
+var UM_MIN_ADOT = 11;        // average depth of target, in yards
+var UM_MIN_YPC = 18;         // yards per catch the combination demands
+var UM_MIN_GAMES = 6;
+// A longshot does not need to land often - it needs to land more often than its price implies.
+// A fixed 20% floor threw away every real case on the board; the gate is the price instead, with
+// a small floor so a single freak game cannot carry a row.
+var UM_MIN_HITS = 0.10;
+var UM_NEAR = null;
+function umRows(key, g){
+  if (key !== 'nfl') return [];
+  UM_NEAR = null;
+  var S = state.sports[key], out = [];
+  var od = oddsRowsAll(key) || [];        // odds.json is an object with a books array, not an array
+  var byPlayer = {};
+  od.forEach(function(r){
+    if (!r.player) return;
+    (byPlayer[r.player] = byPlayer[r.player] || []).push(r);
+  });
+  (S.idx.players || []).forEach(function(p){
+    if (!p || !p.name) return;
+    if (['WR', 'TE', 'RB'].indexOf(String(p.position || '').toUpperCase()) < 0) return;
+    var isHome = normTeam(p.team) === normTeam(g.home), isAway = normTeam(p.team) === normTeam(g.away);
+    if (!isHome && !isAway) return;
+    var mine = byPlayer[p.name] || [];
+    // Every posted receptions line, not just one. Watson under 4.5 with 60+ is the bet people
+    // actually place; under 3.5 lands far less often and only looks better because it pays more.
+    var recLines = mine.filter(function(r){ return r.market === 'receptions' && r.under > 0; });
+    if (!recLines.length) return;
+    var logs = sortLogsDesc(((S.idx.logsByName || {})[p.name] || []).slice())
+      .filter(function(r){ return r.receptions != null && r.recYds != null; });
+    if (logs.length < UM_MIN_GAMES) return;
+    var tgt = mean(logs.map(function(r){ return +r.targets || 0; }));
+    var air = mean(logs.map(function(r){ return +r.airYds || 0; }));
+    var aDot = tgt > 0 ? air / tgt : 0;
+    if (aDot < UM_MIN_ADOT) return;                 // not a deep role: nothing uncorrelated here
+    // the longest receiving-yards line he is priced at that his own record can still reach
+    var best = null;
+    // long for him: comfortably above his own average, and a real number of yards. Keying only off
+    // the receptions line let a 1.5-catch player qualify at 15.5 yards, which is not madness.
+    // The idea is yards PER CATCH, not a multiple of the receptions line. Under 5.5 catches for
+    // 70 yards is 14 a catch - ordinary. Under 3.5 for 61 is 20 a catch, which only a deep threat
+    // does, and that is the bet the books price as if it cannot happen.
+    var avgYds = mean(logs.map(function(x){ return +x.recYds || 0; }));
+    var floor = Math.max(34.5, avgYds * 1.1);
+    var recLine = null;
+    recLines.forEach(function(rl){
+      var maxCatches = Math.max(1, Math.floor(rl.line));       // most he can have and still clear
+      mine.filter(function(r){
+        return r.market === 'recYds' && r.over > 0 && r.line >= floor
+          && (r.line / maxCatches) >= UM_MIN_YPC;
+      }).forEach(function(r){
+        var hits = logs.filter(function(x){
+          return (+x.receptions) < rl.line && (+x.recYds) > r.line;
+        }).length;
+        var rate = hits / logs.length;
+        if (rate < UM_MIN_HITS) return;
+        // prefer the pair that lands most often; the longer yards line breaks a tie
+        if (!best || rate > best.rate || (rate === best.rate && r.line > best.yds.line)){
+          best = { yds:r, hits:hits, rate:rate, price:(+rl.under) * (+r.over), rl:rl };
+          recLine = rl;
+        }
+      });
+    });
+    if (!best) return;
+    // NO EV GATE. The feed carries single prices only, and multiplying them is the wrong number:
+    // a bookmaker's same-game builder LENGTHENS a negatively-correlated pair - Watson under 4.5
+    // catches with 60+ yards paid $7.50 at Bet365 where the two singles multiply to about $4. So
+    // the tool reports what it can know - how often he does it, and the price that makes it worth
+    // taking - and leaves the actual price to the builder screen.
+    out.push({ name:p.name, p:p, team:p.team, opp:(isHome ? g.away : g.home), need:(best.rate > 0 ? 1 / best.rate : null),
+               recLine:recLine.line, recPrice:+recLine.under, recBook:recLine.book,
+               ydsLine:best.yds.line, ydsPrice:+best.yds.over, ydsBook:best.yds.book,
+               price:best.price, hits:best.hits, games:logs.length, rate:best.rate,
+               tgt:tgt, aDot:aDot,
+               fair:best.rate > 0 ? 1 / best.rate : null,
+               ev:best.rate * best.price - 1 });
+  });
+  out.sort(function(a, b){ return b.rate - a.rate || b.ydsLine - a.ydsLine; });
+  return out.slice(0, SIG_MAX_ROWS);
+}
+function umRow(key, r){
+  var btns = rowBtns(key, { name:r.name, mkt:'recYds', line:r.ydsLine, side:'over',
+                            odds:r.ydsPrice, book:r.ydsBook, opp:r.opp, team:r.team, label:'Rec Yds' });
+  // its own class, not .gl-row: these are two-leg rows and anything scanning the over/under rows
+  // would otherwise read "Under 3.5 Receptions + 60+ Rec Yds" as a plain under bet
+  return '<div class="um-row" onclick="LAB.player(\'' + key + '\',\''
+      + esc(r.name).replace(/'/g, "\\'") + '\')">'
+    + btns
+    + playerImgP(key, r.name, 28)
+    + '<div class="gl-left"><div class="gl-nm"><b>' + esc(r.name) + '</b>'
+      + '<span class="gl-tag">' + esc((posShortP(r.p) ? posShortP(r.p) + ' \u00b7 ' : '') + abbrOf(key, r.team))
+      + (r.opp ? ' v ' + esc(abbrOf(key, r.opp)) : '') + '</span></div>'
+    + '<div class="gl-bet">Under ' + r.recLine + ' Receptions <b>+</b> ' + Math.ceil(r.ydsLine) + '+ Rec Yds</div>'
+    + '<div class="gl-why">'
+      + '<span class="gl-chip' + (r.rate >= 0.3 ? ' good' : '') + '">' + r.hits + '/' + r.games + ' both in one game</span>'
+      + '<span class="gl-chip">' + r.aDot.toFixed(1) + ' yd aDOT</span>'
+      + '<span class="gl-chip">' + r.tgt.toFixed(1) + ' targets/gm</span>'
+      + '<span class="gl-chip">singles multiply to $' + r.price.toFixed(2) + '</span>'
+    + '</div></div>'
+    + '<div class="gl-right"><div class="gl-odds"><b>$' + (r.need ? r.need.toFixed(2) : '\u2014') + '</b>'
+      + '<span>you need</span></div>'
+      + '<div class="gl-ev">' + Math.round(r.rate * 100) + '%</div></div></div>';
+}
 function nflTuddyRow(key, r){
   var btns = rowBtns(key, { name:r.name, mkt:'anytimeTd', line:0.5, side:'over', odds:r.price, book:r.book, opp:r.opp, team:(r.p||{}).team, label:'Anytime TD' });
   // reuses the Green Lights row chrome, tagged so the two are distinguishable
@@ -6657,6 +6769,15 @@ function nflSignals(key, g){
               sck.rows.map(function(r){ return nflAngleRow(key, r, 'sacks'); }), sck.why)
     + sigTile('ti-hand-stop', 'Pick Watch', 'Interception risk into a ball-hawk defence',
               pck.rows.map(function(r){ return nflAngleRow(key, r, 'picks'); }), pck.why)
+    + (function(){
+        var um = umRows(key, g);
+        return sigTile('ti-arrows-shuffle', 'Uncorrelated Madness',
+          'Under his catches, over a long yards line \u2014 check the price in the builder',
+          um.map(function(r){ return umRow(key, r); }),
+          um.length ? '' : 'No deep threat here pairs an under-receptions price with a long '
+            + 'receiving-yards line he has actually reached. Needs an aDOT of '+UM_MIN_ADOT+'+ yards '
+            + 'and both legs landing in the same game at least '+Math.round(UM_MIN_HITS*100)+'% of the time.');
+      })()
     + sigTile('ti-target-arrow', 'Kicker Matchup', 'Projected points against the posted line',
               kickerRows(key, g).map(function(r){ return kickerRow(key, r); }),
               'No kicker on this fixture has a posted kicking market.'));
@@ -12588,6 +12709,7 @@ window.LAB = {
   statProbe: function(key, row, mkt){ return statOf(key, row, mkt); },
   doneProbe: function(key, g){ return gameDone(key, g, gameStart(g).ms); },
   countProbe: function(key){ return countGames(key); },
+  umProbe: function(key, i){ var f = (state.sports[key].data.fixture || [])[i]; return f ? umRows(key, f) : []; },
   shareProbe: function(){ return shareLines(); },
   shareDeepProbe: function(){ return shareDeepLines(); },
   shareCmbProbe: function(){ return shareCmbLines(); },
