@@ -444,6 +444,47 @@ def transform(resp, mkmap, sport):
     }
 
 
+
+def write_opening(out_path, data):
+    """Keep the FIRST price we saw for each player-market-line, per game day.
+
+    Odds are overwritten every run, so movement was being thrown away and could never be
+    backfilled - a line that opened at 2.5 and sat at 3.5 by kick-off looked the same as one that
+    never moved. This writes a sibling odds_open.json holding the opening price and the time it was
+    taken, keyed by player|market|line|book. Existing keys are never touched, so the first snapshot
+    of the day is the one that survives; the file resets when the day rolls over.
+    """
+    import datetime
+    base = os.path.dirname(out_path) or '.'
+    path = os.path.join(base, 'odds_open.json')
+    today = datetime.datetime.utcnow().strftime('%Y-%m-%d')
+    prev = {}
+    if os.path.exists(path):
+        try:
+            with open(path) as fh:
+                prev = json.load(fh) or {}
+        except (json.JSONDecodeError, OSError):
+            prev = {}
+    if prev.get('day') != today:
+        prev = {'day': today, 'opened': {}}          # a new slate starts clean
+    opened = prev.setdefault('opened', {})
+    stamp = datetime.datetime.utcnow().strftime('%Y-%m-%dT%H:%MZ')
+    added = 0
+    for row in (data.get('lines') or []) + (data.get('alt') or []):
+        pl, mk, ln, bk = row.get('player'), row.get('market'), row.get('line'), row.get('book')
+        if pl is None or mk is None or ln is None or bk is None:
+            continue
+        k = '%s|%s|%s|%s' % (pl, mk, ln, bk)
+        if k in opened:
+            continue
+        o, u = row.get('over'), row.get('under')
+        opened[k] = {'o': o, 'u': u, 't': stamp}
+        added += 1
+    with open(path, 'w') as fh:
+        json.dump(prev, fh, separators=(',', ':'))
+    return added, len(opened)
+
+
 def main():
     argv = sys.argv[1:]
     force, window, pos, i = False, 3, [], 0
@@ -495,6 +536,8 @@ def main():
     os.makedirs(os.path.dirname(out_path) or '.', exist_ok=True)
     with open(out_path, 'w') as fh:
         json.dump(data, fh, separators=(',', ':'))
+    added, held = write_opening(out_path, data)
+    print('%s opening lines: +%d new, %d held' % (sport, added, held))
     print('%s odds: %d lines, %d alt, %d books, %d games (credits ~%d)' % (
         sport, len(data['lines']), len(data['alt']), len(data['bookNames']), len(data['matchOdds']),
         len(markets) * math.ceil(len(BOOKMAKERS) / 5)))
