@@ -7207,9 +7207,15 @@ function specHitRate(key, name, mkt, line){
 }
 function nblSpecialist(key, g, stat){
   var S = state.sports[key], lg = leagueAvg(key, stat);
-  var top = (S.idx.players || []).filter(function(p){ return lg[p.name] && lg[p.name].games >= 5; })
-    .sort(function(a,b){ return lg[b.name].avg - lg[a.name].avg; }).slice(0, 15);
   var inGame = {}; inGame[normTeam(g.home)] = g.away; inGame[normTeam(g.away)] = g.home;
+  // Rank inside the FIXTURE, not the league. Taking the league's top 15 and then filtering to the
+  // two teams playing left about two candidates in a ten-team competition - which is why Slashers,
+  // Splashers, Dishers and Boarders almost never fired. The read is "the best in this game", so
+  // the field is this game.
+  var top = (S.idx.players || []).filter(function(p){
+      return lg[p.name] && lg[p.name].games >= 5 && inGame[normTeam(p.team)];
+    })
+    .sort(function(a,b){ return lg[b.name].avg - lg[a.name].avg; }).slice(0, 8);
   var out = [];
   top.forEach(function(p, i){
     var opp = inGame[normTeam(p.team)];
