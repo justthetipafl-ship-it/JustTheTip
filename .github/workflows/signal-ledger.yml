@@ -1,0 +1,65 @@
+name: JTT Signal Ledger
+
+# Two jobs on one file:
+#   snapshot - every 30 minutes, record the signals the tool is showing for any game about an hour
+#              out. A fixed lead time is the point: grading "whatever is showing" would make the
+#              record depend on when the grader looked, and the window could be tuned afterwards to
+#              flatter the results.
+#   grade    - settle the rows whose game has been played and publish the per-tile record.
+
+on:
+  schedule:
+    - cron: "*/30 * * * *"     # catch every game once, an hour before it starts
+    - cron: "15 13 * * *"      # and settle yesterday's once the gamelogs have landed
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: signal-ledger
+  cancel-in-progress: false
+
+jobs:
+  ledger:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install jsdom
+        run: npm install jsdom@25 --no-save --silent
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Snapshot the signals showing now
+        run: |
+          # the page reads its data from the repo itself, so --serve is the checkout
+          node --max-old-space-size=6000 scripts/snapshot_signals.js \
+            --serve . --page index.html --out data/signal_log.json \
+            --lead 60 --window 35 || true
+
+      - name: Grade what has been played
+        run: |
+          python3 scripts/grade_signals.py \
+            --log data/signal_log.json --root . --out data/signal_report.json || true
+
+      - name: Commit
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add data/signal_log.json data/signal_report.json
+          if git diff --cached --quiet; then
+            echo "nothing changed"
+          else
+            git commit -m "Signal ledger: snapshot and grade"
+            for i in 1 2 3; do
+              git pull --rebase --autostash origin main && git push && break
+              sleep 5
+            done
+          fi
