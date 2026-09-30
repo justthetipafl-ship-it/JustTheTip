@@ -3661,7 +3661,10 @@ function eliteRow(key, r){
    never cleared it) and AVG (their best or worst matchup in the league).
    AFL gamelogs carry no opponent field, so it's derived from MatchId - both teams
    in a match share one - rather than skipping the sport.                            */
-var H2H_MIN_BUNNY = 3, H2H_MIN_BOGEY = 2, H2H_MIN_OTHER = 2;
+// Meetings needed before a head-to-head record means anything. Two was too few: "never cleared in
+// two games" is a coin flip that landed twice, and the tile was presenting it as a pattern. Four
+// is still a small sample, which is why the row prints the count rather than hiding it.
+var H2H_MIN_BUNNY = 4, H2H_MIN_BOGEY = 4, H2H_MIN_OTHER = 3;
 // A bunny wants the line the book actually hangs on him. Where a sport posts no two-way market
 // at all (EPL) or only one (AFL: disposals), fall back to the alt ladder - but only at $1.75+,
 // so the fallback can't quietly become "he clears a 0.5 rung at $1.02".
@@ -4536,10 +4539,11 @@ function nflTeamAngle(key, g, kind){
       var posMult = posDvp ? Math.max(0.8, Math.min(1.3, 1 + posDvp.pct/200)) : 1;
       var proj = lg.avg * o.mult * posMult;
       var rec = sigRecord(key, p.name, stat, od.line, 10);
-      // Pick Watch is an interception bet, and a projection under one interception is a bet that
-      // something rare happens - the tile was listing quarterbacks projected at 0.7. Require the
-      // model to expect at least one, which is the thing being wagered on.
-      if (stat === 'passInt' && !(proj >= 1)) return;
+      // Both of these are "does a rare thing happen" bets, and a projection under one is a bet
+      // the model itself does not expect to land. Measured on a live board: 17 of 32 quarterbacks
+      // and 141 of 158 pass rushers were being listed under one. Require the model to expect the
+      // thing being wagered on.
+      if ((stat === 'passInt' || stat === 'sacks' || stat === 'defSacks') && !(proj >= 1)) return;
       out.push({ name:p.name, p:p, opp:opp, stat:stat, avg:lg.avg, games:lg.games, rec:rec,
                  oppRate:o.rate, oppMult:o.mult, posDvp:posDvp, snap:snap, vol:vol, proj:proj,
                  price:od.price, line:od.line, book:od.book,
@@ -7186,6 +7190,21 @@ function nblPriced(key, p, mkt, opp, line){
 /* SLASHERS / SPLASHERS / DISHERS / BOARDERS - the league's best at a stat into a defence that
    gives it up to their position. Production took ANY player against a 4%+ soft defence; here it's
    the league's top 15 at the stat, so the tile is about specialists, not everyone on the slate. */
+var SPEC_MIN_PRICE = 1.35;   // below this the margin eats any edge a volume read can have
+function specHitRate(key, name, mkt, line){
+  var logs = ((state.sports[key].idx.logsByName || {})[name] || []);
+  var vals = [];
+  logs.forEach(function(r){ var v = statOf(key, r, mkt); if (v != null) vals.push(v); });
+  if (vals.length < 8 || line == null) return null;
+  var recent = sortLogsDesc(logs.slice()).slice(0, 20);
+  var hits = 0, n = 0;
+  recent.forEach(function(r){
+    var v = statOf(key, r, mkt);
+    if (v == null) return;
+    n++; if (v > line) hits++;
+  });
+  return n >= 8 ? hits / n : null;
+}
 function nblSpecialist(key, g, stat){
   var S = state.sports[key], lg = leagueAvg(key, stat);
   var top = (S.idx.players || []).filter(function(p){ return lg[p.name] && lg[p.name].games >= 5; })
@@ -7198,7 +7217,18 @@ function nblSpecialist(key, g, stat){
     var dr = dvpRankFor(key, opp, p.position || p.pos, stat);
     if (!dr || dr.pct < 4) return;
     var b = nblPriced(key, p, stat, opp);
-    if (b) out.push({ name:p.name, p:p, opp:opp, rank:i+1, avg:lg[p.name].avg, dr:dr, b:b });
+    if (!b) return;
+    // Volume into a soft defence is the read, but the PRICE decides whether it is a bet. These
+    // tiles had no floor at all, and 14% of NHL shot lines sit under $1.35 - a line he clears
+    // nine times in ten at $1.05 still loses money. Same rule Shot Machines uses.
+    var px = +(b.price != null ? b.price : b.over);
+    if (!(px >= SPEC_MIN_PRICE)) return;
+    // and it has to pay at his own rate over the games we have
+    var hit = specHitRate(key, p.name, stat, b.line);
+    if (hit != null && hit * px - 1 <= 0) return;
+    b.hit = hit;
+    out.push({ name:p.name, p:p, opp:opp, rank:i+1, avg:lg[p.name].avg, dr:dr, b:b,
+               ev:(hit != null ? hit * px - 1 : null) });
   });
   out.sort(function(a,b){ return b.b.ev - a.b.ev; });
   return out;
