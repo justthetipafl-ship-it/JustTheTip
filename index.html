@@ -4767,11 +4767,13 @@ function dueRow(key, r){
       + '<span class="gl-chip">' + r.dry + ' of his last 10 with a goal</span>'
       + '<span class="gl-chip good">' + esc(abbrOf(key, r.opp)) + ' concede ' + r.oppGA.toFixed(2) + '</span>'
     + '</div></div>'
-    + '<div class="gl-right"><div class="gl-odds"><b>$' + b.price.toFixed(2) + '</b>'
-      + '<span>' + esc(b.book) + '</span></div>'
-      + '<div class="gl-ev ' + (b.ev >= 0 ? 'good' : 'bad') + '">' + (b.ev >= 0 ? '+' : '')
-      + Math.round(b.ev * 100) + '%</div></div></div>';
+    + '<div class="gl-right"><div class="gl-ev '+(b.ev >= 0 ? 'pos' : 'neg')+'">'
+      + (b.ev > 0 ? '+' : '')+Math.round(b.ev*100)+'%</div>'
+      + '<div class="gl-evl">'+(evTrusted(key) ? 'EDGE' : 'EDGE?')+'</div>'
+      + '<div class="gl-odds">$'+b.price.toFixed(2)+(b.book ? '<i>'+esc(b.book)+'</i>' : '')+'</div>'
+      + '<span class="gl-book">'+esc(b.book||'')+'</span></div></div>';
 }
+
 function ppMerchants(key, g){
   if (key !== 'nhl') return { rows:[], why:'' };
   var S = state.sports[key], out = [];
@@ -4852,10 +4854,13 @@ function ppMerchantRow(key, r){
       + '<span class="gl-chip">' + r.ppRate.toFixed(2) + ' PP pts/gm</span>'
       + '<span class="gl-chip good">' + esc(abbrOf(key, r.opp)) + ' concede ' + r.oppPP.toFixed(2) + ' PP pts</span>'
     + '</div></div>'
-    + '<div class="gl-right"><div class="gl-odds"><b>$' + b.price.toFixed(2) + '</b>'
-      + '<span>' + esc(b.book) + '</span></div>'
-      + '<div class="gl-ev good">+' + Math.round(b.ev * 100) + '%</div></div></div>';
+    + '<div class="gl-right"><div class="gl-ev '+(b.ev >= 0 ? 'pos' : 'neg')+'">'
+      + (b.ev > 0 ? '+' : '')+Math.round(b.ev*100)+'%</div>'
+      + '<div class="gl-evl">'+(evTrusted(key) ? 'EDGE' : 'EDGE?')+'</div>'
+      + '<div class="gl-odds">$'+b.price.toFixed(2)+(b.book ? '<i>'+esc(b.book)+'</i>' : '')+'</div>'
+      + '<span class="gl-book">'+esc(b.book||'')+'</span></div></div>';
 }
+
 function shotMachines(key, g){
   if (key !== 'nhl') return { rows:[], why:'' };
   var S = state.sports[key], out = [];
@@ -4930,26 +4935,13 @@ function shotMachineRow(key, r){
       + '<span class="gl-chip' + (r.soft >= 0.8 ? ' good' : '') + '">' + esc(abbrOf(key, r.opp))
       + ' concede ' + r.oppSA.toFixed(1) + '</span>'
     + '</div></div>'
-    + '<div class="gl-right"><div class="gl-odds"><b>$' + r.price.toFixed(2) + '</b>'
-      + '<span>' + esc(r.book) + '</span></div>'
-      + '<div class="gl-ev ' + (r.ev >= 0 ? 'good' : 'bad') + '">' + (r.ev >= 0 ? '+' : '')
-      + Math.round(r.ev * 100) + '%</div></div></div>';
+    + '<div class="gl-right"><div class="gl-ev '+(r.ev >= 0 ? 'pos' : 'neg')+'">'
+      + (r.ev > 0 ? '+' : '')+Math.round(r.ev*100)+'%</div>'
+      + '<div class="gl-evl">'+(evTrusted(key) ? 'EDGE' : 'EDGE?')+'</div>'
+      + '<div class="gl-odds">$'+r.price.toFixed(2)+(r.book ? '<i>'+esc(r.book)+'</i>' : '')+'</div>'
+      + '<span class="gl-book">'+esc(r.book||'')+'</span></div></div>';
 }
 
-/* DUE TO SCORE (NFL) -----------------------------------------------------------------------------
-   The same idea as the NHL version, in the sport's own currency. Touchdowns are rare and lumpy;
-   the red-zone touches and targets that PRODUCE them are stable week to week. So this looks for a
-   player getting the ball inside the 20 whose conversion has dried up, against a defence that
-   concedes touchdowns to his position. Tuddy Targets asks who has the usage; this asks who has the
-   usage and has been getting nothing for it, which is where the price drifts.                  */
-var NDUE_MIN_USE = 1.2;      // red-zone touches and targets a game, over the recent window
-var NDUE_RECENT = 3;         // "recent" is his last three games
-var NDUE_DROUGHT = 2;        // and he must have gone at least this many without a touchdown
-var NDUE_MIN_SEASON = 2;     // games THIS season before the drought means anything
-var NDUE_MIN_GAMES = 6, NDUE_MIN_PRICE = 1.6;   // games of history behind the scoring rate
-// How often a red-zone touch becomes a touchdown, league-wide, this season. The whole premise is
-// that usage predicts scoring, so the probability should come from HIS CURRENT usage rather than a
-// career rate that still averages in the years he was not the man getting the ball down there.
 function rzConversion(key){
   var S = state.sports[key];
   if (S.idx.rzConv != null) return S.idx.rzConv;
@@ -4962,6 +4954,14 @@ function rzConversion(key){
   S.idx.rzConv = use > 20 ? td / use : null;
   return S.idx.rzConv;
 }
+var NDUE_MIN_USE = 1.2;      // red-zone touches and targets a game, over the recent window
+var NDUE_RECENT = 3;         // "recent" is his last three games
+var NDUE_DROUGHT = 2;        // and he must have gone at least this many without a touchdown
+var NDUE_MIN_SEASON = 2;     // games THIS season before the drought means anything
+var NDUE_MIN_GAMES = 6, NDUE_MIN_PRICE = 1.6;   // games of history behind the scoring rate
+// How often a red-zone touch becomes a touchdown, league-wide, this season. The whole premise is
+// that usage predicts scoring, so the probability should come from HIS CURRENT usage rather than a
+// career rate that still averages in the years he was not the man getting the ball down there.
 function nflDueToScore(key, g){
   if (key !== 'nfl') return { rows:[], why:'' };
   var S = state.sports[key], out = [];
@@ -5109,10 +5109,13 @@ function nflDueRow(key, r){
       + (r.soft != null ? '<span class="gl-chip">' + esc(abbrOf(key, r.opp)) + ' concede '
          + (+r.soft).toFixed(1) + ' TDs to his spot</span>' : '')
     + '</div>' + nflRzBox(key, r) + '</div>'
-    + '<div class="gl-right"><div class="gl-odds"><b>$' + b.price.toFixed(2) + '</b>'
-      + '<span>' + esc(b.book) + '</span></div>'
-      + '<div class="gl-ev good">+' + Math.round(b.ev * 100) + '%</div></div></div>';
+    + '<div class="gl-right"><div class="gl-ev '+(b.ev >= 0 ? 'pos' : 'neg')+'">'
+      + (b.ev > 0 ? '+' : '')+Math.round(b.ev*100)+'%</div>'
+      + '<div class="gl-evl">'+(evTrusted(key) ? 'EDGE' : 'EDGE?')+'</div>'
+      + '<div class="gl-odds">$'+b.price.toFixed(2)+(b.book ? '<i>'+esc(b.book)+'</i>' : '')+'</div>'
+      + '<span class="gl-book">'+esc(b.book||'')+'</span></div></div>';
 }
+
 function umRows(key, g){
   if (key !== 'nfl') return [];
   UM_NEAR = null;
