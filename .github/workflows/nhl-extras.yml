@@ -1,0 +1,76 @@
+name: NHL extras (goalies, special teams)
+
+# Starting goalies, power-play and penalty-kill rates, and optionally NHL Edge shot location.
+#
+# RUN THE DRY RUN FIRST. These NHL endpoints are undocumented and their shapes shift between
+# seasons, so the first run should prove it can read them before anything is written:
+#
+#   Actions -> NHL extras -> Run workflow -> leave "dry run" ticked -> Run
+#   then open the run and read the "Fetch" step's log.
+#
+# If the goalie names and PP/PK numbers look right, run it again with "dry run" unticked. If it
+# comes back empty, nothing is written and nothing is broken - the tool falls back to reading the
+# goalie rotation from the game logs, which is what it does today.
+#
+# Once it works, the schedule below keeps it current: goalies are named a few hours before a game,
+# so an hourly run through the evening is what makes them useful.
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Dry run (print what it finds, write nothing)'
+        type: boolean
+        default: true
+      date:
+        description: 'Date to fetch (YYYY-MM-DD, blank = today)'
+        type: string
+        required: false
+      edge_cap:
+        description: 'How many skaters to pull Edge shot-location data for (0 = skip)'
+        type: string
+        default: '0'
+  schedule:
+    - cron: "0 20-23,0-4 * * *"      # hourly across the NHL evening, UTC
+
+permissions:
+  contents: write
+
+concurrency:
+  group: nhl-extras
+  cancel-in-progress: false
+
+jobs:
+  extras:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Fetch
+        run: |
+          ARGS="--out nhl/data --edge-cap ${{ inputs.edge_cap || '0' }}"
+          if [ -n "${{ inputs.date }}" ]; then ARGS="$ARGS --date ${{ inputs.date }}"; fi
+          # the scheduled run always writes; only a hand-started run can be a dry run
+          if [ "${{ inputs.dry_run }}" = "true" ]; then ARGS="$ARGS --dry-run"; fi
+          echo "python3 nhl/fetch_nhl_extras.py $ARGS"
+          python3 nhl/fetch_nhl_extras.py $ARGS
+
+      - name: Commit
+        if: ${{ inputs.dry_run != true }}
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add nhl/data/goalies.json nhl/data/special_teams.json nhl/data/edge_shots.json 2>/dev/null || true
+          if git diff --cached --quiet; then
+            echo "nothing new"
+          else
+            git commit -m "NHL extras: goalies and special teams"
+            for i in 1 2 3; do
+              git pull --rebase --autostash origin main && git push && break
+              sleep 5
+            done
+          fi
