@@ -703,6 +703,11 @@
   .mb-nm{display:flex;align-items:baseline;gap:7px;flex-wrap:wrap;}
   .mb-nm b{font-size:12px;font-weight:700;}
   .mb-bet{font-family:var(--font-mono);font-size:11px;color:var(--text-2);}
+  .mb-px{text-align:right;flex:0 0 auto;font-family:var(--font-mono);}
+  .mb-px b{display:block;font-size:13px;}
+  .mb-px span{display:flex;gap:6px;justify-content:flex-end;font-size:9px;color:var(--text-3);
+    margin-top:2px;white-space:nowrap;}
+  .mb-px .mb-ev{color:var(--accent);}
   .mb-badge.sig-b{background:rgba(34,197,94,.14);color:var(--accent);border-color:transparent;}
   .mb-tick{color:var(--accent);font-size:15px;margin-left:2px;}
   @media (max-width:560px){ .mb-bar{flex-wrap:wrap;} .mb-bar .ob-sel{flex:1 1 100%;} }
@@ -9374,7 +9379,10 @@ function mbCandidates(key, g, mode){
             why = dr ? ['+'+dr.pct.toFixed(0)+'% DVP', 'L5 '+l5avg.toFixed(1)] : [];
           }
           if (!ok2) return;
-          var rank = mode === 'all' ? ev
+          // Ranking 'all' on EV put "2+ goals at $41, model says 9%" at the top of the list -
+          // the tail of the model, where a point of probability is worth 40 cents of edge. A
+          // builder reads from banker to longshot, so order by how likely the leg is.
+          var rank = mode === 'all' ? prob
                    : mode === 'lotto' ? prob * c.price
                    : mode === 'safe' ? c.price
                    : mode === 'form' ? prob * (c.price - 1)      // the steadiest that still pays
@@ -9529,6 +9537,9 @@ function mbPanel(pin){
     f = fixes[selIdx];
   }
   S = state.sports[f.key];
+  // remember which game this panel is showing: when it is pinned to a focused fixture, the crew
+  // page's picker points somewhere else entirely and a tap looked the leg up in the wrong game
+  state.view.mbShown = { key:f.key, g:f.g };
   var h = pin ? '' : (function(){
     var fixes2 = mbFixtures(), sel2 = Math.min(v.mbFix || 0, fixes2.length - 1);
     return '<select class="mb-fixsel" onchange="LAB.mbFix(this.value)">'
@@ -9575,11 +9586,19 @@ function mbPanel(pin){
     var picked = (v.cmbLegs || []).some(function(l){
       return l && l.p && (l.key + '|' + l.p.name + '|' + l.mkt + '|' + l.line) === c.id;
     });
-    // signals wear the same badge shape as everything else, so the row reads uniformly
-    var sigBad = (c.sigs || []).map(function(x){
-      return '<span class="mb-badge sig-b">' + esc(x[1]) + '</span>';
-    }).join('');
-    var bad = sigBad + (c.badges || '');
+    // mbBadges returns PAIRS - [label, kind] - not HTML. Concatenating it printed the array as
+    // "Value,val". Render the pairs, and add only the reads mbBadges does not already cover, so a
+    // leg never wears the same badge twice.
+    var have = {}, parts = [];
+    (c.badges || []).forEach(function(b){
+      have[String(b[0]).toLowerCase()] = 1;
+      parts.push('<span class="mb-badge ' + esc(b[1]) + '">' + esc(b[0]) + '</span>');
+    });
+    (c.sigs || []).forEach(function(x){
+      if (have[String(x[1]).toLowerCase()]) return;
+      parts.push('<span class="mb-badge sig-b">' + esc(x[1]) + '</span>');
+    });
+    var bad = parts.join('');
     return '<div class="mb-leg'+(picked ? ' on' : '')+'" onclick="LAB.mbAdd(\''+esc(c.id).replace(/'/g, "\\'")+'\')">'
       + '<button class="mb-hide" onclick="event.stopPropagation();LAB.mbHide(\''+esc(c.id).replace(/'/g, "\\'")+'\')" '
       + 'title="hide this leg"><i class="ti ti-eye-off"></i></button>'
@@ -9587,7 +9606,7 @@ function mbPanel(pin){
       + '<span class="mb-bet">'+esc(c.label)+'</span></div>'
       + '<div class="mb-badges">'+bad+'</div></div>'
       + '<div class="mb-px"><b>$'+c.price.toFixed(2)+'</b>'
-      + '<span>'+Math.round(c.prob*100)+'% \u00b7 <span class="mb-ev">'
+      + '<span>'+Math.round(c.prob*100)+'%<span class="mb-ev">'
       + (c.ev > 0 ? '+' : '')+Math.round(c.ev*100)+'%</span></span></div>'
       + (picked ? '<i class="ti ti-check mb-tick"></i>' : '') + '</div>';
   }).join('');
@@ -13827,6 +13846,8 @@ window.LAB = {
   mbPanelProbe: function(){ return mbPanel(); },
   mbListProbe: function(){ var f = mbFixtures()[state.view.mbFix || 0];
     return f ? mbCandidates(f.key, f.g, 'all') : []; },
+  mbPinProbe: function(key, i){ var g = (state.sports[key].data.fixture || [])[i];
+    return g ? mbPanel({ key:key, g:g, i:i }) : ''; },
   mbCandProbe: function(){ var fx = mbFixtures(), out = [];
     fx.slice(0, 12).forEach(function(f, i){
       var n = mbCandidates(f.key, f.g, 'all').length;
@@ -13839,7 +13860,9 @@ window.LAB = {
   },
   mbUnhide: function(){ state.view.mbHidden = {}; render(); },
   mbAdd: function(id){
-    var fixes = mbFixtures(), f = fixes[Math.min(state.view.mbFix || 0, fixes.length - 1)];
+    var shown = state.view.mbShown;
+    var fixes = mbFixtures();
+    var f = shown ? { key:shown.key, g:shown.g } : fixes[Math.min(state.view.mbFix || 0, fixes.length - 1)];
     if (!f) return;
     // the list is built in 'all' mode now - looking the id up under the old mode found nothing,
     // so a tap did nothing at all
