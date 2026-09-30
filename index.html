@@ -687,6 +687,25 @@
   .mb-m{flex:1;min-width:0;}
   .mb-nm{font-size:12px;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
   .mb-bet{font-family:var(--font-mono);font-size:10px;color:var(--text-2);margin-top:2px;}
+  .mb-bar{display:flex;gap:8px;align-items:center;padding:8px 2px;}
+  .mb-bar .ob-sel{flex:1;min-width:0;}
+  .mb-count{display:flex;align-items:center;gap:8px;padding:4px 2px 8px;font-size:10px;
+    color:var(--text-3);font-family:var(--font-mono);}
+  .mb-count span{letter-spacing:.04em;text-transform:uppercase;}
+  .mb-leg{display:flex;gap:10px;align-items:center;padding:10px 10px 10px 4px;
+    border-top:1px solid var(--border);cursor:pointer;position:relative;}
+  .mb-leg:active{background:var(--surface-2);}
+  .mb-leg.on{background:rgba(34,197,94,.07);}
+  .mb-hide{background:none;border:0;color:var(--text-3);padding:4px 6px;cursor:pointer;font-size:13px;
+    opacity:.5;}
+  .mb-hide:active{opacity:1;}
+  .mb-l{flex:1;min-width:0;}
+  .mb-nm{display:flex;align-items:baseline;gap:7px;flex-wrap:wrap;}
+  .mb-nm b{font-size:12px;font-weight:700;}
+  .mb-bet{font-family:var(--font-mono);font-size:11px;color:var(--text-2);}
+  .mb-badge.sig-b{background:rgba(34,197,94,.14);color:var(--accent);border-color:transparent;}
+  .mb-tick{color:var(--accent);font-size:15px;margin-left:2px;}
+  @media (max-width:560px){ .mb-bar{flex-wrap:wrap;} .mb-bar .ob-sel{flex:1 1 100%;} }
   .mb-badges{display:flex;flex-wrap:wrap;gap:3px;margin-top:4px;}
   .mb-b{font-size:8px;font-weight:800;letter-spacing:.03em;padding:2px 6px;border-radius:999px;
     border:1px solid var(--border);color:var(--text-3);}
@@ -9249,6 +9268,9 @@ function mbBadges(key, p, mkt, line, price, prob, vals, h2h){
   if (prob != null && price && prob - 1 / price >= 0.05) out.push(['Value', 'val']);
   return out;
 }
+function betLabelFor(key, mkt, label, line){
+  return (line % 1 ? Math.ceil(line) : line + 1) + '+ ' + label;
+}
 function mbCandidates(key, g, mode){
   var S = state.sports[key], out = [];
   var mkts = (S.config || {}).oddsMkts || (S.config || {}).multiMkts || [];
@@ -9308,6 +9330,22 @@ function mbCandidates(key, g, mode){
           var l10 = vals.slice(0, 10), hits = l10.filter(function(v){ return v > c.line; }).length;
           var hHit = h2h.filter(function(v){ return v > c.line; }).length;
           var why = [], ok2 = false;
+          // 'all' keeps every leg and records which reads it satisfies, so the modes become badges
+          // on the row instead of a filter the reader has to guess at
+          var sigs = [];
+          if (mode === 'all'){
+            var l10a = vals.slice(0, 10), hitsA = l10a.filter(function(x){ return x > c.line; }).length;
+            var l20a = vals.slice(0, 20), h20a = l20a.filter(function(x){ return x > c.line; }).length;
+            var edgeA = fair != null ? prob - fair : prob - 1 / c.price;
+            if (hitsA === l10a.length && l10a.length >= 5) sigs.push(['safe', 'Banker']);
+            if (l20a.length >= 8 && h20a / l20a.length >= 0.65) sigs.push(['form', 'Form']);
+            if (edgeA >= 0.03 && c.price <= MB_VALUE_MAX) sigs.push(['value', 'Value']);
+            if (c.price >= MB_LOTTO_MIN && prob >= 0.15 && edgeA >= 0.02) sigs.push(['lotto', 'Long shot']);
+            if (h2h.length >= 2 && hHit / h2h.length >= 0.75 && h2h[0] > c.line) sigs.push(['hist', 'D\u00e9j\u00e0 Vu']);
+            if (dr && dr.pct >= 8) sigs.push(['match', 'Matchup']);
+            ok2 = true;
+            why = [hitsA + '/' + l10a.length + ' last ' + l10a.length];
+          }
           if (mode === 'safe'){
             ok2 = (hits === l10.length && l10.length >= 5);
             why = [hits+'/'+l10.length+' last '+l10.length];
@@ -9336,13 +9374,16 @@ function mbCandidates(key, g, mode){
             why = dr ? ['+'+dr.pct.toFixed(0)+'% DVP', 'L5 '+l5avg.toFixed(1)] : [];
           }
           if (!ok2) return;
-          var rank = mode === 'lotto' ? prob * c.price
+          var rank = mode === 'all' ? ev
+                   : mode === 'lotto' ? prob * c.price
                    : mode === 'safe' ? c.price
                    : mode === 'form' ? prob * (c.price - 1)      // the steadiest that still pays
                    : ev;
           if (!best || rank > best.rank)
-            best = { key:key, p:p, mkt:k, label:m[1], line:c.line, price:c.price, book:c.book,
-                     prob:prob, ev:ev, opp:opp, team:team, why:why, rank:rank,
+            best = { key:key, p:p, name:p.name, mkt:k, label:betLabelFor(key, k, m[1], c.line),
+                     line:c.line, price:c.price, book:c.book,
+                     prob:prob, ev:ev, opp:opp, team:team, why:why, rank:rank, sigs:sigs || [],
+                     vals:vals, h2h:h2h,
                      badges:mbBadges(key, p, k, c.line, c.price, prob, vals, h2h),
                      id:key+'|'+p.name+'|'+k+'|'+c.line };
         });
@@ -9472,6 +9513,13 @@ function signalsMultiPanel(key, g){
 // pin: {key, g} renders the builder for ONE fixture, with no picker - that is how it sits inside a
 // focused fixture and inside Degen Crew, rather than only behind the Check My Bet panel.
 function mbPanel(pin){
+  /* MULTI BUILDER -------------------------------------------------------------------------------
+     Two filters and a list. The mode chips (value / safe / long) and the line nudger were asking
+     the reader to configure a search before seeing anything, and they hid legs behind settings
+     nobody had a reason to change. Every leg the game has is shown instead, each wearing the same
+     badges the rest of the tool uses - including which signal it came from - and a tap adds it.
+     Hidden legs stay hidden for the session, so a reader can clear away what they do not want
+     rather than filter for what they do.                                                       */
   var v = state.view;
   var f = pin, S;
   if (!f){
@@ -9484,74 +9532,68 @@ function mbPanel(pin){
   var h = pin ? '' : (function(){
     var fixes2 = mbFixtures(), sel2 = Math.min(v.mbFix || 0, fixes2.length - 1);
     return '<select class="mb-fixsel" onchange="LAB.mbFix(this.value)">'
-      + fixes2.map(function(x, i){
-          return '<option value="'+i+'"'+(i===sel2?' selected':'')+'>'
+      + fixes2.map(function(x, i2){
+          return '<option value="'+i2+'"'+(i2===sel2?' selected':'')+'>'
             + esc(SPORTS[x.key].name+' \u00b7 '+abbrOf(x.key, x.g.away)+' @ '+abbrOf(x.key, x.g.home))+'</option>';
         }).join('')+'</select>';
   })();
-  var mode = v.mbMode || 'value';
+
+  // ---- the only two filters: which book, and which market ----
   var books = booksFor(f.key);
-  var cur = state.view.mbBook === '*' ? '*' : (state.view.mbBook || HOUSE_BOOK);
-  h += '<div class="deg-bar"><span>Book</span><select class="ob-sel" onchange="LAB.mbBook(this.value)">'
-    + books.map(function(b){ return '<option value="'+esc(b)+'"'+(b === cur ? ' selected' : '')+'>'+esc(b)+'</option>'; }).join('')
-    + '<option value="*"'+(cur === '*' ? ' selected' : '')+'>Best price per leg (not one ticket)</option></select>'
-    + '<span class="deg-note">'+(cur === '*' ? 'Legs may sit at different books \u2014 you could not place this as one multi.'
-        : 'Every leg priced at '+esc(cur)+', so the multi is placeable.')+'</span></div>';
-  // safer or riskier: shift every suggested line down or up a rung. The prices come from the
-  // book's own ladder, so this is a real bet at a real price, not a re-quote.
-  var nud = +state.view.mbNudge || 0;
-  h += '<div class="deg-bar"><span>Lines</span>'
-    + '<button class="sl-chip" onclick="LAB.mbNudge(-1)"><i class="ti ti-minus"></i></button>'
-    + '<b class="mb-nud">'+(nud === 0 ? 'as posted' : (nud > 0 ? '+' : '')+nud+' rung'+(Math.abs(nud) === 1 ? '' : 's'))+'</b>'
-    + '<button class="sl-chip" onclick="LAB.mbNudge(1)"><i class="ti ti-plus"></i></button>'
-    + '<span class="deg-note">'+(nud < 0 ? 'Shorter lines, shorter prices \u2014 safer.'
-        : nud > 0 ? 'Longer lines, bigger prices \u2014 riskier.'
-        : 'Nudge down for safer legs, up for riskier ones.')+'</span></div>';
-  if (state.view.mbNote) h += '<div class="deg-note" style="padding:6px 2px">'+esc(state.view.mbNote)+'</div>';
-  // Market, bookmaker and signal - the three filters the original tool had. The modes below still
-  // decide HOW legs are ranked; these decide which ones are eligible at all.
+  var cur = v.mbBook === '*' ? '*' : (v.mbBook || HOUSE_BOOK);
   var mkts = ((S.config || {}).oddsMkts) || [];
-  h += '<div class="deg-bar"><span>Market</span>'
+  h += '<div class="deg-bar mb-bar"><select class="ob-sel" onchange="LAB.mbBook(this.value)">'
+    + books.map(function(b){ return '<option value="'+esc(b)+'"'+(b === cur ? ' selected' : '')+'>'+esc(b)+'</option>'; }).join('')
+    + '<option value="*"'+(cur === '*' ? ' selected' : '')+'>Best price per leg</option></select>'
     + '<select class="ob-sel" onchange="LAB.mbMkt(this.value)"><option value="">All markets</option>'
     + mkts.map(function(m){ return '<option value="'+esc(m[0])+'"'+(v.mbMkt === m[0] ? ' selected' : '')+'>'+esc(m[1])+'</option>'; }).join('')
-    + '</select>'
-    + '<span>Signal</span><select class="ob-sel" onchange="LAB.mbSig(this.value)">'
-    + [['','Any signal'],['bank','Banker'],['form','Form'],['streak','Streak'],['deja','D\u00e9j\u00e0 Vu'],['ceil','Ceiling'],['val','Value']]
-        .map(function(o){ return '<option value="'+o[0]+'"'+(v.mbSig === o[0] ? ' selected' : '')+'>'+esc(o[1])+'</option>'; }).join('')
-    + '</select></div>';
-  h += '<div class="mb-modes">'+MB_MODES.map(function(m){
-    return '<button class="sl-chip'+(m[0]===mode?' on':'')+'" onclick="LAB.mbMode(\''+m[0]+'\')">'
-      + m[1]+'</button>'; }).join('')+'</div>';
-  if (S.t3 !== 'ready'){
-    ensureSport(f.key);
-    return h + '<div class="empty" style="padding:18px">Loading '+esc(SPORTS[f.key].name)+' history\u2026</div>';
-  }
-  if (mode === 'signals') return h + signalsMultiPanel(f.key, f.g);
-  var cands = mbCandidates(f.key, f.g, mode).filter(function(c){
-    if (v.mbMkt && c.mkt !== v.mbMkt) return false;
-    if (v.mbSig && !(c.badges || []).some(function(b){ return b[1] === v.mbSig; })) return false;
-    return true;
+    + '</select></div>'
+    + '<div class="deg-note" style="padding:0 2px 6px">'
+    + (cur === '*' ? 'Legs may sit at different books \u2014 you could not place this as one multi.'
+        : 'Every leg priced at '+esc(cur)+', so the multi is placeable.') + '</div>';
+  if (v.mbNote) h += '<div class="deg-note" style="padding:6px 2px">'+esc(v.mbNote)+'</div>';
+
+  // every leg the game has, not a mode's shortlist
+  var cands = mbCandidates(f.key, f.g, 'all').filter(function(c){
+    return !v.mbMkt || c.mkt === v.mbMkt;
   });
-  if (!cands.length) return h + '<div class="empty" style="padding:18px">No legs qualify for '
-    + esc((MB_MODES.filter(function(m){ return m[0]===mode; })[0]||['',''])[1])+' on this game.</div>';
-  h += '<button class="mb-auto" onclick="LAB.mbAuto()"><i class="ti ti-wand"></i> Auto-build best 3-leg multi</button>';
-  var inSlip = {};
-  (v.cmbLegs || []).forEach(function(l){ inSlip[l.key+'|'+l.p.name+'|'+l.mkt+'|'+l.line] = 1; });
-  h += cands.map(function(c){
-    var on = !!inSlip[c.id];
-    return '<div class="mb-card'+(on?' on':'')+'" onclick="LAB.mbAdd(\''+esc(c.id).replace(/'/g,"\\'")+'\')">'
-      + (playerImgP(c.key, c.p, 26) || teamLogo(c.key, c.team))
-      + '<div class="mb-m"><div class="mb-nm">'+esc(c.p.name)+'</div>'
-      + '<div class="mb-bet">'+Math.ceil(c.line)+'+ '+esc(c.label)+' \u00b7 v '+esc(abbrOf(c.key, c.opp))+'</div>'
-      + '<div class="mb-badges">'+(c.badges || []).map(function(b){
-          return '<span class="mb-b mb-b-'+b[1]+'">'+esc(b[0])+'</span>'; }).join('')+'</div>'
-      + '<div class="mb-why">'+esc(c.why.join(' \u00b7 '))+'</div></div>'
+  var hidden = v.mbHidden || {};
+  var shown = cands.filter(function(c){ return !hidden[c.id]; });
+  var nHid = cands.length - shown.length;
+
+  h += '<div class="mb-count"><span>'+shown.length+' leg'+(shown.length === 1 ? '' : 's')+'</span>'
+    + (nHid ? '<button class="sl-chip" onclick="LAB.mbUnhide()">'+nHid+' hidden \u00b7 show</button>' : '')
+    + '</div>';
+
+  if (!shown.length){
+    return h + '<div class="empty" style="padding:18px">'
+      + (nHid ? 'Every leg here is hidden.' : 'No legs posted for this game yet.')+'</div>';
+  }
+
+  h += shown.map(function(c){
+    // a stored leg carries no id of its own, so compare the parts, exactly as mbAdd does
+    var picked = (v.cmbLegs || []).some(function(l){
+      return l && l.p && (l.key + '|' + l.p.name + '|' + l.mkt + '|' + l.line) === c.id;
+    });
+    // signals wear the same badge shape as everything else, so the row reads uniformly
+    var sigBad = (c.sigs || []).map(function(x){
+      return '<span class="mb-badge sig-b">' + esc(x[1]) + '</span>';
+    }).join('');
+    var bad = sigBad + (c.badges || '');
+    return '<div class="mb-leg'+(picked ? ' on' : '')+'" onclick="LAB.mbAdd(\''+esc(c.id).replace(/'/g, "\\'")+'\')">'
+      + '<button class="mb-hide" onclick="event.stopPropagation();LAB.mbHide(\''+esc(c.id).replace(/'/g, "\\'")+'\')" '
+      + 'title="hide this leg"><i class="ti ti-eye-off"></i></button>'
+      + '<div class="mb-l"><div class="mb-nm"><b>'+esc(c.name)+'</b>'
+      + '<span class="mb-bet">'+esc(c.label)+'</span></div>'
+      + '<div class="mb-badges">'+bad+'</div></div>'
       + '<div class="mb-px"><b>$'+c.price.toFixed(2)+'</b>'
       + '<span>'+Math.round(c.prob*100)+'% \u00b7 <span class="mb-ev">'
-      + (c.ev > 0 ? '+' : '')+Math.round(c.ev*100)+'%</span></span></div></div>';
+      + (c.ev > 0 ? '+' : '')+Math.round(c.ev*100)+'%</span></span></div>'
+      + (picked ? '<i class="ti ti-check mb-tick"></i>' : '') + '</div>';
   }).join('');
   return h;
 }
+
 function cmbPanel(){
   var v = state.view;
   if (!v.cmbOpen) return '';
@@ -13761,8 +13803,8 @@ window.LAB = {
   mbFix: function(i){ state.view.mbFix = +i; state.view.smDrop = {}; render(); },
   mbBook: function(b){ state.view.mbBook = b; render(); },
   mbMkt: function(m){ state.view.mbMkt = m || null; state.view.mbNote = null; render(); },
-  mbSig: function(x){ state.view.mbSig = x || null; state.view.mbNote = null; render(); },
-  mbNudge: function(d){
+  retired_mbSig: function(x){ state.view.mbSig = x || null; state.view.mbNote = null; render(); },
+  retired_mbNudge: function(d){
     state.view.mbNudge = Math.max(-3, Math.min(3, (+state.view.mbNudge || 0) + d));
     state.view.mbNote = null; render();
   },
@@ -13782,10 +13824,26 @@ window.LAB = {
     render();
   },
   mbMode: function(m){ state.view.mbMode = m; render(); },
+  mbPanelProbe: function(){ return mbPanel(); },
+  mbListProbe: function(){ var f = mbFixtures()[state.view.mbFix || 0];
+    return f ? mbCandidates(f.key, f.g, 'all') : []; },
+  mbCandProbe: function(){ var fx = mbFixtures(), out = [];
+    fx.slice(0, 12).forEach(function(f, i){
+      var n = mbCandidates(f.key, f.g, 'all').length;
+      if (n) out.push({ i:i, game:(f.g.away||'?')+'@'+(f.g.home||'?'), n:n });
+    });
+    return { fixtures:fx.length, withLegs:out }; },
+  mbHide: function(id){
+    var v = state.view; v.mbHidden = v.mbHidden || {};
+    v.mbHidden[id] = 1; render();
+  },
+  mbUnhide: function(){ state.view.mbHidden = {}; render(); },
   mbAdd: function(id){
     var fixes = mbFixtures(), f = fixes[Math.min(state.view.mbFix || 0, fixes.length - 1)];
     if (!f) return;
-    var c = mbCandidates(f.key, f.g, state.view.mbMode || 'value').filter(function(x){ return x.id === id; })[0];
+    // the list is built in 'all' mode now - looking the id up under the old mode found nothing,
+    // so a tap did nothing at all
+    var c = mbCandidates(f.key, f.g, 'all').filter(function(x){ return x.id === id; })[0];
     if (!c) return;
     var legs = (state.view.cmbLegs || []).slice();
     var at = -1;
