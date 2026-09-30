@@ -4957,6 +4957,11 @@ function rzConversion(key){
 var NDUE_MIN_USE = 1.2;      // red-zone touches and targets a game, over the recent window
 var NDUE_RECENT = 3;         // "recent" is his last three games
 var NDUE_DROUGHT = 2;        // and he must have gone at least this many without a touchdown
+// Expected touchdowns he "should" have scored during the drought. Measured on the live board:
+// 0.8 leaves 35 players, 1.0 leaves 22, 1.3 leaves 9. One owed touchdown is barely a drought -
+// three weeks in, most of the league is on nought. At 1.3 a fixture shows nought or one, which is
+// what a signal should do.
+var NDUE_MIN_OWED = 1.3;
 var NDUE_MIN_SEASON = 2;     // games THIS season before the drought means anything
 var NDUE_MIN_GAMES = 6, NDUE_MIN_PRICE = 1.6;   // games of history behind the scoring rate
 // How often a red-zone touch becomes a touchdown, league-wide, this season. The whole premise is
@@ -5009,6 +5014,13 @@ function nflDueToScore(key, g){
     var drought = logs.slice(0, NDUE_DROUGHT);
     if (drought.length < NDUE_DROUGHT) return;            // needs at least the drought's worth
     if (drought.some(function(r){ return tdOf(r) > 0; })) return;   // he has scored recently
+    // "No touchdown in two games" is the default state three weeks into a season - 49 players
+    // cleared that. The bet is only interesting when the chances he HAS had should already have
+    // produced one: expected touchdowns across the drought, at the league's conversion rate.
+    if (conv){
+      var owed = drought.reduce(function(a, r){ return a + useOf(r); }, 0) * conv;
+      if (owed < NDUE_MIN_OWED) return;
+    }
     // how far back the last one was, for the row to say
     var since = 0;
     for (var qi = 0; qi < logs.length; qi++){ if (tdOf(logs[qi]) > 0) break; since++; }
@@ -5050,13 +5062,14 @@ function nflDueToScore(key, g){
     if (!best) return;
     out.push({ name:p.name, p:p, team:p.team, opp:opp, use:use, last3:logs.slice(0, 3),
                since:since, seasonGames:seasonGames,
+               owed:(conv ? drought.reduce(function(a, r){ return a + useOf(r); }, 0) * conv : null),
                scored:scored, games:logs.length, soft:soft, bet:best });
   });
   out.sort(function(a, b){ return b.bet.ev - a.bet.ev; });
   return { rows:out.slice(0, SIG_MAX_ROWS),
-           why:'No one here is getting ' + NDUE_MIN_USE + '+ red-zone touches a game over his last '
-             + NDUE_RECENT + ', while going ' + NDUE_DROUGHT + '+ games without a touchdown, at an '
-             + 'anytime price that pays.' };
+           why:'No one here has had enough red-zone work to be owed a touchdown - the chances he '
+             + 'has missed on have to be worth ' + NDUE_MIN_OWED + '+ of one - while going '
+             + NDUE_DROUGHT + '+ games without scoring, at an anytime price that pays.' };
 }
 
 /* The red-zone box for his last three games. A receiver has no carries inside the 20 and a runner
@@ -5105,6 +5118,8 @@ function nflDueRow(key, r){
       + NDUE_RECENT + '</span>'
       + '<span class="gl-chip bad">no TD in ' + r.since + ' game' + (r.since === 1 ? '' : 's')
       + ' this season</span>'
+      + (r.owed != null ? '<span class="gl-chip bad">worth ' + r.owed.toFixed(1)
+        + ' TDs on those chances</span>' : '')
       + '<span class="gl-chip">' + Math.round(r.scored * 100) + '% to score, on this usage</span>'
       + (r.soft != null ? '<span class="gl-chip">' + esc(abbrOf(key, r.opp)) + ' concede '
          + (+r.soft).toFixed(1) + ' TDs to his spot</span>' : '')
