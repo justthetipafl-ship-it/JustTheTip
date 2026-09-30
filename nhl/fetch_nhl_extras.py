@@ -75,7 +75,21 @@ def goalie_name(node):
     return None
 
 
-def starting_goalies(day):
+def roster_teams(out_dir):
+    """playerId and name -> team, from the build's own players.json, to sanity-check a goalie."""
+    by_name = {}
+    try:
+        with open(os.path.join(out_dir, 'players.json')) as fh:
+            for p in json.load(fh) or []:
+                nm = str(p.get('name') or '').strip().lower()
+                if nm and p.get('team'):
+                    by_name[nm] = p['team']
+    except (OSError, json.JSONDecodeError, TypeError):
+        pass
+    return by_name
+
+
+def starting_goalies(day, rosters=None):
     """Named starters for a day's games, from the gamecenter landing.
 
     The landing only carries goalies once a team has named them, so a game with nothing yet is
@@ -95,11 +109,14 @@ def starting_goalies(day):
         if not gid:
             continue
         land = api('%s/gamecenter/%s/landing' % (WEB, gid)); time.sleep(PACE)
+        # Take the teams from the LANDING, not the schedule row: a dry run showed "NYI @ TOR:
+        # Sorokin v Bobrovsky", and Bobrovsky is Florida - the two responses were being lined up
+        # against each other by position. The landing knows its own game.
         row = {
             'gameId': gid,
             'date': day,
-            'home': dig(g, 'homeTeam', 'abbrev'),
-            'away': dig(g, 'awayTeam', 'abbrev'),
+            'home': dig(land, 'homeTeam', 'abbrev') or dig(g, 'homeTeam', 'abbrev'),
+            'away': dig(land, 'awayTeam', 'abbrev') or dig(g, 'awayTeam', 'abbrev'),
             'homeGoalie': None, 'awayGoalie': None, 'confirmed': False,
         }
         # the field has moved between seasons, so try the shapes that have carried it
@@ -116,6 +133,20 @@ def starting_goalies(day):
                 nm = goalie_name(dig(land, 'summary', 'iceSurface', key, 'goalies', 0))
                 if nm:
                     row[side] = nm
+        # A goalie whose stored team differs from the club he is named for is usually a TRANSFER,
+        # not an error: players.json takes a player's team from his last gamelog row, so a summer
+        # move does not show up until he plays. The live API is the fresher source, so keep what it
+        # says and flag the difference - it is a useful signal that the roster file is behind.
+        if rosters:
+            for side, team in (('homeGoalie', row['home']), ('awayGoalie', row['away'])):
+                nm = row.get(side)
+                if not nm:
+                    continue
+                on = rosters.get(str(nm).strip().lower())
+                if on and team and str(on).upper() != str(team).upper():
+                    print('  note: %s is named for %s, players.json still has him at %s '
+                          '(moved, or the roster file is stale)' % (nm, team, on))
+                    row.setdefault('moved', []).append(nm)
         row['confirmed'] = bool(row['homeGoalie'] and row['awayGoalie'])
         if row['confirmed']:
             named += 1
@@ -126,7 +157,7 @@ def starting_goalies(day):
     return out
 
 
-def special_teams(season):
+def special_teams(season, name_to_abbrev=None):
     """Power-play and penalty-kill rates per team, which the gamelogs only approximate."""
     url = ('%s/team/summary?cayenneExp=seasonId=%s%%20and%%20gameTypeId=2&limit=-1'
            % (STATS, season))
@@ -134,9 +165,15 @@ def special_teams(season):
     rows = dig(j, 'data', default=[]) or []
     out = {}
     for r in rows:
-        ab = r.get('teamAbbrev') or r.get('teamFullName')
+        # the summary report returns a full name; the tool joins on the three-letter code, so a
+        # file keyed by name would never have matched anything
+        ab = r.get('teamAbbrev')
         if not ab:
-            continue
+            full = r.get('teamFullName')
+            ab = abbrev_for(full, name_to_abbrev)
+            if not ab:
+                print('  ! no abbreviation for "%s" - skipped' % full)
+                continue
         out[ab] = {
             'pp': r.get('powerPlayPct'),
             'pk': r.get('penaltyKillPct'),
@@ -174,6 +211,36 @@ def high_danger(season, player_ids, cap=0):
     return out
 
 
+def team_abbrevs(out_dir):
+    """Team name -> three-letter code, from the build's own teams.json.
+
+    teams.json holds the NICKNAME ("Ducks", "Golden Knights") while the stats API returns the full
+    name ("Vegas Golden Knights"), so the match is on the end of the string, longest nickname first
+    so "Kings" cannot steal "Los Angeles Kings" from a longer name that also ends in it.
+    """
+    pairs = []
+    try:
+        with open(os.path.join(out_dir, 'teams.json')) as fh:
+            for t in json.load(fh) or []:
+                ab, nick = t.get('team'), t.get('teamFull')
+                if ab and nick:
+                    pairs.append((str(nick).strip().lower(), ab))
+    except (OSError, json.JSONDecodeError, TypeError):
+        pass
+    pairs.sort(key=lambda kv: -len(kv[0]))
+    return pairs
+
+
+def abbrev_for(full, pairs):
+    f = str(full or '').strip().lower()
+    if not f:
+        return None
+    for nick, ab in pairs or []:
+        if f == nick or f.endswith(' ' + nick):
+            return ab
+    return None
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--out', default='nhl/data')
@@ -192,8 +259,10 @@ def main():
 
     print('NHL extras for %s (season %s)%s' % (day, season, ' [dry run]' if a.dry_run else ''))
 
-    goalies = starting_goalies(day)
-    st = special_teams(season)
+    rosters = roster_teams(a.out)
+    abbrev = team_abbrevs(a.out)
+    goalies = starting_goalies(day, rosters)
+    st = special_teams(season, abbrev)
     edge = {}
     if a.edge_cap:
         ids = []
