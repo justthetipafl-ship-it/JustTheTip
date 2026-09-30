@@ -71,6 +71,9 @@ def pos_of(code):
     return POS_MAP.get(str(code or "").upper()[:1], "C")
 
 # ---------------- fetch ----------------
+CURRENT_TEAM = {}       # playerId -> the club he is on THIS season, from the live roster
+
+
 def fetch_rosters(seasons):
     """team -> list of (playerId, name, positionCode, is_goalie)."""
     roster = {}
@@ -90,6 +93,12 @@ def fetch_rosters(seasons):
                     nm = ((p.get("firstName") or {}).get("default", "") + " " +
                           (p.get("lastName") or {}).get("default", "")).strip()
                     players.append((pid, nm, p.get("positionCode"), goalie))
+                    # The CURRENT season's roster is the only place a summer move shows up. A
+                    # player's team was taken from his last gamelog row, which is the club he last
+                    # PLAYED for - so a traded man sat with his old team until he played a game,
+                    # and the signals looked for him in the wrong fixture.
+                    if str(season) == str(seasons[-1]):
+                        CURRENT_TEAM[pid] = tm
         roster[tm] = players
     return roster
 
@@ -256,8 +265,10 @@ def build(by_season, results, current):
                     d["sum"][s] += r[s]
     players = []
     for d in pacc.values():
-        g = max(1, d["g"]); row = {"playerId": d["pid"], "name": d["name"], "team": d["team"],
-                                   "teamFull": TEAM_FULL.get(d["team"], d["team"]),
+        g = max(1, d["g"])
+        cur_team = CURRENT_TEAM.get(d["pid"]) or d["team"]      # the roster wins over the last game
+        row = {"playerId": d["pid"], "name": d["name"], "team": cur_team,
+                                   "teamFull": TEAM_FULL.get(cur_team, cur_team),
                                    "position": d["pos"], "pos5": d["pos"], "games": d["g"],
                                    "role": "goalie" if d["pos"] == "G" else "skater"}
         for s in (GO_STATS if d["pos"] == "G" else SK_STATS):
