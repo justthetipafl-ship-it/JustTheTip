@@ -1610,6 +1610,7 @@ function ensureTier2(){
 // the player/log/odds indexes and the sport's scoring + signals modules - is built here.
 var TIER3 = { gamelogs:'data/gamelogs.json', dvp:'data/dvp.json', teams_form:'data/teams_form.json',
               injury:'data/injury.json', lineups:'data/lineups.json', results:'data/results.json',
+              oddsOpen:'data/odds_open.json',
               ladder:'data/ladder.json',
               weather:'data/weather.json', calib:'data/calib.json' };
 function loadTier3(key){
@@ -3519,6 +3520,7 @@ function streakRow(key, r){
         + (r.med != null ? ' \u00b7 med '+(r.med % 1 ? r.med.toFixed(1) : r.med) : '')
         + (r.alt ? ' \u00b7 alt' : '')+(r.short ? ' \u00b7 under $'+STREAK_ODDS_FLOOR.toFixed(2) : '')+'</div>'
       + pips
+    + moveChip(key, r.name, r.mkt, r.line, r.book, r.price)
     + '</div>'
     + '<div class="stk-right"><div class="stk-hit">'+r.streak+'</div>'
       + '<div class="stk-hitl">STRAIGHT</div>'
@@ -3631,6 +3633,7 @@ function eliteRow(key, r){
         + esc(abbrOf(key, r.opp))+' concede '+(r.dvp.allowed % 1 ? r.dvp.allowed.toFixed(1) : r.dvp.allowed)+'</div>'
       + '<div class="elm-mu"><span class="elm-track"><i style="width:'+Math.max(4, soft)+'%"></i></span>'
         + '<span class="elm-pct">'+(r.dvp.pct > 0 ? '+' : '')+r.dvp.pct.toFixed(0)+'% vs league</span></div>'
+    + moveChip(key, r.name, r.mkt, r.line, r.book, r.price)
     + '</div>'
     + '<div class="elm-right"><div class="elm-dvp">'+r.dvp.rank+'</div>'
       + '<div class="elm-dvpl">OF '+r.dvp.total+' SOFTEST</div>'
@@ -3803,6 +3806,7 @@ function h2hSigRow(key, r){
       + '<div class="h2h-sig-sub">'+r.mine.toFixed(r.mine < 3 ? 2 : 1)+' '+esc(r.label)+' v '+esc(abbrOf(key, r.opp))
         + ' \u00b7 '+r.base.toFixed(r.base < 3 ? 2 : 1)+' overall \u00b7 '+esc(vsField)+'</div>'
       + meets
+    + moveChip(key, r.name, r.mkt, r.line, r.book, r.price)
     + '</div>'
     + '<div class="h2h-sig-right"><div class="h2h-sig-v '+(up ? 'up' : 'down')+'">'
       +(r.meetings != null ? r.meetings : r.vals.length)+'</div>'
@@ -4119,6 +4123,37 @@ function nhlCtxChips(key, p, mkt, line, opp){
   }
   return out.slice(0, 3).join('');
 }
+
+/* LINE MOVEMENT ----------------------------------------------------------------------------------
+   The opening price for today's slate, written once per line by the odds run. Where a price has
+   moved since, the row says so: a line that opened at $2.50 and sits at $1.90 has been backed hard,
+   and that is often the whole story. Shortening is the market agreeing with you; drifting is the
+   market disagreeing, and on a signal you like, a drift is the more interesting one.            */
+function openPrice(key, name, mkt, line, book){
+  var S = state.sports[key];
+  var op = S.data.oddsOpen;
+  if (!op || !op.opened) return null;
+  var k = name + '|' + mkt + '|' + line + '|' + book;
+  var row = op.opened[k];
+  if (!row) {
+    // books rename players between feeds; try the resolved spelling before giving up
+    var alt = oddsPlayer(key, name);
+    if (alt && alt !== name) row = op.opened[alt + '|' + mkt + '|' + line + '|' + book];
+  }
+  return row || null;
+}
+function moveChip(key, name, mkt, line, book, now){
+  var o = openPrice(key, name, mkt, line, book);
+  if (!o || !o.o || !now) return '';
+  var was = +o.o, is = +now;
+  if (!isFinite(was) || !isFinite(is) || was <= 0) return '';
+  var pct = (is - was) / was * 100;
+  if (Math.abs(pct) < 4) return '';                 // noise, not movement
+  var shorter = is < was;
+  return '<span class="gl-chip ' + (shorter ? 'good' : 'bad') + '" title="opened $' + was.toFixed(2)
+    + ' at ' + esc(o.t || '') + '">' + (shorter ? '\u2193 ' : '\u2191 ') + '$' + was.toFixed(2)
+    + ' \u2192 $' + is.toFixed(2) + '</span>';
+}
 function ctxChips(key, p, mkt, line, opp){
   var sc = state.sports[key].scoring;
   if (key === 'nhl') return nhlCtxChips(key, p, mkt, line, opp);
@@ -4164,6 +4199,7 @@ function ouRow(key, r){
         + esc((r.pos ? r.pos+' \u00b7 ' : '')+abbrOf(key, r.team)+' v '+abbrOf(key, r.opp))+'</span></div>'
       + '<div class="gl-bet"><b>'+(r.over ? ask+'+ ' : 'Under '+r.line+' ')+'</b>'+esc(r.label)+'</div>'
       + chips
+      + moveChip(key, r.name, r.mkt, r.line, r.book, r.price)
     + '</div>'
     + '<div class="gl-right"><div class="gl-ev '+(r.ev >= 0 ? 'pos' : 'neg')+'">'
       + (r.ev > 0 ? '+' : '')+Math.round(r.ev*100)+'%</div>'
@@ -4766,6 +4802,7 @@ function dueRow(key, r){
       + '<span class="gl-chip good">' + r.per60.toFixed(1) + ' shots/60</span>'
       + '<span class="gl-chip">' + r.dry + ' of his last 10 with a goal</span>'
       + '<span class="gl-chip good">' + esc(abbrOf(key, r.opp)) + ' concede ' + r.oppGA.toFixed(2) + '</span>'
+    + moveChip(key, r.name, 'goals', b.line, b.book, b.price)
     + '</div></div>'
     + '<div class="gl-right"><div class="gl-ev '+(b.ev >= 0 ? 'pos' : 'neg')+'">'
       + (b.ev > 0 ? '+' : '')+Math.round(b.ev*100)+'%</div>'
@@ -4853,6 +4890,7 @@ function ppMerchantRow(key, r){
       + (r.ppTime != null ? '<span class="gl-chip good">' + r.ppTime.toFixed(1) + ' min PP time</span>' : '')
       + '<span class="gl-chip">' + r.ppRate.toFixed(2) + ' PP pts/gm</span>'
       + '<span class="gl-chip good">' + esc(abbrOf(key, r.opp)) + ' concede ' + r.oppPP.toFixed(2) + ' PP pts</span>'
+    + moveChip(key, r.name, b.mkt, b.line, b.book, b.price)
     + '</div></div>'
     + '<div class="gl-right"><div class="gl-ev '+(b.ev >= 0 ? 'pos' : 'neg')+'">'
       + (b.ev > 0 ? '+' : '')+Math.round(b.ev*100)+'%</div>'
@@ -4934,6 +4972,7 @@ function shotMachineRow(key, r){
       + '<span class="gl-chip">' + r.toi.toFixed(1) + ' min TOI</span>'
       + '<span class="gl-chip' + (r.soft >= 0.8 ? ' good' : '') + '">' + esc(abbrOf(key, r.opp))
       + ' concede ' + r.oppSA.toFixed(1) + '</span>'
+    + moveChip(key, r.name, 'shots', r.line, r.book, r.price)
     + '</div></div>'
     + '<div class="gl-right"><div class="gl-ev '+(r.ev >= 0 ? 'pos' : 'neg')+'">'
       + (r.ev > 0 ? '+' : '')+Math.round(r.ev*100)+'%</div>'
@@ -5123,6 +5162,7 @@ function nflDueRow(key, r){
       + '<span class="gl-chip">' + Math.round(r.scored * 100) + '% to score, on this usage</span>'
       + (r.soft != null ? '<span class="gl-chip">' + esc(abbrOf(key, r.opp)) + ' concede '
          + (+r.soft).toFixed(1) + ' TDs to his spot</span>' : '')
+    + moveChip(key, r.name, 'anytimeTd', 0.5, b.book, b.price)
     + '</div>' + nflRzBox(key, r) + '</div>'
     + '<div class="gl-right"><div class="gl-ev '+(b.ev >= 0 ? 'pos' : 'neg')+'">'
       + (b.ev > 0 ? '+' : '')+Math.round(b.ev*100)+'%</div>'
@@ -5827,7 +5867,8 @@ function tackleRow(key, r){
         return '<span class="stk-pip'+(v > r.line ? '' : ' miss')+'"><i style="height:'
           + Math.max(6, Math.round(v/mx*100))+'%"></i></span>'; }).join('')+'</div>'
     + '<div class="stk-vals">'+seq.map(function(v){
-        return '<span>'+(v % 1 ? v.toFixed(1) : v)+'</span>'; }).join('')+'</div></div>'
+        return '<span>'+(v % 1 ? v.toFixed(1) : v)+'</span>'; }).join('')+'</div>'
+    + moveChip(key, r.name, 'tackles', r.line, r.book, r.price) + '</div>'
     + '<div class="stk-right"><div class="stk-hit">'+Math.round(r.rate*100)+'%</div>'
       + '<div class="stk-hitl">'+r.hits+'/'+r.n+' GAMES</div>'
       + '<div class="stk-odds">$'+r.price.toFixed(2)+(r.book ? ' <i>'+esc(r.book)+'</i>' : '')+'</div>'
@@ -6555,7 +6596,7 @@ function eplRow(key, r, bet, chips, big, bigL, good, cardLbl, betOd){
     + '<div class="gl-left"><div class="gl-nm"><b>'+esc(r.name)+'</b><span class="gl-tag">'
     + esc((posShortP(r.p) ? posShortP(r.p)+' \u00b7 ' : '')+abbrOf(key, r.p.team)+' v '+abbrOf(key, r.opp))+'</span></div>'
     + '<div class="gl-bet">'+bet+'</div>'
-    + '<div class="gl-why">'+chips.map(function(c){ return '<span class="gl-chip'+(c[1] ? ' good' : '')+'">'+c[0]+'</span>'; }).join('')+'</div></div>'
+    + '<div class="gl-why">'+chips.map(function(c){ return '<span class="gl-chip'+(c[1] ? ' good' : '')+'">'+c[0]+'</span>'; }).join('')+ moveChip(key, r.name, (betOd && betOd.market) || (r.b && r.b.mkt) || r.mkt, (betOd && betOd.line) != null ? betOd.line : ((r.b && r.b.od) ? r.b.od.line : r.line), (betOd && betOd.book) || ((r.b && r.b.od) ? r.b.od.book : r.book), (betOd && (betOd.price != null ? betOd.price : betOd.over)) || ((r.b && r.b.od) ? (r.b.od.price != null ? r.b.od.price : r.b.od.over) : r.price)) +'</div></div>'
     + '<div class="gl-right"><div class="gl-ev '+(good === false ? 'neg' : 'pos')+'">'+big+'</div><div class="gl-evl">'+bigL+'</div></div></div>';
 }
 var fmtP = function(od){ return '$'+od.price.toFixed(2)+' '+esc(od.book || ''); };
@@ -12336,6 +12377,15 @@ function deepPanel(){
     + (pr != null ? '<div class="dd-sub">model '+Math.round(pr*100)+'%'
         + (implied ? ' v '+Math.round(implied*100)+'% implied' : '')
         + (raw != null && pr < raw - 0.005 ? ' \u00b7 capped down from '+Math.round(raw*100)+'% by his own record' : '')
+        + (function(){
+            // where the price opened, if today's snapshot has it: the market's own opinion, moving
+            var o = d.book ? openPrice(key, name, mkt, line, d.book) : null;
+            if (!o || !o.o || !price) return '';
+            var was = +o.o, pc = (price - was) / was * 100;
+            if (!isFinite(pc) || Math.abs(pc) < 4) return '';
+            return ' \u00b7 opened $' + was.toFixed(2) + ', now $' + price.toFixed(2)
+              + ' (' + (pc < 0 ? 'backed in' : 'drifted') + ')';
+          })()
         + '</div>' : '');
 
   // ---- the worm: his last 20 against this line ----
