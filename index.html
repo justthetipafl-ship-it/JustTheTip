@@ -11881,6 +11881,105 @@ function shareDeepLines(){
   drv.forEach(function(x){ out.push({ title:driverName(key, x.f), sub:'drives this market ' + Math.abs(x.r).toFixed(2), right:'' }); });
   return out;
 }
+
+/* SNAPSHOT SHARE ---------------------------------------------------------------------------------
+   A branded picture of the PANEL ITSELF rather than a rebuilt summary. html2canvas repaints the
+   live DOM into a canvas; the result is framed with the wordmark and the site address so it still
+   reads as ours in a group chat.
+
+   Three things this has to handle, all learned the hard way:
+   - Player photos come from hosts that send no CORS headers. One of those taints the canvas and
+     NOTHING exports, so every image is swapped for its initials fallback before capture and put
+     back after. The shared picture therefore shows initials where the screen shows a face.
+   - html2canvas re-implements CSS. If it throws, or the library will not load, the old drawn card
+     is used instead - a share that works beats a share that is prettier.
+   - Some panels are enormous. Anything taller than SNAP_MAX_H is capped, with a line saying the
+     rest is on the site.                                                                       */
+var SNAP_LIB = 'https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js';
+var SNAP_MAX_H = 2600;
+function snapLib(){
+  if (window.html2canvas) return Promise.resolve(window.html2canvas);
+  if (snapLib._p) return snapLib._p;
+  snapLib._p = new Promise(function(res, rej){
+    var sc = document.createElement('script');
+    sc.src = SNAP_LIB; sc.async = true;
+    sc.onload = function(){ res(window.html2canvas); };
+    sc.onerror = function(){ rej(new Error('library did not load')); };
+    document.head.appendChild(sc);
+    setTimeout(function(){ if (!window.html2canvas) rej(new Error('timed out')); }, 9000);
+  });
+  return snapLib._p;
+}
+function snapHideImgs(root){
+  // swap every remote photo for its initials stand-in, remembering what to put back
+  var undo = [];
+  Array.prototype.forEach.call(root.querySelectorAll('img'), function(im){
+    if (!im.src || im.src.indexOf(location.origin) === 0) return;
+    undo.push([im, im.style.visibility]);
+    im.style.visibility = 'hidden';
+  });
+  return function(){ undo.forEach(function(u){ u[0].style.visibility = u[1]; }); };
+}
+function snapFrame(inner, label){
+  // the branded surround: wordmark, the panel, the site address
+  var W = inner.width, scale = SHARE_W / W;
+  var h = Math.min(SNAP_MAX_H, Math.round(inner.height * scale));
+  var headH = 190, footH = 110;
+  var c = document.createElement('canvas');
+  c.width = SHARE_W; c.height = headH + h + footH;
+  var x = c.getContext && c.getContext('2d');
+  if (!x) return Promise.resolve(null);
+  var grad = x.createLinearGradient(0, 0, 0, c.height);
+  grad.addColorStop(0, '#0d1117'); grad.addColorStop(1, '#070a0e');
+  x.fillStyle = grad; x.fillRect(0, 0, c.width, c.height);
+  x.strokeStyle = 'rgba(34,197,94,.35)'; x.lineWidth = 6; x.strokeRect(3, 3, c.width - 6, c.height - 6);
+  return loadImg(BRAND.wordmark).then(function(mark){
+    if (mark) x.drawImage(mark, 56, 48, 420, 96);
+    x.fillStyle = '#8b949e'; x.font = '600 30px ui-sans-serif, system-ui, sans-serif';
+    x.fillText(String(label || '').toUpperCase(), 58, 176);
+    x.drawImage(inner, 0, 0, W, Math.round(h / scale), 0, headH, SHARE_W, h);
+    if (inner.height * scale > SNAP_MAX_H){
+      x.fillStyle = 'rgba(7,10,14,.92)'; x.fillRect(0, headH + h - 64, SHARE_W, 64);
+      x.fillStyle = '#8b949e'; x.font = '500 28px ui-sans-serif, system-ui, sans-serif';
+      x.fillText('\u2026 more on justthetipaus.com', 58, headH + h - 24);
+    }
+    x.fillStyle = '#6e7681'; x.font = '500 28px ui-sans-serif, system-ui, sans-serif';
+    x.fillText('justthetipaus.com', 56, c.height - 44);
+    return c;
+  });
+}
+function snapElement(sel, label){
+  var el = typeof sel === 'string' ? document.querySelector(sel) : sel;
+  if (!el) return Promise.resolve(null);
+  return snapLib().then(function(h2c){
+    var restore = snapHideImgs(el);
+    return h2c(el, { backgroundColor:'#0d1117', scale:2, logging:false, useCORS:false,
+                     imageTimeout:2000, windowWidth:el.scrollWidth })
+      .then(function(cv){ restore(); return snapFrame(cv, label); })
+      .catch(function(e){ restore(); throw e; });
+  });
+}
+function shareCanvasFor(sel, label){
+  // snapshot if it can, the drawn card if it cannot - never nothing
+  return snapElement(sel, label).catch(function(){ return drawShareCard(); })
+    .then(function(c){ return c || drawShareCard(); });
+}
+function sharePng(canvasPromise, name){
+  return canvasPromise.then(function(c){
+    if (!c || !c.toBlob) return;
+    c.toBlob(function(blob){
+      if (!blob) return;
+      var file = new File([blob], name, { type:'image/png' });
+      if (navigator.canShare && navigator.canShare({ files:[file] })){
+        navigator.share({ files:[file], title:'Just The Tip' }).catch(function(){});
+        return;
+      }
+      var url = URL.createObjectURL(blob), a = document.createElement('a');
+      a.href = url; a.download = name; a.click();
+      setTimeout(function(){ URL.revokeObjectURL(url); }, 4000);
+    }, 'image/png');
+  });
+}
 function drawShareCard(){
   var lines = shareLines();
   if (!lines.length) return Promise.resolve(null);
@@ -13418,14 +13517,23 @@ window.LAB = {
       if (best) lines.push({ title:best.name, sub:m[1] + '  \u00b7  ' + esc(abbrOf(key, best.team)),
                              right:String(best.v % 1 ? best.v.toFixed(1) : best.v) });
     });
-    if (!lines.length) return;
-    drawShare(SPORTS[key].name + ' \u00b7 the round', lines, 'Biggest outputs of the round')
-      .then(function(c){ shareCanvas(c, 'jtt-round.png'); });
+    // the weekly report is mostly tables, which is exactly what a snapshot does well
+    sharePng(snapElement('.wr-grid', SPORTS[key].name + ' \u00b7 the round')
+      .catch(function(){ return null; })
+      .then(function(c){
+        if (c) return c;
+        return lines.length ? drawShare(SPORTS[key].name + ' \u00b7 the round', lines,
+          'Biggest outputs of the round') : null;
+      }), 'jtt-round.png');
   },
   cmbShare: function(){
+    // a picture of the verdict as it stands on screen; the drawn card is the fallback
     var l = shareCmbLines();
-    if (!l) return;
-    drawShare('Check My Bet', l, 'Checked against his record and the market').then(function(c){ shareCanvas(c, 'jtt-check.png'); });
+    sharePng(snapElement('.cmb-body', 'Check My Bet').catch(function(){ return null; })
+      .then(function(c){
+        if (c) return c;
+        return l ? drawShare('Check My Bet', l, 'Checked against his record and the market') : null;
+      }), 'jtt-check.png');
   },
   deepToCard: function(){
     var d = state.view.deep; if (!d) return;
@@ -13843,6 +13951,15 @@ window.LAB = {
     render();
   },
   mbMode: function(m){ state.view.mbMode = m; render(); },
+  snapProbe: function(sel, label){
+    return shareCanvasFor(sel || '#nope', label || 'Test')
+      .then(function(c){ return c ? ('canvas ' + c.width + 'x' + c.height) : 'null'; })
+      .catch(function(e){ return 'threw: ' + (e && e.message); });
+  },
+  snapLibProbe: function(){
+    return snapLib().then(function(){ return 'loaded'; })
+      .catch(function(e){ return 'failed: ' + (e && e.message); });
+  },
   mbPanelProbe: function(){ return mbPanel(); },
   mbListProbe: function(){ var f = mbFixtures()[state.view.mbFix || 0];
     return f ? mbCandidates(f.key, f.g, 'all') : []; },
