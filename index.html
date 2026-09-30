@@ -1610,7 +1610,8 @@ function ensureTier2(){
 // the player/log/odds indexes and the sport's scoring + signals modules - is built here.
 var TIER3 = { gamelogs:'data/gamelogs.json', dvp:'data/dvp.json', teams_form:'data/teams_form.json',
               injury:'data/injury.json', lineups:'data/lineups.json', results:'data/results.json',
-              oddsOpen:'data/odds_open.json',
+              oddsOpen:'data/odds_open.json', goalies:'data/goalies.json',
+              specialTeams:'data/special_teams.json',
               ladder:'data/ladder.json',
               weather:'data/weather.json', calib:'data/calib.json' };
 function loadTier3(key){
@@ -13018,14 +13019,29 @@ function goalieForm(key, team, n){
   }
   return { window:logs.length, list:list, likely:top, run:run };
 }
+function namedGoalies(key, g){
+  // a confirmed starter, if the feed has named one for this game
+  var S = state.sports[key];
+  var gj = S.data.goalies;
+  if (!gj || !gj.games) return null;
+  var want = normTeam(g.home), other = normTeam(g.away);
+  var row = gj.games.filter(function(x){
+    return normTeam(x.home) === want && normTeam(x.away) === other;
+  })[0];
+  if (!row) return null;
+  return { home:row.homeGoalie || null, away:row.awayGoalie || null, confirmed:!!row.confirmed };
+}
 function goalieSection(key, g){
   if (key !== 'nhl') return '';
+  var named = namedGoalies(key, g);
   var cards = [g.home, g.away].map(function(t){
     var f = goalieForm(key, t, 10);
     if (!f) return '';
+    var startNamed = named ? (normTeam(t) === normTeam(g.home) ? named.home : named.away) : null;
     var rows = f.list.slice(0, 3).map(function(b){
       var isTop = b === f.list[0] && f.window && b.starts / f.window >= 0.6;
-      var tag = isTop ? 'NUMBER ONE' : (b.name === f.likely ? 'PLAYED LAST' : '');
+      var isNamed = startNamed && cmbNameKey(b.name) === cmbNameKey(startNamed);
+      var tag = isNamed ? 'STARTING' : (isTop ? 'NUMBER ONE' : (b.name === f.likely ? 'PLAYED LAST' : ''));
       return '<div class="lg-p"><span>' + esc(b.name)
         + (tag ? '<i class="lg-pos">' + tag + '</i>' : '') + '</span>'
         + '<b>' + b.starts + '</b>'
@@ -13034,7 +13050,7 @@ function goalieSection(key, g){
     }).join('');
     return '<div class="lg-card"><div class="lg-hd"><b>' + esc(abbrOf(key, t)) + '</b>'
       + '<span>&nbsp;last ' + f.window + ' starts</span></div>' + rows
-      + '<div class="deg-note">' + (function(){
+      + '<div class="deg-note">' + (startNamed ? '<b>' + esc(startNamed) + ' is named to start.</b> ' : '') + (function(){
           // Two different questions: who is the number one, and who played last. A goalie with 8 of
           // 10 starts is the number one even if the backup had the most recent game - reading only
           // the run called that a split, which it is not.
@@ -13055,9 +13071,14 @@ function goalieSection(key, g){
   }).filter(Boolean).join('');
   if (!cards) return '';
   return '<div class="dayband"><span>In goal</span></div><div class="lg-wrap">' + cards + '</div>'
-    + '<div class="deg-note" style="padding:2px 2px 8px">Who has actually been starting, from the '
-    + 'game logs. <b>Not a confirmed start</b> \u2014 there is no lineup feed for hockey here, so check '
-    + 'the team\u2019s own announcement before backing anything that turns on the goalie.</div>';
+    + '<div class="deg-note" style="padding:2px 2px 8px">'
+    + (named && named.confirmed
+        ? 'Starters as named by the clubs. Teams do change their mind late, so a very late scratch '
+          + 'will not show here.'
+        : 'Who has actually been starting, from the game logs. <b>No starter has been named for this '
+          + 'game yet</b>, so check the club\u2019s own announcement before backing anything that turns '
+          + 'on the goalie.')
+    + '</div>';
 }
 function matchRadar(key, g){
   var S = state.sports[key];
