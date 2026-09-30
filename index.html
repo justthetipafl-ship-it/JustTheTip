@@ -692,10 +692,6 @@
   .mb-count{display:flex;align-items:center;gap:8px;padding:4px 2px 8px;font-size:10px;
     color:var(--text-3);font-family:var(--font-mono);}
   .mb-count span{letter-spacing:.04em;text-transform:uppercase;}
-  .mb-leg{display:flex;gap:10px;align-items:center;padding:10px 10px 10px 4px;
-    border-top:1px solid var(--border);cursor:pointer;position:relative;}
-  .mb-leg:active{background:var(--surface-2);}
-  .mb-leg.on{background:rgba(34,197,94,.07);}
   .mb-hide{background:none;border:0;color:var(--text-3);padding:4px 6px;cursor:pointer;font-size:13px;
     opacity:.5;}
   .mb-hide:active{opacity:1;}
@@ -716,8 +712,11 @@
   .mb-badge.deja{background:rgba(167,139,250,.18);color:#a78bfa;}
   .mb-badge.ceil{background:rgba(249,115,22,.16);color:#f97316;}
   .mb-badge.val{background:rgba(34,197,94,.16);color:var(--accent);}
-  .mb-leg.deja-card{cursor:pointer;margin-bottom:6px;}
-  .mb-leg.deja-card.on{border-color:var(--accent);background:rgba(34,197,94,.09);}
+  /* the Deja Vu card look, without borrowing its class - .deja-card is scanned elsewhere */
+  .mb-leg{display:flex;align-items:center;gap:9px;background:var(--surface-2);
+    border:1px solid var(--border);border-radius:10px;padding:9px 10px;margin-bottom:6px;
+    cursor:pointer;}
+  .mb-leg.on{border-color:var(--accent);background:rgba(34,197,94,.09);}
   .mb-leg .mb-l{flex:1;min-width:0;}
   .mb-leg .mb-nm{display:flex;align-items:baseline;gap:7px;flex-wrap:wrap;}
   .mb-leg .mb-nm b{font-size:12px;}
@@ -9290,6 +9289,25 @@ function mbBadges(key, p, mkt, line, price, prob, vals, h2h){
 function betLabelFor(key, mkt, label, line){
   return (line % 1 ? Math.ceil(line) : line + 1) + '+ ' + label;
 }
+// How many games a player must have before the builder will use him. Early in a season nobody has
+// four - three weeks into the NFL year every player had three, so the builder showed no legs at
+// all for any fixture. Scale the bar to how far the season has actually got, with a floor of two so
+// a single game is never treated as a record.
+function mbMinGames(key, mkt){
+  var S = state.sports[key];
+  if (S.idx.mbMin == null) S.idx.mbMin = {};
+  if (S.idx.mbMin[mkt] != null) return S.idx.mbMin[mkt];
+  // Use a high percentile, not the maximum: one player with a fifth game (a season boundary, a
+  // reschedule) held the bar at four while the whole league sat on three, and the builder showed
+  // nothing at all. The 75th percentile tracks where the season actually is.
+  var lg = leagueAvg(key, mkt) || {}, counts = [];
+  Object.keys(lg).forEach(function(n){ var gms = (lg[n] || {}).games || 0; if (gms > 0) counts.push(gms); });
+  if (!counts.length){ S.idx.mbMin[mkt] = 2; return 2; }
+  counts.sort(function(a, b){ return a - b; });
+  var p75 = counts[Math.floor(counts.length * 0.75)];
+  S.idx.mbMin[mkt] = Math.max(2, Math.min(MB_MIN_GAMES, p75));
+  return S.idx.mbMin[mkt];
+}
 function mbCandidates(key, g, mode){
   var S = state.sports[key], out = [];
   var mkts = (S.config || {}).oddsMkts || (S.config || {}).multiMkts || [];
@@ -9305,7 +9323,7 @@ function mbCandidates(key, g, mode){
           if (p.role !== 'pitch' && ARM_ONLY[k]) return;
         }
         var lg = leagueAvg(key, k)[p.name];
-        if (!lg || lg.games < MB_MIN_GAMES) return;
+        if (!lg || lg.games < mbMinGames(key, k)) return;
         var logs = sortLogsDesc(((S.idx.logsByName || {})[p.name] || []).slice());
         var vals = [];
         logs.forEach(function(r){ var v = statOf(key, r, k); if (v != null) vals.push(v); });
@@ -9613,7 +9631,7 @@ function mbPanel(pin){
       parts.push('<span class="mb-badge sig-b">' + esc(x[1]) + '</span>');
     });
     var bad = parts.join('');
-    return '<div class="mb-leg deja-card'+(picked ? ' on' : '')+'" onclick="LAB.mbAdd(\''+esc(c.id).replace(/'/g, "\\'")+'\')">'
+    return '<div class="mb-leg'+(picked ? ' on' : '')+'" onclick="LAB.mbAdd(\''+esc(c.id).replace(/'/g, "\\'")+'\')">'
       + playerImgP(f.key, c.p, 26)
       + '<div class="mb-l"><div class="mb-nm"><b>'+esc(c.name)+'</b>'
       + '<span class="mb-bet">'+esc(c.label)+' \u00b7 '+esc(abbrOf(f.key, c.team))+'</span></div>'
@@ -13966,6 +13984,52 @@ window.LAB = {
     render();
   },
   mbMode: function(m){ state.view.mbMode = m; render(); },
+  mbTrace: function(){
+    var f = mbFixtures()[0]; if (!f) return { err:'no fixture' };
+    var key = f.key, g = f.g, S = state.sports[key];
+    var mkts = (S.config || {}).oddsMkts || (S.config || {}).multiMkts || [];
+    var t = { sport:key, game:(g.away||'?')+'@'+(g.home||'?'), mkts:mkts.length,
+              players:0, playing:0, withAvg:0, withVals:0, withRungs:0, priced:0 };
+    [g.away, g.home].forEach(function(team){
+      var opp = (team === g.home) ? g.away : g.home;
+      playersOnTeam(key, team).forEach(function(p){
+        if (!p || !p.name) return;
+        t.players++;
+        if (!isPlayingP(key, p.name, team)) return;
+        t.playing++;
+        mkts.forEach(function(m){
+          var k = m[0];
+          var lg = leagueAvg(key, k)[p.name];
+          if (!lg || lg.games < mbMinGames(key, k)) return;
+          t.withAvg++;
+          var logs = sortLogsDesc(((S.idx.logsByName || {})[p.name] || []).slice());
+          var vals = [];
+          logs.forEach(function(r){ var v = statOf(key, r, k); if (v != null) vals.push(v); });
+          if (vals.length < 5) return;
+          t.withVals++;
+          var rungs = streakCandidates(key, p.name, k);
+          if (!rungs.length) return;
+          t.withRungs++;
+          t.priced += rungs.length;
+        });
+      });
+    });
+    t.minGames = MB_MIN_GAMES;
+    var k0 = (mkts[0] || [''])[0];
+    var lg0 = leagueAvg(key, k0) || {};
+    t.mkt0 = k0;
+    t.lgEntries = Object.keys(lg0).length;
+    t.lgSample = Object.keys(lg0).slice(0, 2).map(function(n){ return n + ':' + lg0[n].games; });
+    t.effMin = mkts.length ? mbMinGames(key, k0) : null;
+    var mostG = 0; Object.keys(lg0).forEach(function(n){ var q = (lg0[n]||{}).games||0; if (q > mostG) mostG = q; });
+    t.mostGames = mostG;
+    t.gamesSpread = Object.keys(lg0).slice(0, 5).map(function(n){ return lg0[n].games; });
+    var some = playersOnTeam(key, g.home)[0];
+    t.aPlayer = some && some.name;
+    t.aPlayerInLg = !!(some && lg0[some.name]);
+    t.aPlayerLogs = some ? ((S.idx.logsByName || {})[some.name] || []).length : 0;
+    return t;
+  },
   snapProbe: function(sel, label){
     return shareCanvasFor(sel || '#nope', label || 'Test')
       .then(function(c){ return c ? ('canvas ' + c.width + 'x' + c.height) : 'null'; })
