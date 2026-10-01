@@ -726,8 +726,17 @@ def main():
             if pid in hands:
                 game[side]["probablePitcher"]["throws"] = hands[pid]["throws"]
 
-    # team rates: K-rate + per-game offense (for) and allowed (against)
-    for tid in team_ids_playing:
+    # Team rates: K-rate + per-game offense (for) and allowed (against).
+    #
+    # These are fetched for EVERY team, not just the ones playing today. What a team concedes is
+    # the basis of the tool's defence-vs-position ranking, and a ranking needs a league to rank
+    # against: in the postseason only two clubs had a game, so the file held two rows and the tool
+    # reported "#1 of 2 softest defence", which says nothing at all. Thirty teams is thirty extra
+    # calls once a day - cheap against the season-long table it keeps intact.
+    #
+    # Teams with no game today still get their rates; only their rosters and probables are skipped
+    # further down, which is as it should be.
+    for tid in teams:
         kr, forS, vsS, gp = team_stats(tid, season)
         teams[tid]["kRate"] = kr
         teams[tid]["games"] = gp
