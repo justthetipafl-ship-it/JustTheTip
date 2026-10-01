@@ -3618,15 +3618,27 @@ function eliteStats(key){
   return (cfg.eliteDefs || cfg.dvpStats || cfg.oddsMkts || [])
     .filter(function(m){ return m[0] !== 'dreamteam'; }).slice(0, 6);
 }
+// A defensive ranking needs a league to rank against. In the MLB postseason the build drops to the
+// teams still playing - the live file held two rows, PHI and ATL - and the tool was printing
+// "#1 of 2", which says nothing about how soft a defence is. Below this many teams there is no
+// ranking worth making, so the tiles that lean on it go quiet instead of asserting a number.
+var DVP_MIN_POOL = 8;
 function dvpRankFor(key, opp, pos, mkt){
   var board = dvpBoard(key, mkt);
   var list = board[pos] || board.ALL;                       // MLB's dvp only splits to "ALL"
   if (!list || !list.length) return null;
+
   var e = null;
   for (var i=0;i<list.length;i++){ if (normTeam(list[i].team) === normTeam(opp)){ e = list[i]; break; } }
   if (!e) return null;
   var sum = 0; list.forEach(function(x){ sum += x.val; });
   var avg = sum / list.length;
+  // What a team concedes is worth showing whatever the pool size; the RANK and the percentage
+  // against the league average are not - both are meaningless out of two. Flag it as thin so
+  // callers can print the number and leave the ranking alone.
+  if (list.length < DVP_MIN_POOL){
+    return { rank:null, total:list.length, allowed:e.val, pct:null, thin:true };
+  }
   return { rank:e.rank, total:e.of, allowed:e.val, pct: avg ? (e.val - avg) / avg * 100 : 0 };
 }
 function eliteEntry(key, name, mkt){                       // first rung paying the floor, cheapest up
@@ -3682,7 +3694,7 @@ function eliteRow(key, r){
       + '<div class="elm-stat">'+r.val.toFixed(r.val < 3 ? 2 : 1)+' '+esc(r.label)+'/gm \u00b7 v '
         + esc(abbrOf(key, r.opp))+' concede '+(r.dvp.allowed % 1 ? r.dvp.allowed.toFixed(1) : r.dvp.allowed)+'</div>'
       + '<div class="elm-mu"><span class="elm-track"><i style="width:'+Math.max(4, soft)+'%"></i></span>'
-        + '<span class="elm-pct">'+(r.dvp.pct > 0 ? '+' : '')+r.dvp.pct.toFixed(0)+'% vs league</span></div>'
+        + (r.dvp.pct != null ? '<span class="elm-pct">'+(r.dvp.pct > 0 ? '+' : '')+r.dvp.pct.toFixed(0)+'% vs league</span>' : '')+'</div>'
     + moveChip(key, r.name, r.mkt, r.line, r.book, r.price)
     + '</div>'
     + '<div class="elm-right"><div class="elm-dvp">'+r.dvp.rank+'</div>'
@@ -4223,7 +4235,7 @@ function ctxChips(key, p, mkt, line, opp){
       if (x.t){ out.push('<span class="gl-chip '+(x.good ? 'good' : 'bad')+'">'+esc(x.t)+'</span>'); return; }
       if (x.label == null || x.pct == null || Math.abs(x.pct) < 5) return;
       out.push('<span class="gl-chip '+(x.pct > 0 ? 'good' : 'bad')+'">'+esc(x.label)
-        + ' '+(x.pct > 0 ? '+' : '')+x.pct.toFixed(0)+'%</span>');
+        + (x.pct != null ? ' '+(x.pct > 0 ? '+' : '')+x.pct.toFixed(0)+'%' : '')+'</span>');
     });
   } catch(e){ return ''; }
   return out.join('');
@@ -4480,7 +4492,8 @@ function nflChunk(key, g){
                    avg:vals.reduce(function(a,b){ return a+b; }, 0) / vals.length,
                    price:(od && od.over != null ? +od.over : null),
                    book:(od ? od.book : null), posted:!!(od && od.line != null),
-                   score: rate*100 + (expDvp ? expDvp.pct*0.6 : 0) + (dr ? dr.pct*0.3 : 0)
+                   score: rate*100 + (expDvp && expDvp.pct != null ? expDvp.pct*0.6 : 0)
+                     + (dr && dr.pct != null ? dr.pct*0.3 : 0)
                           + (expRate != null ? expRate*4 : 0) });
       });
     });
@@ -4714,7 +4727,7 @@ function tuddyProfile(key, r){
     h += '<div class="tt-sec">Opportunity</div>'
       + (imp != null ? ttRow('Implied total', imp.toFixed(1)+' pts', imp/34*100) : '')
       + (tdD ? ttRow('TDs allowed', '#'+tdD.rank+'/'+tdD.total+' \u00b7 '+(tdD.pct > 0 ? '+' : '')
-          + tdD.pct.toFixed(0)+'%', (1 - (tdD.rank-1)/Math.max(1, tdD.total-1))*100, true) : '');
+          + (tdD.pct != null ? tdD.pct.toFixed(0) : '\u2014')+'%', (1 - ((tdD.rank||1)-1)/Math.max(1, (tdD.total||1)-1))*100, true) : '');
   }
   // coverage split, where the player has one: how he is used against man and against zone
   if (p.cov && (p.cov.man || p.cov.zone)){
@@ -5363,7 +5376,7 @@ function nflChunkRow(key, r){
       + ' \u00b7 avg '+r.avg.toFixed(1)
       + (r.expRate != null ? ' \u00b7 '+r.expRate.toFixed(1)+' explosive/gm' : '')
       + (r.style != null ? ' \u00b7 '+r.style.toFixed(1)+' '+esc(r.def.styleL) : '')
-      + (r.expDvp ? ' \u00b7 opp explosives '+(r.expDvp.pct > 0 ? '+' : '')+r.expDvp.pct.toFixed(0)+'%' : '')
+      + (r.expDvp && r.expDvp.pct != null ? ' \u00b7 opp explosives '+(r.expDvp.pct > 0 ? '+' : '')+r.expDvp.pct.toFixed(0)+'%' : '')
       + '</div>'
     + pips + '</div>'
     + '<div class="stk-right"><div class="stk-hit">'+Math.round(r.rate*100)+'%</div>'
@@ -5766,7 +5779,7 @@ function kickerRows(key, g){
       var short = band('fg0_39'), mid = band('fg40_49'), long = band('fg50p');
       // opponent context: how many points kickers have taken off them
       var dr = dvpRankFor(key, opp, 'K', 'kickingPts');
-      var oppMult = dr ? Math.max(0.85, Math.min(1.2, 1 + dr.pct/200)) : 1;
+      var oppMult = (dr && dr.pct != null) ? Math.max(0.85, Math.min(1.2, 1 + dr.pct/200)) : 1;
       var proj = kp != null ? kp * windMult * oppMult : null;
       var picks = [];
       [['kickingPts', kp, 'Kicking pts'], ['fgMade', fga, 'FG made']].forEach(function(m){
@@ -5815,8 +5828,9 @@ function kickerRow(key, r){
       + '<span class="gl-chip">range '+pct(r.short)+'/'+pct(r.mid)+'/'+pct(r.long)+' by 40/50+</span>'
       + '<span class="gl-chip'+(r.windMult > 1 ? ' good' : (r.windMult < 1 ? ' bad' : ''))+'">'
         + (r.indoor ? 'indoors' : Math.round(r.wind)+' km/h')+'</span>'
-      + (r.dr ? '<span class="gl-chip'+(r.dr.pct > 0 ? ' good' : '')+'">'+esc(abbrOf(key, r.opp))
-          + ' #'+r.dr.rank+'/'+r.dr.total+' to kickers</span>' : '')
+      + (r.dr && r.dr.pct != null ? '<span class="gl-chip'+(r.dr.pct > 0 ? ' good' : '')+'">'+esc(abbrOf(key, r.opp))
+          + (r.dr.rank != null ? ' #'+r.dr.rank+'/'+r.dr.total+' to kickers' : ' concede '+(+r.dr.allowed).toFixed(2))
+          + '</span>' : '')
     + '</div></div>'
     + '<div class="gl-right"><div class="gl-ev '+(r.picks.some(function(x){ return x.good; }) ? 'pos' : 'neg')+'">'
       + (r.proj != null ? r.proj.toFixed(1) : '\u2014')+'</div><div class="gl-evl">PROJ PTS</div></div></div>';
@@ -5921,7 +5935,7 @@ function tackleRow(key, r){
       + (key === 'nfl' ? 'Tackles + Ast' : 'Tackles')+' \u00b7 v '+esc(abbrOf(key, r.opp))
       + ' \u00b7 avg '+r.avg.toFixed(1)
       + (r.snap != null ? ' \u00b7 '+Math.round(r.snap)+'% snaps' : '')
-      + (r.funnel ? ' \u00b7 funnel '+(r.funnel.pct > 0 ? '+' : '')+r.funnel.pct.toFixed(0)+'%' : '')
+      + (r.funnel && r.funnel.pct != null ? ' \u00b7 funnel '+(r.funnel.pct > 0 ? '+' : '')+r.funnel.pct.toFixed(0)+'%' : '')
       + (r.vol && r.vol.playsRank <= 8 ? ' \u00b7 #'+r.vol.playsRank+' in plays' : '')
       + (r.vol && r.vol.rushRank <= 8 ? ' \u00b7 #'+r.vol.rushRank+' in carries' : '')
       + '</div>'
@@ -6540,10 +6554,13 @@ function snagRow(key, r){
   return aflRowHead(key, r, (posShortP(r.p) ? posShortP(r.p)+' \u00b7 ' : '')+abbrOf(key, r.p.team)+' v '+abbrOf(key, r.opp))
     + '<div class="gl-bet"><b>'+r.bet.n+'+ Goals</b> \u00b7 $'+r.bet.od.price.toFixed(2)+' '+esc(r.bet.od.book||'')+'</div>'
     + '<div class="gl-why"><span class="gl-chip good">#'+r.rank+' in the league \u00b7 '+r.avg.toFixed(2)+'/gm</span>'
-    + '<span class="gl-chip good">'+esc(abbrOf(key, r.opp))+' #'+r.dr.rank+'/'+r.dr.total+' softest goals D ('+(r.dr.pct>0?'+':'')+r.dr.pct.toFixed(0)+'%)</span>'
+    + (r.dr.rank != null
+        ? '<span class="gl-chip good">'+esc(abbrOf(key, r.opp))+' #'+r.dr.rank+'/'+r.dr.total+' softest goals D ('+(r.dr.pct>0?'+':'')+r.dr.pct.toFixed(0)+'%)</span>'
+        : '<span class="gl-chip">'+esc(abbrOf(key, r.opp))+' concede '+(+r.dr.allowed).toFixed(2)+' \u2014 too few teams on file to rank</span>')
     + (r.l5 != null ? '<span class="gl-chip">L5 '+r.l5.toFixed(1)+'</span>' : '')
     + (r.shots != null ? '<span class="gl-chip">'+r.shots.toFixed(1)+' shots/gm L5</span>' : '')+'</div></div>'
-    + '<div class="gl-right"><div class="gl-ev pos">'+r.dr.rank+'</div><div class="gl-evl">GOALS D RANK</div></div></div>';
+    + '<div class="gl-right"><div class="gl-ev pos">'+(r.dr.rank != null ? r.dr.rank : '\u2014')
+      + '</div><div class="gl-evl">GOALS D RANK</div></div></div>';
 }
 function huntRow(key, r){
   return aflRowHead(key, r, (posShortP(r.p) ? posShortP(r.p)+' \u00b7 ' : '')+abbrOf(key, r.p.team)+' v '+abbrOf(key, r.opp))
@@ -7258,7 +7275,7 @@ function nblSpecialist(key, g, stat){
     var opp = inGame[normTeam(p.team)];
     if (!opp || !isPlayingP(key, p.name, p.team) || !hasAnyOddsFor(key, p.name)) return;
     var dr = dvpRankFor(key, opp, p.position || p.pos, stat);
-    if (!dr || dr.pct < 4) return;
+    if (!dr || dr.pct == null || dr.pct < 4) return;   // a thin pool is no read at all
     var b = nblPriced(key, p, stat, opp);
     if (!b) return;
     // Volume into a soft defence is the read, but the PRICE decides whether it is a bet. These
@@ -9017,7 +9034,8 @@ function cmbAnalysis(l){
     + esc((opp ? abbrOf(key, opp) : 'opponent'))+' vs '+esc(posShortP(p) || 'position')+'</div>';
   if (dr){
     var tone = dr.pct > 8 ? 'Soft' : (dr.pct < -8 ? 'Tough' : 'Neutral');
-    h += '<div class="ca-bv">'+tone+'</div><div class="ca-bs">'+(dr.pct > 0 ? '+' : '')+dr.pct.toFixed(0)
+    h += '<div class="ca-bv">'+tone+'</div><div class="ca-bs">'+(dr.pct == null ? '\u2014'
+      : (dr.pct > 0 ? '+' : '')+dr.pct.toFixed(0))
       + '% vs league \u00b7 allows '+dec(dr.allowed)+' \u00b7 #'+dr.rank+'/'+dr.total+' softest</div>';
   } else {
     h += '<div class="ca-bv">Not available</div><div class="ca-bs">'
@@ -9065,7 +9083,9 @@ function cmbAnalysis(l){
   if (dr) push((isUnder ? dr.pct < -8 : dr.pct > 8) ? 'good' : ((isUnder ? dr.pct > 8 : dr.pct < -8) ? 'bad' : 'info'), 'ti-shield-half',
     'DVP: '+esc(abbrOf(key, opp))+' '+(dr.pct > 8 ? 'leaks' : dr.pct < -8 ? 'suppresses' : 'is average vs')
     + ' '+esc(l.label)+' to '+esc(posShortP(p) || 'this position')
-    + ' (#'+dr.rank+'/'+dr.total+', '+(dr.pct > 0 ? '+' : '')+dr.pct.toFixed(0)+'%)');
+    + (dr.rank != null && dr.pct != null
+        ? ' (#'+dr.rank+'/'+dr.total+', '+(dr.pct > 0 ? '+' : '')+dr.pct.toFixed(0)+'%)'
+        : ' (too few teams on file to rank)'));
   if (h2hRows.length) push(cleared(h2hRows[0].v) ? 'good' : 'info', 'ti-history',
     'Last vs '+esc(abbrOf(key, opp))+': '+dec(h2hRows[0].v)+' '+esc(l.label)+' \u2014 '
     + (cleared(h2hRows[0].v) ? 'landed this bet' : 'missed it')+' \u00b7 '
@@ -9408,7 +9428,7 @@ function mbCandidates(key, g, mode){
             var l5 = vals.slice(0, 5);
             var l5avg = l5.reduce(function(a,b){ return a+b; }, 0) / Math.max(1, l5.length);
             ok2 = !!dr && dr.pct >= 8 && l5avg > c.line;
-            why = dr ? ['+'+dr.pct.toFixed(0)+'% DVP', 'L5 '+l5avg.toFixed(1)] : [];
+            why = (dr && dr.pct != null) ? ['+'+dr.pct.toFixed(0)+'% DVP', 'L5 '+l5avg.toFixed(1)] : [];
           }
           if (!ok2) return;
           // Ranking 'all' on EV put "2+ goals at $41, model says 9%" at the top of the list -
@@ -14030,6 +14050,7 @@ window.LAB = {
     t.aPlayerLogs = some ? ((S.idx.logsByName || {})[some.name] || []).length : 0;
     return t;
   },
+  moveProbe: function(key, name, mkt, line, book, price){ return moveChip(key, name, mkt, line, book, price); },
   snapProbe: function(sel, label){
     return shareCanvasFor(sel || '#nope', label || 'Test')
       .then(function(c){ return c ? ('canvas ' + c.width + 'x' + c.height) : 'null'; })
