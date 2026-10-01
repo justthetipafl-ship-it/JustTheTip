@@ -68,7 +68,10 @@ for t in B.get('teams', {}).values():
     for _k, _v in _vs.items(): trow[_k + '_a'] = _v        # opponent "Allows" per-game -> t[k+'_a']
     teams.append(trow)
     vs = t.get('vsStats') or {}
-    dvp.append({'team': ab, 'pos': 'ALL', **{k: vs.get(k) for k in ('R', 'H', 'HR', 'BB', 'SO')}})
+    # A team whose stats fetch came back empty would otherwise land as a row of nulls and drag the
+    # league average it is supposed to be ranked against. No numbers, no row.
+    if any(vs.get(k) is not None for k in ('R', 'H', 'HR', 'BB', 'SO')):
+        dvp.append({'team': ab, 'pos': 'ALL', **{k: vs.get(k) for k in ('R', 'H', 'HR', 'BB', 'SO')}})
     for r in (t.get('recent') or []):
         key = tuple(sorted([ab, r.get('opp', '')])) + (r.get('date', ''),)
         if key in seen_g: continue
