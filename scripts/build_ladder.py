@@ -199,7 +199,7 @@ def _combo_cross_game(by_game):
     return best
 
 
-def best_pick(base, gl, byp, book=LADDER_BOOK, fixtures=None):
+def best_pick(base, gl, byp, book=LADDER_BOOK, fixtures=None, pool_only=False):
     """Cross-game multi across the slate (one book); SGM only when a single game is on."""
     od = load(os.path.join(base, 'odds.json'))
     fx = load(os.path.join(base, 'fixture.json')) or []
@@ -249,8 +249,21 @@ def best_pick(base, gl, byp, book=LADDER_BOOK, fixtures=None):
     todays = [g for g in playable if _gdate(g) == today.isoformat()]
     if todays:                                           # prefer today's slate
         slate = todays
-    elif playable:                                       # else the SOONEST upcoming slate, so the ladder keeps climbing between game days
+    elif playable:
+        # The soonest upcoming slate, but only within MAX_AHEAD days. Unbounded, a Monday run
+        # reached a game played the following Thursday: the bet then sat four days undecided, the
+        # ladder could not compound, and the staleness clock - which runs from the day the rung was
+        # struck - wrote the day off before kick-off. A ladder that climbs daily has to bet on
+        # games that are about to be played, and skip the day when there are none.
         soonest = min(_gdate(g) for g in playable if _gdate(g))
+        try:
+            ahead = (datetime.date.fromisoformat(soonest) - today).days
+        except (TypeError, ValueError):
+            ahead = 0
+        if ahead > MAX_AHEAD:
+            print('  ladder: nothing playable within %d day(s) - next slate is %s (%d days away), '
+                  'no rung today' % (MAX_AHEAD, soonest, ahead))
+            return None
         slate = [g for g in playable if _gdate(g) == soonest]
     else:
         return None
@@ -278,6 +291,31 @@ def best_pick(base, gl, byp, book=LADDER_BOOK, fixtures=None):
         lg['opp'] = a if tm == h else h
         by_book.setdefault(l.get('book'), {}).setdefault(gi, []).append(lg)
 
+    if pool_only:
+        # The raw candidates, keyed by book - a cross-sport multi still has to be placeable at ONE
+        # book. year/round come from the slate's own fixture here, since the usual derivation reads
+        # them off the chosen legs and nothing has been chosen yet.
+        out = {}
+        for bk, by_game in by_book.items():
+            flat = []
+            for gi, lgs in by_game.items():
+                for lg in lgs:
+                    lg = dict(lg); lg['game'] = gi
+                    flat.append(lg)
+            if flat:
+                out[bk] = flat
+        pyr, prd = 0, 0
+        for fxg in (fixtures or []):
+            if fxg.get('week') is None and fxg.get('round') is None:
+                continue
+            try:
+                pyr = int(fxg.get('season') or fxg.get('year') or 0)
+                prd = rnum(fxg.get('week') if fxg.get('week') is not None else fxg.get('round'))
+            except (TypeError, ValueError):
+                continue
+            break
+        return {'pool': out, 'game_date': (_gdate(slate[0]) if slate else None),
+                'year': pyr, 'round': prd}
     best = None
     for book, by_game in by_book.items():
         if single:
@@ -321,13 +359,22 @@ def best_pick(base, gl, byp, book=LADDER_BOOK, fixtures=None):
         if (yr, rd) >= (latest[0], latest[1]):
             target = (yr, rd)
             break
+    # carry the date of the game the rung was actually struck on: the staleness clock should run
+    # from when the bet can be decided, not from when it was placed
+    _gd = None
+    try:
+        _gd = _gdate(slate[0])
+    except (IndexError, TypeError, NameError):
+        _gd = None
     return {'legs': best['legs'], 'price': round(best['price'], 2), 'book': best['book'],
             # `round` is the last COMPLETED round at pick time; grading takes the next game after it
-            'type': best['type'], 'sub': subleg, 'year': target[0], 'round': target[1]}
+            'type': best['type'], 'sub': subleg, 'year': target[0], 'round': target[1],
+            'game_date': _gd}
 
 
 
 DNP = 'dnp'
+MAX_AHEAD = 1         # a rung may be struck for today or tomorrow, never further out
 STALE_DAYS = 3        # a pending day older than this is written off rather than freezing the ladder          # he never took the field in the rounds after the bet
 
 
@@ -378,6 +425,66 @@ def league_round(gl):
     return latest
 
 
+
+CROSS_SPORT = os.environ.get('LADDER_CROSS_SPORT', '1') != '0'   # set 0 to force same-game builds
+CROSS_TARGET = 2.0        # the price the ladder aims at per rung
+
+
+def _combo_cross_sport(pools):
+    """Best 2-3 legs from DIFFERENT sports, at one book.
+
+    A same-game multi's legs move together - a quarterback's yards and his receiver's - so the true
+    price is not the product of the parts, and the book prices that correlation in its own favour.
+    Legs from different sports are independent: the chance all of them land IS the product of their
+    individual rates, and the book's price is the product too. No correlation to model, no shading
+    to argue with, and the number the ladder reports is the number.
+
+    One book only, because that is what you can actually place as a single ticket.
+
+    `pools` is {book: {sport: [legs]}}. Returns the usual combo shape, or None.
+    """
+    best = None
+    for book, by_sport in pools.items():
+        if len(by_sport) < 2:                       # needs two sports to be cross-sport
+            continue
+        # strongest leg per sport, by how often it has landed
+        tops = []
+        for sport, legs in by_sport.items():
+            top = max(legs, key=lambda l: (l.get('hr') or 0, -(l.get('over') or 99)))
+            if (top.get('hr') or 0) <= 0 or not top.get('over'):
+                continue
+            top = dict(top); top['sport'] = sport
+            tops.append(top)
+        if len(tops) < 2:
+            continue
+        tops.sort(key=lambda l: -(l.get('hr') or 0))
+        # grow the ticket while it is short of the target price, keeping the safest legs first
+        pick, price, hrp = [], 1.0, 1.0
+        for lg in tops[:3]:
+            pick.append(lg)
+            price *= float(lg['over'])
+            hrp *= float(lg['hr'])
+            if price >= CROSS_TARGET:
+                break
+        if len(pick) < 2:
+            continue
+        cand = {'legs': pick, 'hrp': hrp, 'price': price, 'book': book, 'type': 'cross'}
+        if best is None or cand['hrp'] > best['hrp']:
+            best = cand
+    return best
+
+
+def _rank(pick):
+    """Sort key for competing picks: today first, then price."""
+    import datetime as _dt
+    gd = str(pick.get('game_date') or '')[:10]
+    try:
+        ahead = (_dt.date.fromisoformat(gd) - _dt.date.today()).days if gd else 99
+    except ValueError:
+        ahead = 99
+    return (-ahead, pick.get('odds') or pick.get('price') or 0)
+
+
 def mixed_pick(bases, book=LADDER_BOOK):
     """The best build across EVERY sport at once, for the mixed challenge.
 
@@ -403,9 +510,59 @@ def mixed_pick(bases, book=LADDER_BOOK):
         if not pick:
             continue
         pick['sport'] = str(base).replace('\\', '/').strip('/').split('/')[-2]
-        if best is None or (pick.get('odds') or 0) > (best.get('odds') or 0):
+        # Rank on WHEN before how much. Choosing purely on price let a four-days-away NFL build
+        # beat everything playing that night, which is how the ladder ended up holding a bet it
+        # could not settle for most of a week. A game today beats a game tomorrow at any price;
+        # within the same day, the bigger price wins.
+        if best is None or _rank(pick) > _rank(best):
             best = pick
+    # A cross-sport ticket, built from the same legs each sport already offered. It competes with
+    # the same-game builds rather than replacing them: whichever is more likely to land wins.
+    if CROSS_SPORT:
+        cross = _cross_from_bases(bases, book)
+        if cross and (best is None or (cross.get('hrp') or 0) > (best.get('hrp') or 0)):
+            print('  mixed: cross-sport build preferred (%d legs, $%.2f, lands %.0f%%)'
+                  % (len(cross['legs']), cross.get('price') or 0, (cross.get('hrp') or 0) * 100))
+            best = cross
     return best
+
+
+def _cross_from_bases(bases, book=LADDER_BOOK):
+    """Collect each sport's candidate legs and build one cross-sport ticket from them."""
+    pools, meta = {}, {}
+    for base in bases:
+        if not os.path.isdir(base):
+            continue
+        sport = str(base).replace('\\', '/').strip('/').split('/')[-2]
+        try:
+            fresh = load(os.path.join(base, 'ladder_gamelogs.json'))
+            fresh = fresh if isinstance(fresh, list) else []
+            gl = fresh + load_gamelogs(base)
+            fx = load(os.path.join(base, 'fixture.json')) or []
+            got = best_pick(base, gl, build_index(gl), book, fx, pool_only=True)
+        except Exception as e:
+            print('  cross: %s failed (%s)' % (base, e))
+            continue
+        if not got or not got.get('pool'):
+            continue
+        for bk, legs in got['pool'].items():
+            pools.setdefault(bk, {})[sport] = legs
+        meta[sport] = got
+    if not pools:
+        return None
+    c = _combo_cross_sport(pools)
+    if not c:
+        return None
+    # the rung is settled per leg, so each one carries its own sport, year and round
+    for lg in c['legs']:
+        m = meta.get(lg.get('sport')) or {}
+        lg['year'] = m.get('year')
+        lg['round'] = m.get('round')
+    first = meta.get(c['legs'][0].get('sport')) or {}
+    return {'legs': c['legs'], 'price': round(c['price'], 2), 'odds': round(c['price'], 2),
+            'book': c['book'], 'type': 'cross', 'sub': None, 'hrp': c['hrp'],
+            'sport': 'mixed', 'game_date': first.get('game_date'),
+            'year': first.get('year'), 'round': first.get('round')}
 
 
 def main():
@@ -469,10 +626,31 @@ def main():
         # league to move on, which never happens once a season ends - AFL and NFL both sat pending
         # from 20 September, so no new rung was ever added. After STALE_DAYS the day is written off
         # as a void, the bank is untouched and the next run picks a fresh rung.
+        # measure from the day the bet could be DECIDED, falling back to the day it was struck
+        _from = str(d.get('game_date') or d.get('date') or '')[:10]
         try:
-            age = (datetime.date.today() - datetime.date.fromisoformat(str(d.get('date'))[:10])).days
+            age = (datetime.date.today() - datetime.date.fromisoformat(_from)).days
         except (TypeError, ValueError):
             age = 0
+        # The clock runs from the day the bet was STRUCK, which is not the day it is decided. An
+        # NFL bet struck on the Monday for a game played the following Thursday is already four
+        # days old at kick-off, so a winning rung was being written off before the ball was thrown.
+        # If not one row exists for that round yet, the game has not been played and no amount of
+        # waiting makes the day stale - hold it. Once rows for the round DO exist and this player
+        # still has none, the round-based void below handles it properly.
+        round_played = False
+        if not dated and d.get('year') and d.get('round') is not None:
+            want = (int(d['year']), rnum(d['round']))
+            for r in gl:
+                try:
+                    if (int(r.get('Year', 0) or 0), rnum(r.get('RoundName') or r.get('Week'))) == want:
+                        round_played = True
+                        break
+                except (TypeError, ValueError):
+                    continue
+            if not round_played:
+                print('  ladder: %s held - round %s has not been played yet' % (d.get('date'), d.get('round')))
+                continue
         if age > STALE_DAYS and (not outcomes or any(o is None for o in outcomes)):
             print('  ladder: %s voided - still ungraded after %s days' % (d.get('date'), age))
             d['result'] = 'void'
@@ -515,6 +693,7 @@ def main():
         sgm = best_pick(base, gl, byp, book, fx)
         if sgm:
             legs = [{'name': lg['name'], 'pick_name': lg['name'], 'market': lg['market'],
+                     'sport': lg.get('sport'), 'year': lg.get('year'), 'round': lg.get('round'),
                      'line': lg['line'], 'odds': lg['over'], 'team': lg.get('team'),
                      'opp': lg.get('opp')} for lg in sgm['legs']]
             desc = ' + '.join('%s %s+ %s' % (lg['name'].split(' ')[-1], lg['line'], lg['market'])
@@ -527,7 +706,8 @@ def main():
                                 'legs': legs, 'pick': desc, 'odds': sgm['price'],
                                 'book': sgm['book'], 'type': sgm.get('type'), 'sub': sub_rec,
                                 'bank_before': round(bank, 2), 'bank_after': None,
-                                'result': 'pending', 'year': sgm['year'], 'round': sgm['round']})
+                                'result': 'pending', 'year': sgm['year'], 'round': sgm['round'],
+                                'game_date': sgm.get('game_date')})
 
     lad['days'] = lad['days'][-MAX_RUNGS:]
     with open(lpath, 'w') as fh:
@@ -571,17 +751,24 @@ def main_mixed(out_dir, bases):
     for d in lad['days']:
         if d.get('result') not in (None, 'pending'):
             continue
-        byp = index_for(d.get('sport') or '')
         outcomes = []
         for lg in (d.get('legs') or []):
+            # A cross-sport ticket has no single sport: each leg is settled against ITS OWN
+            # league's gamelogs and its own round, which is the whole reason the legs are
+            # independent in the first place.
+            sp = lg.get('sport') or d.get('sport') or ''
+            byp = index_for(sp)
             fld = MKT.get(lg.get('market'), lg.get('market'))
-            gl2 = (idx_cache.get('_gl_' + (d.get('sport') or '')) or [])
+            gl2 = (idx_cache.get('_gl_' + sp) or [])
             dated2 = any(str(r.get('Date') or r.get('date') or '') for r in gl2[:50])
             newest2 = max((str(r.get('Date') or r.get('date') or '') for r in gl2), default='')
-            stale2 = 1 if (dated2 and d.get('date') and newest2 > d.get('date')) else 0
+            ref = str(d.get('game_date') or d.get('date') or '')[:10]
+            stale2 = 1 if (dated2 and ref and newest2 > ref) else 0
             outcomes.append(grade_leg(byp, lg.get('pick_name') or lg.get('name'), fld,
-                                      lg.get('line'), d.get('year', 0), d.get('round', 0),
-                                      stale2, dated2 and d.get('date')))
+                                      lg.get('line'),
+                                      lg.get('year', d.get('year', 0)) or 0,
+                                      lg.get('round', d.get('round', 0)) or 0,
+                                      stale2, dated2 and ref))
         try:
             age2 = (datetime.date.today() - datetime.date.fromisoformat(str(d.get('date'))[:10])).days
         except (TypeError, ValueError):
