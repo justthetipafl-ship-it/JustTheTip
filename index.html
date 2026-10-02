@@ -3683,7 +3683,9 @@ function eliteRow(key, r){
   var btns = r.entry ? rowBtns(key, { name:r.name, mkt:mktFromLabel(key, r.label), line:r.entry.line,
                        side:'over', odds:r.entry.price, book:r.entry.book, opp:r.opp, label:r.label }) : '';
   var ord = function(n){ return n + (['th','st','nd','rd'][(n%100-n%10!=10)*(n%10<4)*n%10] || 'th'); };
-  var soft = Math.round((1 - (r.dvp.rank - 1) / Math.max(1, r.dvp.total - 1)) * 100);
+  // with no rank there is no position in a league, so the bar has nothing to show
+  var soft = r.dvp.rank != null
+    ? Math.round((1 - (r.dvp.rank - 1) / Math.max(1, r.dvp.total - 1)) * 100) : 4;
   var ask = r.entry ? ((Math.round(r.entry.line) === r.entry.line) ? r.entry.line + 1 : Math.ceil(r.entry.line)) : null;
   return '<div class="elm-row" onclick="LAB.player(\''
     +key+'\',\''+esc(r.name).replace(/'/g,"\\'")+'\')">'
@@ -3693,12 +3695,15 @@ function eliteRow(key, r){
       + '<div class="elm-nm"><b>'+esc(r.name)+'</b><span class="elm-rk">'+ord(r.lgRank)+' IN LEAGUE</span></div>'
       + '<div class="elm-stat">'+r.val.toFixed(r.val < 3 ? 2 : 1)+' '+esc(r.label)+'/gm \u00b7 v '
         + esc(abbrOf(key, r.opp))+' concede '+(r.dvp.allowed % 1 ? r.dvp.allowed.toFixed(1) : r.dvp.allowed)+'</div>'
-      + '<div class="elm-mu"><span class="elm-track"><i style="width:'+Math.max(4, soft)+'%"></i></span>'
+      + '<div class="elm-mu"><span class="elm-track"><i style="width:'+Math.max(4, isFinite(soft) ? soft : 4)+'%"></i></span>'
         + (r.dvp.pct != null ? '<span class="elm-pct">'+(r.dvp.pct > 0 ? '+' : '')+r.dvp.pct.toFixed(0)+'% vs league</span>' : '')+'</div>'
     + moveChip(key, r.name, r.mkt, r.line, r.book, r.price)
     + '</div>'
-    + '<div class="elm-right"><div class="elm-dvp">'+r.dvp.rank+'</div>'
-      + '<div class="elm-dvpl">OF '+r.dvp.total+' SOFTEST</div>'
+    + '<div class="elm-right">'
+      // no league to rank against means no rank: show what they concede instead of "null of 2"
+      + (r.dvp.rank != null
+          ? '<div class="elm-dvp">'+r.dvp.rank+'</div><div class="elm-dvpl">OF '+r.dvp.total+' SOFTEST</div>'
+          : '<div class="elm-dvp">'+(+r.dvp.allowed).toFixed(1)+'</div><div class="elm-dvpl">CONCEDED</div>')
       + (r.entry ? '<div class="elm-odds">'+ask+'+ $'+r.entry.price.toFixed(2)
           + (r.entry.book ? ' <i>'+esc(r.entry.book)+'</i>' : '')+'</div>'
           + '<span class="elm-book">'+esc(r.entry.book||'')+'</span>' : '')
