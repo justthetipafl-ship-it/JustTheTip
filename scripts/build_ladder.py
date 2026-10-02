@@ -269,6 +269,7 @@ def best_pick(base, gl, byp, book=LADDER_BOOK, fixtures=None, pool_only=False):
         return None
     games = [(g.get('home'), g.get('away')) for g in slate]
     if not games:
+        print('    %s: slate has no games' % base)
         return None
     team_game = {}
     for i, (h, a) in enumerate(games):
@@ -332,6 +333,8 @@ def best_pick(base, gl, byp, book=LADDER_BOOK, fixtures=None, pool_only=False):
             best = {'legs': c['legs'], 'hrp': c['hrp'], 'price': price, 'book': book, 'type': typ}
 
     if not best:
+        print('    %s: %d game(s) on the slate but no build cleared the filters '
+              '(no priced legs at %s, or not enough history)' % (base, len(games), book))
         return None
     picked = set(l['name'] for l in best['legs'])
     subleg = None
@@ -507,9 +510,17 @@ def mixed_pick(bases, book=LADDER_BOOK):
         except Exception as e:
             print('  mixed: %s failed (%s)' % (base, e))
             continue
+        sport_name = str(base).replace('\\', '/').strip('/').split('/')[-2]
         if not pick:
+            # Silence here is what made this hard to diagnose: NHL, MLB and NBL all had games on
+            # the day and simply produced nothing, so NFL won by being the only sport left. Say so.
+            fxn = len([g for g in (fx or []) if g.get('date')])
+            print('  mixed: %-4s no pick (%d fixtures on file)' % (sport_name, fxn))
             continue
-        pick['sport'] = str(base).replace('\\', '/').strip('/').split('/')[-2]
+        pick['sport'] = sport_name
+        print('  mixed: %-4s offers %s on %s at $%.2f (lands %.0f%%)'
+              % (sport_name, pick.get('type') or '?', pick.get('game_date') or '?',
+                 pick.get('price') or pick.get('odds') or 0, (pick.get('hrp') or 0) * 100))
         # Rank on WHEN before how much. Choosing purely on price let a four-days-away NFL build
         # beat everything playing that night, which is how the ladder ended up holding a bet it
         # could not settle for most of a week. A game today beats a game tomorrow at any price;
