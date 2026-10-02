@@ -10,6 +10,11 @@ on:
     - cron: '0 13 * * *'   # 13:00 UTC  (~09:00 ET / ~23:00 AEST) - probable pitchers
     - cron: '0 22 * * *'   # 22:00 UTC  (~18:00 ET, lineups firming up)
   workflow_dispatch:
+    inputs:
+      all_teams:
+        description: "Rebuild the full league pool (every club, not just today's slate)"
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -30,6 +35,11 @@ jobs:
       - run: pip install requests
 
       - name: Fetch today's slate
+        # Tick "all teams" on a hand-started run to rebuild the season-long player pool. The slate
+        # narrows in the postseason, and with it the pool - the adapter's merge then keeps whatever
+        # this pulls, so it only needs doing once.
+        env:
+          MLB_ALL_TEAMS: ${{ inputs.all_teams == true && '1' || '0' }}
         run: python3 mlb/fetch_mlb.py
 
       # Reshape the bundle into the split files the shell loads. MLB_PASSWORD is optional:
