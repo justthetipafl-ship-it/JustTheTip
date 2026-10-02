@@ -106,9 +106,54 @@ _pw = (os.environ.get('MLB_PASSWORD') or '').strip()
 if _pw:
     meta['password_hash'] = hashlib.sha256(_pw.encode('utf-8')).hexdigest()
 
+
+def merge_keep(name, fresh, key):
+    """Keep what a previous run knew about teams that are not playing today.
+
+    The fetcher only pulls rosters and team rates for clubs on the current slate. Through the
+    regular season that is most of the league and nobody notices; in the postseason it collapsed to
+    two teams, so players.json held 28 players and every "1st in the league" badge meant first of
+    28. The season-long pool is what those rankings are for, so a row is only replaced when this
+    run has a newer version of it - never dropped because its team is idle.
+
+    Rows whose key is missing are passed through untouched; a prior file that cannot be read is
+    ignored, so a bad merge can never be worse than the plain write.
+    """
+    path = os.path.join(OUT, name)
+    try:
+        with open(path, encoding='utf-8') as fh:
+            prev = json.load(fh)
+    except (OSError, json.JSONDecodeError, ValueError):
+        return fresh
+    if not isinstance(prev, list) or not isinstance(fresh, list):
+        return fresh
+    out, seen = [], set()
+    for row in fresh:
+        k = row.get(key) if isinstance(row, dict) else None
+        if k is not None:
+            seen.add(k)
+        out.append(row)
+    kept = 0
+    for row in prev:
+        if not isinstance(row, dict):
+            continue
+        k = row.get(key)
+        if k is None or k in seen:
+            continue
+        out.append(row)
+        kept += 1
+    if kept:
+        print('  %s: kept %d row(s) from the previous build (teams not playing today)' % (name, kept))
+    return out
+
+
 def w(name, obj):
     json.dump(obj, open(os.path.join(OUT, name), 'w', encoding='utf-8'), separators=(',', ':'))
 
+# the season-long pools survive a day when most of the league is idle
+players = merge_keep('players.json', players, 'id') if players else players
+teams = merge_keep('teams.json', teams, 'team')
+dvp = merge_keep('dvp.json', dvp, 'team')
 w('players.json', players); w('teams.json', teams)
 # gamelogs split per season (Cloudflare Pages 25 MiB/file cap); shell loads meta.gamelogFiles
 _by_year = {}
