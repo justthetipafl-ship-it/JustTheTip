@@ -266,6 +266,8 @@ def best_pick(base, gl, byp, book=LADDER_BOOK, fixtures=None, pool_only=False):
             return None
         slate = [g for g in playable if _gdate(g) == soonest]
     else:
+        print('    %s: no playable game - %d fixture(s) carry a date, none upcoming on %s'
+              % (base, len([g for g in fx if g.get('date')]), today.isoformat()))
         return None
     games = [(g.get('home'), g.get('away')) for g in slate]
     if not games:
@@ -372,7 +374,9 @@ def best_pick(base, gl, byp, book=LADDER_BOOK, fixtures=None, pool_only=False):
     return {'legs': best['legs'], 'price': round(best['price'], 2), 'book': best['book'],
             # `round` is the last COMPLETED round at pick time; grading takes the next game after it
             'type': best['type'], 'sub': subleg, 'year': target[0], 'round': target[1],
-            'game_date': _gd}
+            # hrp is how often all the legs have landed together. It was being dropped here, so a
+            # same-game build reported "lands 0%" and lost every comparison to a cross-sport one.
+            'hrp': best.get('hrp'), 'game_date': _gd}
 
 
 
