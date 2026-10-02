@@ -1,0 +1,79 @@
+name: AFLW probe (what does fitzRoy return?)
+
+# One hand-started run that answers a single question: do AFLW player stats come back with the
+# same column names as the AFL game logs the tool already understands?
+#
+# It writes NOTHING to the repo. It fetches, prints the columns and a sample row to the log, and
+# stops. Read the log, paste it back, and the next step is either "a config file and a workflow"
+# or "the build needs to tolerate missing columns".
+#
+#   Actions -> AFLW probe -> Run workflow
+#
+# The AFLW season runs roughly August to late November, so a current season has real data; set
+# "season" to a finished one (2025) if the current one has not started.
+
+on:
+  workflow_dispatch:
+    inputs:
+      season:
+        description: "Season to probe (e.g. 2026)"
+        type: string
+        default: "2026"
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: r-lib/actions/setup-r@v2
+        with:
+          r-version: "release"
+
+      - name: Install fitzRoy
+        run: |
+          Rscript -e 'install.packages(c("fitzRoy","dplyr","jsonlite"), repos="https://cloud.r-project.org")'
+
+      - name: Probe AFLW
+        run: |
+          cat > /tmp/probe.R <<'RSCRIPT'
+          suppressMessages({ library(fitzRoy); library(dplyr) })
+          season <- as.integer(Sys.getenv("SEASON", "2026"))
+          say <- function(...) message(sprintf(...))
+
+          say("=== AFLW fixture, season %d ===", season)
+          fx <- tryCatch(fetch_fixture_afl(season = season, comp = "AFLW"),
+                         error = function(e) { say("fixture FAILED: %s", conditionMessage(e)); NULL })
+          if (!is.null(fx)) {
+            say("fixture rows: %d", nrow(fx))
+            say("fixture columns: %s", paste(sort(names(fx)), collapse = ", "))
+          }
+
+          say("")
+          say("=== AFLW player stats, season %d ===", season)
+          ps <- tryCatch(fetch_player_stats_afl(season = season, comp = "AFLW"),
+                         error = function(e) { say("player stats FAILED: %s", conditionMessage(e)); NULL })
+          if (!is.null(ps)) {
+            say("player-stat rows: %d across %d columns", nrow(ps), ncol(ps))
+            say("COLUMNS:")
+            say("%s", paste(sort(names(ps)), collapse = ", "))
+            say("")
+            # the fields the tool's markets join to - this is the part that decides the job size
+            want <- c("disposals","kicks","handballs","marks","tackles","goals","behinds",
+                      "clearances","hitouts","inside50s","contestedPossessions","dreamTeamPoints")
+            have <- sapply(want, function(w) any(tolower(names(ps)) == tolower(w)) ||
+                                             any(grepl(paste0("\\\\.", w, "$"), names(ps), ignore.case = TRUE)))
+            say("MARKET FIELDS PRESENT:")
+            for (i in seq_along(want)) say("  %-22s %s", want[i], ifelse(have[i], "yes", "NO"))
+            say("")
+            say("=== one sample row ===")
+            print(as.data.frame(ps[1, ]))
+          }
+
+          say("")
+          say("=== AFLW results, season %d ===", season)
+          rs <- tryCatch(fetch_results_afl(season = season, comp = "AFLW"),
+                         error = function(e) { say("results FAILED: %s", conditionMessage(e)); NULL })
+          if (!is.null(rs)) say("results rows: %d | columns: %s", nrow(rs), paste(sort(names(rs)), collapse = ", "))
+          RSCRIPT
+          SEASON="${{ inputs.season }}" Rscript /tmp/probe.R
