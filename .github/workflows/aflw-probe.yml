@@ -29,10 +29,23 @@ jobs:
       - uses: r-lib/actions/setup-r@v2
         with:
           r-version: "release"
+          # Posit's public package manager serves PRECOMPILED Linux binaries. Plain CRAN gives
+          # Ubuntu the source, so fitzRoy's dependencies try to compile and fail on missing system
+          # libraries - which is why the first run reported "no package called fitzRoy".
+          use-public-rspm: true
+
+      - name: System libraries
+        run: sudo apt-get update && sudo apt-get install -y libcurl4-openssl-dev libssl-dev libxml2-dev
 
       - name: Install fitzRoy
         run: |
-          Rscript -e 'install.packages(c("fitzRoy","dplyr","jsonlite"), repos="https://cloud.r-project.org")'
+          # install.packages only WARNS when a package fails, so the job used to sail past a broken
+          # install and die in the next step. Check it loads, and stop here if it does not.
+          Rscript -e 'install.packages(c("fitzRoy","dplyr","jsonlite"))'
+          Rscript -e 'ok <- requireNamespace("fitzRoy", quietly=TRUE); \
+            cat(if (ok) sprintf("fitzRoy %s installed\n", as.character(packageVersion("fitzRoy"))) \
+                else "fitzRoy FAILED to install\n"); \
+            if (!ok) quit(status=1)'
 
       - name: Probe AFLW
         run: |
@@ -41,9 +54,16 @@ jobs:
           season <- as.integer(Sys.getenv("SEASON", "2026"))
           say <- function(...) message(sprintf(...))
 
+          say("fitzRoy %s", as.character(packageVersion("fitzRoy")))
+          say("")
           say("=== AFLW fixture, season %d ===", season)
-          fx <- tryCatch(fetch_fixture_afl(season = season, comp = "AFLW"),
-                         error = function(e) { say("fixture FAILED: %s", conditionMessage(e)); NULL })
+          fx <- NULL
+          for (attempt in list(
+                 function() fetch_fixture_afl(season = season, comp = "AFLW"),
+                 function() fetch_fixture(season = season, comp = "AFLW", source = "AFL"))) {
+            fx <- tryCatch(attempt(), error = function(e) { say("  (a call failed: %s)", conditionMessage(e)); NULL })
+            if (!is.null(fx)) break
+          }
           if (!is.null(fx)) {
             say("fixture rows: %d", nrow(fx))
             say("fixture columns: %s", paste(sort(names(fx)), collapse = ", "))
@@ -51,8 +71,16 @@ jobs:
 
           say("")
           say("=== AFLW player stats, season %d ===", season)
-          ps <- tryCatch(fetch_player_stats_afl(season = season, comp = "AFLW"),
-                         error = function(e) { say("player stats FAILED: %s", conditionMessage(e)); NULL })
+          # fitzRoy has changed this signature between versions - try the ones that have existed
+          ps <- NULL
+          for (attempt in list(
+                 function() fetch_player_stats_afl(season = season, comp = "AFLW"),
+                 function() fetch_player_stats(season = season, comp = "AFLW", source = "AFL"),
+                 function() fetch_player_stats_afl(season = season))) {
+            ps <- tryCatch(attempt(), error = function(e) { say("  (a call failed: %s)", conditionMessage(e)); NULL })
+            if (!is.null(ps)) break
+          }
+          if (is.null(ps)) say("player stats FAILED on every known call shape")
           if (!is.null(ps)) {
             say("player-stat rows: %d across %d columns", nrow(ps), ncol(ps))
             say("COLUMNS:")
@@ -73,7 +101,7 @@ jobs:
           say("")
           say("=== AFLW results, season %d ===", season)
           rs <- tryCatch(fetch_results_afl(season = season, comp = "AFLW"),
-                         error = function(e) { say("results FAILED: %s", conditionMessage(e)); NULL })
+                         error = function(e) { say("results: %s", conditionMessage(e)); NULL })
           if (!is.null(rs)) say("results rows: %d | columns: %s", nrow(rs), paste(sort(names(rs)), collapse = ", "))
           RSCRIPT
           SEASON="${{ inputs.season }}" Rscript /tmp/probe.R
