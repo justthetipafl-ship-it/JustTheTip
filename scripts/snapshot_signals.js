@@ -21,7 +21,7 @@
  */
 const fs = require('fs');
 const path = require('path');
-const { JSDOM, requestInterceptor } = require('jsdom');
+const { JSDOM, ResourceLoader } = require('jsdom');
 
 const arg = (k, d) => {
   const i = process.argv.indexOf('--' + k);
@@ -36,11 +36,16 @@ const PAGE       = path.resolve(arg('page', 'index.html'));
 const localPath = u => path.join(ROOT, String(u).replace(/^https?:\/\/[^/]+/, '').split('?')[0]);
 const readLocal = f => (fs.existsSync(f) ? fs.readFileSync(f, 'utf8') : null);
 
-const loader = { interceptors: [ requestInterceptor(req => {
-  const body = readLocal(localPath(req.url)) || '';
-  return new Response(body, { status: body ? 200 : 404,
-    headers: { 'Content-Type': /\.js$/.test(req.url) ? 'application/javascript' : 'text/plain' } });
-}) ] };
+// Serve the page's own scripts and styles from the checkout. This uses jsdom's documented
+// ResourceLoader: requestInterceptor is not in the published package, and the first CI run died
+// on "requestInterceptor is not a function".
+class LocalLoader extends ResourceLoader {
+  fetch(url) {
+    const body = readLocal(localPath(url));
+    return body == null ? null : Promise.resolve(Buffer.from(body));
+  }
+}
+const loader = new LocalLoader();
 
 const wait = ms => new Promise(r => setTimeout(r, ms));
 
