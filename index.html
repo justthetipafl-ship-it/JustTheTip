@@ -10679,6 +10679,7 @@ function playerPanel(){
    and let me judge" - which is the other half of how people actually research a bet.
    Hit rates are his record against THIS line, not a model. H2H is against this opponent only.    */
 var TR_SORT = { col:'l10', dir:-1 }, TR_MIN = 3;
+var TR_F = { side:'all', minG:3, minPx:0 };      // the board's own filters, like a props screen
 function trendRows(key, mkt){
   var S = state.sports[key], out = [];
   var seen = {};
@@ -10688,22 +10689,28 @@ function trendRows(key, mkt){
     var k = r.player + '|' + r.line;
     if (seen[k]) return;
     seen[k] = 1;
-    var logs = sortLogsDesc(((S.idx.logsByName || {})[r.player] || []).slice());
+    // Books spell names their own way, so looking the gamelogs up under the BOOK's spelling found
+    // nothing and every board came back empty. Same resolver the Deep Dive uses.
+    var nm = deepResolveName(key, r.player);
+    var logs = sortLogsDesc(((S.idx.logsByName || {})[nm] || []).slice());
     var vals = [];
     logs.forEach(function(g){ var v = statOf(key, g, mkt); if (v != null) vals.push({ v:v, g:g }); });
-    if (vals.length < TR_MIN) return;
+    if (vals.length < Math.max(TR_MIN, TR_F.minG)) return;
     var rate = function(rows){
       if (!rows.length) return null;
       return rows.filter(function(x){ return x.v > r.line; }).length / rows.length;
     };
     var season = String(curSeason(key));
-    var opp = oppForPlayer(key, r.player);
+    var opp = oppForPlayer(key, nm);
     var h2h = opp ? vals.filter(function(x){ return normTeam(oppOf(key, x.g)) === normTeam(opp); }) : [];
     var cur = vals.filter(function(x){ return String(x.g.Year || x.g.year) === season; });
     var prev = vals.filter(function(x){ return String(x.g.Year || x.g.year) === String(+season - 1); });
     var px = +r.over || +r.under || 0;
+    if (TR_F.minPx && px < TR_F.minPx) return;
+    if (TR_F.side === 'over' && !r.over) return;
+    if (TR_F.side === 'under' && !r.under) return;
     out.push({
-      name:r.player, line:+r.line, price:px, book:r.book, side:side, opp:opp,
+      name:nm, line:+r.line, price:px, book:r.book, side:side, opp:opp,
       imp: px > 0 ? 1 / px : null,
       l5: rate(vals.slice(0, 5)), l10: rate(vals.slice(0, 10)),
       h2h: h2h.length ? rate(h2h) : null, h2hN: h2h.length,
@@ -10763,13 +10770,38 @@ function trendsBoard(key){
       + trCell(r.l5) + trCell(r.l10) + trCell(r.h2h, r.h2hN) + trCell(r.cur) + trCell(r.prev)
       + '</tr>';
   }).join('');
+  var sel = function(id, cur, opts, fn){
+    return '<select class="ob-sel" onchange="LAB.' + fn + '(this.value)">'
+      + opts.map(function(o){ return '<option value="' + esc(o[0]) + '"'
+          + (String(o[0]) === String(cur) ? ' selected' : '') + '>' + esc(o[1]) + '</option>'; }).join('')
+      + '</select>';
+  };
   return '<div class="dayband"><span>Trends</span></div>'
-    + '<div class="deg-bar"><select class="ob-sel" onchange="LAB.trMkt(\'' + key + '\',this.value)">'
+    + '<div class="deg-bar mb-bar">'
+    + '<select class="ob-sel" onchange="LAB.trMkt(\'' + key + '\',this.value)">'
     + mkts.map(function(m){ return '<option value="' + esc(m) + '"' + (m === mkt ? ' selected' : '')
-        + '>' + esc(mktLabel(key, m)) + '</option>'; }).join('') + '</select></div>'
+        + '>' + esc(mktLabel(key, m)) + '</option>'; }).join('') + '</select>'
+    + sel('side', TR_F.side, [['all','Over / Under'],['over','Over only'],['under','Under only']], 'trSide')
+    + sel('ming', TR_F.minG, [[3,'3+ games'],[5,'5+ games'],[10,'10+ games'],[20,'20+ games']], 'trMinG')
+    + sel('minpx', TR_F.minPx, [[0,'Any price'],[1.3,'$1.30+'],[1.6,'$1.60+'],[2,'$2.00+']], 'trMinPx')
+    + '</div>'
     + (rows.length ? '<div class="st-wrap"><table class="st-t tr-t"><thead><tr>' + head + '</tr></thead><tbody>'
           + body + '</tbody></table></div>'
-        : '<div class="deg-note">No priced lines with at least ' + TR_MIN + ' games of record.</div>')
+        : (function(){
+            // Say WHY it is empty. "No priced lines" could mean no odds, no gamelogs, a market
+            // mismatch or names that do not join - four different faults with one message.
+            var od = (oddsRowsAll(key) || []).filter(function(r){
+              return r.market === mkt && r.player && r.line != null; });
+            var li = S.idx.logsByName || {};
+            var withLogs = od.filter(function(r){
+              return (li[deepResolveName(key, r.player)] || []).length; }).length;
+            return '<div class="deg-note">Nothing to show for ' + esc(mktLabel(key, mkt)) + ': '
+              + od.length + ' priced line' + (od.length === 1 ? '' : 's') + ', '
+              + withLogs + ' of them with any game history, from an index of '
+              + Object.keys(li).length + ' players'
+              + (TR_F.minG > 3 ? ' (minimum ' + TR_F.minG + ' games is set)' : '')
+              + (TR_F.minPx ? ', minimum price $' + TR_F.minPx.toFixed(2) : '') + '.</div>';
+          })())
     + '<div class="deg-note">How often he has cleared THIS line, not a model. H2H counts only '
     + 'meetings with the opponent he faces next; the small number is how many.</div>';
 }
@@ -14364,6 +14396,9 @@ window.LAB = {
       .catch(function(e){ return 'failed: ' + (e && e.message); });
   },
   oddsTab: function(t){ state.view.oddsTab = t; if (window.scrollTo) window.scrollTo(0, 0); render(); },
+  trSide: function(v){ TR_F.side = v; render(); },
+  trMinG: function(v){ TR_F.minG = +v || 3; render(); },
+  trMinPx: function(v){ TR_F.minPx = +v || 0; render(); },
   trSort: function(c){ if (TR_SORT.col === c) TR_SORT.dir = -TR_SORT.dir;
     else { TR_SORT.col = c; TR_SORT.dir = (c === 'name' ? 1 : -1); } render(); },
   trMkt: function(key, m){ state.view.trMkt = state.view.trMkt || {}; state.view.trMkt[key] = m; render(); },
