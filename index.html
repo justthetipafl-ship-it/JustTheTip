@@ -1791,6 +1791,7 @@ function buildIndexes(key){
   ix.byName = {};
   players.forEach(function(p){ if (p && p.name) ix.byName[p.name] = p; });
 
+  ix.hasUp = null;        // recomputed whenever the index is rebuilt, so a new fixture re-sorts
   ix.lgAvg = {}; ix.winAvg = {}; ix.matchOpp = null; ix.fs = null;
   ix.pricedSet = null; ix.oddsName = null; ix.oddsIni = null; ix.vac = null; ix.bookList = null; ix.resIdx = null; ix.mlbLg = null; ix.lgRate = null; ix.scState = null; ix.nhlPim = null; ix.injIdx = null; ix.luRows = null; ix.foldName = null;
   var logs = asArray(d.gamelogs) || [];
@@ -10662,8 +10663,37 @@ function oddsPage(){
 }
 
 /* ---- render ------------------------------------------------------------- */
+/* In-season sports first. A competition that has finished should not sit at the head of the bar
+   all summer - AFL from October, NFL from February - but hard-coding an order means editing the
+   file twice a year and forgetting. Sort on whether the sport has a game coming up instead: it
+   demotes itself when the season ends and restores itself when the fixture lands. Within each
+   group the configured order is kept, and a sport whose fixtures have not loaded yet stays put
+   rather than jumping about as data arrives. */
+function sportOrder(){
+  var keys = Object.keys(SPORTS);
+  return keys.slice().sort(function(a, b){
+    var ia = keys.indexOf(a), ib = keys.indexOf(b);
+    var sa = state.sports[a], sb = state.sports[b];
+    var la = sa && sa.status === 'ready', lb = sb && sb.status === 'ready';
+    if (!la || !lb) return ia - ib;                      // not loaded: leave the order alone
+    var ua = hasUpcoming(a) ? 0 : 1, ub = hasUpcoming(b) ? 0 : 1;
+    return ua !== ub ? ua - ub : ia - ib;
+  });
+}
+function hasUpcoming(key){
+  var S = state.sports[key];
+  if (S.idx.hasUp != null) return S.idx.hasUp;
+  var now = Date.now(), found = false;
+  (asArray(S.data.fixture) || []).some(function(g){
+    var t = Date.parse(g.gameTimeUTC || g.utc || g.date || '');
+    if (t && t > now - 6 * 36e5){ found = true; return true; }   // a game in play still counts
+    return false;
+  });
+  S.idx.hasUp = found;
+  return found;
+}
 function sportBar(){
-  return '<div class="sports">'+Object.keys(SPORTS).map(function(k){
+  return '<div class="sports">'+sportOrder().map(function(k){
     var S = state.sports[k], on = state.view.active[k];
     var cls = 'sport-b'+(on?' on':'')+(S.status==='loading'?' loading':'');
     var n = on && S.status==='ready' ? countGames(k) : null;
