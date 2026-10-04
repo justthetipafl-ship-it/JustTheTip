@@ -1,0 +1,60 @@
+name: NFL first read
+
+# First-read share per receiver, from FTN charting joined to play-by-play. Runs after the NFL data
+# build so firstread.json lands in the same commit cycle as the gamelogs it sits beside.
+#
+# FTN charting is CC-BY-SA 4.0 and must be credited to FTN Data via nflverse wherever it is shown.
+
+on:
+  schedule:
+    - cron: "40 13 * * *"      # after the NFL data build
+  workflow_dispatch:
+    inputs:
+      season:
+        description: "Season (blank = current)"
+        type: string
+        required: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: nfl-firstread
+  cancel-in-progress: false
+
+jobs:
+  firstread:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install
+        run: pip install pandas pyarrow
+
+      - name: Build first read
+        run: |
+          ARGS="--out nfl/data"
+          if [ -n "${{ inputs.season }}" ]; then ARGS="$ARGS --season ${{ inputs.season }}"; fi
+          python3 nfl/build_firstread.py $ARGS
+
+      - name: Commit
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          # one at a time: git add fails the whole command on a missing path
+          for f in nfl/data/firstread.json; do
+            [ -f "$f" ] && git add "$f" && echo "staged $f"
+          done
+          if git diff --cached --quiet; then
+            echo "nothing new"
+          else
+            git commit -m "NFL first read"
+            for i in 1 2 3; do
+              git pull --rebase --autostash origin main && git push && break
+              sleep 5
+            done
+          fi
