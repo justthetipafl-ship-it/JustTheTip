@@ -1795,6 +1795,7 @@ function buildIndexes(key){
   players.forEach(function(p){ if (p && p.name) ix.byName[p.name] = p; });
 
   ix.hasUp = null;        // recomputed whenever the index is rebuilt, so a new fixture re-sorts
+  TR_CACHE = { key:null, name:{}, vals:{} };     // trends cache is stale once the data changes
   ix.lgAvg = {}; ix.winAvg = {}; ix.matchOpp = null; ix.fs = null;
   ix.pricedSet = null; ix.oddsName = null; ix.oddsIni = null; ix.vac = null; ix.bookList = null; ix.resIdx = null; ix.mlbLg = null; ix.lgRate = null; ix.scState = null; ix.nhlPim = null; ix.injIdx = null; ix.luRows = null; ix.foldName = null;
   var logs = asArray(d.gamelogs) || [];
@@ -10678,6 +10679,29 @@ function playerPanel(){
    sortable on any column. The signals answer "what should I back"; this answers "show me the board
    and let me judge" - which is the other half of how people actually research a bet.
    Hit rates are his record against THIS line, not a model. H2H is against this opponent only.    */
+var TR_CACHE = { key:null, name:{}, vals:{} };
+function trCacheFor(key){
+  if (TR_CACHE.key !== key){ TR_CACHE = { key:key, name:{}, vals:{} }; }
+  return TR_CACHE;
+}
+function trName(key, bookName){
+  var c = trCacheFor(key);
+  if (c.name[bookName] !== undefined) return c.name[bookName];
+  var S = state.sports[key], li = S.idx.logsByName || {};
+  var nm = li[bookName] ? bookName : deepResolveName(key, bookName);
+  c.name[bookName] = nm;
+  return nm;
+}
+function trVals(key, name, mkt){
+  var c = trCacheFor(key), k = name + '|' + mkt;
+  if (c.vals[k]) return c.vals[k];
+  var S = state.sports[key];
+  var logs = sortLogsDesc(((S.idx.logsByName || {})[name] || []).slice());
+  var out = [];
+  logs.forEach(function(g){ var v = statOf(key, g, mkt); if (v != null) out.push({ v:v, g:g }); });
+  c.vals[k] = out;
+  return out;
+}
 var TR_SORT = { col:'l10', dir:-1 }, TR_MIN = 3;
 var TR_F = { side:'all', minG:3, minPx:0 };      // the board's own filters, like a props screen
 function trendRows(key, mkt){
@@ -10689,12 +10713,13 @@ function trendRows(key, mkt){
     var k = r.player + '|' + r.line;
     if (seen[k]) return;
     seen[k] = 1;
-    // Books spell names their own way, so looking the gamelogs up under the BOOK's spelling found
-    // nothing and every board came back empty. Same resolver the Deep Dive uses.
-    var nm = deepResolveName(key, r.player);
-    var logs = sortLogsDesc(((S.idx.logsByName || {})[nm] || []).slice());
-    var vals = [];
-    logs.forEach(function(g){ var v = statOf(key, g, mkt); if (v != null) vals.push({ v:v, g:g }); });
+    // Books spell names their own way, so the gamelogs have to be looked up through a resolver.
+    // Doing that per ROW was the mistake: deepResolveName scans the whole player index on a miss,
+    // and the logs were re-sorted for every one of ~2,800 priced lines - enough to lock the page
+    // up before the Trends button could even respond. Resolve once per name, sort once per player,
+    // and read the stat once per player-market.
+    var nm = trName(key, r.player);
+    var vals = trVals(key, nm, mkt);
     if (vals.length < Math.max(TR_MIN, TR_F.minG)) return;
     var rate = function(rows){
       if (!rows.length) return null;
