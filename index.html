@@ -6312,15 +6312,32 @@ function jupiterSection(key, g){
 /* AFL-SPECIFIC SIGNALS + LET'S CLIMB -----------------------------------------------------
    Ported from the production AFL tool, each with the reasoning kept and one improvement where
    the data supports it. All are priced: a signal that names no bet is not a tip.              */
+var MODEL_SOURCE = null;      // how the last modelProbAt answer was reached, for the dive to show
 function modelProbAt(key, p, mkt, line, opp){
   var S = state.sports[key], raw = null;
+  MODEL_SOURCE = null;
   try { if (S.scoring && S.scoring.prob) raw = S.scoring.prob(p, mkt, line, opp); } catch(e){}
   if (raw == null){
     try { var sc = S.scoring && S.scoring.scoreCMP ? S.scoring.scoreCMP(p, mkt, line, opp) : null;
       if (sc != null && isFinite(sc)) raw = Math.max(0.01, Math.min(0.99, sc/20 + 0.5)); } catch(e){}
   }
+  if (raw == null && p && p.name){
+    // Last resort: his own record. A market the model cannot price - a sparse stat, a new
+    // market, a sport whose scoring never covered it - used to leave the Deep Dive with no
+    // verdict at all, which reads as broken rather than as "no model". The record is weaker
+    // than a model but it is honest, and the panel says which it is using.
+    var vals = statVals(key, p.name, mkt);
+    if (vals.length >= MODEL_FALLBACK_MIN){
+      var hits = vals.filter(function(v){ return v > line; }).length;
+      raw = Math.max(0.02, Math.min(0.98, hits / vals.length));
+      // every caller expects a NUMBER - the provenance is recorded alongside, not returned
+      MODEL_SOURCE = { from:'record', n:vals.length };
+      return calibrate(key, raw);
+    }
+  }
   return (raw != null && isFinite(raw)) ? calibrate(key, raw) : null;
 }
+var MODEL_FALLBACK_MIN = 6;   // readings needed before his record stands in for a model
 function statVals(key, name, mkt, rows){
   var out = [];
   (rows || sortLogsDesc(((state.sports[key].idx.logsByName || {})[name] || []).slice()))
@@ -12722,6 +12739,8 @@ function deepPanel(){
     + (pr != null ? '<div class="dd-sub">model '+Math.round(pr*100)+'%'
         + (implied ? ' v '+Math.round(implied*100)+'% implied' : '')
         + (raw != null && pr < raw - 0.005 ? ' \u00b7 capped down from '+Math.round(raw*100)+'% by his own record' : '')
+        + (MODEL_SOURCE && MODEL_SOURCE.from === 'record'
+            ? ' \u00b7 from his record over ' + MODEL_SOURCE.n + ' games, not a model' : '')
         + (function(){
             // where the price opened, if today's snapshot has it: the market's own opinion, moving
             var o = d.book ? openPrice(key, name, mkt, line, d.book) : null;
