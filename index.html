@@ -2009,8 +2009,12 @@ function altLadder(key, player, mk){
 // are worth offering, so the chips never point at an empty board.
 function matchesFor(key){
   var fx = asArray(state.sports[key].data.fixture) || [];
+  // Within the fixture window, not the whole file. NHL ships 1,328 games for the season and the
+  // odds page was drawing a chip for every one of them.
+  var hz = fixtureHorizon(key);
   return fx.filter(function(g){
     if (!g || !g.home || !g.away) return false;
+    if (!inFixtureWindow(key, g, hz)) return false;
     return state.view.showDone || !gameDone(key, g, gameStart(g).ms);
   }).map(function(g){
     return { id: g.home+'|'+g.away, home:g.home, away:g.away };
@@ -10736,10 +10740,12 @@ function trCell(v, n){
   return '<td class="' + cls + '">' + pct + '%' + (n ? '<i>' + n + '</i>' : '') + '</td>';
 }
 function trendsBoard(key){
+  // marketsFor returns plain market KEYS, not [key, label] pairs - reading m[0]/m[1] gave the
+  // first two characters of the string, which is why the dropdown said "u" and the board was empty
   var mkts = marketsFor(key);
   if (!mkts.length) return '';
-  var mkt = (state.view.trMkt || {})[key] || mkts[0][0];
-  if (!mkts.some(function(m){ return m[0] === mkt; })) mkt = mkts[0][0];
+  var mkt = (state.view.trMkt || {})[key];
+  if (!mkt || mkts.indexOf(mkt) < 0) mkt = mkts[0];
   var rows = trendRows(key, mkt).slice(0, 60);
   var head = [['name','Player'],['line','Line'],['price','Odds'],['imp','IP'],
               ['l5','L5'],['l10','L10'],['h2h','H2H'],['cur','This yr'],['prev','Last yr']]
@@ -10759,8 +10765,8 @@ function trendsBoard(key){
   }).join('');
   return '<div class="dayband"><span>Trends</span></div>'
     + '<div class="deg-bar"><select class="ob-sel" onchange="LAB.trMkt(\'' + key + '\',this.value)">'
-    + mkts.map(function(m){ return '<option value="' + esc(m[0]) + '"' + (m[0] === mkt ? ' selected' : '')
-        + '>' + esc(m[1]) + '</option>'; }).join('') + '</select></div>'
+    + mkts.map(function(m){ return '<option value="' + esc(m) + '"' + (m === mkt ? ' selected' : '')
+        + '>' + esc(mktLabel(key, m)) + '</option>'; }).join('') + '</select></div>'
     + (rows.length ? '<div class="st-wrap"><table class="st-t tr-t"><thead><tr>' + head + '</tr></thead><tbody>'
           + body + '</tbody></table></div>'
         : '<div class="deg-note">No priced lines with at least ' + TR_MIN + ' games of record.</div>')
@@ -10822,12 +10828,16 @@ function oddsPage(){
             + esc(abbrOf(k,m.away))+' @ '+esc(abbrOf(k,m.home))+'</button>'; }).join('')
       + '</div>') : '';
     h += '<div class="dayband"><span>'+esc(SPORTS[k].name)+'</span></div>'
-      +  mchips
-      +  '<div class="mkt-chips">'+chips+'</div>'
-      +  '<div class="od-hd"><span class="od-nm">Player</span><span class="od-ln">Line</span>'
-      +  '<span class="od-o">Over</span><span class="od-u">Under</span><span class="od-bk">Book</span></div>'
-      +  '<div class="od-list">'+body+'</div>'
-      +  trendsBoard(k);
+      +  '<div class="sl-bar"><button class="sl-chip'+(state.view.oddsTab !== 'trends' ? ' on' : '')
+         + '" onclick="LAB.oddsTab(\'board\')">Board</button>'
+         + '<button class="sl-chip'+(state.view.oddsTab === 'trends' ? ' on' : '')
+         + '" onclick="LAB.oddsTab(\'trends\')">Trends</button></div>'
+      +  (state.view.oddsTab === 'trends' ? '' : mchips)
+      +  (state.view.oddsTab === 'trends' ? trendsBoard(k)
+            : '<div class="mkt-chips">'+chips+'</div>'
+              + '<div class="od-hd"><span class="od-nm">Player</span><span class="od-ln">Line</span>'
+              + '<span class="od-o">Over</span><span class="od-u">Under</span><span class="od-bk">Book</span></div>'
+              + '<div class="od-list">'+body+'</div>');
   });
   return h;
 }
@@ -14353,6 +14363,7 @@ window.LAB = {
     return snapLib().then(function(){ return 'loaded'; })
       .catch(function(e){ return 'failed: ' + (e && e.message); });
   },
+  oddsTab: function(t){ state.view.oddsTab = t; if (window.scrollTo) window.scrollTo(0, 0); render(); },
   trSort: function(c){ if (TR_SORT.col === c) TR_SORT.dir = -TR_SORT.dir;
     else { TR_SORT.col = c; TR_SORT.dir = (c === 'name' ? 1 : -1); } render(); },
   trMkt: function(key, m){ state.view.trMkt = state.view.trMkt || {}; state.view.trMkt[key] = m; render(); },
