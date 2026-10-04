@@ -86,8 +86,14 @@ def main():
         print('  no charted targets - nothing written'); sys.exit(1)
     print('  %d charted targets across %d games' % (len(tg), tg.game_id.nunique()))
 
-    # a team's charted dropbacks, so a share can mean "of what his offence threw"
+    # Two team denominators, and the difference matters:
+    #   team_db     - every charted dropback, so "of everything we threw"
+    #   team_first  - only the throws that WENT to a first read, so "of our first reads, his share"
+    # The second is the one worth leading with. "75% of his targets were first reads" describes
+    # him; "he takes 31% of our first reads" describes his place in the offence, which is what a
+    # bettor is actually buying.
     team_db = m[m.pass_attempt == 1].groupby('posteam').size().to_dict()
+    team_first = (tg[tg.read_thrown == FIRST].groupby('posteam').size().to_dict())
 
     rows = []
     for (name, team), g in tg.groupby(['receiver_player_name', 'posteam']):
@@ -106,12 +112,15 @@ def main():
             'first': first,
             'firstShare': round(first / n, 3),                       # of HIS targets
             'firstOfTeam': round(first / team_db[team], 3) if team_db.get(team) else None,
+            # his share of the team's first reads - the headline number
+            'teamFirstShare': round(first / team_first[team], 3) if team_first.get(team) else None,
+            'teamFirsts': int(team_first.get(team) or 0),
             'second': second, 'checkdown': bail, 'designed': des,
             'catch': round(float((g.complete_pass == 1).mean()), 3),
             'ypt': round(float(g.yards_gained.fillna(0).mean()), 2),
             'games': int(g.game_id.nunique()),
         })
-    rows.sort(key=lambda r: -r['first'])
+    rows.sort(key=lambda r: -(r.get('teamFirstShare') or 0))
     out = {'season': season, 'updated': datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%MZ'),
            'source': 'FTN Data via nflverse (CC-BY-SA 4.0)', 'players': rows}
     os.makedirs(a.out, exist_ok=True)
@@ -119,8 +128,9 @@ def main():
         json.dump(out, fh, separators=(',', ':'))
     print('  wrote %s/firstread.json - %d receivers' % (a.out, len(rows)))
     for r in rows[:5]:
-        print('    %-22s %-4s %3d first reads of %3d targets (%.0f%%)'
-              % (r['name'], r['team'], r['first'], r['targets'], r['firstShare'] * 100))
+        print('    %-22s %-4s %3d of his team\'s %3d first reads (%.0f%%)'
+              % (r['name'], r['team'], r['first'], r['teamFirsts'],
+                 (r.get('teamFirstShare') or 0) * 100))
 
 
 if __name__ == '__main__':
