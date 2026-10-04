@@ -1038,6 +1038,8 @@
   .mr-open{display:flex;align-items:center;gap:9px;flex-wrap:wrap;padding:4px 2px 10px;}
   .lg-p i.good{color:var(--accent);} .lg-p i.bad{color:#f97316;}
   .lg-wrap{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:10px;}
+  .lg-p.lg-out{opacity:.45;}
+  .lg-p .dv-bars{flex:1;min-width:40px;margin:0 8px;}
   .lg-card{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:10px 12px;}
   .lg-hd{display:flex;align-items:baseline;gap:8px;margin-bottom:6px;}
   .lg-hd b{font-size:14px;} .lg-hd span{font-size:10px;color:var(--text-3);font-family:var(--font-mono);}
@@ -7949,6 +7951,7 @@ function focusPage(){
     + (S.t3==='ready' ? firstLastSection(key, g) : '')
     + (S.status === 'ready' && !state.view.nerd ? matchRadar(key, g) : '')
     + (S.t3 === 'ready' && !state.view.nerd ? goalieSection(key, g) : '')
+    + (S.t3 === 'ready' && !state.view.nerd ? firstReadSection(key, g) : '')
 
     // Nerd Mode replaces the signals rather than adding to them: it is a different read of the
     // same fixture (the market against itself), and stacking both made the page enormous.
@@ -13522,6 +13525,42 @@ function namedGoalies(key, g){
   })[0];
   if (!row) return null;
   return { home:row.homeGoalie || null, away:row.awayGoalie || null, confirmed:!!row.confirmed };
+}
+
+/* FIRST READ on a fixture: who each offence looks for first, side by side. The fixture page is
+   where someone decides a bet, and "they throw to him first" is the kind of thing that decides a
+   receptions or receiving-yards market before any price is read. Ranked within each team on its
+   share of that team's first reads, which is the measure that survives a small target count. */
+function firstReadSection(key, g){
+  if (key !== 'nfl') return '';
+  var f = state.sports[key].data.firstRead;
+  if (!f || !f.players || !f.players.length) return '';
+  var cards = [g.away, g.home].map(function(team){
+    var rows = f.players.filter(function(r){
+      return normTeam(r.team) === normTeam(team) && (r.targets || 0) >= 4 && r.teamFirstShare;
+    }).slice().sort(function(a, b){ return (b.teamFirstShare || 0) - (a.teamFirstShare || 0); }).slice(0, 5);
+    if (!rows.length) return '';
+    var top = rows[0].teamFirstShare || 1;
+    var body = rows.map(function(r){
+      var pct = Math.round((r.teamFirstShare || 0) * 100);
+      var playing = isPlayingP(key, r.name, team);
+      return '<div class="lg-p' + (playing === false ? ' lg-out' : '') + '">'
+        + '<span>' + esc(r.name)
+        + (playing === false ? '<i class="lg-pos">OUT</i>' : '') + '</span>'
+        + '<span class="dv-bars"><span class="dv-bar-t"><i class="soft" style="width:'
+        + Math.max(8, Math.round((r.teamFirstShare / top) * 100)) + '%"></i></span></span>'
+        + '<b>' + pct + '%</b>'
+        + '<i>' + r.first + '/' + (r.teamFirsts || 0) + ' \u00b7 ' + (r.ypt || 0).toFixed(1) + ' yds/tgt</i></div>';
+    }).join('');
+    return '<div class="lg-card"><div class="lg-hd"><b>' + esc(abbrOf(key, team)) + '</b>'
+      + '<span>&nbsp;first reads</span></div>' + body + '</div>';
+  }).filter(Boolean).join('');
+  if (!cards) return '';
+  return '<div class="dayband"><span>Who they look for first</span></div>'
+    + '<div class="lg-wrap">' + cards + '</div>'
+    + '<div class="deg-note" style="padding:2px 2px 8px">Share of each offence\u2019s first-read throws. '
+    + 'A receiver can lead his team in targets and still not be the first look. '
+    + '<span style="opacity:.6">Charting: FTN Data via nflverse (CC-BY-SA 4.0).</span></div>';
 }
 function goalieSection(key, g){
   if (key !== 'nhl') return '';
