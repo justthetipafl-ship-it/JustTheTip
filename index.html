@@ -10703,51 +10703,61 @@ function trVals(key, name, mkt){
   return out;
 }
 var TR_SORT = { col:'l10', dir:-1 }, TR_MIN = 3;
-var TR_F = { side:'all', minG:3, minPx:0 };      // the board's own filters, like a props screen
+var TR_F = { side:'all', minG:3, minPx:0 };
+var TR_RUNGS = 3;   // lines per player: the ones nearest his average, not the whole ladder      // the board's own filters, like a props screen
 function trendRows(key, mkt){
+  /* Built from the PLAYERS, not from every posted line. A single market carries ~9,645 rungs for
+     220 players once the alt ladders are counted, and walking all of them locked the page up
+     before the Trends button could respond. Each player contributes the rungs nearest his own
+     average - the ones anyone would actually bet - capped at TR_RUNGS. */
   var S = state.sports[key], out = [];
-  var seen = {};
+  var byPlayer = {};
   (oddsRowsAll(key) || []).forEach(function(r){
     if (!r.player || r.market !== mkt || r.line == null) return;
-    var side = (r.over && r.under) ? null : (r.over ? 'over' : 'under');
-    var k = r.player + '|' + r.line;
-    if (seen[k]) return;
-    seen[k] = 1;
-    // Books spell names their own way, so the gamelogs have to be looked up through a resolver.
-    // Doing that per ROW was the mistake: deepResolveName scans the whole player index on a miss,
-    // and the logs were re-sorted for every one of ~2,800 priced lines - enough to lock the page
-    // up before the Trends button could even respond. Resolve once per name, sort once per player,
-    // and read the stat once per player-market.
-    var nm = trName(key, r.player);
-    var vals = trVals(key, nm, mkt);
-    if (vals.length < Math.max(TR_MIN, TR_F.minG)) return;
-    var rate = function(rows){
-      if (!rows.length) return null;
-      return rows.filter(function(x){ return x.v > r.line; }).length / rows.length;
-    };
-    var season = String(curSeason(key));
-    var opp = oppForPlayer(key, nm);
-    var h2h = opp ? vals.filter(function(x){ return normTeam(oppOf(key, x.g)) === normTeam(opp); }) : [];
-    var cur = vals.filter(function(x){ return String(x.g.Year || x.g.year) === season; });
-    var prev = vals.filter(function(x){ return String(x.g.Year || x.g.year) === String(+season - 1); });
     var px = +r.over || +r.under || 0;
     if (TR_F.minPx && px < TR_F.minPx) return;
     if (TR_F.side === 'over' && !r.over) return;
     if (TR_F.side === 'under' && !r.under) return;
-    out.push({
-      name:nm, line:+r.line, price:px, book:r.book, side:side, opp:opp,
-      imp: px > 0 ? 1 / px : null,
-      l5: rate(vals.slice(0, 5)), l10: rate(vals.slice(0, 10)),
-      h2h: h2h.length ? rate(h2h) : null, h2hN: h2h.length,
-      cur: cur.length ? rate(cur) : null, prev: prev.length ? rate(prev) : null,
-      n: vals.length
+    (byPlayer[r.player] = byPlayer[r.player] || []).push(r);
+  });
+  var season = String(curSeason(key));
+  Object.keys(byPlayer).forEach(function(bookName){
+    var nm = trName(key, bookName);
+    var vals = trVals(key, nm, mkt);
+    if (vals.length < Math.max(TR_MIN, TR_F.minG)) return;
+    var avg = vals.reduce(function(a, x){ return a + x.v; }, 0) / vals.length;
+    // the rungs closest to what he actually does, deduped by line
+    var seen = {}, lines = [];
+    byPlayer[bookName].slice()
+      .sort(function(a, b){ return Math.abs(a.line - avg) - Math.abs(b.line - avg); })
+      .forEach(function(r){
+        if (seen[r.line] || lines.length >= TR_RUNGS) return;
+        seen[r.line] = 1; lines.push(r);
+      });
+    var opp = oppForPlayer(key, nm);
+    var h2hRows = opp ? vals.filter(function(x){ return normTeam(oppOf(key, x.g)) === normTeam(opp); }) : [];
+    var cur = vals.filter(function(x){ return String(x.g.Year || x.g.year) === season; });
+    var prev = vals.filter(function(x){ return String(x.g.Year || x.g.year) === String(+season - 1); });
+    lines.forEach(function(r){
+      var rate = function(rows){
+        return rows.length ? rows.filter(function(x){ return x.v > r.line; }).length / rows.length : null;
+      };
+      var px = +r.over || +r.under || 0;
+      out.push({
+        name:nm, line:+r.line, price:px, book:r.book, opp:opp,
+        imp: px > 0 ? 1 / px : null,
+        l5: rate(vals.slice(0, 5)), l10: rate(vals.slice(0, 10)),
+        h2h: h2hRows.length ? rate(h2hRows) : null, h2hN: h2hRows.length,
+        cur: cur.length ? rate(cur) : null, prev: prev.length ? rate(prev) : null,
+        n: vals.length
+      });
     });
   });
   var c = TR_SORT.col, d = TR_SORT.dir;
   out.sort(function(a, b){
     var av = a[c], bv = b[c];
     if (av == null && bv == null) return 0;
-    if (av == null) return 1;                       // blanks always sink
+    if (av == null) return 1;
     if (bv == null) return -1;
     if (av === bv) return (b.l10 || 0) - (a.l10 || 0);
     return (av > bv ? 1 : -1) * d;
@@ -10890,7 +10900,11 @@ function oddsPage(){
          + '<button class="sl-chip'+(state.view.oddsTab === 'trends' ? ' on' : '')
          + '" onclick="LAB.oddsTab(\'trends\')">Trends</button></div>'
       +  (state.view.oddsTab === 'trends' ? '' : mchips)
-      +  (state.view.oddsTab === 'trends' ? trendsBoard(k)
+      +  (state.view.oddsTab === 'trends'
+            ? ((state.view.trSport || on[0]) === k ? trendsBoard(k)
+               : '<div class="deg-note">Trends is showing ' + esc(SPORTS[state.view.trSport || on[0]].name)
+                 + '. <button class="sl-chip" onclick="LAB.trSport(\'' + k + '\')">Show '
+                 + esc(SPORTS[k].name) + '</button></div>')
             : '<div class="mkt-chips">'+chips+'</div>'
               + '<div class="od-hd"><span class="od-nm">Player</span><span class="od-ln">Line</span>'
               + '<span class="od-o">Over</span><span class="od-u">Under</span><span class="od-bk">Book</span></div>'
@@ -14421,6 +14435,7 @@ window.LAB = {
       .catch(function(e){ return 'failed: ' + (e && e.message); });
   },
   oddsTab: function(t){ state.view.oddsTab = t; if (window.scrollTo) window.scrollTo(0, 0); render(); },
+  trSport: function(k){ state.view.trSport = k; render(); },
   trSide: function(v){ TR_F.side = v; render(); },
   trMinG: function(v){ TR_F.minG = +v || 3; render(); },
   trMinPx: function(v){ TR_F.minPx = +v || 0; render(); },
