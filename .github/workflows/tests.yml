@@ -1,0 +1,34 @@
+name: Tests
+
+# The suite runs on every change to the page or the tests themselves. The previous suite lived only
+# in a working container and was lost when it reset; keeping it here means it cannot be, and a
+# change that breaks the page is caught before it is deployed rather than after.
+
+on:
+  push:
+    paths: [ 'index.html', 'tests/**', '*/scoring.js', '*/config.js' ]
+  workflow_dispatch:
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install jsdom
+        run: npm install jsdom@25 --no-save --silent
+      - name: Stage the data
+        run: node tests/fetch_data.js
+      - name: Boot check
+        run: node --max-old-space-size=6000 tests/harness.js
+      - name: Suite
+        run: |
+          shopt -s nullglob
+          fails=0
+          for t in tests/*_test.js; do
+            echo "=== $t ==="
+            node --max-old-space-size=6000 "$t" || fails=1
+          done
+          exit $fails
