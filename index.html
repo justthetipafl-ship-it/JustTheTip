@@ -100,6 +100,10 @@
   .mkt-chip{font-size:10px;font-weight:700;padding:5px 10px;border-radius:7px;border:1px solid var(--border);
     background:var(--surface-2);color:var(--text-3);cursor:pointer;white-space:nowrap;}
   .mkt-chip.on{border-color:var(--accent);color:var(--accent);background:color-mix(in srgb,var(--accent) 12%,transparent);}
+  .od-hr{width:34px;flex:none;text-align:right;font-family:var(--font-mono);font-size:10px;
+    color:var(--text-3);}
+  .od-hr.hot{color:var(--accent);} .od-hr.cold{color:#f97316;}
+  @media (max-width:560px){ .od-hr{width:28px;font-size:9px;} }
   .od-hd,.od-row{display:flex;align-items:center;gap:8px;padding:6px 10px;font-size:11px;}
   .od-hd{font-size:8px;text-transform:uppercase;letter-spacing:.06em;color:var(--text-3);font-weight:800;
     border-bottom:1px solid var(--border);}
@@ -10840,6 +10844,25 @@ function trendsBoard(key){
     + '<div class="deg-note">How often he has cleared THIS line, not a model. H2H counts only '
     + 'meetings with the opponent he faces next; the small number is how many.</div>';
 }
+/* Hit-rate columns for the odds board. The board already filters by market and match and only
+   draws what is posted, so the work is bounded - which is why these belong here rather than on a
+   second page that had to rebuild the same list from scratch.
+   Rates are his record against THIS line: L5, L10, and the season. Cached per player-market. */
+function odHit(key, bookName, mkt, line){
+  var nm = trName(key, bookName);
+  var vals = trVals(key, nm, mkt);
+  if (vals.length < 3) return '<span class="od-hr">\u2014</span><span class="od-hr">\u2014</span>'
+    + '<span class="od-hr">\u2014</span>';
+  var season = String(curSeason(key));
+  var cell = function(rows){
+    if (!rows.length) return '<span class="od-hr">\u2014</span>';
+    var pct = Math.round(rows.filter(function(x){ return x.v > line; }).length / rows.length * 100);
+    var cls = pct >= 70 ? ' hot' : (pct >= 50 ? '' : ' cold');
+    return '<span class="od-hr' + cls + '">' + pct + '%</span>';
+  };
+  return cell(vals.slice(0, 5)) + cell(vals.slice(0, 10))
+    + cell(vals.filter(function(x){ return String(x.g.Year || x.g.year) === season; }));
+}
 function oddsPage(){
   var on = sportOrder().filter(function(k){ return state.view.active[k]; });
   if (!on.length) return '<div class="empty"><i class="ti ti-filter-off"></i>No sports selected.</div>';
@@ -10881,6 +10904,7 @@ function oddsPage(){
         + '<span class="od-ln">'+esc(r.line)+'</span>'
         + '<span class="od-o">'+(+r.over).toFixed(2)+'</span>'
         + '<span class="od-u">'+(r.under!=null?(+r.under).toFixed(2):'—')+'</span>'
+        + odHit(k, r.player, sel, r.line)
         + '<span class="od-bk'+(nb>1?' multi':'')+'" title="'+esc(bookTitle(k, r.player, sel, r.line))+'"'
         + ' onclick="event.preventDefault();event.stopPropagation();LAB.books(\''+k+'\',\''+esc(r.player).replace(/'/g,"\\'")+'\',\''+esc(sel)+'\','+r.line+')">'
         + esc(r.book||'')+(nb>1?' <u>+'+(nb-1)+'</u>':'')+'</span></div>';
@@ -10895,20 +10919,13 @@ function oddsPage(){
             + esc(abbrOf(k,m.away))+' @ '+esc(abbrOf(k,m.home))+'</button>'; }).join('')
       + '</div>') : '';
     h += '<div class="dayband"><span>'+esc(SPORTS[k].name)+'</span></div>'
-      +  '<div class="sl-bar"><button class="sl-chip'+(state.view.oddsTab !== 'trends' ? ' on' : '')
-         + '" onclick="LAB.oddsTab(\'board\')">Board</button>'
-         + '<button class="sl-chip'+(state.view.oddsTab === 'trends' ? ' on' : '')
-         + '" onclick="LAB.oddsTab(\'trends\')">Trends</button></div>'
-      +  (state.view.oddsTab === 'trends' ? '' : mchips)
-      +  (state.view.oddsTab === 'trends'
-            ? ((state.view.trSport || on[0]) === k ? trendsBoard(k)
-               : '<div class="deg-note">Trends is showing ' + esc(SPORTS[state.view.trSport || on[0]].name)
-                 + '. <button class="sl-chip" onclick="LAB.trSport(\'' + k + '\')">Show '
-                 + esc(SPORTS[k].name) + '</button></div>')
-            : '<div class="mkt-chips">'+chips+'</div>'
-              + '<div class="od-hd"><span class="od-nm">Player</span><span class="od-ln">Line</span>'
-              + '<span class="od-o">Over</span><span class="od-u">Under</span><span class="od-bk">Book</span></div>'
-              + '<div class="od-list">'+body+'</div>');
+      +  mchips
+      +  '<div class="mkt-chips">'+chips+'</div>'
+      +  '<div class="od-hd"><span class="od-nm">Player</span><span class="od-ln">Line</span>'
+      +  '<span class="od-o">Over</span><span class="od-u">Under</span>'
+      +  '<span class="od-hr">L5</span><span class="od-hr">L10</span><span class="od-hr">Yr</span>'
+      +  '<span class="od-bk">Book</span></div>'
+      +  '<div class="od-list">'+body+'</div>';
   });
   return h;
 }
