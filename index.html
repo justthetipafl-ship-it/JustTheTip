@@ -100,6 +100,12 @@
   .mkt-chip{font-size:10px;font-weight:700;padding:5px 10px;border-radius:7px;border:1px solid var(--border);
     background:var(--surface-2);color:var(--text-3);cursor:pointer;white-space:nowrap;}
   .mkt-chip.on{border-color:var(--accent);color:var(--accent);background:color-mix(in srgb,var(--accent) 12%,transparent);}
+  .od-selbar{display:none;gap:8px;padding:0 0 8px;}
+  .od-selbar .od-sel{flex:1;min-width:0;}
+  @media (max-width:620px){
+    .od-selbar{display:flex;}
+    .mt-chips,.mkt-chips{display:none;}
+  }
   .od-hr{width:34px;flex:none;text-align:right;font-family:var(--font-mono);font-size:10px;
     color:var(--text-3);}
   .od-hr.hot{color:var(--accent);} .od-hr.cold{color:#f97316;}
@@ -109,6 +115,20 @@
     border-bottom:1px solid var(--border);}
   .od-row{background:var(--surface);border:1px solid var(--border);border-radius:8px;margin-bottom:3px;}
   .od-nm{flex:1;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;}
+  /* Under 620px the row wraps to two: the name on its own line, the numbers beneath. Truncating a
+     name to "Josh..." to keep one line was the worst of both - the player is the one thing you
+     cannot guess from the rest of the row. The header wraps the same way so the columns still
+     line up with what is under them. */
+  @media (max-width:620px){
+    .od-row,.od-hd{flex-wrap:wrap;row-gap:2px;padding:7px 10px;}
+    .od-row .od-nm,.od-hd .od-nm{flex:1 0 100%;white-space:normal;overflow:visible;
+      text-overflow:clip;font-size:12px;line-height:1.25;}
+    .od-hd .od-nm{font-size:9px;}
+    .od-row .od-ln,.od-hd .od-ln{flex:0 0 auto;min-width:40px;text-align:left;margin-right:auto;}
+    .od-row .od-o,.od-row .od-u,.od-hd .od-o,.od-hd .od-u{min-width:42px;}
+    .od-row .od-bk,.od-hd .od-bk{flex:0 0 auto;max-width:42%;text-align:right;}
+  }
+
   .od-ln{min-width:44px;text-align:right;font-variant-numeric:tabular-nums;color:var(--text-2);}
   .od-o,.od-u{min-width:46px;text-align:right;font-weight:800;font-variant-numeric:tabular-nums;}
   .od-o{color:var(--accent);}
@@ -10918,7 +10938,18 @@ function oddsPage(){
           return '<button class="mt-chip'+(mSel===m.id?' on':'')+'" onclick="LAB.match(\''+k+'\',\''+esc(m.id)+'\')">'
             + esc(abbrOf(k,m.away))+' @ '+esc(abbrOf(k,m.home))+'</button>'; }).join('')
       + '</div>') : '';
+    var mSel2 = state.view.match && state.view.match[k];
+    // dropdowns on a phone, chips on a desktop: the same choices, a fraction of the height
+    var mSelHtml = ms.length ? ('<select class="ob-sel od-sel" onchange="LAB.match(\''+k+'\',this.value)">'
+        + '<option value="">All matches</option>'
+        + ms.map(function(m){ return '<option value="'+esc(m.id)+'"'+(mSel2===m.id?' selected':'')
+            + '>'+esc(abbrOf(k,m.away))+' @ '+esc(abbrOf(k,m.home))+'</option>'; }).join('')
+        + '</select>') : '';
+    var kSelHtml = '<select class="ob-sel od-sel" onchange="LAB.mkt(\''+k+'\',this.value)">'
+        + mkts.map(function(m){ return '<option value="'+esc(m)+'"'+(m===sel?' selected':'')
+            + '>'+esc(mktLabel(k, m))+'</option>'; }).join('') + '</select>';
     h += '<div class="dayband"><span>'+esc(SPORTS[k].name)+'</span></div>'
+      +  '<div class="od-selbar">'+mSelHtml+kSelHtml+'</div>'
       +  mchips
       +  '<div class="mkt-chips">'+chips+'</div>'
       +  '<div class="od-hd"><span class="od-nm">Player</span><span class="od-ln">Line</span>'
