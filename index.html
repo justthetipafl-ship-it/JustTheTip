@@ -1657,6 +1657,7 @@ function ensureTier2(){
 var TIER3 = { gamelogs:'data/gamelogs.json', dvp:'data/dvp.json', teams_form:'data/teams_form.json',
               injury:'data/injury.json', lineups:'data/lineups.json', results:'data/results.json',
               oddsOpen:'data/odds_open.json', goalies:'data/goalies.json',
+              firstRead:'data/firstread.json',
               specialTeams:'data/special_teams.json',
               ladder:'data/ladder.json',
               weather:'data/weather.json', calib:'data/calib.json' };
@@ -4225,11 +4226,47 @@ function moveChip(key, name, mkt, line, book, now){
     + ' at ' + esc(o.t || '') + '">' + (shorter ? '\u2193 ' : '\u2191 ') + '$' + was.toFixed(2)
     + ' \u2192 $' + is.toFixed(2) + '</span>';
 }
+
+/* FIRST READ (NFL) -------------------------------------------------------------------------------
+   Targets say the ball arrived; they do not say the quarterback was looking for him. FTN charts
+   which read each throw went to, so a receiver who is the FIRST read on a quarter of his offence's
+   dropbacks has a floor that a target count hides - and one living on checkdowns has a ceiling it
+   flatters. Built by nfl/build_firstread.py from FTN charting joined to play-by-play.
+   FTN data is CC-BY-SA 4.0: the section credits FTN Data via nflverse, and must keep doing so. */
+function firstRead(key, name){
+  if (key !== 'nfl') return null;
+  var S = state.sports[key], f = S.data.firstRead;
+  if (!f || !f.players) return null;
+  if (!S.idx.frIdx){
+    var ix = {};
+    f.players.forEach(function(r){ ix[cmbNameKey(r.name)] = r; });
+    S.idx.frIdx = ix;
+  }
+  return S.idx.frIdx[cmbNameKey(name)] || null;
+}
+function firstReadChip(key, name){
+  var r = firstRead(key, name);
+  if (!r || !r.targets) return '';
+  // His share of the TEAM'S first reads. "75% of his targets were first reads" describes him and
+  // flatters a decoy with four targets; this says how much of the offence looks for him first.
+  var tfs = r.teamFirstShare;
+  if (tfs == null) return '';
+  var share = Math.round(tfs * 100);
+  var good = share >= 25;
+  return '<span class="gl-chip' + (good ? ' good' : '') + '" title="' + r.first + ' of his team\'s '
+    + (r.teamFirsts || 0) + ' first reads">' + share + '% of team first reads</span>';
+}
 function ctxChips(key, p, mkt, line, opp){
   var sc = state.sports[key].scoring;
   if (key === 'nhl') return nhlCtxChips(key, p, mkt, line, opp);
-  if (!sc || !sc.getContextSignals) return '';
   var out = [];
+  // first read leads the reasoning on receiving markets: it is the one number that separates two
+  // receivers on the same target count
+  if (key === 'nfl' && p && ['recYds', 'receptions', 'longRec', 'anytimeTd', 'rushRecYds'].indexOf(mkt) >= 0){
+    var frc = firstReadChip(key, p.name);
+    if (frc) out.push(frc);
+  }
+  if (!sc || !sc.getContextSignals) return out.join('');
   try {
     // AFL/NFL return weighted numbers that already moved the score; EPL/MLB return tags
     // that nothing consumed until now. Both are worth showing as the row's reasoning.
@@ -10362,6 +10399,7 @@ function weeklyReport(key){
         + onePer(under).map(function(r){ return line(r, -1); }).join('') : '')
     + '<div class="dayband"><span>Biggest outputs</span></div><div class="wr-grid">'+big+'</div>'
     + unrewardedBoard(key, logs, season)
+    + firstReadBoard(key)
     + '<div class="dayband"><span>Season leaders</span></div>'
     + (lead ? '<div class="wr-grid">'+lead+'</div>'
             : '<div class="wr-note">Nobody has three games on record this season yet, so there is '
@@ -10511,6 +10549,35 @@ function dvpView(key){
             }).join('')+'</tr>';
       }).join('')+'</tbody></table></div>';
   return h;
+}
+
+/* FIRST READ LEADERS - who the quarterback is actually looking for. Ranked on share of his OWN
+   OFFENCE'S dropbacks rather than share of his own targets, because the second measure rewards a
+   decoy with four targets. A minimum of targets keeps a one-game sample off the board.        */
+var FR_MIN_TG = 10;
+function firstReadBoard(key){
+  if (key !== 'nfl') return '';
+  var f = state.sports[key].data.firstRead;
+  if (!f || !f.players || !f.players.length) return '';
+  var rows = f.players.filter(function(r){ return (r.targets || 0) >= FR_MIN_TG && r.teamFirstShare; })
+    .slice().sort(function(a, b){ return (b.teamFirstShare || 0) - (a.teamFirstShare || 0); }).slice(0, 10);
+  if (!rows.length) return '';
+  var top = rows[0].teamFirstShare || 1;
+  var body = rows.map(function(r, i){
+    var pct = Math.round((r.teamFirstShare || 0) * 100);
+    return '<div class="wr-row"><span class="wr-rk">' + (i + 1) + '</span>'
+      + '<span class="wr-nm">' + esc(r.name) + '<i>' + esc(r.team) + '</i></span>'
+      + '<span class="dv-bars"><span class="dv-bar-t"><i class="soft" style="width:'
+      + Math.max(6, Math.round((r.teamFirstShare / top) * 100)) + '%"></i></span></span>'
+      + '<span class="wr-v">' + pct + '%</span>'
+      + '<span class="wr-x">' + r.first + '/' + (r.teamFirsts || 0) + '</span></div>';
+  }).join('');
+  return '<div class="dayband"><span>First read leaders</span></div>'
+    + '<div class="wr-note">Share of his team\u2019s first-read throws that went to him. Targets say '
+    + 'the ball arrived; this says how much of the offence looks for him first. Minimum '
+    + FR_MIN_TG + ' targets.</div>'
+    + '<div class="wr-grid"><div class="wr-col">' + body + '</div></div>'
+    + '<div class="wr-note" style="opacity:.6">Charting: FTN Data via nflverse (CC-BY-SA 4.0).</div>';
 }
 function statsPage(){
   var v = state.view;
@@ -12610,6 +12677,38 @@ function nhlProfile(key, name, n){
            perGame:{ goals:g / logs.length, assists:a / logs.length, pp:ppP / logs.length,
                      shots:sh / logs.length } };
 }
+
+function ddFirstRead(key, p, mkt){
+  if (key !== 'nfl' || !p) return '';
+  if (['recYds', 'receptions', 'longRec', 'anytimeTd', 'rushRecYds'].indexOf(mkt) < 0) return '';
+  var r = firstRead(key, p.name);
+  if (!r || !r.targets) return '';
+  var parts = [
+    ['First read',  r.first,     '#22c55e'],
+    ['Second read', r.second,    '#38bdf8'],
+    ['Checkdown',   r.checkdown, '#eab308'],
+    ['Designed',    r.designed,  '#a78bfa']
+  ].filter(function(x){ return x[1] > 0; });
+  var tot = parts.reduce(function(a, x){ return a + x[1]; }, 0) || r.targets;
+  var bar = '<div class="nb-bar">' + parts.map(function(x){
+    return '<span style="width:' + (x[1] / tot * 100).toFixed(1) + '%;background:' + x[2] + '"></span>';
+  }).join('') + '</div>';
+  var legend = '<div class="nb-legend">' + parts.map(function(x){
+    return '<span><i class="nb-dot" style="background:' + x[2] + '"></i>' + esc(x[0]) + ' '
+      + Math.round(x[1] / tot * 100) + '%</span>';
+  }).join('') + '</div>';
+  return '<div class="dd-sec"><div class="dd-h">Where the ball was going</div>'
+    + '<div class="dd-note">' + r.first + ' of his team\u2019s ' + (r.teamFirsts || 0)
+    + ' first reads went to him'
+    + (r.teamFirstShare ? ' \u2014 ' + Math.round(r.teamFirstShare * 100) + '% of them' : '')
+    + (r.firstOfTeam ? ', on ' + Math.round(r.firstOfTeam * 100)
+        + '% of everything his offence has thrown' : '') + '.</div>'
+    + bar + legend
+    + '<div class="dd-note">He catches ' + Math.round((r.catch || 0) * 100) + '% of them for '
+    + (r.ypt || 0).toFixed(1) + ' yards a target, over ' + r.games + ' game'
+    + (r.games === 1 ? '' : 's') + '. '
+    + '<span style="opacity:.6">Charting: FTN Data via nflverse.</span></div></div>';
+}
 function ddNhlScoring(key, p, opp, mkt){
   if (key !== 'nhl' || !p) return '';
   if (['points', 'goals', 'assists', 'shots', 'ppPoints'].indexOf(mkt) < 0) return '';
@@ -12859,6 +12958,7 @@ function deepPanel(){
   var drivers = ddDriverSection(key, name, mkt, d.opp);
   var teams = ddTeamSection(key, p.team || d.team, d.opp, mkt);
   var mlbAdv = ddMlbSection(key, p, d.opp, mkt) + ddNblScoring(key, p, d.opp, mkt) + ddNhlScoring(key, p, d.opp, mkt)
+    + ddFirstRead(key, p, mkt)
              + ddNgsSection(key, p, mkt);
   var script = ddScript(key, p.team, d.opp);
   return '<div class="cmb-overlay open" onclick="if(event.target===this)LAB.deepClose()">'
