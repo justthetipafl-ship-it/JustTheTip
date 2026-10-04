@@ -466,13 +466,37 @@ window.JTTScoring = (function () {
     }
     return Math.max(0, Math.min(1, Math.exp(-z + a*Math.log(z) - gln)*h));
   }
+  // The feed OMITS the long-play stats rather than writing a zero: longRec is null on 2,444 of
+  // this season's 3,092 rows. `+r[statKey] || 0` turned every one of those into a real zero, so a
+  // receiver's 19, 9 and 22 were averaged against a long tail of invented noughts, the mean
+  // collapsed and the model priced Longest Reception at nonsense - which is what made the Deep
+  // Dive look broken on Chunk Plays while every counting stat was fine.
+  //
+  // A row with no value for these is not a zero-yard game; it is a game the feed did not record.
+  // Skip it. Rows where he genuinely played and caught nothing still arrive as an explicit 0.
+  const P_SPARSE = { longRec:1, longRush:1, longComp:1 };
+  function _pVals(rows, statKey){
+    const sparse = P_SPARSE[statKey];
+    const out = [];
+    for(const r of rows){
+      const raw = r ? r[statKey] : null;
+      if(sparse && (raw == null || raw === '')) continue;      // not recorded, not a zero
+      out.push(+raw || 0);
+    }
+    return out;
+  }
   function prob(p, statKey, line, opp){
     if(!p || !statKey || line == null) return null;
     const all = dvpByName(p.name) || [];
     if(all.length < 4) return null;
-    const hist = all.slice(-P_WIN).map(r => +r[statKey] || 0);
-    if(!hist.length) return null;
-    const cur = all.filter(isCurSeason).map(r => +r[statKey] || 0);
+    // For a sparse stat the window must count READINGS, not rows: the last P_WIN rows of a season
+    // where the feed records longRec four times in twelve games holds two values, not ten.
+    const hist = P_SPARSE[statKey]
+      ? _pVals(all, statKey).slice(-P_WIN)
+      : _pVals(all.slice(-P_WIN), statKey);
+    // a sparse stat needs a few real readings before it means anything
+    if(!hist.length || (P_SPARSE[statKey] && hist.length < 3)) return null;
+    const cur = _pVals(all.filter(isCurSeason), statKey);
     const baseline = cur.length ? cur.reduce((a,b)=>a+b,0)/cur.length
                                 : hist.reduce((a,b)=>a+b,0)/hist.length;
     let mu = (_pEwma(hist, P_HALFLIFE)*hist.length + baseline*P_SHRINK)/(hist.length + P_SHRINK);
