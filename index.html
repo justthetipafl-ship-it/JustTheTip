@@ -107,6 +107,14 @@
   .alt-rung b{font-weight:800;color:var(--text);}
   .alt-rung i{font-style:normal;font-size:8px;color:var(--text-3);text-transform:uppercase;}
   .alt-rung.multi{border-color:var(--text-3);}
+  .fold{border-top:1px solid var(--border);margin:0 0 2px;}
+  .fold>summary{list-style:none;cursor:pointer;padding:9px 2px;font-family:var(--font-display);
+    font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--text-3);
+    display:flex;align-items:center;gap:7px;}
+  .fold>summary::-webkit-details-marker{display:none;}
+  .fold>summary:before{content:'\25b8';font-size:9px;color:var(--text-3);transition:transform .15s;}
+  .fold[open]>summary:before{transform:rotate(90deg);}
+  .fold[open]>summary{color:var(--text-2);}
   .alt-rows{padding:4px 6px 6px;}
   .alt-row{background:var(--surface-2);margin-bottom:2px;}
   .alt-row .alt-nm{font-family:var(--font-mono);font-weight:700;color:var(--text-2);flex:1;}
@@ -7937,6 +7945,23 @@ function secNote(title, why){
   return '<div class="dayband"><span>'+title+'</span></div>'
     + '<div class="sec-miss"><i class="ti ti-alert-triangle"></i>'+esc(why)+'</div>';
 }
+/* A focused fixture renders eighteen sections, and most of them are reference rather than decision
+   - Halves, Subs, First/Last, Distribution, Starters, Form, DVP are things you go looking for, not
+   things you need before you can read the page. Those fold away behind their own heading; what the
+   page is actually FOR stays open. What a reader opens is remembered for the session, so anyone who
+   wants everything gets it after one tap per section. */
+var FOLD_SHUT = { form:1, dvp:1, dist:1, starter:1, halves:1, subs:1, firstLast:1, jupiter:1, dejaVu:1 };
+var FOLD_NAME = { form:'Recent form', dvp:'Defence by position', dist:'Distribution',
+                  starter:'Starters', halves:'By half', subs:'Substitutes',
+                  firstLast:'First and last', jupiter:'Jupiter', dejaVu:'D\u00e9j\u00e0 Vu' };
+function fold(id, html){
+  if (!html) return '';
+  var open = state.view.fold && state.view.fold[id] != null
+    ? state.view.fold[id] : !FOLD_SHUT[id];
+  return '<details class="fold"' + (open ? ' open' : '') + '>'
+    + '<summary onclick="LAB.fold(\'' + id + '\')">' + esc(FOLD_NAME[id] || id) + '</summary>'
+    + (open ? html : '') + '</details>';
+}
 function focusPage(){
   var f = state.view.focus;
   if (!f) return '';
@@ -7980,15 +8005,15 @@ function focusPage(){
     + conditionsSection(key, g)
     + h2hSection(key, g)
     + h2hHistory(key, g)
-    + (S.t3==='ready' ? formSection(key, g) : '')
+    + (S.t3==='ready' ? fold('form', formSection(key, g)) : '')
     + (S.t3==='ready' ? leadersSection(key, g) : '')
     + (S.t3==='ready' ? lineupSection(key, g) : '')
-    + (S.t3==='ready' ? dvpSection(key, g) : '')
-    + (S.t3==='ready' ? distSection(key, g) : '')
-    + (S.t3==='ready' ? starterSection(key, g) : '')
-    + (S.t3==='ready' ? halvesSection(key, g) : '')
-    + (S.t3==='ready' ? subsSection(key, g) : '')
-    + (S.t3==='ready' ? firstLastSection(key, g) : '')
+    + (S.t3==='ready' ? fold('dvp', dvpSection(key, g)) : '')
+    + (S.t3==='ready' ? fold('dist', distSection(key, g)) : '')
+    + (S.t3==='ready' ? fold('starter', starterSection(key, g)) : '')
+    + (S.t3==='ready' ? fold('halves', halvesSection(key, g)) : '')
+    + (S.t3==='ready' ? fold('subs', subsSection(key, g)) : '')
+    + (S.t3==='ready' ? fold('firstLast', firstLastSection(key, g)) : '')
     + (S.status === 'ready' && !state.view.nerd ? matchRadar(key, g) : '')
     + (S.t3 === 'ready' && !state.view.nerd ? goalieSection(key, g) : '')
     + (S.t3 === 'ready' && !state.view.nerd ? firstReadSection(key, g) : '')
@@ -8000,8 +8025,8 @@ function focusPage(){
     // the build-your-own tools sit at the foot, above the player list: you read the match, then
     // the signals, then the visual reads, and only then do you go and make something
     + (S.t3==='ready' ? valueBets(key, g) : '')
-    + (S.t3==='ready' ? jupiterSection(key, g) : '')
-    + (S.t3==='ready' ? dejaVuSection(key, g) : '')
+    + (S.t3==='ready' ? fold('jupiter', jupiterSection(key, g)) : '')
+    + (S.t3==='ready' ? fold('dejaVu', dejaVuSection(key, g)) : '')
     + (S.t3==='ready' && !state.view.nerd && mbFixtures().some(function(x){ return x.key === key && x.i === f.i; })
         ? '<div class="dayband"><span>Multi Builder</span></div>'
           + '<div class="mb-inline">'+mbPanel({ key:key, g:g })+'</div>'
@@ -11814,14 +11839,20 @@ function resultsPage(){
   var sports = [];
   R.bets.forEach(function(b){ if (b.sport && sports.indexOf(b.sport) < 0) sports.push(b.sport); });
   var f = state.view.resSport || 'all', per = state.view.resPeriod || 'all';
-  var cut = per === 'all' ? null : new Date(Date.now() - (per === '30' ? 30 : 90) * 864e5).toISOString().slice(0, 10);
+  // "Today" is today in AEST, where the people reading this are - a UTC cut would roll over
+  // mid-evening and empty the view in the middle of a slate.
+  var aestNow = new Date(Date.now() + 10 * 36e5);
+  var today = aestNow.toISOString().slice(0, 10);
+  var cut = per === 'all' ? null
+          : per === 'today' ? today
+          : new Date(Date.now() - (per === '30' ? 30 : 90) * 864e5).toISOString().slice(0, 10);
   var bets = R.bets.filter(function(b){
     return (f === 'all' || b.sport === f) && (!cut || String(b.date) >= cut);
   });
   h += '<div class="sl-bar"><button class="sl-chip'+(f === 'all' ? ' on' : '')+'" onclick="LAB.resSport(\'all\')">All sports</button>'
     + sports.map(function(sp){ return '<button class="sl-chip'+(f === sp ? ' on' : '')+'" onclick="LAB.resSport(\''+esc(sp)+'\')">'+esc(sp)+'</button>'; }).join('')
     + '</div><div class="sl-bar">'
-    + [['all','All time'],['90','90 days'],['30','30 days']].map(function(o){
+    + [['today','Today'],['all','All time'],['90','90 days'],['30','30 days']].map(function(o){
         return '<button class="sl-chip'+(per === o[0] ? ' on' : '')+'" onclick="LAB.resPeriod(\''+o[0]+'\')">'+o[1]+'</button>'; }).join('')
     + '</div>';
   var st = resultsStats(bets, unit);
@@ -14495,6 +14526,13 @@ window.LAB = {
   },
   oddsTab: function(t){ state.view.oddsTab = t; if (window.scrollTo) window.scrollTo(0, 0); render(); },
   trSport: function(k){ state.view.trSport = k; render(); },
+  fold: function(id){
+    var v = state.view; v.fold = v.fold || {};
+    var shut = FOLD_SHUT[id];
+    var open = v.fold[id] != null ? v.fold[id] : !shut;
+    v.fold[id] = !open;
+    setTimeout(render, 0);              // let the summary's own toggle settle first
+  },
   trSide: function(v){ TR_F.side = v; render(); },
   trMinG: function(v){ TR_F.minG = +v || 3; render(); },
   trMinPx: function(v){ TR_F.minPx = +v || 0; render(); },
