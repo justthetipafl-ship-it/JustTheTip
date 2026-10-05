@@ -3435,7 +3435,10 @@ var COVER_FIELD = { epl: { field:'passes' }, nfl: { field:'snapPct', min:0.1 } }
 // is priced for pass RUSHERS (Derrick Brown, Von Miller), but the gamelog's `sacks` column is
 // sacks TAKEN by the quarterback - grading one against the other made every QB a sack artist
 // and every rusher invisible. `defSacks` is the right column.
-var MKT_FIELD = { nfl: { sacks:'defSacks' } };
+// anytimeTd on a gamelog row is a BINARY FLAG - 1 if he scored at all - while the market is a
+// ladder: 1+, 2+, 3+. Reading the flag meant a two-touchdown game plotted as 1 and the 2+ and 3+
+// rungs could never be cleared by anyone. The count is what the ladder is priced against.
+var MKT_FIELD = { nfl: { sacks:'defSacks', anytimeTd:'totalTds' } };
 function mktField(key, mkt){ return ((MKT_FIELD[key] || {})[mkt]) || mkt; }
 /* A row whose minutes say he didn't play is not a game, whatever else it carries. FPL writes a row
    for every squad player every gameweek - 0 minutes for the unused sub and the dropped - with every
@@ -8051,6 +8054,16 @@ function ppOpponent(key, name){
    hit rate over a chosen window, the posted price at that exact line where one exists, and the
    edge the calibrated model makes of it. Adds straight to the multi slip.                     */
 function pcDefaultLine(key, name, mkt){
+  // The MAIN line, not the best price. bestPriceFor returns the longest odds, which on a milestone
+  // ladder is the furthest rung - so an anytime-TD market opened on "3+" at $151 and showed 0/10,
+  // which looked like the game log had lost his touchdowns when it was the line that was absurd.
+  var rungs = streakCandidates(key, name, mkt) || [];
+  var lowest = null;
+  rungs.forEach(function(r){
+    if (r.line == null) return;
+    if (lowest == null || +r.line < lowest) lowest = +r.line;
+  });
+  if (lowest != null) return Math.max(1, Math.ceil(lowest));
   var od = bestPriceFor(key, name, mkt);
   if (od && od.line != null) return Math.max(1, Math.ceil(od.line));
   var e = leagueAvg(key, mkt)[name];
