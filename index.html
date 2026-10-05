@@ -11839,29 +11839,21 @@ function resultsPage(){
   var sports = [];
   R.bets.forEach(function(b){ if (b.sport && sports.indexOf(b.sport) < 0) sports.push(b.sport); });
   var f = state.view.resSport || 'all', per = state.view.resPeriod || 'all';
-  // "Today" means the current BETTING day, not a calendar date. Bets are dated where the game is
-  // played - a US slate is logged 2026-10-05 - while AEST is ten hours ahead, so by mid-morning
-  // here the calendar had already rolled over and the filter hid the very slate being watched.
-  // Take the most recent day that actually has bets, as long as it is recent; fall back to the
-  // local date when nothing has been logged for a while.
-  var todayLocal = new Date(Date.now() + 10 * 36e5).toISOString().slice(0, 10);
-  var newest = '';
-  R.bets.forEach(function(b){ var d = String(b.date || ''); if (d > newest) newest = d; });
-  var floor = new Date(Date.now() - 36 * 36e5).toISOString().slice(0, 10);   // within ~36 hours
-  var today = (newest && newest >= floor) ? newest : todayLocal;
+  // A week, not a day. Bets are dated where the game is played, so a single calendar day never
+  // lines up with an Australian reader's idea of "today" - two attempts at it were both wrong in
+  // different directions. Seven days spans any time-zone boundary and still answers the question
+  // the filter is really for: how has it been going lately.
   var cut = per === 'all' ? null
-          : per === 'today' ? today
-          : new Date(Date.now() - (per === '30' ? 30 : 90) * 864e5).toISOString().slice(0, 10);
+          : new Date(Date.now() - (per === '7' ? 7 : per === '30' ? 30 : 90) * 864e5)
+              .toISOString().slice(0, 10);
   var bets = R.bets.filter(function(b){
     return (f === 'all' || b.sport === f) && (!cut || String(b.date) >= cut);
   });
   h += '<div class="sl-bar"><button class="sl-chip'+(f === 'all' ? ' on' : '')+'" onclick="LAB.resSport(\'all\')">All sports</button>'
     + sports.map(function(sp){ return '<button class="sl-chip'+(f === sp ? ' on' : '')+'" onclick="LAB.resSport(\''+esc(sp)+'\')">'+esc(sp)+'</button>'; }).join('')
     + '</div><div class="sl-bar">'
-    + [['today','Today'],['all','All time'],['90','90 days'],['30','30 days']].map(function(o){
-        return '<button class="sl-chip'+(per === o[0] ? ' on' : '')+'" onclick="LAB.resPeriod(\''+o[0]+'\')">'
-          + (o[0] === 'today' && per === 'today' ? 'Today \u00b7 ' + esc(today.slice(5)) : o[1])
-          + '</button>'; }).join('')
+    + [['7','This week'],['all','All time'],['90','90 days'],['30','30 days']].map(function(o){
+        return '<button class="sl-chip'+(per === o[0] ? ' on' : '')+'" onclick="LAB.resPeriod(\''+o[0]+'\')">'+o[1]+'</button>'; }).join('')
     + '</div>';
   var st = resultsStats(bets, unit);
   if (!st.n && !st.pend) return h + '<div class="sig-empty">Nothing settled in this view yet.</div>'
