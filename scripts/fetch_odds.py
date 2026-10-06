@@ -94,6 +94,16 @@ BOOKMAKERS = ['Sportsbet', 'TAB', 'Pointsbet', 'Ladbrokes', 'Unibet', 'BetRight'
 # per-sport: rapidoddsapi main market key -> JTT market key (config.js uses the JTT keys).
 # milestone (X+) ladders are the same base key + '_milestones'; they feed the `alt` array.
 SPORTS = {
+    # NBA. Keys are the gamelog field names in nba/data/gamelogs*.json, so each market joins
+    # straight to its stat. Every one of these also posts a milestone ladder (15+ points, 10+
+    # rebounds), which is what Streakers and the multi legs are built on - the loop below asks for
+    # both the flat line and the ladder for each.
+    'NBA': {
+        'player_points': 'points', 'player_rebounds': 'rebounds', 'player_assists': 'assists',
+        'player_made_threes': 'threes', 'player_steals': 'steals', 'player_blocks': 'blocks',
+        'player_points_rebounds_assists': 'pra', 'player_points_rebounds': 'pr',
+        'player_points_assists': 'pa', 'player_rebounds_assists': 'ra',
+    },
     # NHL: keys are the gamelog fields in nhl/data/gamelogs_*.json. Only four player props exist
     # for hockey - no saves, blocks, hits or PP points - so those config markets stay unpriced.
     'NHL': {
