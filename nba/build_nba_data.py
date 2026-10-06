@@ -208,6 +208,19 @@ def filter_real_teams(df, ok):
     return df[keep].reset_index(drop=True)
 
 
+def _pid(v):
+    """ESPN athlete id as a plain integer string.
+
+    The ids arrive through pandas as floats, so str() gives "3945274.0" - and the headshot CDN,
+    which is keyed by that id, returns nothing for 3945274.0.png. Anything that is not a clean
+    number comes back empty rather than guessed at.
+    """
+    t = str(v).strip()
+    if t.endswith(".0"):
+        t = t[:-2]
+    return t if t.isdigit() else ""
+
+
 def build_players(logs, rosters, cfg, current):
     """Current-season rep-gated averages + role + roster bio join."""
     cur = logs[logs["Year"] == str(current)]
@@ -258,7 +271,7 @@ def build_players(logs, rosters, cfg, current):
         if r["starterPct"] < 0.4 and (r["minutes"] or 0) >= cfg["game_min"] * 0.4:
             role.append("Sixth Man")
         b = bio.get(str(r["PlayerId"]), {})
-        row = dict(playerId=str(r["PlayerId"]), name=r["Player"],
+        row = dict(playerId=_pid(r["PlayerId"]), name=r["Player"],
                    team=r["Team"], teamFull=r["TeamFull"],
                    position=r["pos"], pos5=b.get("pos5"),
                    games=int(r["games"]), starterPct=round(float(r["starterPct"]), 3),
@@ -416,7 +429,7 @@ def build_lineups(logs, cfg, current):
             mv = r["minAvg"]
             if mv != mv or (mv or 0) < 5:         # NaN (all-null minutes) or deep bench noise
                 continue
-            rows.append(dict(team=team, player=r["Player"], playerId=str(r["PlayerId"]),
+            rows.append(dict(team=team, player=r["Player"], playerId=_pid(r["PlayerId"]),
                              position=r["pos"], depth=depth,
                              starterPct=round(float(r["starterPct"]), 3),
                              minAvg=round(float(r["minAvg"]), 1),
