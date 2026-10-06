@@ -15,15 +15,27 @@ const path = require('path');
 const { JSDOM, ResourceLoader } = require('jsdom');   // ResourceLoader, NOT requestInterceptor
 
 const ROOT = path.join(__dirname, 'serve');
+// repo folder names differ from sport keys - AFL and EPL are upper case on disk
+const DIRS = { afl:'AFL', nfl:'nfl', epl:'EPL', mlb:'mlb', nbl:'nbl', nhl:'nhl' };
 const PAGE = path.join(__dirname, '..', 'index.html');
 
 const localPath = u => path.join(ROOT, String(u).replace(/^https?:\/\/[^/]+/, '').split('?')[0]);
 const readLocal = f => (fs.existsSync(f) ? fs.readFileSync(f, 'utf8') : null);
 
+const MISSES = [];
 class LocalLoader extends ResourceLoader {
   fetch(url) {
     const body = readLocal(localPath(url));
-    return body == null ? null : Promise.resolve(Buffer.from(body));
+    if (body == null) {
+      MISSES.push(String(url).replace(/^https?:\/\/[^/]+/, ''));
+      // Return EMPTY, not null. jsdom fires neither load nor error for a null, so the page's
+      // config queue - which waits on one before moving to the next sport - hung forever and
+      // every sport sat at "loading". An empty script runs, sets nothing, and the page's own
+      // "config.js did not set SPORT_CONFIG" path takes over, which is what happens in a browser
+      // when a file 404s.
+      return Promise.resolve(Buffer.from(''));
+    }
+    return Promise.resolve(Buffer.from(body));
   }
 }
 
@@ -45,7 +57,7 @@ function done() {
 async function boot(sport, opts) {
   opts = opts || {};
   if (!fs.existsSync(PAGE)) throw new Error('no index.html at ' + PAGE);
-  if (!fs.existsSync(path.join(ROOT, sport === 'afl' ? 'AFL' : sport)))
+  if (!fs.existsSync(path.join(ROOT, DIRS[sport] || sport)))
     throw new Error('no data for ' + sport + ' — run: node tests/fetch_data.js ' + sport);
 
   const dom = new JSDOM(fs.readFileSync(PAGE, 'utf8'), {
@@ -54,6 +66,7 @@ async function boot(sport, opts) {
     beforeParse(w) {
       w.fetch = u => {
         const t = readLocal(localPath(u));
+        if (t == null) MISSES.push(String(u).replace(/^https?:\/\/[^/]+/, '').split('?')[0]);
         if (t == null) return Promise.resolve({ ok: false, status: 404,
           json: () => Promise.reject(new Error('404')), text: () => Promise.resolve('') });
         return Promise.resolve({ ok: true, status: 200,
@@ -73,7 +86,10 @@ async function boot(sport, opts) {
   });
   const S = LAB.state.sports[sport];
   for (let i = 0; i < 120 && S.status !== 'ready'; i++) await wait(250);
-  if (S.status !== 'ready') throw new Error(sport + ' never finished loading (status: ' + S.status + ')');
+  if (S.status !== 'ready'){
+    const miss = [...new Set(MISSES)].slice(0, 8).join(', ') || 'none';
+    throw new Error(sport + ' never finished loading (status: ' + S.status + '). Files not found: ' + miss);
+  }
 
   const focus = async (i) => {
     LAB.focus(sport, i || 0);
@@ -90,13 +106,23 @@ if (require.main === module) {
     for (const sp of (process.argv[3] ? [process.argv[3]] : ['nfl', 'nhl', 'mlb', 'nbl', 'epl', 'afl'])) {
       try {
         const t = await boot(sp);
+        // fixtures arrive in tier 1; players, gamelogs and odds come with the first focus
+        if ((t.S.data.fixture || []).length) await t.focus(0);
+        // read the loaded DATA, not the index - the index is built when a fixture is focused,
+        // so checking idx here reported zero for a sport that had loaded perfectly
+        const asArr = x => Array.isArray(x) ? x : (x && typeof x === 'object' ? Object.values(x) : []);
         const counts = {
-          players: (t.S.idx.players || []).length,
-          gamelogs: ((t.S.data.gamelogs) || []).length,
+          players: asArr(t.S.data.players).length,
+          fixtures: asArr(t.S.data.fixture).length,
+          gamelogs: asArr(t.S.data.gamelogs).length,
           odds: ((t.S.data.odds || {}).books || []).length + ((t.S.data.odds || {}).alt || []).length
         };
-        ok(sp + ' boots with data', counts.players > 0 && counts.gamelogs > 0,
-           '(' + counts.players + ' players, ' + counts.gamelogs + ' logs, ' + counts.odds + ' odds rows)');
+        const miss = [...new Set(MISSES)].filter(u => u.indexOf('/' + (DIRS[sp] || sp) + '/') === 0);
+        ok(sp + ' boots with data', counts.players > 0 && counts.fixtures > 0,
+           '(' + counts.players + ' players, ' + counts.fixtures + ' fixtures, '
+           + counts.gamelogs + ' logs, ' + counts.odds + ' odds rows'
+           + (miss.length ? '; missing: ' + miss.slice(0, 5).join(', ') : '') + ')');
+        MISSES.length = 0;
       } catch (e) {
         ok(sp + ' boots with data', false, '(' + e.message.slice(0, 80) + ')');
       }
