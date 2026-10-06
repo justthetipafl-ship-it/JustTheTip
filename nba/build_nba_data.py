@@ -570,9 +570,16 @@ def augment_from_sportsblaze(lg, raw_pb):
     return raw_pb
 
 
+FLAT_OUT = False          # set by --flat
+
+
 def run_league(lg, seasons, current, outroot, password, src_local):
     cfg = LEAGUES[lg]
-    outdir = os.path.join(outroot, lg)
+    # <out>/<league>/ is the two-league layout (data/nba, data/wnba). The shell reads nba/data/
+    # directly, so --flat writes there instead - without it, --out nba/data produced
+    # nba/data/nba/ and every refresh landed in a folder nothing reads, which is why the live
+    # files sat at their August build while the workflow reported success every day.
+    outdir = outroot if FLAT_OUT else os.path.join(outroot, lg)
     os.makedirs(outdir, exist_ok=True)
     print(f"[{cfg['label']}] seasons={seasons} current={current}")
 
@@ -785,6 +792,8 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", default="nba/data")
     ap.add_argument("--league", default="both", choices=["nba", "wnba", "both"])
+    ap.add_argument("--flat", action="store_true",
+                    help="write straight into --out instead of --out/<league>")
     ap.add_argument("--nba-seasons", default="2024,2025,2026")
     ap.add_argument("--nba-current", default="2026")
     ap.add_argument("--wnba-seasons", default="2025,2026")
@@ -794,6 +803,8 @@ def main():
                     help="dir containing {nba,wnba}/{ds}/parquet - skips network")
     ap.add_argument("--selftest", action="store_true")
     args = ap.parse_args()
+    global FLAT_OUT
+    FLAT_OUT = bool(args.flat)
 
     if args.selftest:
         selftest()
