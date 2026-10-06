@@ -1,0 +1,53 @@
+name: NBA quarters
+
+# Per-quarter production from the play-by-play. Runs after the NBA data build, since it reads the
+# same season files and writes alongside them.
+
+on:
+  schedule:
+    - cron: "40 12 * * *"
+  workflow_dispatch:
+    inputs:
+      seasons:
+        description: "Seasons, comma separated (blank = last two)"
+        type: string
+        required: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: nba-quarters
+  cancel-in-progress: false
+
+jobs:
+  quarters:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install
+        run: pip install pandas pyarrow
+      - name: Build quarters
+        run: |
+          ARGS="--out nba/data"
+          if [ -n "${{ inputs.seasons }}" ]; then ARGS="$ARGS --seasons ${{ inputs.seasons }}"; fi
+          python3 nba/build_nba_quarters.py $ARGS
+      - name: Commit
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          for f in nba/data/quarters.json; do
+            [ -f "$f" ] && git add "$f" && echo "staged $f"
+          done
+          if git diff --cached --quiet; then
+            echo "nothing new"
+          else
+            git commit -m "NBA quarters"
+            for i in 1 2 3; do
+              git pull --rebase --autostash origin main && git push && break
+              sleep 5
+            done
+          fi
