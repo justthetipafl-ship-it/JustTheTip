@@ -73,18 +73,20 @@ jobs:
           PW="${{ github.event.inputs.password || secrets.NBA_WEEKLY_PASSWORD }}"
           if [ -n "$PW" ]; then
             python nba/build_nba_data.py --out nba/data --league nba \
-              --nba-seasons "$SEASONS" --nba-current "$CURRENT" \
+              --flat --nba-seasons "$SEASONS" --nba-current "$CURRENT" \
               --password "$PW"
           else
             python nba/build_nba_data.py --out nba/data --league nba \
-              --nba-seasons "$SEASONS" --nba-current "$CURRENT"
+              --flat --nba-seasons "$SEASONS" --nba-current "$CURRENT"
           fi
 
       - name: Commit refreshed data
         run: |
           git config user.name  "jtt-bot"
           git config user.email "actions@github.com"
-          git add nba/data
+          # the build used to write nba/data/nba/ - clear it so the stray copy cannot be served
+          rm -rf nba/data/nba
+          git add -A nba/data
           if git diff --cached --quiet; then
             echo "No changes."
           else
