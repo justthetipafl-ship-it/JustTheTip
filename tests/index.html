@@ -115,6 +115,11 @@
   .fold>summary:before{content:'\25b8';font-size:9px;color:var(--text-3);transition:transform .15s;}
   .fold[open]>summary:before{transform:rotate(90deg);}
   .fold[open]>summary{color:var(--text-2);}
+  .pf-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(104px,1fr));gap:6px;margin:6px 0;}
+  .pf-cell{background:var(--surface-2);border:1px solid var(--border);border-radius:8px;padding:8px 9px;}
+  .pf-cell b{display:block;font-family:var(--font-mono);font-size:15px;}
+  .pf-cell span{display:block;font-size:9px;letter-spacing:.05em;text-transform:uppercase;color:var(--text-3);margin-top:2px;}
+  .pf-cell i{display:block;font-style:normal;font-size:9px;color:var(--text-3);margin-top:3px;}
   .qt-row{display:flex;align-items:center;gap:8px;padding:3px 0;font-size:11px;}
   .qt-row .qt-q{min-width:92px;font-family:var(--font-mono);color:var(--text-2);}
   .qt-row .qt-sh{flex:1;font-size:10px;color:var(--text-3);}
@@ -10814,7 +10819,8 @@ function playerPanel(){
   var tab = state.view.ppTab || 'form';
   var body = tab === 'form' ? ppFormTab(key, name)
     : tab === 'calc' ? ppCalc(key, name)
-    : tab === 'profile' ? (tuddyProfile(key, { name:name, opp:ppOpponent(key, name) })
+    : tab === 'profile' ? (nbaScoringProfile(key, name)
+        || tuddyProfile(key, { name:name, opp:ppOpponent(key, name) })
         || '<div class="empty" style="padding:20px">No usage profile for this player.</div>')
     : tab === 'radar' ? ppRadar(key, name)
     : tab === 'cover' ? ppCoverage(key, name)
@@ -13189,6 +13195,70 @@ function ddNbaZones(key, p){
     + '<div class="dd-note">' + z.shots + ' field-goal attempts. The number on the right is how he '
     + 'shoots from there; the small figure is against the league from the same zone.</div>'
     + bar + rows + '</div>';
+}
+
+/* NBA SCORING PROFILE - the player page's Scoring tab.
+   Everything about how he gets his points in one view: the zone split with league comparison, the
+   shooting line, and the quarter he does it in. tuddyProfile owns this tab for NFL; basketball
+   needs its own, because "usage" for a receiver and for a scorer are different questions. */
+function nbaScoringProfile(key, name){
+  if (key !== 'nba') return '';
+  var S = state.sports[key];
+  var p = (S.idx.byName || {})[name] || {};
+  var z = nbaZones(key, name), q = nbaQuarters(key, name);
+  var logs = sortLogsDesc(((S.idx.logsByName || {})[name] || []).slice())
+    .filter(function(r){ return (+r.minutes || 0) > 0; });
+  if (!z && !q && !logs.length) return '';
+  var h = '';
+
+  // the shooting line, from his own game logs so it is current even before the zone build runs
+  if (logs.length){
+    var sum = function(f){ return logs.reduce(function(a, r){ return a + (+r[f] || 0); }, 0); };
+    var fgm = sum('fgm'), fga = sum('fga'), tpm = sum('threes'), tpa = sum('threesAtt'),
+        ftm = sum('ftm'), fta = sum('fta'), pts = sum('points');
+    var pct = function(m, a2){ return a2 > 0 ? (m / a2 * 100).toFixed(1) + '%' : '\u2014'; };
+    // true shooting counts what a point actually costs: a three and two free throws are not the
+    // same shot, and field-goal percentage treats them as if they were
+    var ts = (fga + 0.44 * fta) > 0 ? pts / (2 * (fga + 0.44 * fta)) * 100 : null;
+    var efg = fga > 0 ? (fgm + 0.5 * tpm) / fga * 100 : null;
+    h += '<div class="dd-sec"><div class="dd-h">Shooting</div><div class="pf-grid">'
+      + [['Field goals', pct(fgm, fga), fgm + '/' + fga],
+         ['Three point', pct(tpm, tpa), tpm + '/' + tpa],
+         ['Free throws', pct(ftm, fta), ftm + '/' + fta],
+         ['Effective FG', efg != null ? efg.toFixed(1) + '%' : '\u2014', 'threes counted properly'],
+         ['True shooting', ts != null ? ts.toFixed(1) + '%' : '\u2014', 'with free throws'],
+         ['Points a game', (pts / logs.length).toFixed(1), logs.length + ' games']]
+        .map(function(x){
+          return '<div class="pf-cell"><b>' + esc(x[1]) + '</b><span>' + esc(x[0]) + '</span>'
+            + '<i>' + esc(x[2]) + '</i></div>';
+        }).join('') + '</div></div>';
+  }
+
+  h += ddNbaZones(key, { name:name });
+  h += ddNbaQuarters(key, { name:name }, 'points');
+
+  // shot diet: how his attempts split between threes, twos and the line
+  if (logs.length){
+    var fga2 = logs.reduce(function(a, r){ return a + (+r.fga || 0); }, 0);
+    var tpa2 = logs.reduce(function(a, r){ return a + (+r.threesAtt || 0); }, 0);
+    var fta2 = logs.reduce(function(a, r){ return a + (+r.fta || 0); }, 0);
+    if (fga2 > 0){
+      var parts = [['Threes', tpa2, '#a78bfa'], ['Twos', Math.max(0, fga2 - tpa2), '#38bdf8'],
+                   ['Free throws', Math.round(fta2 * 0.44), '#eab308']];
+      var tot2 = parts.reduce(function(a, x){ return a + x[1]; }, 0) || 1;
+      h += '<div class="dd-sec"><div class="dd-h">Shot diet</div>'
+        + '<div class="dd-note">Where his attempts go. Free throws counted as the 0.44 of a '
+        + 'possession they are worth, not one for one.</div>'
+        + '<div class="nb-bar">' + parts.map(function(x){
+            return '<span style="width:' + (x[1] / tot2 * 100).toFixed(1) + '%;background:' + x[2] + '"></span>';
+          }).join('') + '</div>'
+        + '<div class="nb-legend">' + parts.map(function(x){
+            return '<span><i class="nb-dot" style="background:' + x[2] + '"></i>' + esc(x[0]) + ' '
+              + Math.round(x[1] / tot2 * 100) + '%</span>';
+          }).join('') + '</div></div>';
+    }
+  }
+  return h;
 }
 function ddNhlScoring(key, p, opp, mkt){
   if (key !== 'nhl' || !p) return '';
