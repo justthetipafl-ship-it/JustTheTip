@@ -7474,6 +7474,105 @@ function nblNextManUp(key, g){
   out.sort(function(a,b){ return b.b.ev - a.b.ev; });
   return out;
 }
+
+/* NBA SIGNALS ------------------------------------------------------------------------------------
+   The basketball reads are the NBL's - the markets are the same shape and the gamelog field names
+   were made to match deliberately - so the specialist tiles are reused rather than rewritten. What
+   NBA adds is the double-double and triple-double markets, which the books price and the NBL's
+   board does not carry.                                                                          */
+var NBA_DD_MIN = 0.40, NBA_TD_MIN = 0.15, NBA_MIN_G = 6;
+function nbaBigNights(key, g, want){
+  // want = 2 for a double-double, 3 for a triple
+  var S = state.sports[key], out = [];
+  var CATS = ['points', 'rebounds', 'assists', 'steals', 'blocks'];
+  [g.away, g.home].forEach(function(team){
+    var opp = (team === g.home) ? g.away : g.home;
+    playersOnTeam(key, team).forEach(function(p){
+      if (!isPlayingP(key, p.name, team)) return;
+      var logs = sortLogsDesc(((S.idx.logsByName || {})[p.name] || []).slice())
+        .filter(function(r){ return (+r.minutes || 0) > 0; });
+      if (logs.length < NBA_MIN_G) return;
+      var l20 = logs.slice(0, 20);
+      var hit = function(r){
+        return CATS.filter(function(k){ return (+r[k] || 0) >= 10; }).length >= want;
+      };
+      var n = l20.filter(hit).length, rate = n / l20.length;
+      if (rate < (want >= 3 ? NBA_TD_MIN : NBA_DD_MIN)) return;
+      // which categories carry it, and which is the one that has to land
+      var reach = CATS.map(function(k){
+        return { k:k, r:l20.filter(function(r){ return (+r[k] || 0) >= 10; }).length / l20.length,
+                 avg:mean(l20.map(function(r){ return +r[k] || 0; })) };
+      }).sort(function(a, b){ return b.r - a.r; });
+      var carry = reach.slice(0, want);
+      var hard = carry[carry.length - 1];
+      if (!hard || hard.r <= 0) return;
+      // priced on the hardest leg: the 9.5 line in the category he reaches least often
+      var b = nblPriced(key, p, hard.k, opp, 9.5);
+      out.push({ name:p.name, p:p, opp:opp, rate:rate, n:n, of:l20.length,
+                 carry:carry, hard:hard, b:b, streak:(function(){
+                   var run = 0;
+                   for (var i = 0; i < logs.length; i++){ if (hit(logs[i])) run++; else break; }
+                   return run;
+                 })() });
+    });
+  });
+  out.sort(function(a, b){ return b.rate - a.rate; });
+  return out.slice(0, SIG_MAX_ROWS);
+}
+function nbaBigRow(key, r, want){
+  var lab = want >= 3 ? 'Triple-double' : 'Double-double';
+  var cats = r.carry.map(function(c){
+    return '<span class="gl-chip' + (c.r >= 0.7 ? ' good' : '') + '">' + esc(mktLabel(key, c.k))
+      + ' ' + c.avg.toFixed(1) + '</span>';
+  }).join('');
+  var btns = r.b ? rowBtns(key, { name:r.name, mkt:r.hard.k, line:9.5, side:'over',
+                                  odds:(r.b.price || r.b.over), book:r.b.book, opp:r.opp,
+                                  team:(r.p || {}).team, label:mktLabel(key, r.hard.k) }) : '';
+  return '<div class="gl-row" onclick="LAB.player(\'' + key + '\',\''
+      + esc(r.name).replace(/'/g, "\\'") + '\')">'
+    + btns + playerImgP(key, r.p, 28)
+    + '<div class="gl-left"><div class="gl-nm"><b>' + esc(r.name) + '</b>'
+      + '<span class="gl-tag">' + esc(posShortP(r.p) ? posShortP(r.p) + ' \u00b7 ' : '')
+      + esc(abbrOf(key, (r.p || {}).team)) + ' v ' + esc(abbrOf(key, r.opp)) + '</span></div>'
+    + '<div class="gl-bet">' + esc(lab) + ' \u00b7 ' + r.n + ' of his last ' + r.of + '</div>'
+    + '<div class="gl-why">' + cats
+      + (r.streak >= 3 ? '<span class="gl-chip good">' + r.streak + ' in a row</span>' : '')
+      + '<span class="gl-chip">needs ' + esc(mktLabel(key, r.hard.k)) + ', '
+      + Math.round(r.hard.r * 100) + '% of games</span>'
+    + '</div></div>'
+    + '<div class="gl-right"><div class="gl-ev pos">' + Math.round(r.rate * 100) + '%</div>'
+      + '<div class="gl-evl">' + (want >= 3 ? 'TD RATE' : 'DD RATE') + '</div>'
+      + (r.b ? '<div class="gl-odds">$' + (+(r.b.price || r.b.over)).toFixed(2)
+          + (r.b.book ? '<i>' + esc(r.b.book) + '</i>' : '') + '</div>' : '')
+    + '</div></div>';
+}
+function nbaSignals(key, g){
+  if (key !== 'nba') return '';
+  var sl = nblSpecialist(key, g, 'points'), sp = nblSpecialist(key, g, 'threes'),
+      di = nblSpecialist(key, g, 'assists'), bo = nblSpecialist(key, g, 'rebounds');
+  var dd = nbaBigNights(key, g, 2), td = nbaBigNights(key, g, 3);
+  var why = function(st){
+    return 'Nobody in this game is among the best at ' + st + ' into a defence conceding 4%+ above '
+      + 'average to his position, at a price his record backs.';
+  };
+  return sigBand('NBA Signals',
+      sigTile('ti-basketball', 'Triple Threat', 'Triple-doubles, and how often',
+              td.map(function(r){ return nbaBigRow(key, r, 3); }),
+              'Nobody here has posted a triple-double in ' + Math.round(NBA_TD_MIN * 100)
+              + '%+ of his last 20.')
+    + sigTile('ti-copy', 'Double Trouble', 'Double-doubles, and the leg that has to land',
+              dd.map(function(r){ return nbaBigRow(key, r, 2); }),
+              'Nobody here is posting a double-double in ' + Math.round(NBA_DD_MIN * 100)
+              + '%+ of his last 20.')
+    + sigTile('ti-target-arrow', 'Scorers', 'Top scorers into a soft defence',
+              sl.map(function(r){ return nblSpecRow(key, r, 'Points'); }), why('points'))
+    + sigTile('ti-circle-dot', 'Splashers', 'Three-point volume into a soft defence',
+              sp.map(function(r){ return nblSpecRow(key, r, 'Threes'); }), why('threes'))
+    + sigTile('ti-hand-finger', 'Dishers', 'Top passers into a soft defence',
+              di.map(function(r){ return nblSpecRow(key, r, 'Assists'); }), why('assists'))
+    + sigTile('ti-arrows-up-down', 'Boarders', 'Rebounding into a soft defence',
+              bo.map(function(r){ return nblSpecRow(key, r, 'Rebounds'); }), why('rebounds')));
+}
 function nblSignals(key, g){
   if (key !== 'nbl') return '';
   var sl = nblSpecialist(key, g, 'points'), sp = nblSpecialist(key, g, 'threes'),
@@ -7931,7 +8030,7 @@ function signalsSection(key, g){
         return sigTile('ti-stairs-up', 'Let\u2019s Climb', 'One staked ladder: main line, then value rungs up',
           lc.rows.map(function(r){ return climbRow(key, r); }), lc.why); })();
   SIG_PHASE = 'sp';                                   // tiles below belong to the sport's own band
-  var nfl = nflSignals(key, g) + aflSignals(key, g) + eplSignals(key, g) + mlbSignals(key, g) + nblSignals(key, g) + nhlSignals(key, g);
+  var nfl = nflSignals(key, g) + aflSignals(key, g) + eplSignals(key, g) + mlbSignals(key, g) + nblSignals(key, g) + nhlSignals(key, g) + nbaSignals(key, g);
   SIG_PHASE = 'u';
   // radar / coverage / usage are reads, not signals - and the most expensive part - so skip them
   // when Degen Crew is only capturing tiles
