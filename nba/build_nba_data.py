@@ -582,13 +582,29 @@ def run_league(lg, seasons, current, outroot, password, src_local):
     for s in probe:
         optional = s not in seasons
         if optional:
+            # Each file is probed SEPARATELY. They do not arrive together: a season's schedule is
+            # published months before its first box score, so one try block around all three meant
+            # the 2026-27 fixture list - 1,206 games, out since the draw - was thrown away because
+            # player_box_2027 did not exist yet. That is why fixture.json was empty with the
+            # season a fortnight away.
             print(f"  probing {s} (next season)...", flush=True)
+            got = []
             try:
                 sc_frames.append(load_frame(lg, "schedules", s, src_local))
-                pb_frames.append(normalize_player_box(load_frame(lg, "player_box", s, src_local)))
-                tb_frames.append(_team_game_rows(load_frame(lg, "team_box", s, src_local)))
+                got.append("schedule")
             except Exception:
-                print(f"  [info] {s} not published yet - skipped")
+                pass
+            try:
+                pb_frames.append(normalize_player_box(load_frame(lg, "player_box", s, src_local)))
+                got.append("player box")
+            except Exception:
+                pass
+            try:
+                tb_frames.append(_team_game_rows(load_frame(lg, "team_box", s, src_local)))
+                got.append("team box")
+            except Exception:
+                pass
+            print(f"  [info] {s}: " + (", ".join(got) if got else "nothing published yet"))
             continue
         print(f"  loading {s}...", flush=True)
         _rawpb = load_frame(lg, "player_box", s, src_local)
