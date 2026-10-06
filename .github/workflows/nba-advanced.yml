@@ -1,4 +1,4 @@
-name: NBA quarters
+name: NBA quarters and zones
 
 # Per-quarter production from the play-by-play. Runs after the NBA data build, since it reads the
 # same season files and writes alongside them.
@@ -17,7 +17,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: nba-quarters
+  group: nba-advanced
   cancel-in-progress: false
 
 jobs:
@@ -35,17 +35,23 @@ jobs:
           ARGS="--out nba/data"
           if [ -n "${{ inputs.seasons }}" ]; then ARGS="$ARGS --seasons ${{ inputs.seasons }}"; fi
           python3 nba/build_nba_quarters.py $ARGS
+
+      - name: Build shot zones
+        run: |
+          ARGS="--out nba/data"
+          if [ -n "${{ inputs.seasons }}" ]; then ARGS="$ARGS --seasons ${{ inputs.seasons }}"; fi
+          python3 nba/build_nba_zones.py $ARGS
       - name: Commit
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          for f in nba/data/quarters.json; do
+          for f in nba/data/quarters.json nba/data/zones.json; do
             [ -f "$f" ] && git add "$f" && echo "staged $f"
           done
           if git diff --cached --quiet; then
             echo "nothing new"
           else
-            git commit -m "NBA quarters"
+            git commit -m "NBA quarters and shot zones"
             for i in 1 2 3; do
               git pull --rebase --autostash origin main && git push && break
               sleep 5
