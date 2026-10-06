@@ -10000,9 +10000,17 @@ function windowAvg(key, mkt, win){
    Premier League photo code on all 662, MLB an id that resolves against its own CDN (production
    never used that one). AFL ships no id, so it gets initials rather than a broken image.
    Any image that 404s swaps itself for initials, so a dead id never leaves a hole in a row.   */
-var IMG_SPORTS = { nfl:1, epl:1, mlb:1, nhl:1 };
+var IMG_SPORTS = { nfl:1, epl:1, mlb:1, nhl:1, nba:1 };
 function playerImgUrl(key, p){
   if (!p) return '';
+  // NBA: ESPN athlete ids, the same source the box scores come from. The build writes them through
+  // pandas, so they arrive as floats - "3945274.0" - and asking the CDN for 3945274.0.png gets
+  // nothing. Trim to the integer before using it.
+  if (key === 'nba'){
+    var nid = String(p.playerId || p.espnId || '').replace(/\.0+$/, '').trim();
+    if (/^\d+$/.test(nid)) return 'https://a.espncdn.com/i/headshots/nba/players/full/' + nid + '.png';
+    return '';
+  }
   if (key === 'nfl' && p.espnId) return 'https://a.espncdn.com/i/headshots/nfl/players/full/'+p.espnId+'.png';
   if (key === 'epl' && p.code)   return 'https://resources.premierleague.com/premierleague/photos/players/110x140/p'+p.code+'.png';
   if (key === 'mlb' && p.id)     return 'https://img.mlbstatic.com/mlb-photos/image/upload/w_120,q_auto:best/v1/people/'+p.id+'/headshot/67/current';
