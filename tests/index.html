@@ -115,6 +115,13 @@
   .fold>summary:before{content:'\25b8';font-size:9px;color:var(--text-3);transition:transform .15s;}
   .fold[open]>summary:before{transform:rotate(90deg);}
   .fold[open]>summary{color:var(--text-2);}
+  .qt-row{display:flex;align-items:center;gap:8px;padding:3px 0;font-size:11px;}
+  .qt-row .qt-q{min-width:92px;font-family:var(--font-mono);color:var(--text-2);}
+  .qt-row .qt-sh{flex:1;font-size:10px;color:var(--text-3);}
+  .qt-row .dv-bars{flex:1;}
+  .qt-row b{min-width:40px;text-align:right;font-family:var(--font-mono);}
+  .qt-row i{font-style:normal;min-width:30px;text-align:right;font-size:9px;font-family:var(--font-mono);}
+  .qt-row i.qt-up{color:var(--accent);} .qt-row i.qt-dn{color:#f97316;}
   .alt-rows{padding:4px 6px 6px;}
   .alt-row{background:var(--surface-2);margin-bottom:2px;}
   .alt-row .alt-nm{font-family:var(--font-mono);font-weight:700;color:var(--text-2);flex:1;}
@@ -1698,6 +1705,7 @@ var TIER3 = { gamelogs:'data/gamelogs.json', dvp:'data/dvp.json', teams_form:'da
               injury:'data/injury.json', lineups:'data/lineups.json', results:'data/results.json',
               oddsOpen:'data/odds_open.json', goalies:'data/goalies.json',
               firstRead:'data/firstread.json',
+              quarters:'data/quarters.json', zones:'data/zones.json',
               specialTeams:'data/special_teams.json',
               ladder:'data/ladder.json',
               weather:'data/weather.json', calib:'data/calib.json' };
@@ -13104,6 +13112,84 @@ function ddFirstRead(key, p, mkt){
     + (r.games === 1 ? '' : 's') + '. '
     + '<span style="opacity:.6">Charting: FTN Data via nflverse.</span></div></div>';
 }
+
+/* NBA QUARTERS AND SHOT ZONES --------------------------------------------------------------------
+   Two players on the same points line are different bets if one scores in the first six minutes
+   and the other in garbage time, or if one lives at the rim and the other settles for long twos.
+   Both files are built from the play-by-play by nba/build_nba_quarters.py and build_nba_zones.py.  */
+function nbaQuarters(key, name){
+  if (key !== 'nba') return null;
+  var S = state.sports[key], q = S.data.quarters;
+  if (!q || !q.players) return null;
+  if (!S.idx.qIdx){
+    var ix = {};
+    q.players.forEach(function(r){ (ix[cmbNameKey(r.name)] = ix[cmbNameKey(r.name)] || []).push(r); });
+    S.idx.qIdx = ix;
+  }
+  var rows = S.idx.qIdx[cmbNameKey(name)];
+  if (!rows || !rows.length) return null;
+  return rows.slice().sort(function(a, b){ return a.period - b.period; });
+}
+function nbaZones(key, name){
+  if (key !== 'nba') return null;
+  var S = state.sports[key], z = S.data.zones;
+  if (!z || !z.players) return null;
+  if (!S.idx.zIdx){
+    var ix = {};
+    z.players.forEach(function(r){ ix[cmbNameKey(r.name)] = r; });
+    S.idx.zIdx = ix;
+  }
+  return S.idx.zIdx[cmbNameKey(name)] || null;
+}
+var ZONE_LAB = { rim:'At the rim', paint:'Paint', midRange:'Mid-range',
+                 cornerThree:'Corner three', armsThree:'Above the break' };
+var ZONE_COL = { rim:'#22c55e', paint:'#38bdf8', midRange:'#eab308',
+                 cornerThree:'#a78bfa', armsThree:'#f97316' };
+function ddNbaQuarters(key, p, mkt){
+  var rows = p ? nbaQuarters(key, p.name) : null;
+  if (!rows) return '';
+  var stat = ['points', 'rebounds', 'assists', 'threes'].indexOf(mkt) >= 0 ? mkt : 'points';
+  var top = Math.max.apply(null, rows.map(function(r){ return +r[stat] || 0; })) || 1;
+  var bars = rows.map(function(r){
+    var v = +r[stat] || 0;
+    return '<div class="qt-row"><span class="qt-q">Q' + r.period + '</span>'
+      + '<span class="dv-bars"><span class="dv-bar-t"><i class="soft" style="width:'
+      + Math.max(4, Math.round(v / top * 100)) + '%"></i></span></span>'
+      + '<b>' + v.toFixed(1) + '</b></div>';
+  }).join('');
+  var tot = rows.reduce(function(a, r){ return a + (+r[stat] || 0); }, 0);
+  var q1 = rows[0] ? (+rows[0][stat] || 0) : 0;
+  return '<div class="dd-sec"><div class="dd-h">By quarter</div>'
+    + '<div class="dd-note">' + esc(mktLabel(key, stat)) + ' a game, split by period. '
+    + (tot ? 'He takes ' + Math.round(q1 / tot * 100) + '% of it in the first.' : '')
+    + ' Over ' + (rows[0] ? rows[0].games : 0) + ' games.</div>' + bars + '</div>';
+}
+function ddNbaZones(key, p){
+  var z = p ? nbaZones(key, p.name) : null;
+  if (!z || !z.shots) return '';
+  var lg = (state.sports[key].data.zones || {}).league || {};
+  var keys = ['rim', 'paint', 'midRange', 'cornerThree', 'armsThree'].filter(function(k){
+    return z[k] && z[k].att;
+  });
+  if (!keys.length) return '';
+  var bar = '<div class="nb-bar">' + keys.map(function(k){
+    return '<span style="width:' + (z[k].share * 100).toFixed(1) + '%;background:' + ZONE_COL[k] + '"></span>';
+  }).join('') + '</div>';
+  var rows = keys.map(function(k){
+    var mine = z[k].pct, league = lg[k] && lg[k].pct;
+    var edge = (mine != null && league) ? (mine - league) * 100 : null;
+    return '<div class="qt-row"><span class="qt-q" style="color:' + ZONE_COL[k] + '">'
+      + esc(ZONE_LAB[k]) + '</span>'
+      + '<span class="qt-sh">' + Math.round(z[k].share * 100) + '% of his shots</span>'
+      + '<b>' + Math.round((mine || 0) * 100) + '%</b>'
+      + (edge != null ? '<i class="' + (edge >= 0 ? 'qt-up' : 'qt-dn') + '">'
+          + (edge >= 0 ? '+' : '') + edge.toFixed(0) + '</i>' : '') + '</div>';
+  }).join('');
+  return '<div class="dd-sec"><div class="dd-h">Where he shoots from</div>'
+    + '<div class="dd-note">' + z.shots + ' field-goal attempts. The number on the right is how he '
+    + 'shoots from there; the small figure is against the league from the same zone.</div>'
+    + bar + rows + '</div>';
+}
 function ddNhlScoring(key, p, opp, mkt){
   if (key !== 'nhl' || !p) return '';
   if (['points', 'goals', 'assists', 'shots', 'ppPoints'].indexOf(mkt) < 0) return '';
@@ -13354,6 +13440,7 @@ function deepPanel(){
   var teams = ddTeamSection(key, p.team || d.team, d.opp, mkt);
   var mlbAdv = ddMlbSection(key, p, d.opp, mkt) + ddNblScoring(key, p, d.opp, mkt) + ddNhlScoring(key, p, d.opp, mkt)
     + ddFirstRead(key, p, mkt)
+    + ddNbaQuarters(key, p, mkt) + ddNbaZones(key, p)
              + ddNgsSection(key, p, mkt);
   var script = ddScript(key, p.team, d.opp);
   return '<div class="cmb-overlay open" onclick="if(event.target===this)LAB.deepClose()">'
