@@ -50,14 +50,34 @@ jobs:
 
       - name: Build split data (both leagues)
         run: |
+          # The NBA season is labelled by the year it ENDS: 2026-27 is "2027". Only seasons that
+          # are PUBLISHED may be listed here - a listed season that 404s kills the run, which is
+          # what happened when 2027 was added two weeks before its first game. The build probes
+          # max+1 by itself and tolerates its absence, so list the two behind and let it reach
+          # forward. Derived from the date, so this never needs editing again.
+          Y=$(date -u +%Y); M=$(date -u +%m)
+          if [ "$M" -ge 09 ]; then NEXT=$((Y+1)); else NEXT=$Y; fi
+          # Include the new season only once its box scores actually exist. Listing it early kills
+          # the run (a required season that 404s is fatal); listing it late leaves currentSeason on
+          # last year all through the new one. So ask.
+          BOX="https://github.com/sportsdataverse/sportsdataverse-data/releases/download"
+          BOX="$BOX/espn_nba_player_boxscores/player_box_$NEXT.parquet"
+          if curl -sfL -o /dev/null -r 0-0 "$BOX"; then
+            SEASONS="$((NEXT-2)),$((NEXT-1)),$NEXT"; CURRENT=$NEXT
+            echo "season $NEXT is published - building it as current"
+          else
+            SEASONS="$((NEXT-2)),$((NEXT-1))"; CURRENT=$((NEXT-1))
+            echo "season $NEXT not published yet - the build will still probe it for the schedule"
+          fi
+          echo "seasons=$SEASONS current=$CURRENT"
           PW="${{ github.event.inputs.password || secrets.NBA_WEEKLY_PASSWORD }}"
           if [ -n "$PW" ]; then
             python nba/build_nba_data.py --out nba/data --league nba \
-              --nba-seasons 2025,2026,2027 --nba-current 2027 \
+              --nba-seasons "$SEASONS" --nba-current "$CURRENT" \
               --password "$PW"
           else
             python nba/build_nba_data.py --out nba/data --league nba \
-              --nba-seasons 2025,2026,2027 --nba-current 2027
+              --nba-seasons "$SEASONS" --nba-current "$CURRENT"
           fi
 
       - name: Commit refreshed data
