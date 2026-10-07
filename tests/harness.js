@@ -15,9 +15,13 @@ const path = require('path');
 const { JSDOM, ResourceLoader } = require('jsdom');   // ResourceLoader, NOT requestInterceptor
 
 const ROOT = path.join(__dirname, 'serve');
+// WHICH PAGE IS UNDER TEST. The staging build lives at tests/index.html and the live one at the
+// repo root; testing the wrong file means every result is about something you did not change.
+// Set JTT_PAGE to override, e.g. JTT_PAGE=../index.html to check what is live.
+const PAGE_REL = process.env.JTT_PAGE || 'index.html';
 // repo folder names differ from sport keys - AFL and EPL are upper case on disk
 const DIRS = { afl:'AFL', nfl:'nfl', epl:'EPL', mlb:'mlb', nbl:'nbl', nhl:'nhl' };
-const PAGE = path.join(__dirname, '..', 'index.html');
+const PAGE = path.resolve(__dirname, PAGE_REL);
 
 const localPath = u => path.join(ROOT, String(u).replace(/^https?:\/\/[^/]+/, '').split('?')[0]);
 const readLocal = f => (fs.existsSync(f) ? fs.readFileSync(f, 'utf8') : null);
@@ -56,7 +60,7 @@ function done() {
    Returns { w, LAB, S } once the sport is ready; focus(i) waits for tier-3 too. */
 async function boot(sport, opts) {
   opts = opts || {};
-  if (!fs.existsSync(PAGE)) throw new Error('no index.html at ' + PAGE);
+  if (!fs.existsSync(PAGE)) throw new Error('no page at ' + PAGE + ' (set JTT_PAGE to point at one)');
   if (!fs.existsSync(path.join(ROOT, DIRS[sport] || sport)))
     throw new Error('no data for ' + sport + ' — run: node tests/fetch_data.js ' + sport);
 
@@ -103,6 +107,7 @@ module.exports = { boot, ok, done, wait, ROOT, PAGE };
 
 if (require.main === module) {
   (async () => {
+    console.log('page under test: ' + PAGE + '\n');
     for (const sp of (process.argv[3] ? [process.argv[3]] : ['nfl', 'nhl', 'mlb', 'nbl', 'epl', 'afl'])) {
       try {
         const t = await boot(sp);
