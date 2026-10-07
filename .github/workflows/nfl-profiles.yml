@@ -1,0 +1,55 @@
+name: NFL usage profiles
+
+# How a receiver is used, how a back is run, how a passer throws - plus each side's pass rate over
+# expected. Built from nflverse play-by-play and FTN charting.
+#
+# FTN charting is CC-BY-SA 4.0 and must be credited to FTN Data via nflverse wherever it is shown.
+
+on:
+  schedule:
+    - cron: "50 13 * * *"      # after the NFL data build and first read
+  workflow_dispatch:
+    inputs:
+      season:
+        description: "Season (blank = current)"
+        type: string
+        required: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: nfl-profiles
+  cancel-in-progress: false
+
+jobs:
+  profiles:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install
+        run: pip install pandas pyarrow
+      - name: Build profiles
+        run: |
+          ARGS="--out nfl/data"
+          if [ -n "${{ inputs.season }}" ]; then ARGS="$ARGS --season ${{ inputs.season }}"; fi
+          python3 nfl/build_nfl_profiles.py $ARGS
+      - name: Commit
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          for f in nfl/data/profiles.json; do
+            [ -f "$f" ] && git add "$f" && echo "staged $f"
+          done
+          if git diff --cached --quiet; then
+            echo "nothing new"
+          else
+            git commit -m "NFL usage profiles"
+            for i in 1 2 3; do
+              git pull --rebase --autostash origin main && git push && break
+              sleep 5
+            done
+          fi
