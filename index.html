@@ -115,6 +115,18 @@
   .fold>summary:before{content:'\25b8';font-size:9px;color:var(--text-3);transition:transform .15s;}
   .fold[open]>summary:before{transform:rotate(90deg);}
   .fold[open]>summary{color:var(--text-2);}
+  .pf-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(104px,1fr));gap:6px;margin:6px 0;}
+  .pf-cell{background:var(--surface-2);border:1px solid var(--border);border-radius:8px;padding:8px 9px;}
+  .pf-cell b{display:block;font-family:var(--font-mono);font-size:15px;}
+  .pf-cell span{display:block;font-size:9px;letter-spacing:.05em;text-transform:uppercase;color:var(--text-3);margin-top:2px;}
+  .pf-cell i{display:block;font-style:normal;font-size:9px;color:var(--text-3);margin-top:3px;}
+  .qt-row{display:flex;align-items:center;gap:8px;padding:3px 0;font-size:11px;}
+  .qt-row .qt-q{min-width:92px;font-family:var(--font-mono);color:var(--text-2);}
+  .qt-row .qt-sh{flex:1;font-size:10px;color:var(--text-3);}
+  .qt-row .dv-bars{flex:1;}
+  .qt-row b{min-width:40px;text-align:right;font-family:var(--font-mono);}
+  .qt-row i{font-style:normal;min-width:30px;text-align:right;font-size:9px;font-family:var(--font-mono);}
+  .qt-row i.qt-up{color:var(--accent);} .qt-row i.qt-dn{color:#f97316;}
   .alt-rows{padding:4px 6px 6px;}
   .alt-row{background:var(--surface-2);margin-bottom:2px;}
   .alt-row .alt-nm{font-family:var(--font-mono);font-weight:700;color:var(--text-2);flex:1;}
@@ -900,6 +912,18 @@
     border-radius:6px;font-size:13px;line-height:1;cursor:pointer;}
   .deja-step button:disabled{opacity:.35;cursor:default;}
   .deja-step b{font-family:var(--font-display);font-size:13px;min-width:14px;text-align:center;}
+  #dv-card{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:8px;}
+  .dv-head{display:flex;align-items:baseline;gap:8px;padding:2px 4px 8px;}
+  .dv-head b{font-family:var(--font-display);font-size:13px;letter-spacing:.04em;}
+  .dv-head span{font-size:10px;color:var(--text-3);}
+  .deja-card .deja-line{flex:0 0 auto;margin:0 6px 0 0;}
+  .deja-line{display:inline-flex;align-items:center;gap:3px;vertical-align:middle;margin-right:4px;}
+  .deja-line button{width:17px;height:17px;line-height:1;padding:0;border-radius:5px;
+    background:var(--surface-2);border:1px solid var(--border);color:var(--text-2);font-size:11px;cursor:pointer;}
+  .deja-line button:disabled{opacity:.3;cursor:default;}
+  .deja-line b{min-width:26px;text-align:center;font-family:var(--font-mono);font-size:11px;}
+  .deja-actions{display:flex;gap:8px;padding:8px 2px 2px;}
+  .deja-actions .pc-add{flex:1;}
   .deja-card{display:flex;align-items:center;gap:9px;background:var(--surface-2);border:1px solid var(--border);
     border-radius:9px;padding:9px 11px;margin-bottom:6px;}
   .deja-m{flex:1;min-width:0;}
@@ -1457,7 +1481,8 @@ var SPORTS = {
   epl: { key:'epl', dir:'EPL', name:'EPL' },
   mlb: { key:'mlb', dir:'mlb', name:'MLB' },
   nbl: { key:'nbl', dir:'nbl', name:'NBL' },
-  nhl: { key:'nhl', dir:'nhl', name:'NHL' }
+  nhl: { key:'nhl', dir:'nhl', name:'NHL' },
+  nba: { key:'nba', dir:'nba', name:'NBA' }
 };
 
 
@@ -1499,9 +1524,10 @@ var state = {
              cmbOpen: false, cmbMode: 'single', cmbLegs: [], cmbResult: null, cmbSugOff: false,
              cmbLadOpen: false, mbFix: 0, mbMode: 'signals', pc: null, ttWin: 10, smDrop: {},
              rdrPick: null, ulMk: 'snapPct', ulWin: 'l5',
-             dvMeets: 3, dvLegs: 3, jMkt: null, jLine: 'auto', jSel: {},
+             // unset on purpose: Déjà Vu opens at the longest streak the fixture supports
+             dvMeets: null, jMkt: null, jLine: 'auto', jSel: {},
              jHide: {}, jMin: 1.60, jMax: null, jFocus: null, jVenue: 'venue',
-             dvMkts: null, dvHail: false, dvDrop: {}, dvMin: null, dvMax: null, dvBook: 'Sportsbet',
+             dvMkts: null, dvHail: false, dvDrop: {}, dvLine: {}, dvBook: 'Sportsbet',
              stSport: null, stMode: 'scanner', stMkt: {}, stPos: {},
              stQ: '', stPosF: '', stWin: 'season', stSort: null, stDir: -1, stAllowed: false,
              stTeamSort: null, stDvpSort: null }   // filter + current page + market per sport
@@ -1697,6 +1723,7 @@ var TIER3 = { gamelogs:'data/gamelogs.json', dvp:'data/dvp.json', teams_form:'da
               injury:'data/injury.json', lineups:'data/lineups.json', results:'data/results.json',
               oddsOpen:'data/odds_open.json', goalies:'data/goalies.json',
               firstRead:'data/firstread.json',
+              quarters:'data/quarters.json', zones:'data/zones.json',
               specialTeams:'data/special_teams.json',
               ladder:'data/ladder.json',
               weather:'data/weather.json', calib:'data/calib.json' };
@@ -6103,9 +6130,9 @@ function dvLegs(key, g, meets){
         // the line he cleared every time, priced where the book has it
         var od = bookPriceFor(key, p.name, m[0], lo - 0.5, state.view.dvBook);
         if (!od || od.price < STREAK_ODDS_FLOOR) return;
-        var lo2 = state.view.dvMin, hi2 = state.view.dvMax;
-        if (lo2 != null && od.price < lo2) return;
-        if (hi2 != null && od.price > hi2) return;
+        // The odds min/max filter is gone: stepping a single leg's line down is a better
+        // instrument, because it keeps the player and asks less of him rather than dropping names
+        // for being priced wrong. STREAK_ODDS_FLOOR above still rejects the unbackably short.
         out.push({ name:p.name, p:p, team:team, opp:opp, mkt:m[0], label:m[1], line:lo,
                    vals:vals, price:od.price, book:od.book, strength:lo * od.price });
       });
@@ -6114,40 +6141,67 @@ function dvLegs(key, g, meets){
   out.sort(function(a,b){ return b.strength - a.strength; });
   return { legs:out, dates:dates };
 }
+/* The posted rungs for one Déjà Vu leg, shortest first, so a line can be stepped down to something
+   the books actually price rather than nudged to a number nobody offers. */
+function dvRungs(key, l){
+  // A leg carries the DISPLAYED line - "3+" - while the book posts 2.5. Comparing the two directly
+  // never matched, so the stepper found no current rung and disabled both buttons. Everything here
+  // works in posted terms and the display adds the half back.
+  var out = [], seen = {};
+  (oddsRowsAll(key) || []).forEach(function(r){
+    if (!r.player || r.market !== l.mkt || r.line == null) return;
+    if (cmbNameKey(r.player) !== cmbNameKey(l.name)) return;
+    if (state.view.dvBook && r.book !== state.view.dvBook) return;
+    var px = +r.over || 0;
+    if (!(px > 1)) return;
+    var k = String(r.line);
+    if (!seen[k] || px > seen[k].price) seen[k] = { line:+r.line, price:px, book:r.book };
+  });
+  Object.keys(seen).forEach(function(k){ out.push(seen[k]); });
+  out.sort(function(a, b){ return a.line - b.line; });
+  return out;
+}
 function dejaVuSection(key, g){
   var avail = dvMeetings(key, g).length;
   if (!avail) return '';
-  var meets = Math.min(Math.max(1, state.view.dvMeets || 3), avail);
+  // Open at the longest streak that still FINDS somebody. Defaulting to the number of meetings
+  // asks for a player who cleared his line in every one of them, which is usually nobody and
+  // leaves the panel empty; the useful default is the deepest streak with legs in it. Walk down
+  // from the top and stop at the first that produces any.
   var hail = !!state.view.dvHail;
-  var res = dvLegs(key, g, meets);
+  var meets, res;
+  if (state.view.dvMeets){
+    meets = Math.min(Math.max(1, state.view.dvMeets), avail);
+    res = dvLegs(key, g, meets);
+  } else {
+    for (meets = avail; meets >= 1; meets--){
+      res = dvLegs(key, g, meets);
+      if (res.legs.length) break;
+    }
+    if (meets < 1){ meets = 1; res = dvLegs(key, g, 1); }
+  }
   var distinct = {};
   res.legs.forEach(function(l){ distinct[l.name] = 1; });
   var distinctN = Object.keys(distinct).length;
   // Hail Mary: every qualifying player, one leg each, however long that gets
-  var legN = hail ? Math.max(1, distinctN) : Math.max(2, Math.min(state.view.dvLegs || 3, 6));
+  // every qualifying player gets a leg; the only way to shorten the ticket is to remove cards,
+  // which is what the × on each one is for
+  var legN = Math.max(1, distinctN);
   var allMkts = (state.sports[key].config || {}).oddsMkts || [];
   var only = state.view.dvMkts;
   var ctrl = '<div class="deja-ctrl">'
     + '<span class="deja-step">Hit streak<button onclick="LAB.dvMeets(-1)"'+(meets <= 1 ? ' disabled' : '')+'>\u2212</button>'
       + '<b>'+meets+'</b><button onclick="LAB.dvMeets(1)"'+(meets >= avail ? ' disabled' : '')+'>+</button>/'+avail+'</span>'
-    + '<span class="deja-step">Legs<button onclick="LAB.dvLegs(-1)"'+(legN <= 2 || hail ? ' disabled' : '')+'>\u2212</button>'
-      + '<b>'+legN+'</b><button onclick="LAB.dvLegs(1)"'+(hail ? ' disabled' : '')+'>+</button></span>'
-    + '<button class="sl-chip'+(hail ? ' on' : '')+'" onclick="LAB.dvHail()">Hail Mary</button>'
-    + '<span class="deja-step">Odds'
-      + '<input type="number" step="0.05" min="1" value="'+(state.view.dvMin != null ? state.view.dvMin : '')
-      + '" placeholder="min" style="width:52px" onchange="LAB.dvOdds(\'min\',this.value)">'
-      + '<input type="number" step="0.05" min="1" value="'+(state.view.dvMax != null ? state.view.dvMax : '')
-      + '" placeholder="max" style="width:52px" onchange="LAB.dvOdds(\'max\',this.value)"></span></div>'
-    + '<div class="sl-bar">'
-      + '<button class="sl-chip'+(!state.view.dvBook ? ' on' : '')+'" onclick="LAB.dvBook(\'\')">Best price (not one ticket)</button>'
-      + booksFor(key).slice(0, 10).map(function(b){
-          return '<button class="sl-chip'+(state.view.dvBook === b ? ' on' : '')+'" onclick="LAB.dvBook(\''
-            + esc(b).replace(/'/g,"\\'")+'\')">'+esc(b)+'</button>'; }).join('')+'</div>'
-    + '<div class="sl-bar">'
-      + '<button class="sl-chip'+(!only || !only.length ? ' on' : '')+'" onclick="LAB.dvMkt(null)">All markets</button>'
-      + allMkts.slice(0, 8).map(function(m){
-          return '<button class="sl-chip'+(only && only.indexOf(m[0]) >= 0 ? ' on' : '')
-            + '" onclick="LAB.dvMkt(\''+m[0]+'\')">'+esc(m[1])+'</button>'; }).join('')+'</div>';
+    + '<select class="ob-sel" onchange="LAB.dvBook(this.value)">'
+      + '<option value=""'+(!state.view.dvBook ? ' selected' : '')+'>Best price \u00b7 not one ticket</option>'
+      + booksFor(key).map(function(b){
+          return '<option value="'+esc(b)+'"'+(state.view.dvBook === b ? ' selected' : '')+'>'+esc(b)+'</option>';
+        }).join('') + '</select></div>'
+    + '<select class="ob-sel" onchange="LAB.dvMkt(this.value || null)">'
+      + '<option value=""'+(!only || !only.length ? ' selected' : '')+'>All markets</option>'
+      + allMkts.map(function(m){
+          return '<option value="'+esc(m[0])+'"'+(only && only.indexOf(m[0]) >= 0 ? ' selected' : '')
+            + '>'+esc(m[1])+'</option>'; }).join('') + '</select></div>';
   if (!res.legs.length)
     return '<div class="dayband"><span>D\u00e9j\u00e0 Vu SGM</span></div>'+ctrl
       + '<div class="sig-empty">No player with a posted price cleared a line in all '+meets
@@ -6156,8 +6210,25 @@ function dejaVuSection(key, g){
   var seen = {}, picked = [];
   var dropped = state.view.dvDrop || {};
   res.legs.forEach(function(l){
-    if (dropped[l.name]) return;                       // removed from the Hail Mary by hand
+    if (dropped[l.name]) return;                       // removed by hand
     if (picked.length < legN && !seen[l.name]){ seen[l.name] = 1; picked.push(l); }
+  });
+  // Apply any per-leg line steps. The step moves to a rung the books actually post, so the price
+  // shown is a real one rather than an interpolation - if the move lands nowhere, the leg stays put.
+  var steps = state.view.dvLine || {};
+  picked = picked.map(function(l){
+    var n = steps[l.name] | 0;
+    if (!n) return l;
+    var rungs = dvRungs(key, l);
+    var posted = +l.line - 0.5;
+    var at = rungs.findIndex(function(r){ return Math.abs(r.line - posted) < 0.01; });
+    if (at < 0) return l;
+    var want = rungs[Math.max(0, Math.min(rungs.length - 1, at + n))];
+    if (!want) return l;
+    var copy = {}; for (var k in l) copy[k] = l[k];
+    copy.line = want.line + 0.5;        // back to the displayed convention
+    copy.price = want.price; copy.book = want.book;
+    return copy;
   });
   var legs = picked.map(function(l){ return cmbLeg(key, l.p, [l.mkt, l.label], l.line - 0.5, 'over'); })
     .filter(function(l){ return l && l.prob != null; });
@@ -6166,26 +6237,42 @@ function dejaVuSection(key, g){
   if (joint == null || !isFinite(joint) || joint <= 0) joint = null;
   var fair = joint ? 1/joint : null;
   return '<div class="dayband"><span>D\u00e9j\u00e0 Vu SGM</span></div>'+ctrl
+    // Everything inside dv-card is what the share captures. The id used to sit on the summary
+    // alone, so the picture showed a price with no legs behind it - the one thing worth sharing.
+    + '<div id="dv-card">'
+    + '<div class="dv-head"><b>D\u00e9j\u00e0 Vu</b><span>'+esc(abbrOf(key, g.away))+' @ '
+      + esc(abbrOf(key, g.home))+' \u00b7 cleared in '+meets+' straight meeting'+(meets===1?'':'s')+'</span></div>'
     + picked.map(function(l){
+        // Step a leg's line down to a rung that is actually posted. Shortening one man is a finer
+        // instrument than an odds filter across the whole ticket: it keeps the player you want and
+        // asks less of him, where a min/max just removed names.
+        var rungs = dvRungs(key, l);
+        var posted = +l.line - 0.5;
+        var at = rungs.findIndex(function(r){ return Math.abs(r.line - posted) < 0.01; });
+        var nm = esc(l.name).replace(/'/g, "\\'");
         return '<div class="deja-card">'+playerImgP(key, l.p, 26)
-          + '<div class="deja-m"><b>'+esc(l.name)+'</b><span>'+Math.ceil(l.line)+'+ '+esc(l.label)
+          + '<div class="deja-m"><b>'+esc(l.name)+'</b><span>'+esc(l.label)
           + ' \u00b7 '+esc(abbrOf(key, l.team))+' \u00b7 <span class="deja-vals">'+l.vals.join(' / ')+'</span></span></div>'
+          + '<span class="deja-line">'
+            + '<button onclick="event.stopPropagation();LAB.dvLine(\''+nm+'\',-1)"'
+            + (at <= 0 ? ' disabled' : '')+'>\u2212</button>'
+            + '<b>'+Math.ceil(l.line)+'+</b>'
+            + '<button onclick="event.stopPropagation();LAB.dvLine(\''+nm+'\',1)"'
+            + (at < 0 || at >= rungs.length - 1 ? ' disabled' : '')+'>+</button></span>'
           + '<span class="deja-px">$'+l.price.toFixed(2)+(l.book ? '<i>'+esc(l.book)+'</i>' : '')+'</span>'
-          + (hail ? '<button class="cmb-leg-x" onclick="LAB.dvDrop(\''+esc(l.name).replace(/'/g,"\\'")
-              + '\')">&times;</button>' : '')+'</div>';
+          + '<button class="cmb-leg-x" onclick="event.stopPropagation();LAB.dvDrop(\''+nm+'\')">&times;</button></div>';
       }).join('')
     + '<div class="deja-sum">'
-      + '<div class="cmb-sum-row"><span>Combined at the book</span><b>$'+comb.toFixed(2)+'</b></div>'
-      + (joint != null ? '<div class="cmb-sum-row"><span>Correlated model</span><b>'+cmbOdds(joint)+'</b></div>'
-        + '<div class="cmb-sum-row tot"><span>Fair price</span><b>$'+fair.toFixed(2)+'</b></div>'
-        + '<div class="cmb-sum-row"><span>Edge</span><b class="'+(comb*joint - 1 > 0 ? 'cmb-vscore good' : 'cmb-vscore bad')
-        + '" style="font-size:14px">'+((comb*joint - 1) > 0 ? '+' : '')+Math.round((comb*joint-1)*100)+'%</b></div>' : '')
+      + '<div class="cmb-sum-row tot"><span>Estimated at '
+      + esc(state.view.dvBook || 'best price') + '</span><b>$'+comb.toFixed(2)+'</b></div>'
       + '<div class="cmb-corr">Every leg cleared its line in all '+meets+' straight meetings between these '
       + 'clubs, in this shirt \u2014 games played for a former club do not count. Lines are each '
       + 'player\u2019s minimum across those games, so the record held every time.'
       + (state.view.dvBook ? ' Priced at '+esc(state.view.dvBook)+', so the whole multi is placeable there.'
          : ' Best price per leg \u2014 pick a book to make it placeable as one ticket.')+'</div>'
-      + '<button class="pc-add" onclick="LAB.dvAdd()">Send to Check My Multi</button></div>';
+      + '</div></div>'
+    + '<div class="deja-actions"><button class="pc-add" onclick="LAB.dvShare()">'
+      + '<i class="ti ti-share"></i> Share this multi</button></div>';
 }
 /* JUPITER ------------------------------------------------------------------------
    The orb: every priced player in the fixture placed by how hot they are for one market.
@@ -7201,20 +7288,41 @@ function mlbWalks(key, g){
 }
 /* HOMERS - home run spots: the model's HR probability with park and the starter's HR/9 shown.
    Tail guard applies: HR is a long-priced market where an extrapolating model looks generous. */
+/* A home run happens in maybe 3% of plate appearances, so an EV edge on a $9 price is cheap to
+   manufacture and worth little: eight names from one game is not eight spots, it is a loose gate.
+   Two things are required beyond the price. He has to have actual power - a season rate a real
+   home-run hitter clears - and the tile is capped well below the usual eight, because a fixture
+   does not contain eight live home-run chances however the model feels about it. */
+var MLB_HR_MIN_RATE = 0.08;      // roughly 13 home runs over a full season
+var MLB_HR_MAX_ROWS = 4;
 function mlbHomers(key, g){
-  var out = [];
+  var out = [], S = state.sports[key], season = curSeason(key);
   mlbBats(key, g, function(p, team, opp, sp){
     var b = mlbPriced(key, p, 'HR', opp, 'over', 0.5);
     if (!b) return;
-    var pk = {}; try { pk = state.sports[key].scoring.parkFor(p.team) || {}; } catch(e){}
-    out.push({ name:p.name, p:p, opp:opp, sp:sp, pk:pk, b:b });
+    // his own rate this season, from the games themselves rather than a season total that may be
+    // carrying another club's at-bats
+    // BATTING rows only. A pitcher's HR is what he gave UP, and a two-way name or a pitcher who
+    // had a rough month otherwise reads as a slugger: Tyler Mahle came out at 20 "home runs" in 27
+    // games, which is the worst sort of wrong - plausible-looking and completely inverted.
+    var logs = sortLogsDesc(((S.idx.logsByName || {})[p.name] || []).slice())
+      .filter(function(r){ return String(r.Year || r.year) === String(season)
+                                  && String(r.role || 'bat') === 'bat'; });
+    if (logs.length < 20) return;                       // too little to call anyone a power bat
+    var hrs = logs.reduce(function(a, r){ return a + (+r.HR || 0); }, 0);
+    var rate = hrs / logs.length;
+    if (rate < MLB_HR_MIN_RATE) return;                 // not a home-run hitter, whatever the price
+    var pk = {}; try { pk = S.scoring.parkFor(p.team) || {}; } catch(e){}
+    out.push({ name:p.name, p:p, opp:opp, sp:sp, pk:pk, b:b, rate:rate, hrs:hrs, gp:logs.length });
   });
-  out.sort(function(a,b){ return b.b.ev - a.b.ev; });
-  return { rows:out.slice(0, SIG_MAX_ROWS).map(function(r){
-      return mlbRow(key, r, 'Home run', [[(r.p.HR||0)+' HR this season', (r.p.HR||0) >= 20],
+  // rank on what he actually does, then the edge - not the edge alone, which floats weak bats up
+  out.sort(function(a, b){ return (b.rate - a.rate) || (b.b.ev - a.b.ev); });
+  return { rows:out.slice(0, MLB_HR_MAX_ROWS).map(function(r){
+      return mlbRow(key, r, 'Home run', [[r.hrs+' HR in '+r.gp+' games', r.rate >= 0.15],
         ['park HR '+(r.pk.hrFactor || 1).toFixed(2)+'x', (r.pk.hrFactor || 1) > 1.03],
         (r.sp ? [esc(r.sp.name)+' HR/9 '+(r.sp.HR9||0).toFixed(2), (r.sp.HR9||0) >= 1.3] : ['starter TBC', false])]); }),
-    why:'No home-run price on this fixture is 5% generous against the model.' };
+    why:'No home-run hitter here - a rate of ' + MLB_HR_MIN_RATE.toFixed(2) + ' a game or better - '
+      + 'is priced generously enough against the model.' };
 }
 /* STRIKE TIME / GRINDERS - the starters. Strike Time backs strikeouts where the K projection
    beats the posted line; Grinders fades a starter in a tough spot - the UNDER on his Ks. Both are
@@ -7472,6 +7580,105 @@ function nblNextManUp(key, g){
   });
   out.sort(function(a,b){ return b.b.ev - a.b.ev; });
   return out;
+}
+
+/* NBA SIGNALS ------------------------------------------------------------------------------------
+   The basketball reads are the NBL's - the markets are the same shape and the gamelog field names
+   were made to match deliberately - so the specialist tiles are reused rather than rewritten. What
+   NBA adds is the double-double and triple-double markets, which the books price and the NBL's
+   board does not carry.                                                                          */
+var NBA_DD_MIN = 0.40, NBA_TD_MIN = 0.15, NBA_MIN_G = 6;
+function nbaBigNights(key, g, want){
+  // want = 2 for a double-double, 3 for a triple
+  var S = state.sports[key], out = [];
+  var CATS = ['points', 'rebounds', 'assists', 'steals', 'blocks'];
+  [g.away, g.home].forEach(function(team){
+    var opp = (team === g.home) ? g.away : g.home;
+    playersOnTeam(key, team).forEach(function(p){
+      if (!isPlayingP(key, p.name, team)) return;
+      var logs = sortLogsDesc(((S.idx.logsByName || {})[p.name] || []).slice())
+        .filter(function(r){ return (+r.minutes || 0) > 0; });
+      if (logs.length < NBA_MIN_G) return;
+      var l20 = logs.slice(0, 20);
+      var hit = function(r){
+        return CATS.filter(function(k){ return (+r[k] || 0) >= 10; }).length >= want;
+      };
+      var n = l20.filter(hit).length, rate = n / l20.length;
+      if (rate < (want >= 3 ? NBA_TD_MIN : NBA_DD_MIN)) return;
+      // which categories carry it, and which is the one that has to land
+      var reach = CATS.map(function(k){
+        return { k:k, r:l20.filter(function(r){ return (+r[k] || 0) >= 10; }).length / l20.length,
+                 avg:mean(l20.map(function(r){ return +r[k] || 0; })) };
+      }).sort(function(a, b){ return b.r - a.r; });
+      var carry = reach.slice(0, want);
+      var hard = carry[carry.length - 1];
+      if (!hard || hard.r <= 0) return;
+      // priced on the hardest leg: the 9.5 line in the category he reaches least often
+      var b = nblPriced(key, p, hard.k, opp, 9.5);
+      out.push({ name:p.name, p:p, opp:opp, rate:rate, n:n, of:l20.length,
+                 carry:carry, hard:hard, b:b, streak:(function(){
+                   var run = 0;
+                   for (var i = 0; i < logs.length; i++){ if (hit(logs[i])) run++; else break; }
+                   return run;
+                 })() });
+    });
+  });
+  out.sort(function(a, b){ return b.rate - a.rate; });
+  return out.slice(0, SIG_MAX_ROWS);
+}
+function nbaBigRow(key, r, want){
+  var lab = want >= 3 ? 'Triple-double' : 'Double-double';
+  var cats = r.carry.map(function(c){
+    return '<span class="gl-chip' + (c.r >= 0.7 ? ' good' : '') + '">' + esc(mktLabel(key, c.k))
+      + ' ' + c.avg.toFixed(1) + '</span>';
+  }).join('');
+  var btns = r.b ? rowBtns(key, { name:r.name, mkt:r.hard.k, line:9.5, side:'over',
+                                  odds:(r.b.price || r.b.over), book:r.b.book, opp:r.opp,
+                                  team:(r.p || {}).team, label:mktLabel(key, r.hard.k) }) : '';
+  return '<div class="gl-row" onclick="LAB.player(\'' + key + '\',\''
+      + esc(r.name).replace(/'/g, "\\'") + '\')">'
+    + btns + playerImgP(key, r.p, 28)
+    + '<div class="gl-left"><div class="gl-nm"><b>' + esc(r.name) + '</b>'
+      + '<span class="gl-tag">' + esc(posShortP(r.p) ? posShortP(r.p) + ' \u00b7 ' : '')
+      + esc(abbrOf(key, (r.p || {}).team)) + ' v ' + esc(abbrOf(key, r.opp)) + '</span></div>'
+    + '<div class="gl-bet">' + esc(lab) + ' \u00b7 ' + r.n + ' of his last ' + r.of + '</div>'
+    + '<div class="gl-why">' + cats
+      + (r.streak >= 3 ? '<span class="gl-chip good">' + r.streak + ' in a row</span>' : '')
+      + '<span class="gl-chip">needs ' + esc(mktLabel(key, r.hard.k)) + ', '
+      + Math.round(r.hard.r * 100) + '% of games</span>'
+    + '</div></div>'
+    + '<div class="gl-right"><div class="gl-ev pos">' + Math.round(r.rate * 100) + '%</div>'
+      + '<div class="gl-evl">' + (want >= 3 ? 'TD RATE' : 'DD RATE') + '</div>'
+      + (r.b ? '<div class="gl-odds">$' + (+(r.b.price || r.b.over)).toFixed(2)
+          + (r.b.book ? '<i>' + esc(r.b.book) + '</i>' : '') + '</div>' : '')
+    + '</div></div>';
+}
+function nbaSignals(key, g){
+  if (key !== 'nba') return '';
+  var sl = nblSpecialist(key, g, 'points'), sp = nblSpecialist(key, g, 'threes'),
+      di = nblSpecialist(key, g, 'assists'), bo = nblSpecialist(key, g, 'rebounds');
+  var dd = nbaBigNights(key, g, 2), td = nbaBigNights(key, g, 3);
+  var why = function(st){
+    return 'Nobody in this game is among the best at ' + st + ' into a defence conceding 4%+ above '
+      + 'average to his position, at a price his record backs.';
+  };
+  return sigBand('NBA Signals',
+      sigTile('ti-basketball', 'Triple Threat', 'Triple-doubles, and how often',
+              td.map(function(r){ return nbaBigRow(key, r, 3); }),
+              'Nobody here has posted a triple-double in ' + Math.round(NBA_TD_MIN * 100)
+              + '%+ of his last 20.')
+    + sigTile('ti-copy', 'Double Trouble', 'Double-doubles, and the leg that has to land',
+              dd.map(function(r){ return nbaBigRow(key, r, 2); }),
+              'Nobody here is posting a double-double in ' + Math.round(NBA_DD_MIN * 100)
+              + '%+ of his last 20.')
+    + sigTile('ti-target-arrow', 'Scorers', 'Top scorers into a soft defence',
+              sl.map(function(r){ return nblSpecRow(key, r, 'Points'); }), why('points'))
+    + sigTile('ti-circle-dot', 'Splashers', 'Three-point volume into a soft defence',
+              sp.map(function(r){ return nblSpecRow(key, r, 'Threes'); }), why('threes'))
+    + sigTile('ti-hand-finger', 'Dishers', 'Top passers into a soft defence',
+              di.map(function(r){ return nblSpecRow(key, r, 'Assists'); }), why('assists'))
+    + sigTile('ti-arrows-up-down', 'Boarders', 'Rebounding into a soft defence',
+              bo.map(function(r){ return nblSpecRow(key, r, 'Rebounds'); }), why('rebounds')));
 }
 function nblSignals(key, g){
   if (key !== 'nbl') return '';
@@ -7930,7 +8137,7 @@ function signalsSection(key, g){
         return sigTile('ti-stairs-up', 'Let\u2019s Climb', 'One staked ladder: main line, then value rungs up',
           lc.rows.map(function(r){ return climbRow(key, r); }), lc.why); })();
   SIG_PHASE = 'sp';                                   // tiles below belong to the sport's own band
-  var nfl = nflSignals(key, g) + aflSignals(key, g) + eplSignals(key, g) + mlbSignals(key, g) + nblSignals(key, g) + nhlSignals(key, g);
+  var nfl = nflSignals(key, g) + aflSignals(key, g) + eplSignals(key, g) + mlbSignals(key, g) + nblSignals(key, g) + nhlSignals(key, g) + nbaSignals(key, g);
   SIG_PHASE = 'u';
   // radar / coverage / usage are reads, not signals - and the most expensive part - so skip them
   // when Degen Crew is only capturing tiles
@@ -9999,9 +10206,17 @@ function windowAvg(key, mkt, win){
    Premier League photo code on all 662, MLB an id that resolves against its own CDN (production
    never used that one). AFL ships no id, so it gets initials rather than a broken image.
    Any image that 404s swaps itself for initials, so a dead id never leaves a hole in a row.   */
-var IMG_SPORTS = { nfl:1, epl:1, mlb:1, nhl:1 };
+var IMG_SPORTS = { nfl:1, epl:1, mlb:1, nhl:1, nba:1 };
 function playerImgUrl(key, p){
   if (!p) return '';
+  // NBA: ESPN athlete ids, the same source the box scores come from. The build writes them through
+  // pandas, so they arrive as floats - "3945274.0" - and asking the CDN for 3945274.0.png gets
+  // nothing. Trim to the integer before using it.
+  if (key === 'nba'){
+    var nid = String(p.playerId || p.espnId || '').replace(/\.0+$/, '').trim();
+    if (/^\d+$/.test(nid)) return 'https://a.espncdn.com/i/headshots/nba/players/full/' + nid + '.png';
+    return '';
+  }
   if (key === 'nfl' && p.espnId) return 'https://a.espncdn.com/i/headshots/nfl/players/full/'+p.espnId+'.png';
   if (key === 'epl' && p.code)   return 'https://resources.premierleague.com/premierleague/photos/players/110x140/p'+p.code+'.png';
   if (key === 'mlb' && p.id)     return 'https://img.mlbstatic.com/mlb-photos/image/upload/w_120,q_auto:best/v1/people/'+p.id+'/headshot/67/current';
@@ -10698,7 +10913,8 @@ function playerPanel(){
   var tab = state.view.ppTab || 'form';
   var body = tab === 'form' ? ppFormTab(key, name)
     : tab === 'calc' ? ppCalc(key, name)
-    : tab === 'profile' ? (tuddyProfile(key, { name:name, opp:ppOpponent(key, name) })
+    : tab === 'profile' ? (nbaScoringProfile(key, name)
+        || tuddyProfile(key, { name:name, opp:ppOpponent(key, name) })
         || '<div class="empty" style="padding:20px">No usage profile for this player.</div>')
     : tab === 'radar' ? ppRadar(key, name)
     : tab === 'cover' ? ppCoverage(key, name)
@@ -10735,7 +10951,9 @@ function playerPanel(){
          ['radar','Radar'],['cover','Coverage'],['mkts','All markets']]
         .filter(function(t){
           // profile/radar/coverage only exist where the sport has the data behind them
-          if (t[0] === 'profile') return key === 'nfl';
+          // NBA has its own scoring profile - shooting line, zones, quarters, shot diet - so the
+          // tab is no longer NFL-only. Still hidden everywhere the data does not exist.
+          if (t[0] === 'profile') return key === 'nfl' || key === 'nba';
           if (t[0] === 'radar') return key === 'nfl';
           if (t[0] === 'cover') return key === 'nfl' && !!((state.sports[key].idx.byName || {})[name] || {}).cov;
           return true;
@@ -12996,6 +13214,148 @@ function ddFirstRead(key, p, mkt){
     + (r.games === 1 ? '' : 's') + '. '
     + '<span style="opacity:.6">Charting: FTN Data via nflverse.</span></div></div>';
 }
+
+/* NBA QUARTERS AND SHOT ZONES --------------------------------------------------------------------
+   Two players on the same points line are different bets if one scores in the first six minutes
+   and the other in garbage time, or if one lives at the rim and the other settles for long twos.
+   Both files are built from the play-by-play by nba/build_nba_quarters.py and build_nba_zones.py.  */
+function nbaQuarters(key, name){
+  if (key !== 'nba') return null;
+  var S = state.sports[key], q = S.data.quarters;
+  if (!q || !q.players) return null;
+  if (!S.idx.qIdx){
+    var ix = {};
+    q.players.forEach(function(r){ (ix[cmbNameKey(r.name)] = ix[cmbNameKey(r.name)] || []).push(r); });
+    S.idx.qIdx = ix;
+  }
+  var rows = S.idx.qIdx[cmbNameKey(name)];
+  if (!rows || !rows.length) return null;
+  return rows.slice().sort(function(a, b){ return a.period - b.period; });
+}
+function nbaZones(key, name){
+  if (key !== 'nba') return null;
+  var S = state.sports[key], z = S.data.zones;
+  if (!z || !z.players) return null;
+  if (!S.idx.zIdx){
+    var ix = {};
+    z.players.forEach(function(r){ ix[cmbNameKey(r.name)] = r; });
+    S.idx.zIdx = ix;
+  }
+  return S.idx.zIdx[cmbNameKey(name)] || null;
+}
+var ZONE_LAB = { rim:'At the rim', paint:'Paint', midRange:'Mid-range',
+                 cornerThree:'Corner three', armsThree:'Above the break' };
+var ZONE_COL = { rim:'#22c55e', paint:'#38bdf8', midRange:'#eab308',
+                 cornerThree:'#a78bfa', armsThree:'#f97316' };
+function ddNbaQuarters(key, p, mkt){
+  var rows = p ? nbaQuarters(key, p.name) : null;
+  if (!rows) return '';
+  var stat = ['points', 'rebounds', 'assists', 'threes'].indexOf(mkt) >= 0 ? mkt : 'points';
+  var top = Math.max.apply(null, rows.map(function(r){ return +r[stat] || 0; })) || 1;
+  var bars = rows.map(function(r){
+    var v = +r[stat] || 0;
+    return '<div class="qt-row"><span class="qt-q">Q' + r.period + '</span>'
+      + '<span class="dv-bars"><span class="dv-bar-t"><i class="soft" style="width:'
+      + Math.max(4, Math.round(v / top * 100)) + '%"></i></span></span>'
+      + '<b>' + v.toFixed(1) + '</b></div>';
+  }).join('');
+  var tot = rows.reduce(function(a, r){ return a + (+r[stat] || 0); }, 0);
+  var q1 = rows[0] ? (+rows[0][stat] || 0) : 0;
+  return '<div class="dd-sec"><div class="dd-h">By quarter</div>'
+    + '<div class="dd-note">' + esc(mktLabel(key, stat)) + ' a game, split by period. '
+    + (tot ? 'He takes ' + Math.round(q1 / tot * 100) + '% of it in the first.' : '')
+    + ' Over ' + (rows[0] ? rows[0].games : 0) + ' games.</div>' + bars + '</div>';
+}
+function ddNbaZones(key, p){
+  var z = p ? nbaZones(key, p.name) : null;
+  if (!z || !z.shots) return '';
+  var lg = (state.sports[key].data.zones || {}).league || {};
+  var keys = ['rim', 'paint', 'midRange', 'cornerThree', 'armsThree'].filter(function(k){
+    return z[k] && z[k].att;
+  });
+  if (!keys.length) return '';
+  var bar = '<div class="nb-bar">' + keys.map(function(k){
+    return '<span style="width:' + (z[k].share * 100).toFixed(1) + '%;background:' + ZONE_COL[k] + '"></span>';
+  }).join('') + '</div>';
+  var rows = keys.map(function(k){
+    var mine = z[k].pct, league = lg[k] && lg[k].pct;
+    var edge = (mine != null && league) ? (mine - league) * 100 : null;
+    return '<div class="qt-row"><span class="qt-q" style="color:' + ZONE_COL[k] + '">'
+      + esc(ZONE_LAB[k]) + '</span>'
+      + '<span class="qt-sh">' + Math.round(z[k].share * 100) + '% of his shots</span>'
+      + '<b>' + Math.round((mine || 0) * 100) + '%</b>'
+      + (edge != null ? '<i class="' + (edge >= 0 ? 'qt-up' : 'qt-dn') + '">'
+          + (edge >= 0 ? '+' : '') + edge.toFixed(0) + '</i>' : '') + '</div>';
+  }).join('');
+  return '<div class="dd-sec"><div class="dd-h">Where he shoots from</div>'
+    + '<div class="dd-note">' + z.shots + ' field-goal attempts. The number on the right is how he '
+    + 'shoots from there; the small figure is against the league from the same zone.</div>'
+    + bar + rows + '</div>';
+}
+
+/* NBA SCORING PROFILE - the player page's Scoring tab.
+   Everything about how he gets his points in one view: the zone split with league comparison, the
+   shooting line, and the quarter he does it in. tuddyProfile owns this tab for NFL; basketball
+   needs its own, because "usage" for a receiver and for a scorer are different questions. */
+function nbaScoringProfile(key, name){
+  if (key !== 'nba') return '';
+  var S = state.sports[key];
+  var p = (S.idx.byName || {})[name] || {};
+  var z = nbaZones(key, name), q = nbaQuarters(key, name);
+  var logs = sortLogsDesc(((S.idx.logsByName || {})[name] || []).slice())
+    .filter(function(r){ return (+r.minutes || 0) > 0; });
+  if (!z && !q && !logs.length) return '';
+  var h = '';
+
+  // the shooting line, from his own game logs so it is current even before the zone build runs
+  if (logs.length){
+    var sum = function(f){ return logs.reduce(function(a, r){ return a + (+r[f] || 0); }, 0); };
+    var fgm = sum('fgm'), fga = sum('fga'), tpm = sum('threes'), tpa = sum('threesAtt'),
+        ftm = sum('ftm'), fta = sum('fta'), pts = sum('points');
+    var pct = function(m, a2){ return a2 > 0 ? (m / a2 * 100).toFixed(1) + '%' : '\u2014'; };
+    // true shooting counts what a point actually costs: a three and two free throws are not the
+    // same shot, and field-goal percentage treats them as if they were
+    var ts = (fga + 0.44 * fta) > 0 ? pts / (2 * (fga + 0.44 * fta)) * 100 : null;
+    var efg = fga > 0 ? (fgm + 0.5 * tpm) / fga * 100 : null;
+    h += '<div class="dd-sec"><div class="dd-h">Shooting</div><div class="pf-grid">'
+      + [['Field goals', pct(fgm, fga), fgm + '/' + fga],
+         ['Three point', pct(tpm, tpa), tpm + '/' + tpa],
+         ['Free throws', pct(ftm, fta), ftm + '/' + fta],
+         ['Effective FG', efg != null ? efg.toFixed(1) + '%' : '\u2014', 'threes counted properly'],
+         ['True shooting', ts != null ? ts.toFixed(1) + '%' : '\u2014', 'with free throws'],
+         ['Points a game', (pts / logs.length).toFixed(1), logs.length + ' games']]
+        .map(function(x){
+          return '<div class="pf-cell"><b>' + esc(x[1]) + '</b><span>' + esc(x[0]) + '</span>'
+            + '<i>' + esc(x[2]) + '</i></div>';
+        }).join('') + '</div></div>';
+  }
+
+  h += ddNbaZones(key, { name:name });
+  h += ddNbaQuarters(key, { name:name }, 'points');
+
+  // shot diet: how his attempts split between threes, twos and the line
+  if (logs.length){
+    var fga2 = logs.reduce(function(a, r){ return a + (+r.fga || 0); }, 0);
+    var tpa2 = logs.reduce(function(a, r){ return a + (+r.threesAtt || 0); }, 0);
+    var fta2 = logs.reduce(function(a, r){ return a + (+r.fta || 0); }, 0);
+    if (fga2 > 0){
+      var parts = [['Threes', tpa2, '#a78bfa'], ['Twos', Math.max(0, fga2 - tpa2), '#38bdf8'],
+                   ['Free throws', Math.round(fta2 * 0.44), '#eab308']];
+      var tot2 = parts.reduce(function(a, x){ return a + x[1]; }, 0) || 1;
+      h += '<div class="dd-sec"><div class="dd-h">Shot diet</div>'
+        + '<div class="dd-note">Where his attempts go. Free throws counted as the 0.44 of a '
+        + 'possession they are worth, not one for one.</div>'
+        + '<div class="nb-bar">' + parts.map(function(x){
+            return '<span style="width:' + (x[1] / tot2 * 100).toFixed(1) + '%;background:' + x[2] + '"></span>';
+          }).join('') + '</div>'
+        + '<div class="nb-legend">' + parts.map(function(x){
+            return '<span><i class="nb-dot" style="background:' + x[2] + '"></i>' + esc(x[0]) + ' '
+              + Math.round(x[1] / tot2 * 100) + '%</span>';
+          }).join('') + '</div></div>';
+    }
+  }
+  return h;
+}
 function ddNhlScoring(key, p, opp, mkt){
   if (key !== 'nhl' || !p) return '';
   if (['points', 'goals', 'assists', 'shots', 'ppPoints'].indexOf(mkt) < 0) return '';
@@ -13246,6 +13606,7 @@ function deepPanel(){
   var teams = ddTeamSection(key, p.team || d.team, d.opp, mkt);
   var mlbAdv = ddMlbSection(key, p, d.opp, mkt) + ddNblScoring(key, p, d.opp, mkt) + ddNhlScoring(key, p, d.opp, mkt)
     + ddFirstRead(key, p, mkt)
+    + ddNbaQuarters(key, p, mkt) + ddNbaZones(key, p)
              + ddNgsSection(key, p, mkt);
   var script = ddScript(key, p.team, d.opp);
   return '<div class="cmb-overlay open" onclick="if(event.target===this)LAB.deepClose()">'
@@ -14382,11 +14743,6 @@ window.LAB = {
     render();
   },
   dvBook: function(b){ state.view.dvBook = b || null; state.view.dvDrop = {}; render(); },
-  dvOdds: function(which, v){
-    var n = parseFloat(v);
-    state.view[which === 'min' ? 'dvMin' : 'dvMax'] = isFinite(n) && n > 0 ? n : null;
-    render();
-  },
   dvAdd: function(){
     var f = state.view.focus; if (!f || !f.g) return;
     var meets = Math.max(1, state.view.dvMeets || 3);
@@ -14545,6 +14901,19 @@ window.LAB = {
     var open = v.fold[id] != null ? v.fold[id] : !shut;
     v.fold[id] = !open;
     setTimeout(render, 0);              // let the summary's own toggle settle first
+  },
+  // exposed for tests: statOf is the single place a market maps to a gamelog field, and the
+  // anytimeTd flag-versus-count bug lived exactly there
+  statOfProbe: function(key, row, mkt){ return statOf(key, row, mkt); },
+  dvLine: function(name, dir){
+    var v = state.view; v.dvLine = v.dvLine || {};
+    v.dvLine[name] = (v.dvLine[name] || 0) + dir;        // steps from the player's natural rung
+    render();
+  },
+  dvShare: function(){
+    var el = document.getElementById('dv-card');
+    if (!el) return;
+    sharePng(snapElement(el, 'D\u00e9j\u00e0 Vu').catch(function(){ return null; }), 'jtt-dejavu.png');
   },
   trSide: function(v){ TR_F.side = v; render(); },
   trMinG: function(v){ TR_F.minG = +v || 3; render(); },
