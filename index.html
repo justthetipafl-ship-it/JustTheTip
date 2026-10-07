@@ -1083,6 +1083,13 @@
   .mr-open{display:flex;align-items:center;gap:9px;flex-wrap:wrap;padding:4px 2px 10px;}
   .lg-p i.good{color:var(--accent);} .lg-p i.bad{color:#f97316;}
   .lg-wrap{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:10px;}
+  .tp-link{cursor:pointer;}
+  .tp-link:hover .fxr-name{color:var(--accent);}
+  .tp-head{display:flex;align-items:baseline;gap:9px;padding:2px 2px 10px;}
+  .tp-head b{font-family:var(--font-display);font-size:15px;}
+  .tp-head span{font-size:10px;color:var(--text-3);}
+  .lg-p b{margin-left:auto;font-family:var(--font-mono);}
+  .lg-p i{font-style:normal;font-size:9px;color:var(--text-3);margin-left:7px;}
   .rest-wrap{display:flex;gap:8px;padding:2px 0 6px;}
   .rest-card{flex:1;background:var(--surface);border:1px solid var(--border);border-radius:9px;padding:9px 10px;}
   .rest-card.rest-hard{border-color:#f97316;}
@@ -8256,13 +8263,14 @@ function focusPage(){
     + '<i class="ti ti-math-symbols"></i>Nerd Mode</button></div>'
     + ''
     + '<div class="fx-hero">'
-    + '<div class="fxr-team">'+teamLogo(key,g.away)+'<div class="fxr-name">'+esc(teamName(key,g.away))+'</div></div>'
+    + '<div class="fxr-team tp-link" onclick="LAB.teamView(\''+key+'\',\''+esc(g.away).replace(/'/g,"\\'")+'\')">'
+      + teamLogo(key,g.away)+'<div class="fxr-name">'+esc(teamName(key,g.away))+'</div></div>'
     + '<div class="fxr-center"><span class="fxr-badge" style="color:var(--accent);background:color-mix(in srgb,var(--accent) 16%,transparent)">'
       + esc(SPORTS[key].name)+'</span>'
       + (st.ms!=null?'<span class="fxr-ko-date">'+esc(localDate(st.ms))+'</span>'
           +'<span class="fxr-ko-time">'+esc(st.hasTime?localTime(st.ms):'time TBC')+'</span>':'<span class="fxr-ko-date">TBC</span>')
       + '<div class="fxr-vs">@</div><div class="fxr-venue">'+esc(g.venue||'TBC')+'</div></div>'
-    + '<div class="fxr-team">'+teamLogo(key,g.home)+'<div class="fxr-name">'+esc(teamName(key,g.home))+'</div></div>'
+    + '<div class="fxr-team tp-link" onclick="LAB.teamView(\''+key+'\',\''+esc(g.home).replace(/'/g,"\\'")+'\')">'+teamLogo(key,g.home)+'<div class="fxr-name">'+esc(teamName(key,g.home))+'</div></div>'
     + '</div>';
   if (S.t2 !== 'ready') return head + '<div class="empty"><i class="ti ti-loader"></i>Loading '+esc(SPORTS[key].name)+' odds…</div>';
   if (S.noOdds) head += secNote('Odds', 'No prices for '+SPORTS[key].name+' \u2014 '+S.noOdds
@@ -10971,6 +10979,17 @@ function statsPage(){
   if (sub === 'dvp') return h + dvpView(key);
   return h + scannerView(key);
 }
+function teamPanel(){
+  var sel = state.view.teamView;
+  if (!sel) return '';
+  return '<div class="pp-wrap" onclick="if(event.target===this)LAB.teamView(null)">'
+    + '<div class="pp-card">'
+    + '<div class="pp-hd">' + teamLogo(sel.sport, sel.team)
+      + '<div><div class="pp-nm">' + esc(teamName(sel.sport, sel.team) || sel.team) + '</div>'
+      + '<div class="pp-sub">' + esc(SPORTS[sel.sport].name) + '</div></div>'
+      + '<button class="pp-x" onclick="LAB.teamView(null)">&times;</button></div>'
+    + '<div class="pp-body">' + teamProfile(sel.sport, sel.team) + '</div></div></div>';
+}
 function playerPanel(){
   var sel = state.view.player;
   if (!sel) return '';
@@ -13467,6 +13486,107 @@ function nflUsageProfile(key, name, opp){
   }
   return h;
 }
+
+/* TEAM PROFILE ------------------------------------------------------------------------------------
+   The club equivalent of the player page: what they do, what they allow, and where that ranks.
+   Everything is driven off teams.json, which every sport normalises to for/against columns, so the
+   page works for all six without a per-sport table. Sports that carry extra - NBA's zone defence,
+   NFL's pass rate over expected - add a section of their own underneath.                          */
+function teamProfile(key, team){
+  var S = state.sports[key];
+  var rows = teamRowsFor(key);
+  var me = rows.filter(function(t){ return normTeam(t.team || t.name) === normTeam(team); })[0];
+  if (!me) return '<div class="empty" style="padding:20px">No team record for ' + esc(team) + '.</div>';
+
+  // every numeric column, split into what they produce and what they concede, each with a rank
+  var numeric = Object.keys(me).filter(function(k){ return typeof me[k] === 'number'; });
+  var rankOf = function(col, lowBetter){
+    var vals = rows.map(function(t){ return t[col]; }).filter(function(v){ return typeof v === 'number'; });
+    if (vals.length < 4) return null;
+    var sorted = vals.slice().sort(function(a, b){ return lowBetter ? a - b : b - a; });
+    return { rank: sorted.indexOf(me[col]) + 1, of: sorted.length };
+  };
+  var isAgainst = function(c){ return /_a$|Against$|allowed/i.test(c); };
+  var label = function(c){
+    return String(c).replace(/_a$/, '').replace(/Against$/, '').replace(/([a-z])([A-Z])/g, '$1 $2');
+  };
+  var cell = function(col){
+    var against = isAgainst(col);
+    var r = rankOf(col, against);          // conceding less is better
+    var v = me[col];
+    var good = r ? r.rank <= Math.max(3, r.of * 0.25) : null;
+    return '<div class="pf-cell"><b' + (good === true ? ' class="pf-good"' : good === false ? '' : '')
+      + '>' + (Math.abs(v) >= 100 ? Math.round(v) : v.toFixed(1)) + '</b>'
+      + '<span>' + esc(label(col)) + '</span>'
+      + (r ? '<i>' + ordinalish(r.rank) + ' of ' + r.of + '</i>' : '') + '</div>';
+  };
+  var forCols = numeric.filter(function(c){ return !isAgainst(c) && c !== 'games'; }).slice(0, 10);
+  var agCols = numeric.filter(isAgainst).slice(0, 10);
+
+  var h = '<div class="tp-head"><b>' + esc(teamName(key, team) || team) + '</b>'
+    + '<span>' + esc(SPORTS[key].name) + (me.games ? ' \u00b7 ' + me.games + ' games' : '') + '</span></div>';
+  if (forCols.length)
+    h += '<div class="dd-sec"><div class="dd-h">What they do</div><div class="pf-grid">'
+       + forCols.map(cell).join('') + '</div></div>';
+  if (agCols.length)
+    h += '<div class="dd-sec"><div class="dd-h">What they allow</div><div class="pf-grid">'
+       + agCols.map(cell).join('') + '</div></div>';
+
+  // NBA: what this defence concedes by shot zone, which is the read that matters for a scorer
+  var zf = S.data.zones;
+  if (key === 'nba' && zf && zf.defence){
+    var d = zf.defence[normTeam(team)] || zf.defence[team];
+    if (d){
+      h += '<div class="dd-sec"><div class="dd-h">What they concede by zone</div>'
+        + ['rim', 'paint', 'midRange', 'cornerThree', 'armsThree'].filter(function(z){ return d[z]; })
+          .map(function(z){
+            var lg = (zf.league || {})[z];
+            var edge = lg ? (d[z].pct - lg.pct) * 100 : null;
+            return '<div class="qt-row"><span class="qt-q" style="color:' + ZONE_COL[z] + '">'
+              + esc(ZONE_LAB[z]) + '</span>'
+              + '<span class="qt-sh">' + ordinalish(d[z].rank) + ' of ' + d[z].of
+              + ' \u00b7 ' + d[z].att + ' faced</span>'
+              + '<b>' + Math.round(d[z].pct * 100) + '%</b>'
+              + (edge != null ? '<i class="' + (edge <= 0 ? 'qt-up' : 'qt-dn') + '">'
+                  + (edge >= 0 ? '+' : '') + edge.toFixed(0) + '</i>' : '') + '</div>';
+          }).join('')
+        + '<div class="dd-note">A low rank means they concede least there. The small figure is '
+        + 'against the league from the same zone.</div></div>';
+    }
+  }
+  // NFL: how both sides lean, which moves every passing market in the game
+  var pf = S.data.profiles;
+  if (key === 'nfl' && pf && pf.teams){
+    var t2 = pf.teams[normTeam(team)] || pf.teams[team];
+    if (t2){
+      h += '<div class="dd-sec"><div class="dd-h">How they lean</div><div class="pf-grid">'
+        + (t2.proe != null ? pfCell('Pass rate over expected',
+            (t2.proe > 0 ? '+' : '') + t2.proe.toFixed(1) + '%',
+            t2.proeRank ? ordinalish(t2.proeRank) + ' of 32' : '', t2.proe > 0) : '')
+        + (t2.proeAllowed != null ? pfCell('Allowed to opponents',
+            (t2.proeAllowed > 0 ? '+' : '') + t2.proeAllowed.toFixed(1) + '%',
+            t2.proeAllowedRank ? ordinalish(t2.proeAllowedRank) + ' of 32' : '') : '')
+        + (t2.deepAllowed != null ? pfCell('Deep passes allowed',
+            Math.round(t2.deepAllowed * 100) + '%',
+            t2.deepAllowedRank ? ordinalish(t2.deepAllowedRank) + ' of 32' : '') : '')
+        + '</div></div>';
+    }
+  }
+
+  // who does the work: the squad ranked on the sport's headline stat
+  var head = (marketsFor(key) || [])[0];
+  var squad = playersOnTeam(key, team).filter(function(p){ return head && p[head] != null; })
+    .sort(function(a, b){ return (b[head] || 0) - (a[head] || 0); }).slice(0, 8);
+  if (squad.length){
+    h += '<div class="dd-sec"><div class="dd-h">Who does the work</div>'
+      + squad.map(function(p){
+          return '<div class="lg-p" onclick="LAB.player(\'' + key + '\',\''
+            + esc(p.name).replace(/'/g, "\\'") + '\')"><span>' + esc(p.name) + '</span>'
+            + '<b>' + (+p[head]).toFixed(1) + '</b><i>' + esc(mktLabel(key, head)) + '</i></div>';
+        }).join('') + '</div>';
+  }
+  return h;
+}
 function nbaScoringProfile(key, name){
   if (key !== 'nba') return '';
   var S = state.sports[key];
@@ -14470,7 +14590,7 @@ function render(){
 
   if (state.view.focus){
     h = '' + focusPage();                       // focused fixture replaces the page
-    $('app').innerHTML = configBanner() + h + playerPanel() + booksPanel() + cmbFab() + cmbPanel() + cardFab() + cardPanel() + livePanel() + deepPanel() + mrPanel();
+    $('app').innerHTML = configBanner() + h + playerPanel() + teamPanel() + booksPanel() + cmbFab() + cmbPanel() + cardFab() + cardPanel() + livePanel() + deepPanel() + mrPanel();
     return;
   }
   if (state.view.tab === 'results'){
@@ -14501,7 +14621,7 @@ function render(){
       });
     }
   }
-  $('app').innerHTML = configBanner() + h + playerPanel() + booksPanel() + cmbFab() + cmbPanel() + cardFab() + cardPanel() + livePanel() + deepPanel();
+  $('app').innerHTML = configBanner() + h + playerPanel() + teamPanel() + booksPanel() + cmbFab() + cmbPanel() + cardFab() + cardPanel() + livePanel() + deepPanel();
 }
 
 /* ---- public ------------------------------------------------------------- */
@@ -14765,6 +14885,7 @@ window.LAB = {
   mkt: function(k, m){ state.view.mkt[k] = m; render(); },
   match: function(k, id){ state.view.match[k] = id; render(); },
   player: function(k, name){ state.view.player = k ? {sport:k, name:name} : null; render(); },
+  teamView: function(k, team){ state.view.teamView = k ? {sport:k, team:team} : null; render(); },
   focus: function(k, i){
     if (!k){ state.view.focus = null; state.view.mrOpen = false; render(); return; }
     var fx = asArray(state.sports[k].data.fixture) || [];
