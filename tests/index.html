@@ -912,6 +912,13 @@
     border-radius:6px;font-size:13px;line-height:1;cursor:pointer;}
   .deja-step button:disabled{opacity:.35;cursor:default;}
   .deja-step b{font-family:var(--font-display);font-size:13px;min-width:14px;text-align:center;}
+  .deja-line{display:inline-flex;align-items:center;gap:3px;vertical-align:middle;margin-right:4px;}
+  .deja-line button{width:17px;height:17px;line-height:1;padding:0;border-radius:5px;
+    background:var(--surface-2);border:1px solid var(--border);color:var(--text-2);font-size:11px;cursor:pointer;}
+  .deja-line button:disabled{opacity:.3;cursor:default;}
+  .deja-line b{min-width:26px;text-align:center;font-family:var(--font-mono);font-size:11px;}
+  .deja-actions{display:flex;gap:8px;padding:8px 2px 2px;}
+  .deja-actions .pc-add{flex:1;}
   .deja-card{display:flex;align-items:center;gap:9px;background:var(--surface-2);border:1px solid var(--border);
     border-radius:9px;padding:9px 11px;margin-bottom:6px;}
   .deja-m{flex:1;min-width:0;}
@@ -1514,7 +1521,7 @@ var state = {
              rdrPick: null, ulMk: 'snapPct', ulWin: 'l5',
              dvMeets: 3, dvLegs: 3, jMkt: null, jLine: 'auto', jSel: {},
              jHide: {}, jMin: 1.60, jMax: null, jFocus: null, jVenue: 'venue',
-             dvMkts: null, dvHail: false, dvDrop: {}, dvMin: null, dvMax: null, dvBook: 'Sportsbet',
+             dvMkts: null, dvHail: false, dvDrop: {}, dvLine: {}, dvBook: 'Sportsbet',
              stSport: null, stMode: 'scanner', stMkt: {}, stPos: {},
              stQ: '', stPosF: '', stWin: 'season', stSort: null, stDir: -1, stAllowed: false,
              stTeamSort: null, stDvpSort: null }   // filter + current page + market per sport
@@ -6117,9 +6124,9 @@ function dvLegs(key, g, meets){
         // the line he cleared every time, priced where the book has it
         var od = bookPriceFor(key, p.name, m[0], lo - 0.5, state.view.dvBook);
         if (!od || od.price < STREAK_ODDS_FLOOR) return;
-        var lo2 = state.view.dvMin, hi2 = state.view.dvMax;
-        if (lo2 != null && od.price < lo2) return;
-        if (hi2 != null && od.price > hi2) return;
+        // The odds min/max filter is gone: stepping a single leg's line down is a better
+        // instrument, because it keeps the player and asks less of him rather than dropping names
+        // for being priced wrong. STREAK_ODDS_FLOOR above still rejects the unbackably short.
         out.push({ name:p.name, p:p, team:team, opp:opp, mkt:m[0], label:m[1], line:lo,
                    vals:vals, price:od.price, book:od.book, strength:lo * od.price });
       });
@@ -6128,17 +6135,39 @@ function dvLegs(key, g, meets){
   out.sort(function(a,b){ return b.strength - a.strength; });
   return { legs:out, dates:dates };
 }
+/* The posted rungs for one Déjà Vu leg, shortest first, so a line can be stepped down to something
+   the books actually price rather than nudged to a number nobody offers. */
+function dvRungs(key, l){
+  var rows = bookRows ? null : null;
+  var out = [], seen = {};
+  (oddsRowsAll(key) || []).forEach(function(r){
+    if (!r.player || r.market !== l.mkt || r.line == null) return;
+    if (cmbNameKey(r.player) !== cmbNameKey(l.name)) return;
+    if (state.view.dvBook && r.book !== state.view.dvBook) return;
+    var px = +r.over || 0;
+    if (!(px > 1)) return;
+    var k = String(r.line);
+    if (!seen[k] || px > seen[k].price) seen[k] = { line:+r.line, price:px, book:r.book };
+  });
+  Object.keys(seen).forEach(function(k){ out.push(seen[k]); });
+  out.sort(function(a, b){ return a.line - b.line; });
+  return out;
+}
 function dejaVuSection(key, g){
   var avail = dvMeetings(key, g).length;
   if (!avail) return '';
-  var meets = Math.min(Math.max(1, state.view.dvMeets || 3), avail);
+  // Start at the LONGEST streak the fixture supports and at full legs. The strongest version of
+  // the bet is the interesting one; anyone who wants it looser can step down, and legs are
+  // removable by hand anyway.
+  var meets = Math.min(Math.max(1, state.view.dvMeets || avail), avail);
   var hail = !!state.view.dvHail;
   var res = dvLegs(key, g, meets);
   var distinct = {};
   res.legs.forEach(function(l){ distinct[l.name] = 1; });
   var distinctN = Object.keys(distinct).length;
   // Hail Mary: every qualifying player, one leg each, however long that gets
-  var legN = hail ? Math.max(1, distinctN) : Math.max(2, Math.min(state.view.dvLegs || 3, 6));
+  var legN = hail ? Math.max(1, distinctN)
+                  : Math.max(2, Math.min(state.view.dvLegs || Math.max(2, distinctN), distinctN || 6));
   var allMkts = (state.sports[key].config || {}).oddsMkts || [];
   var only = state.view.dvMkts;
   var ctrl = '<div class="deja-ctrl">'
@@ -6147,16 +6176,11 @@ function dejaVuSection(key, g){
     + '<span class="deja-step">Legs<button onclick="LAB.dvLegs(-1)"'+(legN <= 2 || hail ? ' disabled' : '')+'>\u2212</button>'
       + '<b>'+legN+'</b><button onclick="LAB.dvLegs(1)"'+(hail ? ' disabled' : '')+'>+</button></span>'
     + '<button class="sl-chip'+(hail ? ' on' : '')+'" onclick="LAB.dvHail()">Hail Mary</button>'
-    + '<span class="deja-step">Odds'
-      + '<input type="number" step="0.05" min="1" value="'+(state.view.dvMin != null ? state.view.dvMin : '')
-      + '" placeholder="min" style="width:52px" onchange="LAB.dvOdds(\'min\',this.value)">'
-      + '<input type="number" step="0.05" min="1" value="'+(state.view.dvMax != null ? state.view.dvMax : '')
-      + '" placeholder="max" style="width:52px" onchange="LAB.dvOdds(\'max\',this.value)"></span></div>'
-    + '<div class="sl-bar">'
-      + '<button class="sl-chip'+(!state.view.dvBook ? ' on' : '')+'" onclick="LAB.dvBook(\'\')">Best price (not one ticket)</button>'
-      + booksFor(key).slice(0, 10).map(function(b){
-          return '<button class="sl-chip'+(state.view.dvBook === b ? ' on' : '')+'" onclick="LAB.dvBook(\''
-            + esc(b).replace(/'/g,"\\'")+'\')">'+esc(b)+'</button>'; }).join('')+'</div>'
+    + '<select class="ob-sel" onchange="LAB.dvBook(this.value)">'
+      + '<option value=""'+(!state.view.dvBook ? ' selected' : '')+'>Best price \u00b7 not one ticket</option>'
+      + booksFor(key).map(function(b){
+          return '<option value="'+esc(b)+'"'+(state.view.dvBook === b ? ' selected' : '')+'>'+esc(b)+'</option>';
+        }).join('') + '</select></div>'
     + '<div class="sl-bar">'
       + '<button class="sl-chip'+(!only || !only.length ? ' on' : '')+'" onclick="LAB.dvMkt(null)">All markets</button>'
       + allMkts.slice(0, 8).map(function(m){
@@ -6170,8 +6194,23 @@ function dejaVuSection(key, g){
   var seen = {}, picked = [];
   var dropped = state.view.dvDrop || {};
   res.legs.forEach(function(l){
-    if (dropped[l.name]) return;                       // removed from the Hail Mary by hand
+    if (dropped[l.name]) return;                       // removed by hand
     if (picked.length < legN && !seen[l.name]){ seen[l.name] = 1; picked.push(l); }
+  });
+  // Apply any per-leg line steps. The step moves to a rung the books actually post, so the price
+  // shown is a real one rather than an interpolation - if the move lands nowhere, the leg stays put.
+  var steps = state.view.dvLine || {};
+  picked = picked.map(function(l){
+    var n = steps[l.name] | 0;
+    if (!n) return l;
+    var rungs = dvRungs(key, l);
+    var at = rungs.findIndex(function(r){ return +r.line === +l.line; });
+    if (at < 0) return l;
+    var want = rungs[Math.max(0, Math.min(rungs.length - 1, at + n))];
+    if (!want) return l;
+    var copy = {}; for (var k in l) copy[k] = l[k];
+    copy.line = want.line; copy.price = want.price; copy.book = want.book;
+    return copy;
   });
   var legs = picked.map(function(l){ return cmbLeg(key, l.p, [l.mkt, l.label], l.line - 0.5, 'over'); })
     .filter(function(l){ return l && l.prob != null; });
@@ -6181,25 +6220,36 @@ function dejaVuSection(key, g){
   var fair = joint ? 1/joint : null;
   return '<div class="dayband"><span>D\u00e9j\u00e0 Vu SGM</span></div>'+ctrl
     + picked.map(function(l){
+        // Step a leg's line down to a rung that is actually posted. Shortening one man is a finer
+        // instrument than an odds filter across the whole ticket: it keeps the player you want and
+        // asks less of him, where a min/max just removed names.
+        var rungs = dvRungs(key, l);
+        var at = rungs.findIndex(function(r){ return +r.line === +l.line; });
         return '<div class="deja-card">'+playerImgP(key, l.p, 26)
-          + '<div class="deja-m"><b>'+esc(l.name)+'</b><span>'+Math.ceil(l.line)+'+ '+esc(l.label)
+          + '<div class="deja-m"><b>'+esc(l.name)+'</b><span>'
+          + '<span class="deja-line">'
+            + '<button onclick="LAB.dvLine(\''+esc(l.name).replace(/'/g,"\\'")+'\',-1)"'
+            + (at <= 0 ? ' disabled' : '')+'>\u2212</button>'
+            + '<b>'+Math.ceil(l.line)+'+</b>'
+            + '<button onclick="LAB.dvLine(\''+esc(l.name).replace(/'/g,"\\'")+'\',1)"'
+            + (at < 0 || at >= rungs.length - 1 ? ' disabled' : '')+'>+</button></span>'
+          + ' '+esc(l.label)
           + ' \u00b7 '+esc(abbrOf(key, l.team))+' \u00b7 <span class="deja-vals">'+l.vals.join(' / ')+'</span></span></div>'
           + '<span class="deja-px">$'+l.price.toFixed(2)+(l.book ? '<i>'+esc(l.book)+'</i>' : '')+'</span>'
-          + (hail ? '<button class="cmb-leg-x" onclick="LAB.dvDrop(\''+esc(l.name).replace(/'/g,"\\'")
-              + '\')">&times;</button>' : '')+'</div>';
+          + '<button class="cmb-leg-x" onclick="LAB.dvDrop(\''+esc(l.name).replace(/'/g,"\\'")
+              + '\')">&times;</button></div>';
       }).join('')
-    + '<div class="deja-sum">'
-      + '<div class="cmb-sum-row"><span>Combined at the book</span><b>$'+comb.toFixed(2)+'</b></div>'
-      + (joint != null ? '<div class="cmb-sum-row"><span>Correlated model</span><b>'+cmbOdds(joint)+'</b></div>'
-        + '<div class="cmb-sum-row tot"><span>Fair price</span><b>$'+fair.toFixed(2)+'</b></div>'
-        + '<div class="cmb-sum-row"><span>Edge</span><b class="'+(comb*joint - 1 > 0 ? 'cmb-vscore good' : 'cmb-vscore bad')
-        + '" style="font-size:14px">'+((comb*joint - 1) > 0 ? '+' : '')+Math.round((comb*joint-1)*100)+'%</b></div>' : '')
+    + '<div class="deja-sum" id="dv-card">'
+      + '<div class="cmb-sum-row tot"><span>Estimated at '
+      + esc(state.view.dvBook || 'best price') + '</span><b>$'+comb.toFixed(2)+'</b></div>'
       + '<div class="cmb-corr">Every leg cleared its line in all '+meets+' straight meetings between these '
       + 'clubs, in this shirt \u2014 games played for a former club do not count. Lines are each '
       + 'player\u2019s minimum across those games, so the record held every time.'
       + (state.view.dvBook ? ' Priced at '+esc(state.view.dvBook)+', so the whole multi is placeable there.'
          : ' Best price per leg \u2014 pick a book to make it placeable as one ticket.')+'</div>'
-      + '<button class="pc-add" onclick="LAB.dvAdd()">Send to Check My Multi</button></div>';
+      + '</div>'
+    + '<div class="deja-actions"><button class="pc-add" onclick="LAB.dvShare()">'
+      + '<i class="ti ti-share"></i> Share this multi</button></div>';
 }
 /* JUPITER ------------------------------------------------------------------------
    The orb: every priced player in the fixture placed by how hot they are for one market.
@@ -14670,11 +14720,6 @@ window.LAB = {
     render();
   },
   dvBook: function(b){ state.view.dvBook = b || null; state.view.dvDrop = {}; render(); },
-  dvOdds: function(which, v){
-    var n = parseFloat(v);
-    state.view[which === 'min' ? 'dvMin' : 'dvMax'] = isFinite(n) && n > 0 ? n : null;
-    render();
-  },
   dvAdd: function(){
     var f = state.view.focus; if (!f || !f.g) return;
     var meets = Math.max(1, state.view.dvMeets || 3);
@@ -14837,6 +14882,15 @@ window.LAB = {
   // exposed for tests: statOf is the single place a market maps to a gamelog field, and the
   // anytimeTd flag-versus-count bug lived exactly there
   statOfProbe: function(key, row, mkt){ return statOf(key, row, mkt); },
+  dvLine: function(name, dir){
+    var v = state.view; v.dvLine = v.dvLine || {};
+    v.dvLine[name] = (v.dvLine[name] || 0) + dir;        // steps from the player's natural rung
+    render();
+  },
+  dvShare: function(){
+    var el = document.getElementById('dv-card');
+    if (el) snapElement(el, 'Déjà Vu multi');
+  },
   trSide: function(v){ TR_F.side = v; render(); },
   trMinG: function(v){ TR_F.minG = +v || 3; render(); },
   trMinPx: function(v){ TR_F.minPx = +v || 0; render(); },
