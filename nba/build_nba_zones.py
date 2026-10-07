@@ -83,12 +83,16 @@ def main():
 
     ZONES = ['rim', 'paint', 'midRange', 'cornerThree', 'armsThree']
     names, acc, lg, done = {}, {}, {}, []
+    # what each DEFENCE concedes by zone. Player zones say where he shoots; this says who lets him.
+    # The shooting team is on the play and both clubs are on the row, so the defence is the other one.
+    dfn = {}
 
     for season in seasons:
         try:
             d = pd.read_parquet(grab(PBP % season), columns=[
                 'type_text', 'text', 'score_value', 'scoring_play', 'shooting_play',
-                'coordinate_x_raw', 'coordinate_y_raw', 'athlete_id_1'])
+                'coordinate_x_raw', 'coordinate_y_raw', 'athlete_id_1',
+                'team_id', 'home_team_id', 'home_team_abbrev', 'away_team_abbrev'])
         except Exception as e:
             print('  %s: play-by-play not available (%s)' % (season, str(e)[:60])); continue
         try:
@@ -115,12 +119,22 @@ def main():
         is3 = (sh.score_value == 3) | txt.str.contains('three point', regex=False)
         print('  %s: %d field-goal attempts' % (season, len(sh)))
 
-        for (x, y, dist, three, hit, who) in zip(sh.coordinate_x_raw, sh.coordinate_y_raw, sh.dist,
-                                                 is3, made, sh.athlete_id_1):
+        shooting_home = (sh.team_id.astype('Int64') == sh.home_team_id.astype('Int64'))
+        for (x, y, dist, three, hit, who, is_home, hab, aab) in zip(
+                sh.coordinate_x_raw, sh.coordinate_y_raw, sh.dist, is3, made, sh.athlete_id_1,
+                shooting_home, sh.home_team_abbrev, sh.away_team_abbrev):
+            z0 = zone_of(float(x), float(y), float(dist), bool(three))
+            # the defending club is whichever side did not take the shot
+            dteam = (str(aab) if bool(is_home) else str(hab))
+            if dteam and dteam != 'nan':
+                e2 = dfn.setdefault(dteam, {}).setdefault(z0, {'att': 0, 'made': 0})
+                e2['att'] += 1
+                if hit:
+                    e2['made'] += 1
             k = pid(who)
             if not k:
                 continue
-            z = zone_of(float(x), float(y), float(dist), bool(three))
+            z = z0
             e = acc.setdefault(k, {})
             d2 = e.setdefault(z, {'att': 0, 'made': 0, 'dist': 0.0})
             d2['att'] += 1
@@ -161,13 +175,23 @@ def main():
     rows.sort(key=lambda r: -r['shots'])
 
     os.makedirs(a.out, exist_ok=True)
-    out = {'seasons': done, 'zones': ZONES, 'minShots': a.min_shots,
+    # defences, with a rank per zone: 1 concedes least, 30 concedes most
+    defence = {}
+    for z in ZONES:
+        vals = {t: (v[z]['made'] / v[z]['att']) for t, v in dfn.items() if v.get(z, {}).get('att', 0) >= 50}
+        order = sorted(vals.items(), key=lambda kv: kv[1])
+        for i, (t, pct) in enumerate(order):
+            e3 = defence.setdefault(t, {'team': t})
+            e3[z] = {'pct': round(pct, 3), 'rank': i + 1, 'of': len(order),
+                     'att': dfn[t][z]['att']}
+
+    out = {'seasons': done, 'zones': ZONES, 'minShots': a.min_shots, 'defence': defence,
            'updated': datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%MZ'),
            'source': 'ESPN play-by-play via sportsdataverse-data',
            'league': league, 'leagueShots': total_att, 'players': rows}
     with open(os.path.join(a.out, 'zones.json'), 'w') as fh:
         json.dump(out, fh, separators=(',', ':'))
-    print('  wrote zones.json - %d players' % len(rows))
+    print('  wrote zones.json - %d players, %d defences' % (len(rows), len(defence)))
     print('  league: ' + '  '.join('%s %d%% (%d%% of shots)'
           % (z, round((league[z]['pct'] or 0) * 100), round(league[z]['att'] / total_att * 100))
           for z in ZONES if z in league))
