@@ -912,6 +912,7 @@
     border-radius:6px;font-size:13px;line-height:1;cursor:pointer;}
   .deja-step button:disabled{opacity:.35;cursor:default;}
   .deja-step b{font-family:var(--font-display);font-size:13px;min-width:14px;text-align:center;}
+  .deja-card .deja-line{flex:0 0 auto;margin:0 6px 0 0;}
   .deja-line{display:inline-flex;align-items:center;gap:3px;vertical-align:middle;margin-right:4px;}
   .deja-line button{width:17px;height:17px;line-height:1;padding:0;border-radius:5px;
     background:var(--surface-2);border:1px solid var(--border);color:var(--text-2);font-size:11px;cursor:pointer;}
@@ -1519,7 +1520,8 @@ var state = {
              cmbOpen: false, cmbMode: 'single', cmbLegs: [], cmbResult: null, cmbSugOff: false,
              cmbLadOpen: false, mbFix: 0, mbMode: 'signals', pc: null, ttWin: 10, smDrop: {},
              rdrPick: null, ulMk: 'snapPct', ulWin: 'l5',
-             dvMeets: 3, dvLegs: 3, jMkt: null, jLine: 'auto', jSel: {},
+             // unset on purpose: Déjà Vu opens at the longest streak the fixture supports
+             dvMeets: null, jMkt: null, jLine: 'auto', jSel: {},
              jHide: {}, jMin: 1.60, jMax: null, jFocus: null, jVenue: 'venue',
              dvMkts: null, dvHail: false, dvDrop: {}, dvLine: {}, dvBook: 'Sportsbet',
              stSport: null, stMode: 'scanner', stMkt: {}, stPos: {},
@@ -6138,7 +6140,9 @@ function dvLegs(key, g, meets){
 /* The posted rungs for one Déjà Vu leg, shortest first, so a line can be stepped down to something
    the books actually price rather than nudged to a number nobody offers. */
 function dvRungs(key, l){
-  var rows = bookRows ? null : null;
+  // A leg carries the DISPLAYED line - "3+" - while the book posts 2.5. Comparing the two directly
+  // never matched, so the stepper found no current rung and disabled both buttons. Everything here
+  // works in posted terms and the display adds the half back.
   var out = [], seen = {};
   (oddsRowsAll(key) || []).forEach(function(r){
     if (!r.player || r.market !== l.mkt || r.line == null) return;
@@ -6166,26 +6170,24 @@ function dejaVuSection(key, g){
   res.legs.forEach(function(l){ distinct[l.name] = 1; });
   var distinctN = Object.keys(distinct).length;
   // Hail Mary: every qualifying player, one leg each, however long that gets
-  var legN = hail ? Math.max(1, distinctN)
-                  : Math.max(2, Math.min(state.view.dvLegs || Math.max(2, distinctN), distinctN || 6));
+  // every qualifying player gets a leg; the only way to shorten the ticket is to remove cards,
+  // which is what the × on each one is for
+  var legN = Math.max(1, distinctN);
   var allMkts = (state.sports[key].config || {}).oddsMkts || [];
   var only = state.view.dvMkts;
   var ctrl = '<div class="deja-ctrl">'
     + '<span class="deja-step">Hit streak<button onclick="LAB.dvMeets(-1)"'+(meets <= 1 ? ' disabled' : '')+'>\u2212</button>'
       + '<b>'+meets+'</b><button onclick="LAB.dvMeets(1)"'+(meets >= avail ? ' disabled' : '')+'>+</button>/'+avail+'</span>'
-    + '<span class="deja-step">Legs<button onclick="LAB.dvLegs(-1)"'+(legN <= 2 || hail ? ' disabled' : '')+'>\u2212</button>'
-      + '<b>'+legN+'</b><button onclick="LAB.dvLegs(1)"'+(hail ? ' disabled' : '')+'>+</button></span>'
-    + '<button class="sl-chip'+(hail ? ' on' : '')+'" onclick="LAB.dvHail()">Hail Mary</button>'
     + '<select class="ob-sel" onchange="LAB.dvBook(this.value)">'
       + '<option value=""'+(!state.view.dvBook ? ' selected' : '')+'>Best price \u00b7 not one ticket</option>'
       + booksFor(key).map(function(b){
           return '<option value="'+esc(b)+'"'+(state.view.dvBook === b ? ' selected' : '')+'>'+esc(b)+'</option>';
         }).join('') + '</select></div>'
-    + '<div class="sl-bar">'
-      + '<button class="sl-chip'+(!only || !only.length ? ' on' : '')+'" onclick="LAB.dvMkt(null)">All markets</button>'
-      + allMkts.slice(0, 8).map(function(m){
-          return '<button class="sl-chip'+(only && only.indexOf(m[0]) >= 0 ? ' on' : '')
-            + '" onclick="LAB.dvMkt(\''+m[0]+'\')">'+esc(m[1])+'</button>'; }).join('')+'</div>';
+    + '<select class="ob-sel" onchange="LAB.dvMkt(this.value || null)">'
+      + '<option value=""'+(!only || !only.length ? ' selected' : '')+'>All markets</option>'
+      + allMkts.map(function(m){
+          return '<option value="'+esc(m[0])+'"'+(only && only.indexOf(m[0]) >= 0 ? ' selected' : '')
+            + '>'+esc(m[1])+'</option>'; }).join('') + '</select></div>';
   if (!res.legs.length)
     return '<div class="dayband"><span>D\u00e9j\u00e0 Vu SGM</span></div>'+ctrl
       + '<div class="sig-empty">No player with a posted price cleared a line in all '+meets
@@ -6204,12 +6206,14 @@ function dejaVuSection(key, g){
     var n = steps[l.name] | 0;
     if (!n) return l;
     var rungs = dvRungs(key, l);
-    var at = rungs.findIndex(function(r){ return +r.line === +l.line; });
+    var posted = +l.line - 0.5;
+    var at = rungs.findIndex(function(r){ return Math.abs(r.line - posted) < 0.01; });
     if (at < 0) return l;
     var want = rungs[Math.max(0, Math.min(rungs.length - 1, at + n))];
     if (!want) return l;
     var copy = {}; for (var k in l) copy[k] = l[k];
-    copy.line = want.line; copy.price = want.price; copy.book = want.book;
+    copy.line = want.line + 0.5;        // back to the displayed convention
+    copy.price = want.price; copy.book = want.book;
     return copy;
   });
   var legs = picked.map(function(l){ return cmbLeg(key, l.p, [l.mkt, l.label], l.line - 0.5, 'over'); })
@@ -6224,20 +6228,20 @@ function dejaVuSection(key, g){
         // instrument than an odds filter across the whole ticket: it keeps the player you want and
         // asks less of him, where a min/max just removed names.
         var rungs = dvRungs(key, l);
-        var at = rungs.findIndex(function(r){ return +r.line === +l.line; });
+        var posted = +l.line - 0.5;
+        var at = rungs.findIndex(function(r){ return Math.abs(r.line - posted) < 0.01; });
+        var nm = esc(l.name).replace(/'/g, "\\'");
         return '<div class="deja-card">'+playerImgP(key, l.p, 26)
-          + '<div class="deja-m"><b>'+esc(l.name)+'</b><span>'
+          + '<div class="deja-m"><b>'+esc(l.name)+'</b><span>'+esc(l.label)
+          + ' \u00b7 '+esc(abbrOf(key, l.team))+' \u00b7 <span class="deja-vals">'+l.vals.join(' / ')+'</span></span></div>'
           + '<span class="deja-line">'
-            + '<button onclick="LAB.dvLine(\''+esc(l.name).replace(/'/g,"\\'")+'\',-1)"'
+            + '<button onclick="event.stopPropagation();LAB.dvLine(\''+nm+'\',-1)"'
             + (at <= 0 ? ' disabled' : '')+'>\u2212</button>'
             + '<b>'+Math.ceil(l.line)+'+</b>'
-            + '<button onclick="LAB.dvLine(\''+esc(l.name).replace(/'/g,"\\'")+'\',1)"'
+            + '<button onclick="event.stopPropagation();LAB.dvLine(\''+nm+'\',1)"'
             + (at < 0 || at >= rungs.length - 1 ? ' disabled' : '')+'>+</button></span>'
-          + ' '+esc(l.label)
-          + ' \u00b7 '+esc(abbrOf(key, l.team))+' \u00b7 <span class="deja-vals">'+l.vals.join(' / ')+'</span></span></div>'
           + '<span class="deja-px">$'+l.price.toFixed(2)+(l.book ? '<i>'+esc(l.book)+'</i>' : '')+'</span>'
-          + '<button class="cmb-leg-x" onclick="LAB.dvDrop(\''+esc(l.name).replace(/'/g,"\\'")
-              + '\')">&times;</button></div>';
+          + '<button class="cmb-leg-x" onclick="event.stopPropagation();LAB.dvDrop(\''+nm+'\')">&times;</button></div>';
       }).join('')
     + '<div class="deja-sum" id="dv-card">'
       + '<div class="cmb-sum-row tot"><span>Estimated at '
@@ -14889,7 +14893,8 @@ window.LAB = {
   },
   dvShare: function(){
     var el = document.getElementById('dv-card');
-    if (el) snapElement(el, 'Déjà Vu multi');
+    if (!el) return;
+    sharePng(snapElement(el, 'D\u00e9j\u00e0 Vu').catch(function(){ return null; }), 'jtt-dejavu.png');
   },
   trSide: function(v){ TR_F.side = v; render(); },
   trMinG: function(v){ TR_F.minG = +v || 3; render(); },
