@@ -115,6 +115,7 @@
   .fold>summary:before{content:'\25b8';font-size:9px;color:var(--text-3);transition:transform .15s;}
   .fold[open]>summary:before{transform:rotate(90deg);}
   .fold[open]>summary{color:var(--text-2);}
+  .pf-cell b.pf-good{color:var(--accent);} .pf-cell b.pf-bad{color:#f97316;}
   .pf-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(104px,1fr));gap:6px;margin:6px 0;}
   .pf-cell{background:var(--surface-2);border:1px solid var(--border);border-radius:8px;padding:8px 9px;}
   .pf-cell b{display:block;font-family:var(--font-mono);font-size:15px;}
@@ -1724,6 +1725,7 @@ var TIER3 = { gamelogs:'data/gamelogs.json', dvp:'data/dvp.json', teams_form:'da
               oddsOpen:'data/odds_open.json', goalies:'data/goalies.json',
               firstRead:'data/firstread.json',
               quarters:'data/quarters.json', zones:'data/zones.json',
+              profiles:'data/profiles.json',
               specialTeams:'data/special_teams.json',
               ladder:'data/ladder.json',
               weather:'data/weather.json', calib:'data/calib.json' };
@@ -10914,6 +10916,8 @@ function playerPanel(){
   var body = tab === 'form' ? ppFormTab(key, name)
     : tab === 'calc' ? ppCalc(key, name)
     : tab === 'profile' ? (nbaScoringProfile(key, name)
+        || (nflUsageProfile(key, name, ppOpponent(key, name))
+            + (tuddyProfile(key, { name:name, opp:ppOpponent(key, name) }) || ''))
         || tuddyProfile(key, { name:name, opp:ppOpponent(key, name) })
         || '<div class="empty" style="padding:20px">No usage profile for this player.</div>')
     : tab === 'radar' ? ppRadar(key, name)
@@ -13297,6 +13301,89 @@ function ddNbaZones(key, p){
    Everything about how he gets his points in one view: the zone split with league comparison, the
    shooting line, and the quarter he does it in. tuddyProfile owns this tab for NFL; basketball
    needs its own, because "usage" for a receiver and for a scorer are different questions. */
+
+/* NFL USAGE PROFILE - the Scoring tab for a receiver, back or passer.
+   Not his counting stats: the shape of his usage and the matchup he walks into. Route share and
+   coverage splits are deliberately absent - routes run needs charting nobody publishes free, and
+   inventing a proxy for it would be worse than leaving it out. Built by nfl/build_nfl_profiles.py.  */
+function nflProfile(key, name){
+  if (key !== 'nfl') return null;
+  var S = state.sports[key], pr = S.data.profiles;
+  if (!pr) return null;
+  if (!S.idx.prIdx){
+    var ix = { rec:{}, rush:{}, pass:{} };
+    (pr.receiving || []).forEach(function(r){ ix.rec[cmbNameKey(r.name)] = r; });
+    (pr.rushing   || []).forEach(function(r){ ix.rush[cmbNameKey(r.name)] = r; });
+    (pr.passing   || []).forEach(function(r){ ix.pass[cmbNameKey(r.name)] = r; });
+    S.idx.prIdx = ix;
+  }
+  var k = cmbNameKey(name), ix2 = S.idx.prIdx;
+  return { rec:ix2.rec[k], rush:ix2.rush[k], pass:ix2.pass[k], teams:pr.teams || {} };
+}
+function pfCell(label, value, note, good){
+  return '<div class="pf-cell"><b' + (good === true ? ' class="pf-good"' : good === false ? ' class="pf-bad"' : '')
+    + '>' + esc(value) + '</b><span>' + esc(label) + '</span>'
+    + (note ? '<i>' + esc(note) + '</i>' : '') + '</div>';
+}
+function nflUsageProfile(key, name, opp){
+  var pr = nflProfile(key, name);
+  if (!pr || (!pr.rec && !pr.rush && !pr.pass)) return '';
+  var pct = function(v){ return v == null ? '\u2014' : Math.round(v * 100) + '%'; };
+  var d = pr.teams[opp] || {}, mine = pr.teams[(pr.rec || pr.rush || pr.pass).team] || {};
+  var h = '';
+
+  if (pr.rec){
+    var r = pr.rec;
+    h += '<div class="dd-sec"><div class="dd-h">How he is used</div><div class="pf-grid">'
+      + pfCell('Target share', pct(r.targetShare), r.targets + ' targets', r.targetShare >= 0.22)
+      + pfCell('Air yards share', pct(r.airShare), 'of the team\u2019s', r.airShare >= 0.3)
+      + pfCell('ADOT', r.adot != null ? r.adot.toFixed(1) : '\u2014', 'yards downfield')
+      + pfCell('Deep targets', pct(r.deepRate), '20+ yards', r.deepRate >= 0.15)
+      + pfCell('Catch rate', pct(r.catchRate), r.ypt + ' yds a target')
+      + pfCell('Play action', pct(r.paShare), 'of his targets')
+      + '</div></div>';
+  }
+  if (pr.rush){
+    var ru = pr.rush;
+    h += '<div class="dd-sec"><div class="dd-h">How he is run</div><div class="pf-grid">'
+      + pfCell('Carry share', pct(ru.carryShare), ru.carries + ' carries', ru.carryShare >= 0.5)
+      + pfCell('Yards a carry', ru.ypc != null ? ru.ypc.toFixed(1) : '\u2014', '')
+      + pfCell('Stacked boxes', pct(ru.stackedRate), '8+ defenders', ru.stackedRate != null && ru.stackedRate <= 0.15)
+      + pfCell('Average box', ru.avgBox != null ? ru.avgBox.toFixed(1) : '\u2014', 'defenders')
+      + pfCell('Inside the five', String(ru.insideFive), 'carries')
+      + '</div></div>';
+  }
+  if (pr.pass){
+    var q = pr.pass;
+    h += '<div class="dd-sec"><div class="dd-h">How he throws</div><div class="pf-grid">'
+      + pfCell('ADOT', q.adot != null ? q.adot.toFixed(1) : '\u2014', 'yards downfield')
+      + pfCell('Deep rate', pct(q.deepRate), '20+ yards')
+      + pfCell('Play action', pct(q.paRate), 'of dropbacks')
+      + pfCell('Out of pocket', pct(q.outOfPocket), 'of dropbacks')
+      + pfCell('Blitzed', pct(q.blitzRate), '5+ rushers')
+      + '</div></div>';
+  }
+
+  // the matchup: what his own offence does, and what this defence gives up
+  if (mine.proe != null || d.proeAllowed != null){
+    var comb = (mine.proe != null && d.proeAllowed != null) ? mine.proe + d.proeAllowed : null;
+    h += '<div class="dd-sec"><div class="dd-h">The game he walks into</div><div class="pf-grid">'
+      + pfCell('Team PROE', mine.proe != null ? (mine.proe > 0 ? '+' : '') + mine.proe.toFixed(1) + '%' : '\u2014',
+               mine.proeRank ? 'rank ' + mine.proeRank + ' of 32' : '', mine.proe > 0)
+      + (opp ? pfCell('Allowed by ' + abbrOf(key, opp),
+               d.proeAllowed != null ? (d.proeAllowed > 0 ? '+' : '') + d.proeAllowed.toFixed(1) + '%' : '\u2014',
+               d.proeAllowedRank ? 'rank ' + d.proeAllowedRank + ' of 32' : '', d.proeAllowed > 0) : '')
+      + (comb != null ? pfCell('Combined', (comb > 0 ? '+' : '') + comb.toFixed(1) + '%',
+               'both sides lean pass', comb > 0) : '')
+      + (opp && d.deepAllowed != null ? pfCell('Deep allowed', pct(d.deepAllowed),
+               d.deepAllowedRank ? 'rank ' + d.deepAllowedRank + ' of 32' : '', d.deepAllowed >= 0.12) : '')
+      + '</div>'
+      + '<div class="dd-note">PROE is how much more often than expected a side throws, given down, '
+      + 'distance and score. Positive means pass-leaning. '
+      + '<span style="opacity:.6">Charting: FTN Data via nflverse.</span></div></div>';
+  }
+  return h;
+}
 function nbaScoringProfile(key, name){
   if (key !== 'nba') return '';
   var S = state.sports[key];
