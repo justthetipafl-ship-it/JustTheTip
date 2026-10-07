@@ -1083,6 +1083,13 @@
   .mr-open{display:flex;align-items:center;gap:9px;flex-wrap:wrap;padding:4px 2px 10px;}
   .lg-p i.good{color:var(--accent);} .lg-p i.bad{color:#f97316;}
   .lg-wrap{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:10px;}
+  .rest-wrap{display:flex;gap:8px;padding:2px 0 6px;}
+  .rest-card{flex:1;background:var(--surface);border:1px solid var(--border);border-radius:9px;padding:9px 10px;}
+  .rest-card.rest-hard{border-color:#f97316;}
+  .rest-card b{display:block;font-family:var(--font-display);font-size:13px;}
+  .rest-card span{display:block;font-size:11px;color:var(--text-2);margin-top:3px;}
+  .rest-card i{display:block;font-style:normal;font-size:9px;color:var(--text-3);margin-top:4px;
+    font-family:var(--font-mono);}
   .lg-p.lg-out{opacity:.45;}
   .lg-p .dv-bars{flex:1;min-width:40px;margin:0 8px;}
   .lg-card{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:10px 12px;}
@@ -7590,6 +7597,69 @@ function nblNextManUp(key, g){
    NBA adds is the double-double and triple-double markets, which the books price and the NBL's
    board does not carry.                                                                          */
 var NBA_DD_MIN = 0.40, NBA_TD_MIN = 0.15, NBA_MIN_G = 6;
+
+/* REST AND SCHEDULE SPOT (NBA) -------------------------------------------------------------------
+   In basketball the calendar moves lines more than most matchup stats: a side on the second night
+   of a back-to-back rests starters, empties the bench early and loses minutes off every prop. All
+   of it comes from the fixture list - no build, no extra file.
+   A back-to-back is a game the day after the last one. Three-in-four counts this game plus two in
+   the previous three days; four-in-six the same idea one step out.                                */
+var NBA_REST_MAX = 4;        // more days than this reads as "rested" rather than a number
+function nbaRestFor(key, team, when){
+  var S = state.sports[key];
+  if (!S.idx.restIdx){
+    var ix = {};
+    (asArray(S.data.fixture) || []).forEach(function(g){
+      var t = Date.parse(g.utc || g.gameTimeUTC || g.date || '');
+      if (!t) return;
+      [g.home, g.away].forEach(function(tm){ if (tm) (ix[normTeam(tm)] = ix[normTeam(tm)] || []).push(t); });
+    });
+    Object.keys(ix).forEach(function(k){ ix[k].sort(function(a, b){ return a - b; }); });
+    S.idx.restIdx = ix;
+  }
+  var days = S.idx.restIdx[normTeam(team)];
+  if (!days || !days.length) return null;
+  var now = typeof when === 'number' ? when : Date.parse(when || '');
+  if (!now) return null;
+  var before = days.filter(function(t){ return t < now - 36e5; });   // an hour's grace for tip time
+  if (!before.length) return { rest:null, b2b:false, in4:1, in6:1, first:true };
+  var last = before[before.length - 1];
+  var rest = Math.round((now - last) / 864e5);
+  var within = function(d){
+    var cut = now - d * 864e5;
+    return before.filter(function(t){ return t >= cut; }).length + 1;   // + this game
+  };
+  return { rest:rest, b2b:rest <= 1, in4:within(3), in6:within(5), first:false };
+}
+function nbaRestSection(key, g){
+  if (key !== 'nba') return '';
+  var when = Date.parse(g.utc || g.gameTimeUTC || g.date || '');
+  if (!when) return '';
+  var rows = [g.away, g.home].map(function(team){
+    var r = nbaRestFor(key, team, when);
+    if (!r) return null;
+    var tag = r.first ? 'season opener'
+      : r.b2b ? 'second night of a back-to-back'
+      : r.rest >= NBA_REST_MAX ? r.rest + ' days off'
+      : r.rest + ' day' + (r.rest === 1 ? '' : 's') + ' rest';
+    var hard = r.b2b || r.in4 >= 3 || r.in6 >= 4;
+    return { team:team, r:r, tag:tag, hard:hard };
+  }).filter(Boolean);
+  if (rows.length < 2) return '';
+  var diff = (rows[1].r.rest || 0) - (rows[0].r.rest || 0);
+  return '<div class="dayband"><span>The schedule</span></div>'
+    + '<div class="rest-wrap">' + rows.map(function(x){
+        return '<div class="rest-card' + (x.hard ? ' rest-hard' : '') + '">'
+          + '<b>' + esc(abbrOf(key, x.team)) + '</b>'
+          + '<span>' + esc(x.tag) + '</span>'
+          + '<i>' + x.r.in4 + ' in 4 \u00b7 ' + x.r.in6 + ' in 6</i></div>';
+      }).join('') + '</div>'
+    + (Math.abs(diff) >= 2
+        ? '<div class="deg-note">' + esc(abbrOf(key, diff > 0 ? g.home : g.away)) + ' comes in with '
+          + Math.abs(diff) + ' more days off. A rest edge of two days or more shows up in minutes '
+          + 'before it shows up in anything else.</div>'
+        : '<div class="deg-note">Neither side has a meaningful rest edge.</div>');
+}
 function nbaBigNights(key, g, want){
   // want = 2 for a double-double, 3 for a triple
   var S = state.sports[key], out = [];
@@ -8229,6 +8299,7 @@ function focusPage(){
     + (S.status === 'ready' && !state.view.nerd ? matchRadar(key, g) : '')
     + (S.t3 === 'ready' && !state.view.nerd ? goalieSection(key, g) : '')
     + (S.t3 === 'ready' && !state.view.nerd ? firstReadSection(key, g) : '')
+    + (!state.view.nerd ? nbaRestSection(key, g) : '')
 
     // Nerd Mode replaces the signals rather than adding to them: it is a different read of the
     // same fixture (the market against itself), and stacking both made the page enormous.
@@ -15004,6 +15075,9 @@ window.LAB = {
   // exposed for tests: statOf is the single place a market maps to a gamelog field, and the
   // anytimeTd flag-versus-count bug lived exactly there
   statOfProbe: function(key, row, mkt){ return statOf(key, row, mkt); },
+  // exposed for tests: rest is derived live from the fixture list, so a bad sort or date would
+  // quietly report everyone as rested
+  nbaRestProbe: function(team, when){ return nbaRestFor('nba', team, when); },
   dvLine: function(name, dir){
     var v = state.view; v.dvLine = v.dvLine || {};
     v.dvLine[name] = (v.dvLine[name] || 0) + dir;        // steps from the player's natural rung
