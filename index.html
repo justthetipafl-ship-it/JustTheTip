@@ -13251,6 +13251,11 @@ var ZONE_LAB = { rim:'At the rim', paint:'Paint', midRange:'Mid-range',
                  cornerThree:'Corner three', armsThree:'Above the break' };
 var ZONE_COL = { rim:'#22c55e', paint:'#38bdf8', midRange:'#eab308',
                  cornerThree:'#a78bfa', armsThree:'#f97316' };
+function ordinalish(n){
+  if (n == null) return '';
+  var s2 = ['th', 'st', 'nd', 'rd'], v = n % 100;
+  return n + (s2[(v - 20) % 10] || s2[v] || s2[0]);
+}
 function ddNbaQuarters(key, p, mkt){
   var rows = p ? nbaQuarters(key, p.name) : null;
   if (!rows) return '';
@@ -13270,10 +13275,13 @@ function ddNbaQuarters(key, p, mkt){
     + (tot ? 'He takes ' + Math.round(q1 / tot * 100) + '% of it in the first.' : '')
     + ' Over ' + (rows[0] ? rows[0].games : 0) + ' games.</div>' + bars + '</div>';
 }
-function ddNbaZones(key, p){
+function ddNbaZones(key, p, opp){
   var z = p ? nbaZones(key, p.name) : null;
   if (!z || !z.shots) return '';
-  var lg = (state.sports[key].data.zones || {}).league || {};
+  var zf = state.sports[key].data.zones || {};
+  var lg = zf.league || {};
+  // what THIS defence concedes in each zone - the half that turns a shot profile into a matchup
+  var dfn = opp ? ((zf.defence || {})[normTeam(opp)] || (zf.defence || {})[opp]) : null;
   var keys = ['rim', 'paint', 'midRange', 'cornerThree', 'armsThree'].filter(function(k){
     return z[k] && z[k].att;
   });
@@ -13284,16 +13292,20 @@ function ddNbaZones(key, p){
   var rows = keys.map(function(k){
     var mine = z[k].pct, league = lg[k] && lg[k].pct;
     var edge = (mine != null && league) ? (mine - league) * 100 : null;
+    var dz = dfn && dfn[k];
     return '<div class="qt-row"><span class="qt-q" style="color:' + ZONE_COL[k] + '">'
       + esc(ZONE_LAB[k]) + '</span>'
-      + '<span class="qt-sh">' + Math.round(z[k].share * 100) + '% of his shots</span>'
+      + '<span class="qt-sh">' + Math.round(z[k].share * 100) + '% of his shots'
+      + (dz ? ' \u00b7 ' + esc(abbrOf(key, opp)) + ' concedes ' + Math.round(dz.pct * 100)
+              + '%, ' + ordinalish(dz.rank) + ' of ' + dz.of : '') + '</span>'
       + '<b>' + Math.round((mine || 0) * 100) + '%</b>'
       + (edge != null ? '<i class="' + (edge >= 0 ? 'qt-up' : 'qt-dn') + '">'
           + (edge >= 0 ? '+' : '') + edge.toFixed(0) + '</i>' : '') + '</div>';
   }).join('');
   return '<div class="dd-sec"><div class="dd-h">Where he shoots from</div>'
     + '<div class="dd-note">' + z.shots + ' field-goal attempts. The number on the right is how he '
-    + 'shoots from there; the small figure is against the league from the same zone.</div>'
+    + 'shoots from there; the small figure is against the league from the same zone.'
+    + (dfn ? ' A low rank for the opponent means they concede least there.' : '') + '</div>'
     + bar + rows + '</div>';
 }
 
@@ -13417,7 +13429,7 @@ function nbaScoringProfile(key, name){
         }).join('') + '</div></div>';
   }
 
-  h += ddNbaZones(key, { name:name });
+  h += ddNbaZones(key, { name:name }, ppOpponent(key, name));
   h += ddNbaQuarters(key, { name:name }, 'points');
 
   // shot diet: how his attempts split between threes, twos and the line
@@ -13693,7 +13705,7 @@ function deepPanel(){
   var teams = ddTeamSection(key, p.team || d.team, d.opp, mkt);
   var mlbAdv = ddMlbSection(key, p, d.opp, mkt) + ddNblScoring(key, p, d.opp, mkt) + ddNhlScoring(key, p, d.opp, mkt)
     + ddFirstRead(key, p, mkt)
-    + ddNbaQuarters(key, p, mkt) + ddNbaZones(key, p)
+    + ddNbaQuarters(key, p, mkt) + ddNbaZones(key, p, d.opp)
              + ddNgsSection(key, p, mkt);
   var script = ddScript(key, p.team, d.opp);
   return '<div class="cmb-overlay open" onclick="if(event.target===this)LAB.deepClose()">'
