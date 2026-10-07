@@ -7215,20 +7215,41 @@ function mlbWalks(key, g){
 }
 /* HOMERS - home run spots: the model's HR probability with park and the starter's HR/9 shown.
    Tail guard applies: HR is a long-priced market where an extrapolating model looks generous. */
+/* A home run happens in maybe 3% of plate appearances, so an EV edge on a $9 price is cheap to
+   manufacture and worth little: eight names from one game is not eight spots, it is a loose gate.
+   Two things are required beyond the price. He has to have actual power - a season rate a real
+   home-run hitter clears - and the tile is capped well below the usual eight, because a fixture
+   does not contain eight live home-run chances however the model feels about it. */
+var MLB_HR_MIN_RATE = 0.08;      // roughly 13 home runs over a full season
+var MLB_HR_MAX_ROWS = 4;
 function mlbHomers(key, g){
-  var out = [];
+  var out = [], S = state.sports[key], season = curSeason(key);
   mlbBats(key, g, function(p, team, opp, sp){
     var b = mlbPriced(key, p, 'HR', opp, 'over', 0.5);
     if (!b) return;
-    var pk = {}; try { pk = state.sports[key].scoring.parkFor(p.team) || {}; } catch(e){}
-    out.push({ name:p.name, p:p, opp:opp, sp:sp, pk:pk, b:b });
+    // his own rate this season, from the games themselves rather than a season total that may be
+    // carrying another club's at-bats
+    // BATTING rows only. A pitcher's HR is what he gave UP, and a two-way name or a pitcher who
+    // had a rough month otherwise reads as a slugger: Tyler Mahle came out at 20 "home runs" in 27
+    // games, which is the worst sort of wrong - plausible-looking and completely inverted.
+    var logs = sortLogsDesc(((S.idx.logsByName || {})[p.name] || []).slice())
+      .filter(function(r){ return String(r.Year || r.year) === String(season)
+                                  && String(r.role || 'bat') === 'bat'; });
+    if (logs.length < 20) return;                       // too little to call anyone a power bat
+    var hrs = logs.reduce(function(a, r){ return a + (+r.HR || 0); }, 0);
+    var rate = hrs / logs.length;
+    if (rate < MLB_HR_MIN_RATE) return;                 // not a home-run hitter, whatever the price
+    var pk = {}; try { pk = S.scoring.parkFor(p.team) || {}; } catch(e){}
+    out.push({ name:p.name, p:p, opp:opp, sp:sp, pk:pk, b:b, rate:rate, hrs:hrs, gp:logs.length });
   });
-  out.sort(function(a,b){ return b.b.ev - a.b.ev; });
-  return { rows:out.slice(0, SIG_MAX_ROWS).map(function(r){
-      return mlbRow(key, r, 'Home run', [[(r.p.HR||0)+' HR this season', (r.p.HR||0) >= 20],
+  // rank on what he actually does, then the edge - not the edge alone, which floats weak bats up
+  out.sort(function(a, b){ return (b.rate - a.rate) || (b.b.ev - a.b.ev); });
+  return { rows:out.slice(0, MLB_HR_MAX_ROWS).map(function(r){
+      return mlbRow(key, r, 'Home run', [[r.hrs+' HR in '+r.gp+' games', r.rate >= 0.15],
         ['park HR '+(r.pk.hrFactor || 1).toFixed(2)+'x', (r.pk.hrFactor || 1) > 1.03],
         (r.sp ? [esc(r.sp.name)+' HR/9 '+(r.sp.HR9||0).toFixed(2), (r.sp.HR9||0) >= 1.3] : ['starter TBC', false])]); }),
-    why:'No home-run price on this fixture is 5% generous against the model.' };
+    why:'No home-run hitter here - a rate of ' + MLB_HR_MIN_RATE.toFixed(2) + ' a game or better - '
+      + 'is priced generously enough against the model.' };
 }
 /* STRIKE TIME / GRINDERS - the starters. Strike Time backs strikeouts where the K projection
    beats the posted line; Grinders fades a starter in a tough spot - the UNDER on his Ks. Both are
