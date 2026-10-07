@@ -750,9 +750,17 @@ def main():
         if h["probablePitcher"]["id"]: opp_starters_for_team.setdefault(a["teamId"], []).append(h["probablePitcher"]["id"])
         if a["probablePitcher"]["id"]: opp_starters_for_team.setdefault(h["teamId"], []).append(a["probablePitcher"]["id"])
 
-    # roster hitters per playing team (active roster; lineup overrides order when posted)
+    # Roster hitters per playing team (active roster; lineup overrides order when posted).
+    #
+    # MLB_ALL_TEAMS=1 widens this to every club. The daily run only needs the teams playing, but
+    # when the slate narrows - two teams in the World Series - the player pool collapses with it,
+    # and "1st in the league" starts meaning first of 28. Run it once with the flag to rebuild the
+    # full pool; the adapter's merge keeps it from then on.
+    roster_teams = set(teams) if os.environ.get('MLB_ALL_TEAMS') == '1' else team_ids_playing
+    if roster_teams is not team_ids_playing:
+        print('MLB_ALL_TEAMS: pulling rosters for all %d clubs' % len(roster_teams))
     batters, pitchers = {}, {}
-    for tid in sorted(team_ids_playing):
+    for tid in sorted(roster_teams):
         roster = api(f"teams/{tid}/roster", rosterType="active")
         hitters = [r for r in roster.get("roster", [])
                    if (r.get("position") or {}).get("type") != "Pitcher"]
@@ -837,7 +845,8 @@ def main():
 
     bundle = {
         "generated": int(time.time()), "season": season, "asOf": date,
-        "teams": {str(tid): t for tid, t in teams.items() if tid in team_ids_playing},
+        # every team's rates travel in the bundle - the ranking they feed needs a whole league
+        "teams": {str(tid): t for tid, t in teams.items()},
         "parks": parks, "slate": slate, "batters": batters, "pitchers": pitchers,
         "standings": standings, "leagueLeaders": league_leaders, "trends": trends,
     }
