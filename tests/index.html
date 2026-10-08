@@ -1104,6 +1104,23 @@
   .worm-dot{fill:var(--text);}
   .worm-ax{display:flex;justify-content:space-between;font-size:9px;color:var(--text-3);
     font-family:var(--font-mono);padding:3px 0 0;}
+  .sim-score{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:2px 0 8px;}
+  .sim-sc{display:flex;align-items:center;gap:7px;}
+  .sim-sc>span{font-family:var(--font-display);font-size:12px;min-width:34px;}
+  .sim-stp{display:inline-flex;align-items:center;gap:4px;}
+  .sim-stp button{width:20px;height:20px;line-height:1;padding:0;border-radius:6px;
+    background:var(--surface-2);border:1px solid var(--border);color:var(--text-2);cursor:pointer;}
+  .sim-stp b{min-width:30px;text-align:center;font-family:var(--font-mono);font-size:13px;}
+  .sim-note{font-size:10px;color:var(--text-3);display:flex;align-items:center;gap:7px;margin-left:auto;}
+  /* height:auto, not a fixed height with preserveAspectRatio none - a stretched viewBox
+     squashes the one <text> label out of shape */
+  .simchart{width:100%;height:auto;display:block;}
+  .sim-bar-all{fill:var(--text-3);opacity:.22;}
+  .sim-bar-hit{fill:var(--accent);opacity:.85;}
+  .sim-band{fill:var(--accent);opacity:.08;}
+  .sim-lab{fill:var(--text);font-family:var(--font-mono);font-size:9px;}
+  .sim-zero{stroke:var(--border);stroke-width:1;stroke-dasharray:3 3;vector-effect:non-scaling-stroke;}
+  #sim-card{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:8px;}
   .hist{width:100%;height:72px;display:block;}
   .hist-b{fill:var(--accent);opacity:.55;}
   .hist-med{stroke:var(--text-2);stroke-width:1;stroke-dasharray:2 3;opacity:.7;vector-effect:non-scaling-stroke;}
@@ -8349,6 +8366,7 @@ function focusPage(){
     + (S.t3 === 'ready' && !state.view.nerd ? goalieSection(key, g) : '')
     + (S.t3 === 'ready' && !state.view.nerd ? firstReadSection(key, g) : '')
     + (!state.view.nerd ? nbaRestSection(key, g) : '')
+    + (S.t3 === 'ready' && !state.view.nerd ? simSection(key, g) : '')
 
     // Nerd Mode replaces the signals rather than adding to them: it is a different read of the
     // same fixture (the market against itself), and stacking both made the page enormous.
@@ -13719,6 +13737,606 @@ function hashStr(t){
   for (var i = 0; i < t.length; i++){ h = ((h << 5) - h + t.charCodeAt(i)) | 0; }
   return h;
 }
+
+/* ===== MONTE CARLO GAME SIMULATOR ==============================================================
+   Simulates a fixture by drawing one REAL past game from each side and scaling it for the
+   opponent now being faced. Everything inside a drawn game happened together, so team-mates'
+   lines keep their real relationship instead of being multiplied as if independent.
+
+   WHAT IT IS AND IS NOT GOOD FOR - measured, not assumed, by back-testing on completed games:
+     - Calibration is sound. Real totals and margins land uniformly across the simulated spread
+       (chi-square 14.5 and 11.7 over 331 NBA games), and a simulated 70% hits 69% of the time;
+       calibration error 0.027.
+     - It does NOT out-price multiplying legs independently. Over 700+ NFL combos the Brier scores
+       are a tie, because the correlation that exists is small in its effect on two or three legs.
+     - What it CAN do that multiplication cannot: condition on a result. "Show me the legs that
+       land in the games that finish like this" has no closed form - you have to simulate.
+   Correlation is reproduced rather than invented: the jitter split is fitted so the simulator
+   matches the correlation measured in real games (NFL quarterback-with-receiver 1.24 real against
+   1.236 simulated; NBA team-mates 1.02).                                                       */
+var SIM_CFG = {
+  nba: { stats:['points','rebounds','assists','threes','steals','blocks','turnovers','minutes'],
+         fixed:['minutes'], score:'points', teamJitter:0.05, jitter:0.15 },
+  nbl: { stats:['points','rebounds','assists','threes','steals','blocks','minutes'],
+         fixed:['minutes'], score:'points', teamJitter:0.05, jitter:0.15 },
+  nfl: { stats:['passYds','passAtt','passComp','passTds','passInt','rushYds','rushAtt','rushTds',
+                'receptions','targets','recYds','recTds'],
+         fixed:[], score:null, teamJitter:0.18, jitter:0.06 },
+  afl: { stats:['disposals','kicks','handballs','marks','tackles','goals','behinds'],
+         fixed:[], score:null, teamJitter:0.10, jitter:0.12 },
+  epl: { stats:['goals','assists','shots','shotsOnTarget','passes','tackles'],
+         fixed:[], score:null, teamJitter:0.10, jitter:0.12 },
+  mlb: { stats:['H','HR','R','RBI','BB','SO','TB'],
+         fixed:[], score:null, teamJitter:0.10, jitter:0.12 }
+};
+function simCfg(key){ return SIM_CFG[key] || SIM_CFG.nba; }
+
+/* REAL SCORES, not scores inferred from the box score.
+   Summing a player column only gives a team's score in basketball; in NFL it misses field goals,
+   extra points and anything the defence scored, and in MLB and EPL there is no such column at all.
+   results.json carries the actual scoreline for every sport, so the simulator joins to that - which
+   is what lets the score filter work outside basketball at all. The join key differs per sport
+   (NFL has season+week and no date, basketball has a game id, EPL and MLB have a date), so every
+   row is filed under all of them and the lookup tries each in turn. AFL gamelogs carry a round
+   NAME ("Opening Round") that its results file does not, so AFL finds nothing and its panel stays
+   hidden - which is what it did before. */
+function simScoreIndex(key){
+  var S = state.sports[key];
+  if (S.idx.simScores) return S.idx.simScores;
+  var raw = S.data.results;
+  var all = Array.isArray(raw) ? raw : ((raw && (raw.games || raw.rows)) || []);
+  var m = {};
+  all.forEach(function(r){
+    var hs = r.hs != null ? +r.hs : (r.homeScore != null ? +r.homeScore : null);
+    var as = r.as != null ? +r.as : (r.awayScore != null ? +r.awayScore : null);
+    if (hs == null || as == null || !isFinite(hs) || !isFinite(as) || !r.home || !r.away) return;
+    var v = { hs:hs, as:as, home:normTeam(r.home), away:normTeam(r.away) };
+    if (r.gameId != null) m['g:' + r.gameId] = v;
+    if (r.date) m['d:' + v.home + '|' + String(r.date).slice(0, 10)] = v;
+    var yr = r.season != null ? r.season : r.year;
+    var wk = r.week != null ? r.week : r.round;
+    if (yr != null && wk != null) m['w:' + v.home + '|' + yr + '|' + wk] = v;
+  });
+  S.idx.simScores = m;
+  return m;
+}
+/* For one team-game, find its scoreline and return it from THAT team's point of view. */
+function simScoreFor(key, gl){
+  var m = simScoreIndex(key);
+  var hoTeam = gl.home ? gl.team : gl.opp;
+  var hit = (gl.id != null && m['g:' + gl.id])
+    || (gl.date && m['d:' + normTeam(hoTeam) + '|' + String(gl.date).slice(0, 10)])
+    || (gl.year != null && gl.week != null && m['w:' + normTeam(hoTeam) + '|' + gl.year + '|' + gl.week]);
+  if (!hit) return null;
+  return gl.home ? { me:hit.hs, them:hit.as } : { me:hit.as, them:hit.hs };
+}
+
+function simBuildGames(key){
+  var S = state.sports[key];
+  if (S.idx.simGames) return S.idx.simGames;
+  var cfg = simCfg(key);
+  var logs = [];
+  (S.data.gamelogFiles || ['gamelogs']).forEach(function(){});
+  logs = asArray(S.data.gamelogs) || [];
+  if (!logs.length && S.idx.logsByName){
+    Object.keys(S.idx.logsByName).forEach(function(n){
+      (S.idx.logsByName[n] || []).forEach(function(r){ logs.push(r); });
+    });
+  }
+  var byGame = {};
+  logs.forEach(function(r){
+    var mid = r.MatchId || ((r.Year || '') + '-' + (r.Week || r.RoundName || r.Date || ''));
+    if (!mid || !r.Team) return;
+    (byGame[mid] = byGame[mid] || {});
+    (byGame[mid][r.Team] = byGame[mid][r.Team] || []).push(r);
+  });
+  var teamGames = {};
+  Object.keys(byGame).forEach(function(mid){
+    var sides = Object.keys(byGame[mid]);
+    if (sides.length !== 2) return;                 // a half-recorded game is not a sample
+    sides.forEach(function(t){
+      var opp = sides[0] === t ? sides[1] : sides[0];
+      var mine = byGame[mid][t], theirs = byGame[mid][opp];
+      var g0 = { id:mid, date:String(mine[0].Date || ''), year:mine[0].Year,
+                 week:mine[0].Week != null ? mine[0].Week : mine[0].RoundName,
+                 team:t, opp:opp, home:(mine[0].home === true || +mine[0].home === 1) };
+      var sc = null, osc = null;
+      var real = simScoreFor(key, g0);
+      if (real){ sc = real.me; osc = real.them; }
+      else if (cfg.score){
+        sc = mine.reduce(function(a, r){ return a + (+r[cfg.score] || 0); }, 0);
+        osc = theirs.reduce(function(a, r){ return a + (+r[cfg.score] || 0); }, 0);
+        if (!sc || !osc){ sc = null; osc = null; }    // keep the game for props, just not for scores
+      }
+      g0.score = sc; g0.oppScore = osc; g0.lines = mine;
+      (teamGames[t] = teamGames[t] || []).push(g0);
+    });
+  });
+  // how permissive each defence is - points allowed, or production allowed where rows carry no score
+  var def = {};
+  Object.keys(teamGames).forEach(function(t){
+    var vals = [];
+    teamGames[t].forEach(function(g){
+      if (cfg.score && g.oppScore != null){ vals.push(g.oppScore); return; }
+      var theirs = (teamGames[g.opp] || []).filter(function(x){ return x.id === g.id; })[0];
+      if (!theirs) return;
+      var v = 0;
+      theirs.lines.forEach(function(r){
+        cfg.stats.forEach(function(st){ if (/Yds$|^disposals$|^goals$|^H$/.test(st)) v += (+r[st] || 0); });
+      });
+      if (isFinite(v) && v > 0) vals.push(v);
+    });
+    if (vals.length) def[t] = vals.reduce(function(a, b){ return a + b; }, 0) / vals.length;
+  });
+  // the scale of a scoreline in THIS sport. A fixed tolerance of 4 means "within 4 points" in
+  // basketball and "within 4 goals" in football, which is the entire range of football results -
+  // the filter accepted 90% of sims and the feature did nothing.
+  var tots = [];
+  Object.keys(teamGames).forEach(function(t){
+    teamGames[t].forEach(function(g){
+      if (g.score != null && g.oppScore != null) tots.push(g.score + g.oppScore);
+    });
+  });
+  var meanTot = tots.length ? tots.reduce(function(a, b){ return a + b; }, 0) / tots.length : 0;
+  S.idx.simGames = { teams:teamGames, def:def, cfg:cfg, meanTot:meanTot,
+                     scored:tots.length, games:tots.length ? tots.length : 0 };
+  return S.idx.simGames;
+}
+
+function simRng(seed){
+  var a = seed >>> 0;
+  return function(){
+    a |= 0; a = (a + 0x6D2B79F5) | 0;
+    var t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+function simGauss(rng){
+  var u = 0, v = 0;
+  while (u === 0) u = rng();
+  while (v === 0) v = rng();
+  return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
+}
+
+function simulateFixture(key, home, away, n, opts){
+  var G = simBuildGames(key), cfg = G.cfg, o = opts || {};
+  var rng = simRng(o.seed || 20261008);
+  var lgVals = Object.keys(G.def).map(function(t){ return G.def[t]; })
+    .filter(function(v){ return isFinite(v) && v > 0; });
+  var lgDef = lgVals.length ? lgVals.reduce(function(a, b){ return a + b; }, 0) / lgVals.length : 1;
+  var out = [];
+  var side = function(team, oppTeam, atHome){
+    var pool = G.teams[normTeam(team)] || G.teams[team] || [];
+    if (!pool.length) return null;
+    // Where most of a side's games have a scoreline, drop the few that do not. Keeping them meant
+    // a few hundred sims had no margin, so the chart could not place them and its bars no longer
+    // added up to the sim count the panel reported.
+    var withSc = pool.filter(function(g){ return g.score != null; });
+    if (withSc.length >= pool.length * 0.6 && withSc.length >= 8) pool = withSc;
+    var same = pool.filter(function(g){ return g.home === atHome; });
+    if (same.length >= 6) pool = same;              // venue matters; a mixed pool hides it
+    var g = pool[Math.floor(rng() * pool.length)];
+    var faced = G.def[g.opp] || lgDef, facing = G.def[normTeam(oppTeam)] || G.def[oppTeam] || lgDef;
+    var f = (isFinite(faced) && isFinite(facing) && faced > 0) ? facing / faced : 1;
+    if (!isFinite(f) || f <= 0) f = 1;
+    f = Math.max(0.82, Math.min(1.22, f));
+    var teamJit = Math.exp(simGauss(rng) * cfg.teamJitter);
+    var lines = g.lines.map(function(r){
+      var jit = teamJit * Math.exp(simGauss(rng) * cfg.jitter);
+      var row = { name:r.Player, team:team };
+      cfg.stats.forEach(function(st){
+        var v = +r[st] || 0;
+        row[st] = cfg.fixed.indexOf(st) >= 0 ? v : v * f * jit;
+      });
+      if (cfg.score === 'points'){
+        row.pra = row.points + row.rebounds + row.assists;
+        row.pr = row.points + row.rebounds;
+        row.pa = row.points + row.assists;
+        row.ra = row.rebounds + row.assists;
+      } else if (row.rushYds != null || row.recYds != null){
+        row.rushRecYds = (row.rushYds || 0) + (row.recYds || 0);
+      }
+      return row;
+    });
+    return { score: g.score == null ? null : g.score * f * teamJit, lines:lines };
+  };
+  for (var i = 0; i < n; i++){
+    var H = side(home, away, true), A = side(away, home, false);
+    if (!H || !A) continue;
+    var have = H.score != null && A.score != null;
+    out.push({ home:H, away:A,
+               hs: have ? Math.round(H.score) : null, as: have ? Math.round(A.score) : null,
+               total: have ? Math.round(H.score + A.score) : null,
+               margin: have ? Math.round(H.score - A.score) : null });
+  }
+  return out;
+}
+
+/* ===== SIM BUILDER ============================================================================
+   The multi builder the simulator makes possible. You say roughly how the game finishes; it keeps
+   only the simulated games that finished that way, then ranks the posted legs by how often they
+   landed in THOSE games. Independence cannot answer that question - there is no formula for "given
+   this scoreline", you have to simulate and count.                                             */
+var SIM_N = 4000;                 // enough that a 5% leg is measured on ~200 games
+var SIM_TOL = 0.12;               // how loosely a sim has to match the score you asked for
+
+function simState(){
+  state.view.sim = state.view.sim || { legs:3, mkt:null, book:'', hs:null, as:null, runs:0, mode:'likely' };
+  return state.view.sim;
+}
+function simFilter(sims, hs, as, scale){
+  // Returns INDICES, not the sim objects. Returning objects meant the caller had to ask
+  // kept.indexOf(s) once per sim, which is 16 million comparisons at SIM_N = 4000 and was most
+  // of the run time.
+  var all = [];
+  if (hs == null || as == null){
+    for (var k = 0; k < sims.length; k++) all.push(k);
+    return { idx:all, all:true };
+  }
+  var tot = hs + as, mar = hs - as;
+  // Tolerance set by how big a scoreline is in this sport, not by a constant. In football, where
+  // a game averages under three goals, "2-0" means 2-0 - any tolerance at all accepts half the
+  // league - so low-scoring sports match the scoreline exactly.
+  var exact = scale && scale <= 6;
+  var floor = exact ? 0 : Math.max(1, Math.round((scale || 0) * 0.04));
+  var tTol = exact ? 0 : Math.max(floor, Math.round(tot * SIM_TOL * 0.5));
+  var mTol = exact ? 0 : Math.max(floor, Math.round(Math.abs(mar) * 0.5) + floor);
+  var idx = [];
+  for (var i = 0; i < sims.length; i++){
+    var s = sims[i];
+    if (s.total == null) continue;
+    if (Math.abs(s.total - tot) <= tTol && Math.abs(s.margin - mar) <= mTol) idx.push(i);
+  }
+  return { idx:idx, all:false, tTol:tTol, mTol:mTol,
+           loM:mar - mTol, hiM:mar + mTol, loT:tot - tTol, hiT:tot + tTol };
+}
+
+/* Candidate legs: what the books actually post, so every result is bettable. */
+function simCandidates(key, g, mkt, book){
+  var out = [], seen = {};
+  (oddsRowsAll(key) || []).forEach(function(r){
+    if (!r.player || r.line == null || !(+r.over > 1)) return;
+    if (mkt && r.market !== mkt) return;
+    if (book && r.book !== book) return;
+    var team = (((state.sports[key].idx.byName || {})[r.player] || {}).team) || null;
+    if (team && normTeam(team) !== normTeam(g.home) && normTeam(team) !== normTeam(g.away)) return;
+    var k = r.player + '|' + r.market + '|' + r.line;
+    if (seen[k] && seen[k].price >= +r.over) return;
+    seen[k] = { name:r.player, mkt:r.market, line:+r.line, price:+r.over, book:r.book, team:team };
+  });
+  Object.keys(seen).forEach(function(k){ out.push(seen[k]); });
+  return out;
+}
+
+/* The 4,000 games, simulated once and kept.
+   Every control on the panel - the scoreline, the market, the book, the number of legs, the
+   objective - is a question about the SAME simulated season, so re-simulating on each change cost
+   about 2.5 seconds per dropdown for nothing. Only a fresh "run" (a new seed) rebuilds them. */
+function simSims(key, g, seed){
+  var S = state.sports[key];
+  var ck = normTeam(g.home) + '|' + normTeam(g.away) + '|' + seed;
+  if (S.idx.simCache && S.idx.simCache.k === ck) return S.idx.simCache.v;
+  var sims = simulateFixture(key, g.home, g.away, SIM_N, { seed:seed });
+  if (!sims.length) return null;
+  // one lookup per simulated game: player -> his line in that game
+  var perSim = sims.map(function(s){
+    var m = {};
+    s.home.lines.forEach(function(r){ m[cmbNameKey(r.name)] = r; });
+    s.away.lines.forEach(function(r){ m[cmbNameKey(r.name)] = r; });
+    return m;
+  });
+  // who is in these games at all, so a candidate on a player the sim never sees is dropped before
+  // we walk 4,000 games looking for him
+  var seenPl = {};
+  perSim.forEach(function(m){ Object.keys(m).forEach(function(k2){ seenPl[k2] = (seenPl[k2] || 0) + 1; }); });
+  var v = { sims:sims, perSim:perSim, seen:seenPl };
+  S.idx.simCache = { k:ck, v:v };
+  return v;
+}
+
+function simRun(key, g){
+  var st = simState();
+  var seed = 7 + (st.runs || 0);
+  var C = simSims(key, g, seed);
+  if (!C) return null;
+  // The rating is the expensive half - about 0.9s - and it only depends on the simulated games,
+  // the scoreline and the two filters. Changing the leg count or the objective does not touch it,
+  // so cache it and let those two controls answer instantly.
+  var rk = [normTeam(g.home), normTeam(g.away), seed, st.hs, st.as, st.mkt || '', st.book || ''].join('|');
+  var S0 = state.sports[key];
+  if (S0.idx.simRated && S0.idx.simRated.k === rk) return S0.idx.simRated.v;
+  var sims = C.sims, perSim = C.perSim;
+  var f = simFilter(sims, st.hs, st.as, (state.sports[key].idx.simGames || {}).meanTot);
+  var idx = f.idx;
+  var cands = simCandidates(key, g, st.mkt, st.book);
+  var rated = [];
+  var need = Math.max(30, idx.length * 0.3);
+  // Rate by player-and-market, not by posted line. A player can have a dozen lines in one market
+  // (10+, 20+, 30+ receiving yards...), and rating each one separately walked all 4,000 games
+  // again for each - about 7 million lookups a run, which was most of the 1.6s. Gather his values
+  // once, sort them, then every line on him is a binary search.
+  var byPM = {};
+  cands.forEach(function(c){ var gk = c.name + '|' + c.mkt; (byPM[gk] = byPM[gk] || []).push(c); });
+  Object.keys(byPM).forEach(function(gk){
+    var list = byPM[gk], k = cmbNameKey(list[0].name), mkt = list[0].mkt;
+    if ((C.seen[k] || 0) < need) return;         // never in these games; no point walking them
+    var vals = [];
+    for (var j = 0; j < idx.length; j++){
+      var row = perSim[idx[j]][k];
+      if (row) vals.push(+row[mkt] || 0);
+    }
+    if (vals.length < need) return;              // too rarely in the game to rate
+    vals.sort(function(a, b){ return a - b; });
+    list.forEach(function(c){
+      var lo = 0, hi = vals.length;              // first index whose value beats the line
+      while (lo < hi){ var mid = (lo + hi) >> 1; if (vals[mid] > c.line) hi = mid; else lo = mid + 1; }
+      var hits = vals.length - lo, p = hits / vals.length;
+      if (p <= 0.02 || p >= 0.995) return;
+      rated.push({ c:c, p:p, hits:hits, of:vals.length, ev:p * c.price - 1 });
+    });
+  });
+  rated.sort(function(a, b){ return b.ev - a.ev; });
+  var out = { sims:sims, perSim:perSim, idx:idx, rated:rated, filtered:!f.all, band:f,
+              tTol:f.tTol, mTol:f.mTol, n:sims.length };
+  S0.idx.simRated = { k:rk, v:out };
+  return out;
+}
+
+/* GREEDY BUILD, to one of two objectives.
+   The ask was "multis that hit the most on the simulations", and maximising value does the
+   opposite - expected value is highest on long shots, so the value build kept returning 3-leg
+   multis that landed in 1% of sims. So "Most likely" is the default: it maximises how often the
+   whole multi lands, with a price floor per leg so the answer is not six near-certainties priced
+   at $1.15. "Best value" keeps the old objective for anyone who wants it.
+   Either way the legs are counted together in the SAME simulated games, so whatever relationship
+   they really have is kept rather than multiplied away. */
+var SIM_LEG_FLOOR = 1.35;         // below this a leg is not really a leg
+
+function simBuild(res, want, mode){
+  if (!res || !res.rated.length) return null;
+  var likely = mode !== 'value';
+  var pool = likely
+    ? res.rated.filter(function(r){ return r.c.price >= SIM_LEG_FLOOR; })
+    : res.rated.slice();
+  if (!pool.length) pool = res.rated.slice();
+  pool.sort(likely
+    ? function(a, b){ return b.p - a.p || b.c.price - a.c.price; }
+    : function(a, b){ return b.ev - a.ev; });
+
+  var picked = [pool[0]];
+  var liveIdx = res.idx.filter(function(i){
+    var r = res.perSim[i][cmbNameKey(picked[0].c.name)];
+    return r && (+r[picked[0].c.mkt] || 0) > picked[0].c.line;
+  });
+  while (picked.length < want){
+    var best = null;
+    for (var i = 0; i < pool.length && i < 80; i++){
+      var cand = pool[i];
+      // one leg per player: two lines on the same man are the same bet twice, and most books
+      // will not take them together anyway
+      if (picked.some(function(p2){ return p2.c.name === cand.c.name; })) continue;
+      var k = cmbNameKey(cand.c.name), still = [];
+      for (var j = 0; j < liveIdx.length; j++){
+        var row = res.perSim[liveIdx[j]][k];
+        if (row && (+row[cand.c.mkt] || 0) > cand.c.line) still.push(liveIdx[j]);
+      }
+      var p = still.length / Math.max(1, res.idx.length);
+      var price = picked.reduce(function(a, p2){ return a * p2.c.price; }, 1) * cand.c.price;
+      var scoreV = likely ? p : (p * price - 1);
+      if (!best || scoreV > best.s) best = { cand:cand, still:still, p:p, price:price, s:scoreV };
+    }
+    if (!best || !best.still.length) break;
+    picked.push(best.cand);
+    liveIdx = best.still;
+  }
+  var price = picked.reduce(function(a, p2){ return a * p2.c.price; }, 1);
+  var p = liveIdx.length / Math.max(1, res.idx.length);
+  return { legs:picked, price:price, p:p, hits:liveIdx.length, of:res.idx.length,
+           ev:p * price - 1, liveIdx:liveIdx, mode:likely ? 'likely' : 'value' };
+}
+
+/* Does this sport actually have scorelines for these two sides? Gating on the config alone meant
+   the panel only ever appeared for basketball; gating on the data means it appears wherever the
+   results join landed, and stays hidden where it did not. */
+function simHasScores(key, home, away){
+  var G = simBuildGames(key);
+  var scored = function(t){
+    var pool = G.teams[normTeam(t)] || G.teams[t] || [];
+    var n = 0;
+    for (var i = 0; i < pool.length; i++) if (pool[i].score != null) n++;
+    return n;
+  };
+  return scored(home) >= 5 && scored(away) >= 5;
+}
+
+function simSection(key, g){
+  var cfg = simCfg(key);
+  if (!g || !g.home || !g.away) return '';
+  if (!simHasScores(key, g.home, g.away)) return '';   // nothing to filter a scoreline on
+  var st = simState();
+  var mkts = marketsFor(key);
+  var books = booksFor(key);
+  var head = '<div class="dayband"><span>Simulator</span></div>';
+  if (!st.on){
+    return head + '<div class="deg-note">Simulate this game ' + SIM_N.toLocaleString()
+      + ' times from both sides’ real past games, then see which legs land in the games that '
+      + 'finish the way you think it will. '
+      + '<button class="sl-chip" onclick="LAB.simOn(\'' + key + '\')">Run the simulator</button></div>';
+  }
+  var res = simRun(key, g);
+  if (!res) return head + '<div class="deg-note">Not enough game history for these two sides yet.</div>';
+  var built = simBuild(res, Math.max(2, Math.min(6, st.legs || 3)), st.mode || 'likely');
+
+  // the score you are betting into
+  var sc = '<div class="sim-score">'
+    + ['away', 'home'].map(function(sideKey){
+        var team = sideKey === 'home' ? g.home : g.away;
+        var v = sideKey === 'home' ? st.hs : st.as;
+        return '<div class="sim-sc"><span>' + esc(abbrOf(key, team)) + '</span>'
+          + '<div class="sim-stp"><button onclick="LAB.simScore(\'' + sideKey + '\',-1)">−</button>'
+          + '<b>' + (v == null ? '—' : v) + '</b>'
+          + '<button onclick="LAB.simScore(\'' + sideKey + '\',1)">+</button></div></div>';
+      }).join('')
+    + '<div class="sim-note">' + (res.filtered
+        ? res.idx.length.toLocaleString() + ' of ' + res.n.toLocaleString() + ' sims finished like this'
+        : 'all ' + res.n.toLocaleString() + ' sims · set a score to narrow it')
+      + (res.filtered ? '<button class="sl-chip" onclick="LAB.simScore(\'clear\')">clear</button>' : '')
+      + '</div></div>';
+
+  var ctrl = '<div class="deg-bar mb-bar">'
+    + '<select class="ob-sel" onchange="LAB.simLegs(this.value)">'
+      + [2,3,4,5,6].map(function(n){ return '<option value="'+n+'"'+(st.legs===n?' selected':'')+'>'+n+' legs</option>'; }).join('')
+    + '</select>'
+    + '<select class="ob-sel" onchange="LAB.simMkt(this.value||null)">'
+      + '<option value="">All markets</option>'
+      + mkts.map(function(m){ return '<option value="'+esc(m)+'"'+(st.mkt===m?' selected':'')+'>'+esc(mktLabel(key,m))+'</option>'; }).join('')
+    + '</select>'
+    + '<select class="ob-sel" onchange="LAB.simBook(this.value)">'
+      + '<option value="">Best price</option>'
+      + books.map(function(b){ return '<option value="'+esc(b)+'"'+(st.book===b?' selected':'')+'>'+esc(b)+'</option>'; }).join('')
+    + '</select>'
+    + '<select class="ob-sel" onchange="LAB.simMode(this.value)">'
+      + '<option value="likely"' + ((st.mode || 'likely') === 'likely' ? ' selected' : '') + '>Most likely</option>'
+      + '<option value="value"' + (st.mode === 'value' ? ' selected' : '') + '>Best value</option>'
+    + '</select></div>';
+
+  if (!built || !built.legs.length){
+    return head + sc + ctrl + '<div class="deg-note">No posted legs clear the filters for that '
+      + 'scoreline. Widen the score, or drop the market filter.</div>';
+  }
+
+  var legs = built.legs.map(function(l){
+    return '<div class="deja-card">' + playerImgP(key, (state.sports[key].idx.byName||{})[l.c.name], 26)
+      + '<div class="deja-m"><b>' + esc(l.c.name) + '</b><span>'
+      + Math.ceil(l.c.line) + '+ ' + esc(mktLabel(key, l.c.mkt))
+      + ' · lands in ' + Math.round(l.p * 100) + '% on its own</span></div>'
+      + '<span class="deja-px">$' + l.c.price.toFixed(2)
+      + (l.c.book ? '<i>' + esc(l.c.book) + '</i>' : '') + '</span></div>';
+  }).join('');
+
+  // where it hits: the simulated margin, with the winning games picked out
+  var dist = simHitChart(key, res, built, g);
+
+  return head + sc + ctrl
+    + '<div id="sim-card">'
+    + '<div class="dv-head"><b>Simulated multi</b><span>' + esc(abbrOf(key, g.away)) + ' @ '
+      + esc(abbrOf(key, g.home)) + ' · ' + built.legs.length + ' legs</span></div>'
+    + legs
+    + '<div class="deja-sum">'
+      + '<div class="cmb-sum-row"><span>Price</span><b>$' + built.price.toFixed(2) + '</b></div>'
+      + '<div class="cmb-sum-row tot"><span>Hit in the sims</span><b>' + built.hits.toLocaleString()
+        + ' of ' + built.of.toLocaleString() + ' · ' + (built.p * 100).toFixed(1) + '%</b></div>'
+      + '<div class="cmb-sum-row"><span>Against the price'
+        + (res.filtered ? ', if it finishes like that' : '') + '</span><b class="'
+        + (built.ev > 0 ? 'cmb-vscore good' : 'cmb-vscore bad') + '">'
+        + (built.ev > 0 ? '+' : '') + Math.round(built.ev * 100) + '%</b></div>'
+    + '</div>' + dist + '</div>'
+    + '<div class="deja-actions"><button class="pc-add" onclick="LAB.simShare()">'
+      + '<i class="ti ti-share"></i> Share this multi</button></div>'
+    + '<div class="deg-note">Legs are counted together in the same simulated games, so their real '
+      + 'relationship is kept rather than multiplied. Back-testing says the simulator is well '
+      + 'calibrated but no sharper than multiplying legs - what it adds is the question above: '
+      + 'which legs land when the game finishes like THAT.</div>';
+}
+
+/* Where the combo hits, across the simulated margin. One series, so no legend: the caption names
+   it. Bars are every simulated game; the lit part is the games the multi landed in. */
+function simHitChart(key, res, built, g){
+  var sims = res.sims.filter(function(s){ return s.margin != null; });
+  if (sims.length < 50) return '';
+  var live = {};
+  built.liveIdx.forEach(function(i){ live[i] = 1; });
+  var margins = sims.map(function(s){ return s.margin; });
+  var lo = Math.min.apply(null, margins), hi = Math.max.apply(null, margins);
+  var n = 24, step = Math.max(1, (hi - lo) / n);
+  var tot = new Array(n).fill(0), won = new Array(n).fill(0);
+  res.sims.forEach(function(s, i){
+    if (s.margin == null) return;
+    var b = Math.min(n - 1, Math.floor((s.margin - lo) / step));
+    tot[b]++;
+    if (live[i]) won[b]++;
+  });
+  var peak = Math.max.apply(null, tot) || 1;
+  // headroom for the one direct label, so the tallest bar does not touch the top
+  var W = 320, H = 68, PAD = 13, gap = 1.5, bw = (W - gap * (n - 1)) / n;
+  // Label the bar the reader wants a number from: the one this multi landed in most. Labelling
+  // the TALLEST bar put "0/503" on the chart whenever a scoreline was set, because the most
+  // common margin sits outside the band and can never hit - which reads as a broken chart.
+  var mostWon = Math.max.apply(null, won);
+  var tall = mostWon > 0 ? won.indexOf(mostWon) : tot.indexOf(peak);
+  // the margin window this multi lands in most often, among buckets with enough games to mean it
+  var bestB = -1, bestR = 0;
+  for (var b2 = 0; b2 < n; b2++){
+    if (tot[b2] < Math.max(20, sims.length * 0.02)) continue;
+    var r2 = won[b2] / tot[b2];
+    if (r2 > bestR){ bestR = r2; bestB = b2; }
+  }
+  var bars = tot.map(function(c, i){
+    var h2 = (c / peak) * H, hw = c ? (won[i] / c) * h2 : 0;
+    var x = (i * (bw + gap)), from = Math.round(lo + i * step), to = Math.round(from + step);
+    var lab = '';
+    if (i === tall && c){
+      // one number on the chart, on the bar it belongs to: how many of the most common
+      // scoreline's games this multi landed in. Every other bar carries it on hover.
+      var anchor = x + bw / 2 < 28 ? 'start' : (x + bw / 2 > W - 28 ? 'end' : 'middle');
+      var tx = anchor === 'start' ? x : (anchor === 'end' ? x + bw : x + bw / 2);
+      // With a scoreline set, "14/404" would put the bar's hits over the bar's TOTAL, and most of
+      // that total was never eligible to hit - the same mixed denominator the caption had. Show
+      // the count alone there and let the caption carry the rate.
+      var txt = res.filtered ? (won[i] + ' hit') : (won[i] + '/' + c);
+      lab = '<text x="' + tx.toFixed(1) + '" y="' + (PAD + H - h2 - 4).toFixed(1)
+        + '" class="sim-lab" text-anchor="' + anchor + '">' + txt + '</text>';
+    }
+    return '<g><rect x="' + x.toFixed(1) + '" y="' + (PAD + H - h2).toFixed(1) + '" width="' + bw.toFixed(1)
+      + '" height="' + h2.toFixed(1) + '" rx="1.5" class="sim-bar-all"/>'
+      + (hw ? '<rect x="' + x.toFixed(1) + '" y="' + (PAD + H - hw).toFixed(1) + '" width="' + bw.toFixed(1)
+        + '" height="' + hw.toFixed(1) + '" rx="1.5" class="sim-bar-hit"/>' : '')
+      + lab
+      + '<rect x="' + x.toFixed(1) + '" y="0" width="' + bw.toFixed(1) + '" height="' + (H + PAD)
+      + '" fill="transparent">'
+      + '<title>' + esc(abbrOf(key, g.home)) + ' by ' + from + ' to ' + to + ': '
+      + won[i] + ' of ' + c + ' hit</title></rect></g>';
+  }).join('');
+  // the slice of the distribution the score filter kept, so the dark bars outside it read as
+  // "not asked about" rather than "never hits"
+  var xOf = function(m){ return Math.max(0, Math.min(W, ((m - lo) / Math.max(1e-6, hi - lo)) * W)); };
+  var band = '';
+  if (res.filtered && res.band && res.band.loM != null){
+    var bx = xOf(res.band.loM), bx2 = xOf(res.band.hiM);
+    // In a low-scoring sport the band is an exact margin, so lo and hi are the same point and a
+    // plain rect had zero width and never appeared. Give it a visible minimum, centred.
+    var bwd = Math.max(2.5, bx2 - bx);
+    band = '<rect x="' + Math.max(0, bx - (bwd - (bx2 - bx)) / 2).toFixed(1) + '" y="' + PAD
+      + '" width="' + bwd.toFixed(1) + '" height="' + H + '" class="sim-band"/>';
+  }
+  var zx = xOf(0);
+  // With a scoreline set, "x% of games in this margin" is wrong: outside the band nothing can hit
+  // by construction, so the rate across a bucket mixes games that were never eligible. Inside the
+  // band the honest number is the headline one, so say that instead.
+  var cap;
+  if (res.filtered){
+    cap = 'The shaded band is the ' + (built.of ? built.of.toLocaleString() : '') + ' simulated games '
+      + 'that finished the way you asked. ' + built.hits.toLocaleString() + ' of them landed this multi.';
+  } else if (bestB >= 0){
+    cap = 'Lands most often when ' + esc(abbrOf(key, lo + bestB * step >= 0 ? g.home : g.away))
+      + ' win by ' + Math.abs(Math.round(lo + bestB * step)) + '\u2013'
+      + Math.abs(Math.round(lo + (bestB + 1) * step)) + ' \u2014 ' + Math.round(bestR * 100)
+      + '% of those games.';
+  } else {
+    cap = 'Every simulated game by its margin; the bright part of each bar is the games this multi landed in.';
+  }
+  return '<div class="dd-sec" style="padding-top:4px"><div class="dd-h">Where it hits</div>'
+    + '<svg class="simchart" viewBox="0 0 ' + W + ' ' + (H + PAD + 2) + '" '
+    + 'role="img" aria-label="Simulated margins, with the games this multi landed in">' + band + bars
+    + '<line x1="' + zx.toFixed(1) + '" y1="' + PAD + '" x2="' + zx.toFixed(1) + '" y2="'
+    + (H + PAD) + '" class="sim-zero"/>'
+    + '</svg>'
+    + '<div class="hist-ax"><span>' + esc(abbrOf(key, g.away)) + ' by ' + Math.abs(Math.round(lo))
+      + '</span><span class="hist-med-lab">level</span><span>' + esc(abbrOf(key, g.home)) + ' by '
+      + Math.round(hi) + '</span></div>'
+    + '<div class="dd-note">' + cap + '</div></div>';
+}
 function teamNextOpp(key, team){
   var S = state.sports[key], now = Date.now(), best = null;
   (asArray(S.data.fixture) || []).forEach(function(g){
@@ -15627,6 +16245,62 @@ window.LAB = {
     if (!el) return;
     sharePng(snapElement(el, 'D\u00e9j\u00e0 Vu').catch(function(){ return null; }), 'jtt-dejavu.png');
   },
+  // exposed for tests: the simulator has several places it can silently find nothing
+  simProbe: function(key, gi){
+    var g = (asArray(state.sports[key].data.fixture) || [])[gi || 0];
+    if (!g) return { error:'no fixture' };
+    var G = simBuildGames(key);
+    var rows = (oddsRowsAll(key) || []).filter(function(r){ return r.player && r.line != null && +r.over > 1; });
+    var byName = state.sports[key].idx.byName || {};
+    var inGame = rows.filter(function(r){
+      var tm = (byName[r.player] || {}).team;
+      return tm && (normTeam(tm) === normTeam(g.home) || normTeam(tm) === normTeam(g.away));
+    });
+    return { home:g.home, away:g.away,
+             simTeams:Object.keys(G.teams).length,
+             homePool:(G.teams[normTeam(g.home)] || G.teams[g.home] || []).length,
+             awayPool:(G.teams[normTeam(g.away)] || G.teams[g.away] || []).length,
+             pricedRows:rows.length, inThisGame:inGame.length,
+             sampleTeams: rows.slice(0, 4).map(function(r){ return r.player + '=' + ((byName[r.player] || {}).team || 'none'); }),
+             cands: simCandidates(key, g, null, '').length };
+  },
+  // exposed for tests: where the run time goes. The panel re-runs on every dropdown change, so a
+  // slow stage is felt on every interaction, and the slow one has not been where I guessed twice.
+  simTimeProbe: function(key, gi){
+    var g = (asArray(state.sports[key].data.fixture) || [])[gi || 0];
+    if (!g) return { error:'no fixture' };
+    var o = {}, a;
+    a = Date.now(); simBuildGames(key); o.buildGames = Date.now() - a;
+    state.sports[key].idx.simCache = null;
+    a = Date.now(); simSims(key, g, 7); o.simsCold = Date.now() - a;
+    a = Date.now(); simSims(key, g, 7); o.simsCached = Date.now() - a;
+    a = Date.now(); o.nCands = simCandidates(key, g, null, '').length; o.cands = Date.now() - a;
+    a = Date.now(); var res = simRun(key, g); o.simRun = Date.now() - a;
+    o.rated = res ? res.rated.length : 0;
+    a = Date.now(); simBuild(res, 4, 'likely'); o.simBuild = Date.now() - a;
+    a = Date.now(); simSection(key, g); o.section = Date.now() - a;
+    a = Date.now(); render(); o.render = Date.now() - a;
+    return o;
+  },
+  simOn: function(k){ var st = simState(); st.on = true; st.runs = (st.runs || 0) + 1; render(); },
+  simLegs: function(v){ simState().legs = +v || 3; render(); },
+  simMkt: function(v){ simState().mkt = v; render(); },
+  simMode: function(v){ simState().mode = v === 'value' ? 'value' : 'likely'; render(); },
+  simBook: function(v){ simState().book = v || ''; render(); },
+  simScore: function(side, d){
+    var st = simState();
+    if (side === 'clear'){ st.hs = null; st.as = null; render(); return; }
+    var cur = side === 'home' ? st.hs : st.as;
+    if (cur == null) cur = 100;                 // a starting point people then adjust
+    cur = Math.max(0, cur + (d || 0));
+    if (side === 'home') st.hs = cur; else st.as = cur;
+    render();
+  },
+  simShare: function(){
+    var el = document.getElementById('sim-card');
+    if (!el) return;
+    sharePng(snapElement(el, 'Simulated multi').catch(function(){ return null; }), 'jtt-sim.png');
+  },
   trSide: function(v){ TR_F.side = v; render(); },
   trMinG: function(v){ TR_F.minG = +v || 3; render(); },
   trMinPx: function(v){ TR_F.minPx = +v || 0; render(); },
@@ -15729,7 +16403,7 @@ window.LAB = {
 // ==> ONE SWITCH. Set to true on launch day and the gate is live again; nothing else to change.
 //     Off, the tool opens straight to the fixtures - handy while testing.
 //     (localStorage 'jtt_auth_force' = '1' turns it on for one browser, for checking the gate.)
-var AUTH_ON = true;
+var AUTH_ON = false;
 var AUTH_HASH = '6bbaa0af9ac8cf78c4cf5ca258bfd862c3aa4fb860401abfb387fc34b65af59b';   // fallback only
 var AUTH_KEY = 'jtt_afl_auth';                    // shared with the per-sport tools on purpose
 var AUTH_DAYS = 7;
