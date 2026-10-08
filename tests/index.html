@@ -2031,16 +2031,43 @@ function localDate(ms){ return new Date(ms).toLocaleDateString([], {weekday:'sho
 function localTime(ms){ return new Date(ms).toLocaleTimeString([], {hour:'numeric', minute:'2-digit'}); }
 function dayKey(ms){ var d=new Date(ms); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
 
-function teamName(key, t){
-  var rec = teamRec(key, t);
-  return (rec.name || rec.school || rec.displayName) || String(t);
-}
+/* Clubs are named in full wherever a human reads them - the panel header, the profile heading,
+   the name under a logo on a fixture row. Both name helpers resolve the same way now; they used
+   to differ, and teamName missed the `teamFull` field that NBA and NBL teams.json carries, so a
+   Denver profile was headed "DEN". */
+function teamName(key, t){ return teamFullName(key, t); }
+
+// NFL and NHL teams.json carry a code and no name at all, so the full names live here. They do
+// not change, and a 32-line table beats showing people three letters where a club name belongs.
+var TEAM_FULL = {
+  nfl: { ARI:'Arizona Cardinals', ATL:'Atlanta Falcons', BAL:'Baltimore Ravens', BUF:'Buffalo Bills',
+    CAR:'Carolina Panthers', CHI:'Chicago Bears', CIN:'Cincinnati Bengals', CLE:'Cleveland Browns',
+    DAL:'Dallas Cowboys', DEN:'Denver Broncos', DET:'Detroit Lions', GB:'Green Bay Packers',
+    HOU:'Houston Texans', IND:'Indianapolis Colts', JAX:'Jacksonville Jaguars', KC:'Kansas City Chiefs',
+    LAC:'Los Angeles Chargers', LAR:'Los Angeles Rams', LV:'Las Vegas Raiders', MIA:'Miami Dolphins',
+    MIN:'Minnesota Vikings', NE:'New England Patriots', NO:'New Orleans Saints', NYG:'New York Giants',
+    NYJ:'New York Jets', PHI:'Philadelphia Eagles', PIT:'Pittsburgh Steelers', SEA:'Seattle Seahawks',
+    SF:'San Francisco 49ers', TB:'Tampa Bay Buccaneers', TEN:'Tennessee Titans',
+    WAS:'Washington Commanders' },
+  nhl: { ANA:'Anaheim Ducks', BOS:'Boston Bruins', BUF:'Buffalo Sabres', CGY:'Calgary Flames',
+    CAR:'Carolina Hurricanes', CHI:'Chicago Blackhawks', COL:'Colorado Avalanche',
+    CBJ:'Columbus Blue Jackets', DAL:'Dallas Stars', DET:'Detroit Red Wings', EDM:'Edmonton Oilers',
+    FLA:'Florida Panthers', LAK:'Los Angeles Kings', MIN:'Minnesota Wild', MTL:'Montreal Canadiens',
+    NSH:'Nashville Predators', NJD:'New Jersey Devils', NYI:'New York Islanders',
+    NYR:'New York Rangers', OTT:'Ottawa Senators', PHI:'Philadelphia Flyers',
+    PIT:'Pittsburgh Penguins', SJS:'San Jose Sharks', SEA:'Seattle Kraken', STL:'St. Louis Blues',
+    TBL:'Tampa Bay Lightning', TOR:'Toronto Maple Leafs', UTA:'Utah Mammoth', VAN:'Vancouver Canucks',
+    VGK:'Vegas Golden Knights', WSH:'Washington Capitals', WPG:'Winnipeg Jets' }
+};
 // Club label for tables: prefer a real name where the data has one. AFL and EPL key teams by
 // name already; MLB carries a `name` field beside the code; NFL has neither, so its three-letter
 // code is genuinely all there is and the abbreviation stands on its own.
 function teamFullName(key, t){
   var rec = teamRec(key, t);
-  return rec.name || rec.fullName || rec.team || t;
+  var m = TEAM_FULL[key];
+  return rec.teamFull || rec.fullName || rec.name || rec.displayName || rec.school
+    || (m && (m[String(t).toUpperCase()] || m[String(rec.team || '').toUpperCase()]))
+    || rec.team || String(t);
 }
 // The NHL's own SVGs carry padding around the crest, so they drew visibly smaller than every
 // other sport's in the same box. ESPN hosts NHL logos in the same full-frame format as the NFL
@@ -13583,7 +13610,7 @@ function teamResults(key, team){
     if (!isHome && !isAway) return;
     var mine = isHome ? hs : as, theirs = isHome ? as : hs;
     out.push({
-      date: String(r.date || ''), home: isHome,
+      date: String(r.date || ''), home: isHome, season: resSeason(key, r),
       opp: isHome ? r.away : r.home,
       f: mine, a: theirs,
       res: mine > theirs ? 'W' : (mine < theirs ? 'L' : 'D')
@@ -13591,6 +13618,52 @@ function teamResults(key, team){
   });
   out.sort(function(a, b){ return String(a.date).localeCompare(String(b.date)); });
   return out;
+}
+
+/* Which season a result belongs to. Every sport files this differently - NFL, NBA and MLB carry a
+   season, AFL a year, NBL a "2024-2025" string, EPL nothing at all - so EPL falls back to the
+   date, with the cut in July because its season straddles the new year. */
+function resSeason(key, r){
+  if (r.season != null) return String(r.season);
+  if (r.year != null) return String(r.year);
+  var d = String(r.date || '').slice(0, 10);
+  if (d.length < 7) return '';
+  var y = +d.slice(0, 4), m = +d.slice(5, 7);
+  if (key === 'epl' || key === 'nbl' || key === 'nba' || key === 'nhl'){
+    // a straddling season is named for both years - October 2026 is 2026-27, not "2027", which is
+    // what a single year made it look like
+    var a = m >= 7 ? y : y - 1;
+    return a + '-' + String((a + 1) % 100).padStart(2, '0');
+  }
+  return String(y);
+}
+
+/* THIS SEASON'S games, which is what every chart on the profile was supposed to be showing.
+   The worm ran across every season in the file and still said "across the season", so a club with
+   three years of results had a worm that was mostly history. H2H is the deliberate exception -
+   head-to-head is worth more the further back it goes. */
+function teamSeasonGames(key, team){
+  var all = teamResults(key, team);
+  if (!all.length) return { games:[], season:'', all:all };
+  var by = {};
+  all.forEach(function(g){ (by[g.season || ''] = by[g.season || ''] || []).push(g); });
+  var ks = Object.keys(by).sort();
+  var cur = ks[ks.length - 1];
+  // Four games in, a four-point worm is thin but it is the truth, and it is what was asked for.
+  // Only below that does it fall back to last season - and the heading names whichever season it
+  // settled on, so it is never a guess. Dallas five games into 2026 was showing 2025 before this.
+  if ((by[cur] || []).length < 4 && ks.length > 1) cur = ks[ks.length - 2];
+  return { games: by[cur] || all, season: cur, all: all, seasons: ks.length };
+}
+// "2026" on its own, or "2024-2025" as the NBL files it
+function seasonLabel(sn){ return sn ? String(sn) : ''; }
+
+/* The two distribution charts are about tendency rather than this season's story, and a histogram
+   of five games says nothing. They use the last N games instead and say so, which crosses the
+   season break honestly rather than silently. */
+function teamRecentGames(key, team, n){
+  var all = teamResults(key, team);
+  return { games: all.slice(-n), n:n, short: all.length < n, total: all.length };
 }
 
 /* How a club's season has gone, ten games at a time. A single record hides a side that started
@@ -13610,7 +13683,7 @@ function teamResults(key, team){
    have identical means. Sequential fill in one hue; the median marked rather than labelling every
    bar. */
 function teamTotalsChart(key, team){
-  var g = teamResults(key, team);
+  var RG = teamRecentGames(key, team, 24), g = RG.games;
   if (g.length < 10) return '';
   var totals = g.map(function(x){ return x.f + x.a; });
   var lo = Math.min.apply(null, totals), hi = Math.max.apply(null, totals);
@@ -13657,7 +13730,8 @@ function teamTotalsChart(key, team){
   }).join('');
   var medX = ((med - lo) / (hi - lo)) * W;
   var fmt = function(v){ return v >= 100 ? Math.round(v) : v.toFixed(1); };
-  return '<div class="dd-sec"><div class="dd-h">Where their totals land</div>'
+  return '<div class="dd-sec"><div class="dd-h">Where their totals land \u00b7 last '
+    + g.length + '</div>'
     + '<svg class="hist" viewBox="0 0 ' + W + ' ' + (H + 2) + '" preserveAspectRatio="none" role="img" '
     + 'aria-label="Distribution of combined scores across ' + totals.length + ' games">'
     + bars
@@ -13675,8 +13749,8 @@ function teamTotalsChart(key, team){
     + 'the average: two sides can average the same total and spread very differently.</div></div>';
 }
 function teamWorm(key, team){
-  var g = teamResults(key, team);
-  if (g.length < 6) return '';
+  var SG = teamSeasonGames(key, team), g = SG.games;
+  if (g.length < 4) return '';
   var cum = 0, pts = g.map(function(x, i){ cum += (x.f - x.a); return { i:i, v:cum, g:x }; });
   var vals = pts.map(function(p2){ return p2.v; });
   var hi = Math.max.apply(null, vals.concat([0])), lo = Math.min.apply(null, vals.concat([0]));
@@ -13699,7 +13773,8 @@ function teamWorm(key, team){
       + ' · running ' + (p2.v > 0 ? '+' : '') + p2.v + '</title></rect>';
   }).join('');
   var last = pts[pts.length - 1].v;
-  return '<div class="dd-sec"><div class="dd-h">The worm</div>'
+  return '<div class="dd-sec"><div class="dd-h">The worm'
+    + (SG.season ? ' \u00b7 ' + esc(seasonLabel(SG.season)) : '') + '</div>'
     + '<svg class="worm" viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="none" role="img" '
     + 'aria-label="Cumulative scoring margin across ' + pts.length + ' games">'
     + '<defs>'
@@ -13720,8 +13795,11 @@ function teamWorm(key, team){
           if (p2 == null) return '';
           var px = x(p2.i), py = y(p2.v);
           var ax = anchor === 'end' ? px - 4 : (anchor === 'start' ? px + 4 : px);
+          // below the line when the point is near the top, above it otherwise, and never within
+          // 10px of either edge - the season-low label used to sit on the axis, through the line
+          var ty = py < 16 ? py + 11 : py - 6;
           return '<circle cx="' + px.toFixed(1) + '" cy="' + py.toFixed(1) + '" r="2.5" class="worm-dot"/>'
-            + '<text x="' + ax.toFixed(1) + '" y="' + Math.max(9, Math.min(H - 3, py - 6)).toFixed(1)
+            + '<text x="' + ax.toFixed(1) + '" y="' + Math.max(10, Math.min(H - 8, ty)).toFixed(1)
             + '" class="worm-n ' + cls + '" text-anchor="' + (anchor === 'end' ? 'end' : anchor === 'start' ? 'start' : 'middle')
             + '">' + (p2.v > 0 ? '+' : '') + p2.v + '</text>';
         };
@@ -14649,7 +14727,7 @@ function teamH2HSection(key, team){
    lives in one-score finishes, is a different proposition from one with the same record whose games
    are settled by half-time. */
 function teamGameShapeSection(key, team){
-  var g = teamResults(key, team);
+  var RG = teamRecentGames(key, team, 24), g = RG.games;
   if (g.length < 8) return '';
   var totals = g.map(function(x){ return x.f + x.a; });
   var margins = g.map(function(x){ return x.f - x.a; });
@@ -14673,7 +14751,8 @@ function teamGameShapeSection(key, team){
   var worst = g.slice().sort(function(a, b){ return (a.f - a.a) - (b.f - b.a); })[0];
   var dp = function(v){ return v >= 100 ? Math.round(v) : v.toFixed(1); };
   var shutouts = g.filter(function(x){ return x.a === 0; }).length;
-  return '<div class="dd-sec"><div class="dd-h">How their games go</div><div class="pf-grid">'
+  return '<div class="dd-sec"><div class="dd-h">How their games go \u00b7 last '
+    + g.length + '</div><div class="pf-grid">'
     + pfCell('Average total', dp(avgTot), 'median ' + dp(med))
     + pfCell('Above that', Math.round(over / g.length * 100) + '%', 'of their games')
     + pfCell('Within ' + close, tw + '-' + tl,
@@ -14687,7 +14766,7 @@ function teamGameShapeSection(key, team){
     + (worst.home ? 'v ' : '@ ') + esc(abbrOf(key, worst.opp)) + '.</div></div>';
 }
 function teamFormSection(key, team){
-  var g = teamResults(key, team);
+  var SG = teamSeasonGames(key, team), g = SG.games;
   if (g.length < 3) return '';
   var tally = function(rows){
     var w = rows.filter(function(x){ return x.res === 'W'; }).length;
@@ -14712,11 +14791,14 @@ function teamFormSection(key, team){
       + ' ' + x.f + '-' + x.a + '">' + x.res + '</span>';
   }).join('');
 
-  return '<div class="dd-sec"><div class="dd-h">Form</div>'
+  return '<div class="dd-sec"><div class="dd-h">Form'
+    + (SG.season ? ' \u00b7 ' + esc(seasonLabel(SG.season)) : '') + '</div>'
     + '<div class="fm-pips">' + pips + '<span class="fm-lab">last ' + Math.min(10, g.length) + '</span></div>'
     + '<div class="pf-grid">'
     + pfCell('Record', rec(all), all.n + ' games')
-    + pfCell('Last 10', rec(last), dp(last.f) + ' for, ' + dp(last.a) + ' against')
+    + (g.length > 10
+        ? pfCell('Last 10', rec(last), dp(last.f) + ' for, ' + dp(last.a) + ' against')
+        : '')
     + pfCell('At home', rec(home), home.n ? dp(home.f) + ' – ' + dp(home.a) : '')
     + pfCell('Away', rec(away), away.n ? dp(away.f) + ' – ' + dp(away.a) : '')
     + pfCell('Scored', dp(all.f), 'a game')
@@ -14751,11 +14833,13 @@ function teamProfile(key, team){
       + '<span>' + esc(label(col)) + '</span>'
       + (r ? '<i>' + ordinalish(r.rank) + ' of ' + r.of + '</i>' : '') + '</div>';
   };
-  var forCols = numeric.filter(function(c){ return !isAgainst(c) && c !== 'games'; }).slice(0, 10);
+  var SKIP_COLS = { games:1, matches:1, gp:1, id:1, code:1 };
+  var forCols = numeric.filter(function(c){ return !isAgainst(c) && !SKIP_COLS[c]; }).slice(0, 10);
   var agCols = numeric.filter(isAgainst).slice(0, 10);
 
-  var h = '<div class="tp-head"><b>' + esc(teamName(key, team) || team) + '</b>'
-    + '<span>' + esc(SPORTS[key].name) + (me.games ? ' \u00b7 ' + me.games + ' games' : '') + '</span></div>';
+  // No heading here: teamPanel already puts the club's name and sport at the top of the card, and
+  // printing both read as a stutter once the names went full-length.
+  var h = '';
   h += teamFormSection(key, team) + teamWorm(key, team) + teamH2HSection(key, team)
      + teamGameShapeSection(key, team) + teamTotalsChart(key, team);
   if (forCols.length)
