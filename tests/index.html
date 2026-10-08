@@ -115,6 +115,7 @@
   .fold>summary:before{content:'\25b8';font-size:9px;color:var(--text-3);transition:transform .15s;}
   .fold[open]>summary:before{transform:rotate(90deg);}
   .fold[open]>summary{color:var(--text-2);}
+  .pf-cell b.pf-good{color:var(--accent);} .pf-cell b.pf-bad{color:#f97316;}
   .pf-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(104px,1fr));gap:6px;margin:6px 0;}
   .pf-cell{background:var(--surface-2);border:1px solid var(--border);border-radius:8px;padding:8px 9px;}
   .pf-cell b{display:block;font-family:var(--font-mono);font-size:15px;}
@@ -912,6 +913,10 @@
     border-radius:6px;font-size:13px;line-height:1;cursor:pointer;}
   .deja-step button:disabled{opacity:.35;cursor:default;}
   .deja-step b{font-family:var(--font-display);font-size:13px;min-width:14px;text-align:center;}
+  #dv-card{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:8px;}
+  .dv-head{display:flex;align-items:baseline;gap:8px;padding:2px 4px 8px;}
+  .dv-head b{font-family:var(--font-display);font-size:13px;letter-spacing:.04em;}
+  .dv-head span{font-size:10px;color:var(--text-3);}
   .deja-card .deja-line{flex:0 0 auto;margin:0 6px 0 0;}
   .deja-line{display:inline-flex;align-items:center;gap:3px;vertical-align:middle;margin-right:4px;}
   .deja-line button{width:17px;height:17px;line-height:1;padding:0;border-radius:5px;
@@ -1078,6 +1083,34 @@
   .mr-open{display:flex;align-items:center;gap:9px;flex-wrap:wrap;padding:4px 2px 10px;}
   .lg-p i.good{color:var(--accent);} .lg-p i.bad{color:#f97316;}
   .lg-wrap{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:10px;}
+  .tt-wrap{display:flex;align-items:center;gap:5px;padding:4px 0 8px;height:62px;}
+  .tt-col{flex:1;display:flex;flex-direction:column;justify-content:center;min-width:0;}
+  .tt-up,.tt-dn{display:flex;height:28px;align-items:flex-end;}
+  .tt-dn{align-items:flex-start;}
+  .tt-up i{display:block;width:100%;background:var(--accent);border-radius:3px 3px 0 0;opacity:.8;}
+  .tt-dn i{display:block;width:100%;background:#f97316;border-radius:0 0 3px 3px;opacity:.8;}
+  .fm-pips{display:flex;align-items:center;gap:3px;padding:2px 0 8px;flex-wrap:wrap;}
+  .fm-pip{width:19px;height:19px;border-radius:5px;display:inline-flex;align-items:center;
+    justify-content:center;font-size:9px;font-weight:800;font-family:var(--font-mono);}
+  .fm-w{background:rgba(34,197,94,.18);color:var(--accent);}
+  .fm-l{background:rgba(249,115,22,.16);color:#f97316;}
+  .fm-d{background:var(--surface-2);color:var(--text-3);}
+  .fm-lab{font-size:9px;color:var(--text-3);margin-left:5px;text-transform:uppercase;letter-spacing:.05em;}
+  .tp-link{cursor:pointer;}
+  tr.tp-link:hover{background:var(--surface-2);}
+  .tp-link:hover .fxr-name{color:var(--accent);}
+  .tp-head{display:flex;align-items:baseline;gap:9px;padding:2px 2px 10px;}
+  .tp-head b{font-family:var(--font-display);font-size:15px;}
+  .tp-head span{font-size:10px;color:var(--text-3);}
+  .lg-p b{margin-left:auto;font-family:var(--font-mono);}
+  .lg-p i{font-style:normal;font-size:9px;color:var(--text-3);margin-left:7px;}
+  .rest-wrap{display:flex;gap:8px;padding:2px 0 6px;}
+  .rest-card{flex:1;background:var(--surface);border:1px solid var(--border);border-radius:9px;padding:9px 10px;}
+  .rest-card.rest-hard{border-color:#f97316;}
+  .rest-card b{display:block;font-family:var(--font-display);font-size:13px;}
+  .rest-card span{display:block;font-size:11px;color:var(--text-2);margin-top:3px;}
+  .rest-card i{display:block;font-style:normal;font-size:9px;color:var(--text-3);margin-top:4px;
+    font-family:var(--font-mono);}
   .lg-p.lg-out{opacity:.45;}
   .lg-p .dv-bars{flex:1;min-width:40px;margin:0 8px;}
   .lg-card{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:10px 12px;}
@@ -1720,6 +1753,7 @@ var TIER3 = { gamelogs:'data/gamelogs.json', dvp:'data/dvp.json', teams_form:'da
               oddsOpen:'data/odds_open.json', goalies:'data/goalies.json',
               firstRead:'data/firstread.json',
               quarters:'data/quarters.json', zones:'data/zones.json',
+              profiles:'data/profiles.json',
               specialTeams:'data/special_teams.json',
               ladder:'data/ladder.json',
               weather:'data/weather.json', calib:'data/calib.json' };
@@ -6160,12 +6194,22 @@ function dvRungs(key, l){
 function dejaVuSection(key, g){
   var avail = dvMeetings(key, g).length;
   if (!avail) return '';
-  // Start at the LONGEST streak the fixture supports and at full legs. The strongest version of
-  // the bet is the interesting one; anyone who wants it looser can step down, and legs are
-  // removable by hand anyway.
-  var meets = Math.min(Math.max(1, state.view.dvMeets || avail), avail);
+  // Open at the longest streak that still FINDS somebody. Defaulting to the number of meetings
+  // asks for a player who cleared his line in every one of them, which is usually nobody and
+  // leaves the panel empty; the useful default is the deepest streak with legs in it. Walk down
+  // from the top and stop at the first that produces any.
   var hail = !!state.view.dvHail;
-  var res = dvLegs(key, g, meets);
+  var meets, res;
+  if (state.view.dvMeets){
+    meets = Math.min(Math.max(1, state.view.dvMeets), avail);
+    res = dvLegs(key, g, meets);
+  } else {
+    for (meets = avail; meets >= 1; meets--){
+      res = dvLegs(key, g, meets);
+      if (res.legs.length) break;
+    }
+    if (meets < 1){ meets = 1; res = dvLegs(key, g, 1); }
+  }
   var distinct = {};
   res.legs.forEach(function(l){ distinct[l.name] = 1; });
   var distinctN = Object.keys(distinct).length;
@@ -6223,6 +6267,11 @@ function dejaVuSection(key, g){
   if (joint == null || !isFinite(joint) || joint <= 0) joint = null;
   var fair = joint ? 1/joint : null;
   return '<div class="dayband"><span>D\u00e9j\u00e0 Vu SGM</span></div>'+ctrl
+    // Everything inside dv-card is what the share captures. The id used to sit on the summary
+    // alone, so the picture showed a price with no legs behind it - the one thing worth sharing.
+    + '<div id="dv-card">'
+    + '<div class="dv-head"><b>D\u00e9j\u00e0 Vu</b><span>'+esc(abbrOf(key, g.away))+' @ '
+      + esc(abbrOf(key, g.home))+' \u00b7 cleared in '+meets+' straight meeting'+(meets===1?'':'s')+'</span></div>'
     + picked.map(function(l){
         // Step a leg's line down to a rung that is actually posted. Shortening one man is a finer
         // instrument than an odds filter across the whole ticket: it keeps the player you want and
@@ -6243,7 +6292,7 @@ function dejaVuSection(key, g){
           + '<span class="deja-px">$'+l.price.toFixed(2)+(l.book ? '<i>'+esc(l.book)+'</i>' : '')+'</span>'
           + '<button class="cmb-leg-x" onclick="event.stopPropagation();LAB.dvDrop(\''+nm+'\')">&times;</button></div>';
       }).join('')
-    + '<div class="deja-sum" id="dv-card">'
+    + '<div class="deja-sum">'
       + '<div class="cmb-sum-row tot"><span>Estimated at '
       + esc(state.view.dvBook || 'best price') + '</span><b>$'+comb.toFixed(2)+'</b></div>'
       + '<div class="cmb-corr">Every leg cleared its line in all '+meets+' straight meetings between these '
@@ -6251,7 +6300,7 @@ function dejaVuSection(key, g){
       + 'player\u2019s minimum across those games, so the record held every time.'
       + (state.view.dvBook ? ' Priced at '+esc(state.view.dvBook)+', so the whole multi is placeable there.'
          : ' Best price per leg \u2014 pick a book to make it placeable as one ticket.')+'</div>'
-      + '</div>'
+      + '</div></div>'
     + '<div class="deja-actions"><button class="pc-add" onclick="LAB.dvShare()">'
       + '<i class="ti ti-share"></i> Share this multi</button></div>';
 }
@@ -7569,6 +7618,69 @@ function nblNextManUp(key, g){
    NBA adds is the double-double and triple-double markets, which the books price and the NBL's
    board does not carry.                                                                          */
 var NBA_DD_MIN = 0.40, NBA_TD_MIN = 0.15, NBA_MIN_G = 6;
+
+/* REST AND SCHEDULE SPOT (NBA) -------------------------------------------------------------------
+   In basketball the calendar moves lines more than most matchup stats: a side on the second night
+   of a back-to-back rests starters, empties the bench early and loses minutes off every prop. All
+   of it comes from the fixture list - no build, no extra file.
+   A back-to-back is a game the day after the last one. Three-in-four counts this game plus two in
+   the previous three days; four-in-six the same idea one step out.                                */
+var NBA_REST_MAX = 4;        // more days than this reads as "rested" rather than a number
+function nbaRestFor(key, team, when){
+  var S = state.sports[key];
+  if (!S.idx.restIdx){
+    var ix = {};
+    (asArray(S.data.fixture) || []).forEach(function(g){
+      var t = Date.parse(g.utc || g.gameTimeUTC || g.date || '');
+      if (!t) return;
+      [g.home, g.away].forEach(function(tm){ if (tm) (ix[normTeam(tm)] = ix[normTeam(tm)] || []).push(t); });
+    });
+    Object.keys(ix).forEach(function(k){ ix[k].sort(function(a, b){ return a - b; }); });
+    S.idx.restIdx = ix;
+  }
+  var days = S.idx.restIdx[normTeam(team)];
+  if (!days || !days.length) return null;
+  var now = typeof when === 'number' ? when : Date.parse(when || '');
+  if (!now) return null;
+  var before = days.filter(function(t){ return t < now - 36e5; });   // an hour's grace for tip time
+  if (!before.length) return { rest:null, b2b:false, in4:1, in6:1, first:true };
+  var last = before[before.length - 1];
+  var rest = Math.round((now - last) / 864e5);
+  var within = function(d){
+    var cut = now - d * 864e5;
+    return before.filter(function(t){ return t >= cut; }).length + 1;   // + this game
+  };
+  return { rest:rest, b2b:rest <= 1, in4:within(3), in6:within(5), first:false };
+}
+function nbaRestSection(key, g){
+  if (key !== 'nba') return '';
+  var when = Date.parse(g.utc || g.gameTimeUTC || g.date || '');
+  if (!when) return '';
+  var rows = [g.away, g.home].map(function(team){
+    var r = nbaRestFor(key, team, when);
+    if (!r) return null;
+    var tag = r.first ? 'season opener'
+      : r.b2b ? 'second night of a back-to-back'
+      : r.rest >= NBA_REST_MAX ? r.rest + ' days off'
+      : r.rest + ' day' + (r.rest === 1 ? '' : 's') + ' rest';
+    var hard = r.b2b || r.in4 >= 3 || r.in6 >= 4;
+    return { team:team, r:r, tag:tag, hard:hard };
+  }).filter(Boolean);
+  if (rows.length < 2) return '';
+  var diff = (rows[1].r.rest || 0) - (rows[0].r.rest || 0);
+  return '<div class="dayband"><span>The schedule</span></div>'
+    + '<div class="rest-wrap">' + rows.map(function(x){
+        return '<div class="rest-card' + (x.hard ? ' rest-hard' : '') + '">'
+          + '<b>' + esc(abbrOf(key, x.team)) + '</b>'
+          + '<span>' + esc(x.tag) + '</span>'
+          + '<i>' + x.r.in4 + ' in 4 \u00b7 ' + x.r.in6 + ' in 6</i></div>';
+      }).join('') + '</div>'
+    + (Math.abs(diff) >= 2
+        ? '<div class="deg-note">' + esc(abbrOf(key, diff > 0 ? g.home : g.away)) + ' comes in with '
+          + Math.abs(diff) + ' more days off. A rest edge of two days or more shows up in minutes '
+          + 'before it shows up in anything else.</div>'
+        : '<div class="deg-note">Neither side has a meaningful rest edge.</div>');
+}
 function nbaBigNights(key, g, want){
   // want = 2 for a double-double, 3 for a triple
   var S = state.sports[key], out = [];
@@ -8165,13 +8277,14 @@ function focusPage(){
     + '<i class="ti ti-math-symbols"></i>Nerd Mode</button></div>'
     + ''
     + '<div class="fx-hero">'
-    + '<div class="fxr-team">'+teamLogo(key,g.away)+'<div class="fxr-name">'+esc(teamName(key,g.away))+'</div></div>'
+    + '<div class="fxr-team tp-link" onclick="LAB.teamView(\''+key+'\',\''+esc(g.away).replace(/'/g,"\\'")+'\')">'
+      + teamLogo(key,g.away)+'<div class="fxr-name">'+esc(teamName(key,g.away))+'</div></div>'
     + '<div class="fxr-center"><span class="fxr-badge" style="color:var(--accent);background:color-mix(in srgb,var(--accent) 16%,transparent)">'
       + esc(SPORTS[key].name)+'</span>'
       + (st.ms!=null?'<span class="fxr-ko-date">'+esc(localDate(st.ms))+'</span>'
           +'<span class="fxr-ko-time">'+esc(st.hasTime?localTime(st.ms):'time TBC')+'</span>':'<span class="fxr-ko-date">TBC</span>')
       + '<div class="fxr-vs">@</div><div class="fxr-venue">'+esc(g.venue||'TBC')+'</div></div>'
-    + '<div class="fxr-team">'+teamLogo(key,g.home)+'<div class="fxr-name">'+esc(teamName(key,g.home))+'</div></div>'
+    + '<div class="fxr-team tp-link" onclick="LAB.teamView(\''+key+'\',\''+esc(g.home).replace(/'/g,"\\'")+'\')">'+teamLogo(key,g.home)+'<div class="fxr-name">'+esc(teamName(key,g.home))+'</div></div>'
     + '</div>';
   if (S.t2 !== 'ready') return head + '<div class="empty"><i class="ti ti-loader"></i>Loading '+esc(SPORTS[key].name)+' odds…</div>';
   if (S.noOdds) head += secNote('Odds', 'No prices for '+SPORTS[key].name+' \u2014 '+S.noOdds
@@ -8208,6 +8321,7 @@ function focusPage(){
     + (S.status === 'ready' && !state.view.nerd ? matchRadar(key, g) : '')
     + (S.t3 === 'ready' && !state.view.nerd ? goalieSection(key, g) : '')
     + (S.t3 === 'ready' && !state.view.nerd ? firstReadSection(key, g) : '')
+    + (!state.view.nerd ? nbaRestSection(key, g) : '')
 
     // Nerd Mode replaces the signals rather than adding to them: it is a different read of the
     // same fixture (the market against itself), and stacking both made the page enormous.
@@ -10754,7 +10868,10 @@ function teamsView(key){
         return '<th class="'+(sortKey===c[0]?'on':'')+'" onclick="LAB.stTeamSort(\''+c[0]+'\')">'
           + esc(c[1])+(sortKey===c[0]?' \u25be':'')+'</th>'; }).join('')+'</tr></thead><tbody>'
     + rows.map(function(t){
-        return '<tr><td class="nm"><span class="st-team">'+teamLogo(key, t.team)
+        // the board is the obvious place to click a club, so open the profile from here too
+        return '<tr class="tp-link" onclick="LAB.teamView(\''+key+'\',\''
+          + esc(t.team).replace(/'/g,"\\'")+'\')"><td class="nm"><span class="st-team">'
+          + teamLogo(key, t.team)
           + '<span>'+esc(teamFullName(key, t.team))+'</span></span></td>'
           + '<td>'+(t.matches || 0)+'</td>'
           + cols.map(function(c){
@@ -10879,6 +10996,20 @@ function statsPage(){
   if (sub === 'dvp') return h + dvpView(key);
   return h + scannerView(key);
 }
+function teamPanel(){
+  var sel = state.view.teamView;
+  if (!sel) return '';
+  // Same shape as the player overlay: a fixed backdrop plus a centred .pp card. The first version
+  // invented pp-wrap/pp-card, which match no rule in the stylesheet, so the panel rendered as a
+  // plain block at the very bottom of the page - present, styled like nothing, and invisible
+  // unless you scrolled to the end.
+  return '<div class="pp-back" onclick="LAB.teamView(null)"></div>'
+    + '<div class="pp"><div class="pp-hd">' + teamLogo(sel.sport, sel.team)
+    + '<div><div class="pp-nm">' + esc(teamName(sel.sport, sel.team) || sel.team) + '</div>'
+    + '<div class="pp-sub">' + esc(SPORTS[sel.sport].name) + '</div></div>'
+    + '<button class="pp-x" onclick="LAB.teamView(null)">&times;</button></div>'
+    + '<div class="pp-body">' + teamProfile(sel.sport, sel.team) + '</div></div>';
+}
 function playerPanel(){
   var sel = state.view.player;
   if (!sel) return '';
@@ -10895,6 +11026,8 @@ function playerPanel(){
   var body = tab === 'form' ? ppFormTab(key, name)
     : tab === 'calc' ? ppCalc(key, name)
     : tab === 'profile' ? (nbaScoringProfile(key, name)
+        || (nflUsageProfile(key, name, ppOpponent(key, name))
+            + (tuddyProfile(key, { name:name, opp:ppOpponent(key, name) }) || ''))
         || tuddyProfile(key, { name:name, opp:ppOpponent(key, name) })
         || '<div class="empty" style="padding:20px">No usage profile for this player.</div>')
     : tab === 'radar' ? ppRadar(key, name)
@@ -13228,6 +13361,11 @@ var ZONE_LAB = { rim:'At the rim', paint:'Paint', midRange:'Mid-range',
                  cornerThree:'Corner three', armsThree:'Above the break' };
 var ZONE_COL = { rim:'#22c55e', paint:'#38bdf8', midRange:'#eab308',
                  cornerThree:'#a78bfa', armsThree:'#f97316' };
+function ordinalish(n){
+  if (n == null) return '';
+  var s2 = ['th', 'st', 'nd', 'rd'], v = n % 100;
+  return n + (s2[(v - 20) % 10] || s2[v] || s2[0]);
+}
 function ddNbaQuarters(key, p, mkt){
   var rows = p ? nbaQuarters(key, p.name) : null;
   if (!rows) return '';
@@ -13247,10 +13385,13 @@ function ddNbaQuarters(key, p, mkt){
     + (tot ? 'He takes ' + Math.round(q1 / tot * 100) + '% of it in the first.' : '')
     + ' Over ' + (rows[0] ? rows[0].games : 0) + ' games.</div>' + bars + '</div>';
 }
-function ddNbaZones(key, p){
+function ddNbaZones(key, p, opp){
   var z = p ? nbaZones(key, p.name) : null;
   if (!z || !z.shots) return '';
-  var lg = (state.sports[key].data.zones || {}).league || {};
+  var zf = state.sports[key].data.zones || {};
+  var lg = zf.league || {};
+  // what THIS defence concedes in each zone - the half that turns a shot profile into a matchup
+  var dfn = opp ? ((zf.defence || {})[normTeam(opp)] || (zf.defence || {})[opp]) : null;
   var keys = ['rim', 'paint', 'midRange', 'cornerThree', 'armsThree'].filter(function(k){
     return z[k] && z[k].att;
   });
@@ -13261,16 +13402,20 @@ function ddNbaZones(key, p){
   var rows = keys.map(function(k){
     var mine = z[k].pct, league = lg[k] && lg[k].pct;
     var edge = (mine != null && league) ? (mine - league) * 100 : null;
+    var dz = dfn && dfn[k];
     return '<div class="qt-row"><span class="qt-q" style="color:' + ZONE_COL[k] + '">'
       + esc(ZONE_LAB[k]) + '</span>'
-      + '<span class="qt-sh">' + Math.round(z[k].share * 100) + '% of his shots</span>'
+      + '<span class="qt-sh">' + Math.round(z[k].share * 100) + '% of his shots'
+      + (dz ? ' \u00b7 ' + esc(abbrOf(key, opp)) + ' concedes ' + Math.round(dz.pct * 100)
+              + '%, ' + ordinalish(dz.rank) + ' of ' + dz.of : '') + '</span>'
       + '<b>' + Math.round((mine || 0) * 100) + '%</b>'
       + (edge != null ? '<i class="' + (edge >= 0 ? 'qt-up' : 'qt-dn') + '">'
           + (edge >= 0 ? '+' : '') + edge.toFixed(0) + '</i>' : '') + '</div>';
   }).join('');
   return '<div class="dd-sec"><div class="dd-h">Where he shoots from</div>'
     + '<div class="dd-note">' + z.shots + ' field-goal attempts. The number on the right is how he '
-    + 'shoots from there; the small figure is against the league from the same zone.</div>'
+    + 'shoots from there; the small figure is against the league from the same zone.'
+    + (dfn ? ' A low rank for the opponent means they concede least there.' : '') + '</div>'
     + bar + rows + '</div>';
 }
 
@@ -13278,6 +13423,291 @@ function ddNbaZones(key, p){
    Everything about how he gets his points in one view: the zone split with league comparison, the
    shooting line, and the quarter he does it in. tuddyProfile owns this tab for NFL; basketball
    needs its own, because "usage" for a receiver and for a scorer are different questions. */
+
+/* NFL USAGE PROFILE - the Scoring tab for a receiver, back or passer.
+   Not his counting stats: the shape of his usage and the matchup he walks into. Route share and
+   coverage splits are deliberately absent - routes run needs charting nobody publishes free, and
+   inventing a proxy for it would be worse than leaving it out. Built by nfl/build_nfl_profiles.py.  */
+function nflProfile(key, name){
+  if (key !== 'nfl') return null;
+  var S = state.sports[key], pr = S.data.profiles;
+  if (!pr) return null;
+  if (!S.idx.prIdx){
+    var ix = { rec:{}, rush:{}, pass:{} };
+    (pr.receiving || []).forEach(function(r){ ix.rec[cmbNameKey(r.name)] = r; });
+    (pr.rushing   || []).forEach(function(r){ ix.rush[cmbNameKey(r.name)] = r; });
+    (pr.passing   || []).forEach(function(r){ ix.pass[cmbNameKey(r.name)] = r; });
+    S.idx.prIdx = ix;
+  }
+  var k = cmbNameKey(name), ix2 = S.idx.prIdx;
+  return { rec:ix2.rec[k], rush:ix2.rush[k], pass:ix2.pass[k], teams:pr.teams || {} };
+}
+function pfCell(label, value, note, good){
+  return '<div class="pf-cell"><b' + (good === true ? ' class="pf-good"' : good === false ? ' class="pf-bad"' : '')
+    + '>' + esc(value) + '</b><span>' + esc(label) + '</span>'
+    + (note ? '<i>' + esc(note) + '</i>' : '') + '</div>';
+}
+function nflUsageProfile(key, name, opp){
+  var pr = nflProfile(key, name);
+  if (!pr || (!pr.rec && !pr.rush && !pr.pass)) return '';
+  var pct = function(v){ return v == null ? '\u2014' : Math.round(v * 100) + '%'; };
+  var d = pr.teams[opp] || {}, mine = pr.teams[(pr.rec || pr.rush || pr.pass).team] || {};
+  var h = '';
+
+  if (pr.rec){
+    var r = pr.rec;
+    h += '<div class="dd-sec"><div class="dd-h">How he is used</div><div class="pf-grid">'
+      + pfCell('Target share', pct(r.targetShare), r.targets + ' targets', r.targetShare >= 0.22)
+      + pfCell('Air yards share', pct(r.airShare), 'of the team\u2019s', r.airShare >= 0.3)
+      + pfCell('ADOT', r.adot != null ? r.adot.toFixed(1) : '\u2014', 'yards downfield')
+      + pfCell('Deep targets', pct(r.deepRate), '20+ yards', r.deepRate >= 0.15)
+      + pfCell('Catch rate', pct(r.catchRate), r.ypt + ' yds a target')
+      + pfCell('Play action', pct(r.paShare), 'of his targets')
+      + '</div></div>';
+  }
+  if (pr.rush){
+    var ru = pr.rush;
+    h += '<div class="dd-sec"><div class="dd-h">How he is run</div><div class="pf-grid">'
+      + pfCell('Carry share', pct(ru.carryShare), ru.carries + ' carries', ru.carryShare >= 0.5)
+      + pfCell('Yards a carry', ru.ypc != null ? ru.ypc.toFixed(1) : '\u2014', '')
+      + pfCell('Stacked boxes', pct(ru.stackedRate), '8+ defenders', ru.stackedRate != null && ru.stackedRate <= 0.15)
+      + pfCell('Average box', ru.avgBox != null ? ru.avgBox.toFixed(1) : '\u2014', 'defenders')
+      + pfCell('Inside the five', String(ru.insideFive), 'carries')
+      + '</div></div>';
+  }
+  if (pr.pass){
+    var q = pr.pass;
+    h += '<div class="dd-sec"><div class="dd-h">How he throws</div><div class="pf-grid">'
+      + pfCell('ADOT', q.adot != null ? q.adot.toFixed(1) : '\u2014', 'yards downfield')
+      + pfCell('Deep rate', pct(q.deepRate), '20+ yards')
+      + pfCell('Play action', pct(q.paRate), 'of dropbacks')
+      + pfCell('Out of pocket', pct(q.outOfPocket), 'of dropbacks')
+      + pfCell('Blitzed', pct(q.blitzRate), '5+ rushers')
+      + '</div></div>';
+  }
+
+  // the matchup: what his own offence does, and what this defence gives up
+  if (mine.proe != null || d.proeAllowed != null){
+    var comb = (mine.proe != null && d.proeAllowed != null) ? mine.proe + d.proeAllowed : null;
+    h += '<div class="dd-sec"><div class="dd-h">The game he walks into</div><div class="pf-grid">'
+      + pfCell('Team PROE', mine.proe != null ? (mine.proe > 0 ? '+' : '') + mine.proe.toFixed(1) + '%' : '\u2014',
+               mine.proeRank ? 'rank ' + mine.proeRank + ' of 32' : '', mine.proe > 0)
+      + (opp ? pfCell('Allowed by ' + abbrOf(key, opp),
+               d.proeAllowed != null ? (d.proeAllowed > 0 ? '+' : '') + d.proeAllowed.toFixed(1) + '%' : '\u2014',
+               d.proeAllowedRank ? 'rank ' + d.proeAllowedRank + ' of 32' : '', d.proeAllowed > 0) : '')
+      + (comb != null ? pfCell('Combined', (comb > 0 ? '+' : '') + comb.toFixed(1) + '%',
+               'both sides lean pass', comb > 0) : '')
+      + (opp && d.deepAllowed != null ? pfCell('Deep allowed', pct(d.deepAllowed),
+               d.deepAllowedRank ? 'rank ' + d.deepAllowedRank + ' of 32' : '', d.deepAllowed >= 0.12) : '')
+      + '</div>'
+      + '<div class="dd-note">PROE is how much more often than expected a side throws, given down, '
+      + 'distance and score. Positive means pass-leaning. '
+      + '<span style="opacity:.6">Charting: FTN Data via nflverse.</span></div></div>';
+  }
+  return h;
+}
+
+/* TEAM PROFILE ------------------------------------------------------------------------------------
+   The club equivalent of the player page: what they do, what they allow, and where that ranks.
+   Everything is driven off teams.json, which every sport normalises to for/against columns, so the
+   page works for all six without a per-sport table. Sports that carry extra - NBA's zone defence,
+   NFL's pass rate over expected - add a section of their own underneath.                          */
+
+/* A club's results, normalised. Every sport ships results.json with scores, but under its own
+   names: AFL and EPL say homeScore/awayScore, the rest say hs/as. One reader rather than six. */
+function teamResults(key, team){
+  var S = state.sports[key];
+  var raw = S.data.results;
+  var all = Array.isArray(raw) ? raw : ((raw && (raw.games || raw.rows)) || []);
+  if (!all.length) return [];
+  var out = [];
+  all.forEach(function(r){
+    var hs = r.hs != null ? +r.hs : (r.homeScore != null ? +r.homeScore : null);
+    var as = r.as != null ? +r.as : (r.awayScore != null ? +r.awayScore : null);
+    if (hs == null || as == null || !r.home || !r.away) return;
+    var isHome = normTeam(r.home) === normTeam(team);
+    var isAway = normTeam(r.away) === normTeam(team);
+    if (!isHome && !isAway) return;
+    var mine = isHome ? hs : as, theirs = isHome ? as : hs;
+    out.push({
+      date: String(r.date || ''), home: isHome,
+      opp: isHome ? r.away : r.home,
+      f: mine, a: theirs,
+      res: mine > theirs ? 'W' : (mine < theirs ? 'L' : 'D')
+    });
+  });
+  out.sort(function(a, b){ return String(a.date).localeCompare(String(b.date)); });
+  return out;
+}
+
+/* How a club's season has gone, ten games at a time. A single record hides a side that started
+   badly and fixed itself, or one that has quietly fallen apart - which is the thing a season-long
+   average is worst at showing and the thing most worth knowing before a bet. */
+function teamTrendSection(key, team){
+  var g = teamResults(key, team);
+  if (g.length < 20) return '';
+  var chunks = [], size = Math.max(5, Math.round(g.length / 6));
+  for (var i = 0; i < g.length; i += size) chunks.push(g.slice(i, i + size));
+  if (chunks.length > 1 && chunks[chunks.length - 1].length < size / 2){
+    var tail = chunks.pop();
+    chunks[chunks.length - 1] = chunks[chunks.length - 1].concat(tail);
+  }
+  var diffs = chunks.map(function(c){
+    return c.reduce(function(a, x){ return a + (x.f - x.a); }, 0) / c.length;
+  });
+  var top = Math.max.apply(null, diffs.map(Math.abs)) || 1;
+  var bars = chunks.map(function(c, i){
+    var d = diffs[i], h = Math.max(3, Math.round(Math.abs(d) / top * 26));
+    var w = c.filter(function(x){ return x.res === 'W'; }).length;
+    return '<div class="tt-col" title="' + c.length + ' games, ' + w + ' won, '
+      + (d >= 0 ? '+' : '') + d.toFixed(1) + ' a game">'
+      + '<span class="tt-up">' + (d > 0 ? '<i style="height:' + h + 'px"></i>' : '') + '</span>'
+      + '<span class="tt-dn">' + (d <= 0 ? '<i style="height:' + h + 'px"></i>' : '') + '</span>'
+      + '</div>';
+  }).join('');
+  var first = diffs[0], lastd = diffs[diffs.length - 1];
+  return '<div class="dd-sec"><div class="dd-h">How the season has gone</div>'
+    + '<div class="tt-wrap">' + bars + '</div>'
+    + '<div class="dd-note">Scoring margin a game, in blocks of about ' + size + '. '
+    + (Math.abs(lastd - first) >= 3
+        ? (lastd > first ? 'They have been getting better' : 'They have been getting worse')
+          + ' — ' + (first >= 0 ? '+' : '') + first.toFixed(1) + ' early against '
+          + (lastd >= 0 ? '+' : '') + lastd.toFixed(1) + ' lately.'
+        : 'Steady across the season.') + '</div></div>';
+}
+function teamFormSection(key, team){
+  var g = teamResults(key, team);
+  if (g.length < 3) return '';
+  var tally = function(rows){
+    var w = rows.filter(function(x){ return x.res === 'W'; }).length;
+    var l = rows.filter(function(x){ return x.res === 'L'; }).length;
+    var d = rows.filter(function(x){ return x.res === 'D'; }).length;
+    return { w:w, l:l, d:d, n:rows.length,
+             f: rows.length ? rows.reduce(function(a, x){ return a + x.f; }, 0) / rows.length : 0,
+             a: rows.length ? rows.reduce(function(a, x){ return a + x.a; }, 0) / rows.length : 0 };
+  };
+  // Draws go in the MIDDLE. A three-part record is read as win-draw-loss everywhere football is
+  // played, so printing wins-losses-draws says the opposite of what it means: Arsenal's 50-21-10
+  // came out as 50-10-21, which reads as ten draws and twenty-one defeats.
+  var rec = function(t){ return t.d ? (t.w + '-' + t.d + '-' + t.l) : (t.w + '-' + t.l); };
+  var all = tally(g), home = tally(g.filter(function(x){ return x.home; })),
+      away = tally(g.filter(function(x){ return !x.home; })), last = tally(g.slice(-10));
+  var dp = function(v){ return v >= 100 ? Math.round(v) : v.toFixed(1); };
+
+  // the last ten as pips, newest on the right, so form reads at a glance
+  var pips = g.slice(-10).map(function(x){
+    return '<span class="fm-pip fm-' + x.res.toLowerCase() + '" title="'
+      + esc(x.date.slice(5)) + ' ' + (x.home ? 'v ' : '@ ') + esc(abbrOf(key, x.opp))
+      + ' ' + x.f + '-' + x.a + '">' + x.res + '</span>';
+  }).join('');
+
+  return '<div class="dd-sec"><div class="dd-h">Form</div>'
+    + '<div class="fm-pips">' + pips + '<span class="fm-lab">last ' + Math.min(10, g.length) + '</span></div>'
+    + '<div class="pf-grid">'
+    + pfCell('Record', rec(all), all.n + ' games')
+    + pfCell('Last 10', rec(last), dp(last.f) + ' for, ' + dp(last.a) + ' against')
+    + pfCell('At home', rec(home), home.n ? dp(home.f) + ' – ' + dp(home.a) : '')
+    + pfCell('Away', rec(away), away.n ? dp(away.f) + ' – ' + dp(away.a) : '')
+    + pfCell('Scored', dp(all.f), 'a game')
+    + pfCell('Conceded', dp(all.a), 'a game')
+    + '</div></div>';
+}
+function teamProfile(key, team){
+  var S = state.sports[key];
+  var rows = teamRowsFor(key);
+  var me = rows.filter(function(t){ return normTeam(t.team || t.name) === normTeam(team); })[0];
+  if (!me) return '<div class="empty" style="padding:20px">No team record for ' + esc(team) + '.</div>';
+
+  // every numeric column, split into what they produce and what they concede, each with a rank
+  var numeric = Object.keys(me).filter(function(k){ return typeof me[k] === 'number'; });
+  var rankOf = function(col, lowBetter){
+    var vals = rows.map(function(t){ return t[col]; }).filter(function(v){ return typeof v === 'number'; });
+    if (vals.length < 4) return null;
+    var sorted = vals.slice().sort(function(a, b){ return lowBetter ? a - b : b - a; });
+    return { rank: sorted.indexOf(me[col]) + 1, of: sorted.length };
+  };
+  var isAgainst = function(c){ return /_a$|Against$|allowed/i.test(c); };
+  var label = function(c){
+    return String(c).replace(/_a$/, '').replace(/Against$/, '').replace(/([a-z])([A-Z])/g, '$1 $2');
+  };
+  var cell = function(col){
+    var against = isAgainst(col);
+    var r = rankOf(col, against);          // conceding less is better
+    var v = me[col];
+    var good = r ? r.rank <= Math.max(3, r.of * 0.25) : null;
+    return '<div class="pf-cell"><b' + (good === true ? ' class="pf-good"' : good === false ? '' : '')
+      + '>' + (Math.abs(v) >= 100 ? Math.round(v) : v.toFixed(1)) + '</b>'
+      + '<span>' + esc(label(col)) + '</span>'
+      + (r ? '<i>' + ordinalish(r.rank) + ' of ' + r.of + '</i>' : '') + '</div>';
+  };
+  var forCols = numeric.filter(function(c){ return !isAgainst(c) && c !== 'games'; }).slice(0, 10);
+  var agCols = numeric.filter(isAgainst).slice(0, 10);
+
+  var h = '<div class="tp-head"><b>' + esc(teamName(key, team) || team) + '</b>'
+    + '<span>' + esc(SPORTS[key].name) + (me.games ? ' \u00b7 ' + me.games + ' games' : '') + '</span></div>';
+  h += teamFormSection(key, team) + teamTrendSection(key, team);
+  if (forCols.length)
+    h += '<div class="dd-sec"><div class="dd-h">What they do</div><div class="pf-grid">'
+       + forCols.map(cell).join('') + '</div></div>';
+  if (agCols.length)
+    h += '<div class="dd-sec"><div class="dd-h">What they allow</div><div class="pf-grid">'
+       + agCols.map(cell).join('') + '</div></div>';
+
+  // NBA: what this defence concedes by shot zone, which is the read that matters for a scorer
+  var zf = S.data.zones;
+  if (key === 'nba' && zf && zf.defence){
+    var d = zf.defence[normTeam(team)] || zf.defence[team];
+    if (d){
+      h += '<div class="dd-sec"><div class="dd-h">What they concede by zone</div>'
+        + ['rim', 'paint', 'midRange', 'cornerThree', 'armsThree'].filter(function(z){ return d[z]; })
+          .map(function(z){
+            var lg = (zf.league || {})[z];
+            var edge = lg ? (d[z].pct - lg.pct) * 100 : null;
+            return '<div class="qt-row"><span class="qt-q" style="color:' + ZONE_COL[z] + '">'
+              + esc(ZONE_LAB[z]) + '</span>'
+              + '<span class="qt-sh">' + ordinalish(d[z].rank) + ' of ' + d[z].of
+              + ' \u00b7 ' + d[z].att + ' faced</span>'
+              + '<b>' + Math.round(d[z].pct * 100) + '%</b>'
+              + (edge != null ? '<i class="' + (edge <= 0 ? 'qt-up' : 'qt-dn') + '">'
+                  + (edge >= 0 ? '+' : '') + edge.toFixed(0) + '</i>' : '') + '</div>';
+          }).join('')
+        + '<div class="dd-note">A low rank means they concede least there. The small figure is '
+        + 'against the league from the same zone.</div></div>';
+    }
+  }
+  // NFL: how both sides lean, which moves every passing market in the game
+  var pf = S.data.profiles;
+  if (key === 'nfl' && pf && pf.teams){
+    var t2 = pf.teams[normTeam(team)] || pf.teams[team];
+    if (t2){
+      h += '<div class="dd-sec"><div class="dd-h">How they lean</div><div class="pf-grid">'
+        + (t2.proe != null ? pfCell('Pass rate over expected',
+            (t2.proe > 0 ? '+' : '') + t2.proe.toFixed(1) + '%',
+            t2.proeRank ? ordinalish(t2.proeRank) + ' of 32' : '', t2.proe > 0) : '')
+        + (t2.proeAllowed != null ? pfCell('Allowed to opponents',
+            (t2.proeAllowed > 0 ? '+' : '') + t2.proeAllowed.toFixed(1) + '%',
+            t2.proeAllowedRank ? ordinalish(t2.proeAllowedRank) + ' of 32' : '') : '')
+        + (t2.deepAllowed != null ? pfCell('Deep passes allowed',
+            Math.round(t2.deepAllowed * 100) + '%',
+            t2.deepAllowedRank ? ordinalish(t2.deepAllowedRank) + ' of 32' : '') : '')
+        + '</div></div>';
+    }
+  }
+
+  // who does the work: the squad ranked on the sport's headline stat
+  var head = (marketsFor(key) || [])[0];
+  var squad = playersOnTeam(key, team).filter(function(p){ return head && p[head] != null; })
+    .sort(function(a, b){ return (b[head] || 0) - (a[head] || 0); }).slice(0, 8);
+  if (squad.length){
+    h += '<div class="dd-sec"><div class="dd-h">Who does the work</div>'
+      + squad.map(function(p){
+          return '<div class="lg-p" onclick="LAB.player(\'' + key + '\',\''
+            + esc(p.name).replace(/'/g, "\\'") + '\')"><span>' + esc(p.name) + '</span>'
+            + '<b>' + (+p[head]).toFixed(1) + '</b><i>' + esc(mktLabel(key, head)) + '</i></div>';
+        }).join('') + '</div>';
+  }
+  return h;
+}
 function nbaScoringProfile(key, name){
   if (key !== 'nba') return '';
   var S = state.sports[key];
@@ -13311,7 +13741,7 @@ function nbaScoringProfile(key, name){
         }).join('') + '</div></div>';
   }
 
-  h += ddNbaZones(key, { name:name });
+  h += ddNbaZones(key, { name:name }, ppOpponent(key, name));
   h += ddNbaQuarters(key, { name:name }, 'points');
 
   // shot diet: how his attempts split between threes, twos and the line
@@ -13587,7 +14017,7 @@ function deepPanel(){
   var teams = ddTeamSection(key, p.team || d.team, d.opp, mkt);
   var mlbAdv = ddMlbSection(key, p, d.opp, mkt) + ddNblScoring(key, p, d.opp, mkt) + ddNhlScoring(key, p, d.opp, mkt)
     + ddFirstRead(key, p, mkt)
-    + ddNbaQuarters(key, p, mkt) + ddNbaZones(key, p)
+    + ddNbaQuarters(key, p, mkt) + ddNbaZones(key, p, d.opp)
              + ddNgsSection(key, p, mkt);
   var script = ddScript(key, p.team, d.opp);
   return '<div class="cmb-overlay open" onclick="if(event.target===this)LAB.deepClose()">'
@@ -14281,7 +14711,7 @@ function render(){
 
   if (state.view.focus){
     h = '' + focusPage();                       // focused fixture replaces the page
-    $('app').innerHTML = configBanner() + h + playerPanel() + booksPanel() + cmbFab() + cmbPanel() + cardFab() + cardPanel() + livePanel() + deepPanel() + mrPanel();
+    $('app').innerHTML = configBanner() + h + playerPanel() + teamPanel() + booksPanel() + cmbFab() + cmbPanel() + cardFab() + cardPanel() + livePanel() + deepPanel() + mrPanel();
     return;
   }
   if (state.view.tab === 'results'){
@@ -14312,7 +14742,7 @@ function render(){
       });
     }
   }
-  $('app').innerHTML = configBanner() + h + playerPanel() + booksPanel() + cmbFab() + cmbPanel() + cardFab() + cardPanel() + livePanel() + deepPanel();
+  $('app').innerHTML = configBanner() + h + playerPanel() + teamPanel() + booksPanel() + cmbFab() + cmbPanel() + cardFab() + cardPanel() + livePanel() + deepPanel();
 }
 
 /* ---- public ------------------------------------------------------------- */
@@ -14576,6 +15006,7 @@ window.LAB = {
   mkt: function(k, m){ state.view.mkt[k] = m; render(); },
   match: function(k, id){ state.view.match[k] = id; render(); },
   player: function(k, name){ state.view.player = k ? {sport:k, name:name} : null; render(); },
+  teamView: function(k, team){ state.view.teamView = k ? {sport:k, team:team} : null; render(); },
   focus: function(k, i){
     if (!k){ state.view.focus = null; state.view.mrOpen = false; render(); return; }
     var fx = asArray(state.sports[k].data.fixture) || [];
@@ -14886,6 +15317,9 @@ window.LAB = {
   // exposed for tests: statOf is the single place a market maps to a gamelog field, and the
   // anytimeTd flag-versus-count bug lived exactly there
   statOfProbe: function(key, row, mkt){ return statOf(key, row, mkt); },
+  // exposed for tests: rest is derived live from the fixture list, so a bad sort or date would
+  // quietly report everyone as rested
+  nbaRestProbe: function(team, when){ return nbaRestFor('nba', team, when); },
   dvLine: function(name, dir){
     var v = state.view; v.dvLine = v.dvLine || {};
     v.dvLine[name] = (v.dvLine[name] || 0) + dir;        // steps from the player's natural rung
