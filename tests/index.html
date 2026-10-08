@@ -215,6 +215,12 @@
   .h2h-head{display:flex;align-items:center;justify-content:space-between;font-family:var(--font-display);
     font-weight:800;font-size:12px;letter-spacing:.04em;padding-bottom:7px;margin-bottom:4px;border-bottom:1px solid var(--border);}
   .h2h-gp{font-family:var(--font-mono);font-size:8px;color:var(--text-3);font-weight:400;text-transform:uppercase;letter-spacing:.08em;}
+  .dv-t td{font-family:var(--font-mono);font-size:10px;text-align:center;white-space:nowrap;}
+  .dv-t td.dv-pos{font-family:var(--font-display);text-align:left;font-size:11px;color:var(--text-2);}
+  .dv-t td i{font-style:normal;display:block;font-size:8px;color:var(--text-3);}
+  .dv-t td.dv-soft{color:#f97316;background:rgba(249,115,22,.08);}
+  .dv-t td.dv-hard{color:var(--accent);}
+  .dv-t th{white-space:nowrap;}
   .h2h-row{display:flex;align-items:center;gap:9px;padding:5px 0;}
   .h2h-v{min-width:56px;font-weight:800;font-size:13px;font-variant-numeric:tabular-nums;color:var(--text-3);}
   .h2h-v.l{text-align:left;} .h2h-v.r{text-align:right;}
@@ -1083,6 +1089,12 @@
   .mr-open{display:flex;align-items:center;gap:9px;flex-wrap:wrap;padding:4px 2px 10px;}
   .lg-p i.good{color:var(--accent);} .lg-p i.bad{color:#f97316;}
   .lg-wrap{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:10px;}
+  .h2h-row{display:flex;align-items:center;gap:9px;padding:3px 2px;font-size:11px;
+    border-top:1px solid var(--border);}
+  .h2h-row span{color:var(--text-3);font-size:10px;font-family:var(--font-mono);}
+  .h2h-row .h2h-vn{color:var(--text-2);min-width:52px;}
+  .h2h-row b{margin-left:auto;font-family:var(--font-mono);}
+  .h2h-w{color:var(--accent);} .h2h-l{color:#f97316;} .h2h-d{color:var(--text-3);}
   .tt-wrap{display:flex;align-items:center;gap:5px;padding:4px 0 8px;height:62px;}
   .tt-col{flex:1;display:flex;flex-direction:column;justify-content:center;min-width:0;}
   .tt-up,.tt-dn{display:flex;height:28px;align-items:flex-end;}
@@ -13575,6 +13587,159 @@ function teamTrendSection(key, team){
           + (lastd >= 0 ? '+' : '') + lastd.toFixed(1) + ' lately.'
         : 'Steady across the season.') + '</div></div>';
 }
+
+/* The club's next opponent, from the fixture list. */
+function teamNextOpp(key, team){
+  var S = state.sports[key], now = Date.now(), best = null;
+  (asArray(S.data.fixture) || []).forEach(function(g){
+    if (!g.home || !g.away) return;
+    var isH = normTeam(g.home) === normTeam(team), isA = normTeam(g.away) === normTeam(team);
+    if (!isH && !isA) return;
+    var t = Date.parse(g.utc || g.gameTimeUTC || g.date || '');
+    if (!t || t < now - 6 * 36e5) return;
+    if (!best || t < best.t) best = { t:t, opp:isH ? g.away : g.home, home:isH, g:g };
+  });
+  return best;
+}
+
+/* HEAD TO HEAD with whoever is next. A season average says what a side does against everybody; this
+   says what they do against the one they are about to play, which is often a different story. */
+
+/* WHAT THEY GIVE UP, BY POSITION. Every sport ships dvp.json as team + pos + the stats conceded,
+   so one reader covers all six. This is the section a prop bettor actually wants: a side can be
+   solid overall and still be the place a certain kind of player goes to feast.
+   Rank 1 = concedes least, so a high rank is the soft spot. */
+function teamDvpSection(key, team){
+  var S = state.sports[key];
+  var raw = S.data.dvp;
+  var all = Array.isArray(raw) ? raw : ((raw && (raw.rows || raw.teams)) || []);
+  if (!all.length) return '';
+  var mine = all.filter(function(r){ return normTeam(r.team) === normTeam(team); });
+  if (!mine.length) return '';
+
+  // the stats worth showing are the ones the sport's own markets use, in that order
+  var mkts = (marketsFor(key) || []);
+  var cols = [];
+  Object.keys(mine[0]).forEach(function(c){
+    if (c === 'team' || c === 'pos' || c === 'games' || typeof mine[0][c] !== 'number') return;
+    cols.push(c);
+  });
+  cols.sort(function(a, b){
+    var ia = mkts.indexOf(a), ib = mkts.indexOf(b);
+    return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib);
+  });
+  cols = cols.slice(0, 4);
+  if (!cols.length) return '';
+
+  var rankIn = function(pos, col){
+    var peers = all.filter(function(r){ return r.pos === pos && typeof r[col] === 'number'; });
+    if (peers.length < 4) return null;
+    var sorted = peers.map(function(r){ return r[col]; }).sort(function(a, b){ return a - b; });
+    var v = mine.filter(function(r){ return r.pos === pos; })[0][col];
+    return { rank: sorted.indexOf(v) + 1, of: sorted.length, v: v };
+  };
+
+  // Only positions that actually produce in these columns. NFL's file carries every position
+  // including DB, DL and K, which concede 0.0 receiving yards to nobody's surprise and pushed the
+  // positions anyone bets on off the bottom of the table.
+  var shown = mine.filter(function(r){
+    return cols.reduce(function(a, c){ return a + (+r[c] || 0); }, 0) > 0.5;
+  });
+  // rank within the same filtered peer group, biggest producer first
+  shown.sort(function(a, b){
+    var sa = cols.reduce(function(x, c){ return x + (+a[c] || 0); }, 0);
+    var sb = cols.reduce(function(x, c){ return x + (+b[c] || 0); }, 0);
+    return sb - sa;
+  });
+  if (!shown.length) return '';
+  var body = shown.slice(0, 8).map(function(r){
+    var cells = cols.map(function(c){
+      var k = rankIn(r.pos, c);
+      if (!k) return '<td>' + (r[c] != null ? (r[c] >= 100 ? Math.round(r[c]) : r[c].toFixed(1)) : '—') + '</td>';
+      // soft = concedes more than most, which is where the bet is
+      var soft = k.rank > k.of * 0.75, hard = k.rank <= k.of * 0.25;
+      return '<td class="' + (soft ? 'dv-soft' : hard ? 'dv-hard' : '') + '">'
+        + (k.v >= 100 ? Math.round(k.v) : k.v.toFixed(1))
+        + '<i>' + k.rank + '</i></td>';
+    }).join('');
+    return '<tr><td class="dv-pos">' + esc(r.pos) + '</td>' + cells + '</tr>';
+  }).join('');
+
+  return '<div class="dd-sec"><div class="dd-h">What they give up, by position</div>'
+    + '<div class="st-wrap"><table class="st-t dv-t"><thead><tr><th></th>'
+    + cols.map(function(c){ return '<th>' + esc(mktLabel(key, c)) + '</th>'; }).join('')
+    + '</tr></thead><tbody>' + body + '</tbody></table></div>'
+    + '<div class="dd-note">Conceded a game, with the league rank beside it. '
+    + 'A high rank is a soft spot — orange means they give up more than three quarters of the '
+    + 'league to that position.</div></div>';
+}
+function teamH2HSection(key, team){
+  var nx = teamNextOpp(key, team);
+  if (!nx) return '';
+  var g = teamResults(key, team).filter(function(x){ return normTeam(x.opp) === normTeam(nx.opp); });
+  if (g.length < 2) return '';
+  var w = g.filter(function(x){ return x.res === 'W'; }).length;
+  var d = g.filter(function(x){ return x.res === 'D'; }).length;
+  var l = g.filter(function(x){ return x.res === 'L'; }).length;
+  var f = g.reduce(function(a, x){ return a + x.f; }, 0) / g.length;
+  var a2 = g.reduce(function(a, x){ return a + x.a; }, 0) / g.length;
+  var dp = function(v){ return v >= 100 ? Math.round(v) : v.toFixed(1); };
+  var recent = g.slice(-5).map(function(x){
+    return '<div class="h2h-row"><span>' + esc(x.date.slice(0, 10)) + '</span>'
+      + '<span class="h2h-vn">' + (x.home ? 'v ' : '@ ') + esc(abbrOf(key, x.opp)) + '</span>'
+      + '<b class="h2h-' + x.res.toLowerCase() + '">' + x.f + '–' + x.a + '</b></div>';
+  }).reverse().join('');
+  return '<div class="dd-sec"><div class="dd-h">Against ' + esc(abbrOf(key, nx.opp)) + '</div>'
+    + '<div class="pf-grid">'
+    + pfCell('Record', d ? (w + '-' + d + '-' + l) : (w + '-' + l), g.length + ' meetings', w > l)
+    + pfCell('They score', dp(f), 'a game')
+    + pfCell('They concede', dp(a2), 'a game')
+    + '</div>' + recent
+    + '<div class="dd-note">' + (nx.home ? 'At home' : 'Away') + ' next, '
+    + esc(new Date(nx.t).toLocaleDateString()) + '.</div></div>';
+}
+
+/* HOW THEIR GAMES GO. Totals and margins rather than who won: a side whose games land high, or who
+   lives in one-score finishes, is a different proposition from one with the same record whose games
+   are settled by half-time. */
+function teamGameShapeSection(key, team){
+  var g = teamResults(key, team);
+  if (g.length < 8) return '';
+  var totals = g.map(function(x){ return x.f + x.a; });
+  var margins = g.map(function(x){ return x.f - x.a; });
+  var avgTot = totals.reduce(function(a, b){ return a + b; }, 0) / totals.length;
+  var med = totals.slice().sort(function(a, b){ return a - b; })[Math.floor(totals.length / 2)];
+  var over = totals.filter(function(t){ return t > avgTot; }).length;
+  // "Close" has to scale off the typical MARGIN, not the total. A share of the total made close
+  // games 14 points in basketball, which caught 130 of 184 - most games, not tight ones. Half the
+  // average winning margin lands where each sport actually draws the line: 5 in the NBA, a score
+  // in the NFL, one goal in football, a run in baseball.
+  var absM = margins.map(Math.abs);
+  var avgM = absM.reduce(function(a, b){ return a + b; }, 0) / absM.length;
+  var close = Math.max(1, Math.round(avgM * 0.5));
+  var tight = g.filter(function(x){ return Math.abs(x.f - x.a) <= close; });
+  var tw = tight.filter(function(x){ return x.res === 'W'; }).length;
+  var tl = tight.filter(function(x){ return x.res === 'L'; }).length;
+  var blowAt = Math.max(close * 2, Math.round(avgM * 1.8));
+  var blow = g.filter(function(x){ return Math.abs(x.f - x.a) >= blowAt; });
+  var bw = blow.filter(function(x){ return x.res === 'W'; }).length;
+  var best = g.slice().sort(function(a, b){ return (b.f - b.a) - (a.f - a.a); })[0];
+  var worst = g.slice().sort(function(a, b){ return (a.f - a.a) - (b.f - b.a); })[0];
+  var dp = function(v){ return v >= 100 ? Math.round(v) : v.toFixed(1); };
+  var shutouts = g.filter(function(x){ return x.a === 0; }).length;
+  return '<div class="dd-sec"><div class="dd-h">How their games go</div><div class="pf-grid">'
+    + pfCell('Average total', dp(avgTot), 'median ' + dp(med))
+    + pfCell('Above that', Math.round(over / g.length * 100) + '%', 'of their games')
+    + pfCell('Within ' + close, tw + '-' + tl,
+             tight.length + ' of ' + g.length + ' (' + Math.round(tight.length / g.length * 100) + '%)',
+             tw > tl)
+    + pfCell('By ' + blowAt + '+', bw + '-' + (blow.length - bw), blow.length + ' blowouts', bw > blow.length - bw)
+    + (shutouts ? pfCell('Clean sheets', String(shutouts), 'of ' + g.length) : '')
+    + '</div>'
+    + '<div class="dd-note">Best: ' + best.f + '–' + best.a + ' ' + (best.home ? 'v ' : '@ ')
+    + esc(abbrOf(key, best.opp)) + '. Worst: ' + worst.f + '–' + worst.a + ' '
+    + (worst.home ? 'v ' : '@ ') + esc(abbrOf(key, worst.opp)) + '.</div></div>';
+}
 function teamFormSection(key, team){
   var g = teamResults(key, team);
   if (g.length < 3) return '';
@@ -13645,13 +13810,15 @@ function teamProfile(key, team){
 
   var h = '<div class="tp-head"><b>' + esc(teamName(key, team) || team) + '</b>'
     + '<span>' + esc(SPORTS[key].name) + (me.games ? ' \u00b7 ' + me.games + ' games' : '') + '</span></div>';
-  h += teamFormSection(key, team) + teamTrendSection(key, team);
+  h += teamFormSection(key, team) + teamH2HSection(key, team)
+     + teamGameShapeSection(key, team) + teamTrendSection(key, team);
   if (forCols.length)
     h += '<div class="dd-sec"><div class="dd-h">What they do</div><div class="pf-grid">'
        + forCols.map(cell).join('') + '</div></div>';
   if (agCols.length)
     h += '<div class="dd-sec"><div class="dd-h">What they allow</div><div class="pf-grid">'
        + agCols.map(cell).join('') + '</div></div>';
+  h += teamDvpSection(key, team);
 
   // NBA: what this defence concedes by shot zone, which is the read that matters for a scorer
   var zf = S.data.zones;
