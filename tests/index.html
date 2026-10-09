@@ -13867,9 +13867,21 @@ var SIM_CFG = {
          style:{ key:'shots', hi:'Open game', lo:'Tight game' } },
   mlb: { stats:['H','HR','R','RBI','BB','SO','TB'],
          fixed:[], score:null, teamJitter:0.10, jitter:0.12, big:['TB'],
-         style:{ key:'H', hi:'Hit-fest', lo:'Pitchers\u2019 duel' } }
+         style:{ key:'H', hi:'Hit-fest', lo:'Pitchers\u2019 duel' } },
+  nhl: { stats:['goals','assists','points','shots','ppPoints','ppGoals','pim','plusMinus','toiMin'],
+         fixed:['toiMin'], score:'goals', teamJitter:0.10, jitter:0.12,
+         // one entry only: a big night for a skater is points, and the biggest-average rule would
+         // otherwise pick shots, which every forward takes two or three of
+         big:['points'], style:{ key:'shots', hi:'Shot-heavy', lo:'Low-event' } }
 };
-function simCfg(key){ return SIM_CFG[key] || SIM_CFG.nba; }
+/* NO FALLBACK TO ANOTHER SPORT. This used to return the basketball config for any sport without
+   an entry of its own, so the NHL - which had none - was simulated on rebounds and threes and
+   offered a "Three-happy" filter. Wrong labels were the visible half; the invisible half was a
+   filter reading a column that does not exist, which neither narrows anything nor says so. A
+   sport with no config now gets no simulator at all, which is at least honest. */
+var SIM_EMPTY = { stats:[], fixed:[], score:null, teamJitter:0.1, jitter:0.12, big:[], style:null };
+function simCfg(key){ return SIM_CFG[key] || SIM_EMPTY; }
+function simConfigured(key){ return !!SIM_CFG[key]; }
 
 /* REAL SCORES, not scores inferred from the box score.
    Summing a player column only gives a team's score in basketball; in NFL it misses field goals,
@@ -13891,24 +13903,48 @@ function simScoreIndex(key){
     var as = r.as != null ? +r.as : (r.awayScore != null ? +r.awayScore : null);
     if (hs == null || as == null || !isFinite(hs) || !isFinite(as) || !r.home || !r.away) return;
     var v = { hs:hs, as:as, home:normTeam(r.home), away:normTeam(r.away) };
+    var pair = v.home < v.away ? v.home + '|' + v.away : v.away + '|' + v.home;
     if (r.gameId != null) m['g:' + r.gameId] = v;
-    if (r.date) m['d:' + v.home + '|' + String(r.date).slice(0, 10)] = v;
+    if (r.date){
+      m['d:' + v.home + '|' + String(r.date).slice(0, 10)] = v;
+      m['p:' + pair + '|' + String(r.date).slice(0, 10)] = v;
+    }
     var yr = r.season != null ? r.season : r.year;
     var wk = r.week != null ? r.week : r.round;
-    if (yr != null && wk != null) m['w:' + v.home + '|' + yr + '|' + wk] = v;
+    if (yr != null && wk != null){
+      m['w:' + v.home + '|' + yr + '|' + wk] = v;
+      // the pair key is what rescues a sport whose gamelogs say neither who was at home nor what
+      // date it was - AFL has only a round NAME ("Round 1") and the two team names
+      m['q:' + pair + '|' + yr + '|' + _rnum(wk)] = v;
+    }
   });
   S.idx.simScores = m;
   return m;
 }
-/* For one team-game, find its scoreline and return it from THAT team's point of view. */
+// "Round 1" and 1 are the same round; one file writes the name and the other the number
+function _rnum(x){
+  var mm = String(x == null ? '' : x).match(/\d+/);
+  return mm ? +mm[0] : String(x);
+}
+/* For one team-game, find its scoreline and return it from THAT team's point of view.
+   Four ways in, tried in order of how certain they are: the game's own id, the date with the home
+   side, the season and week with the home side, and finally the unordered pair - which is the only
+   one that works where the gamelogs do not record who was at home. */
 function simScoreFor(key, gl){
   var m = simScoreIndex(key);
-  var hoTeam = gl.home ? gl.team : gl.opp;
+  var a = normTeam(gl.team), b = normTeam(gl.opp);
+  var pair = a < b ? a + '|' + b : b + '|' + a;
+  var hoTeam = normTeam(gl.home ? gl.team : gl.opp);
+  var day = gl.date ? String(gl.date).slice(0, 10) : null;
   var hit = (gl.id != null && m['g:' + gl.id])
-    || (gl.date && m['d:' + normTeam(hoTeam) + '|' + String(gl.date).slice(0, 10)])
-    || (gl.year != null && gl.week != null && m['w:' + normTeam(hoTeam) + '|' + gl.year + '|' + gl.week]);
+    || (day && m['d:' + hoTeam + '|' + day])
+    || (gl.year != null && gl.week != null && m['w:' + hoTeam + '|' + gl.year + '|' + gl.week])
+    || (day && m['p:' + pair + '|' + day])
+    || (gl.year != null && gl.week != null && m['q:' + pair + '|' + gl.year + '|' + _rnum(gl.week)]);
   if (!hit) return null;
-  return gl.home ? { me:hit.hs, them:hit.as } : { me:hit.as, them:hit.hs };
+  // decide which score is this team's from the result row itself, not from a flag the gamelog
+  // may not have
+  return hit.home === a ? { me:hit.hs, them:hit.as } : { me:hit.as, them:hit.hs };
 }
 
 function simBuildGames(key){
@@ -13925,7 +13961,19 @@ function simBuildGames(key){
   }
   var byGame = {};
   logs.forEach(function(r){
-    var mid = r.MatchId || ((r.Year || '') + '-' + (r.Week || r.RoundName || r.Date || ''));
+    // WITHOUT A MATCH ID, THE TWO TEAMS HAVE TO BE IN THE KEY. Keying on year plus week collapsed
+    // every baseball game played on the same day into one "game" with thirty teams in it, and a
+    // game with more than two sides is thrown out below - so MLB ended up with two teams in the
+    // whole simulator. Where the row names its opponent, the key is the date and the unordered
+    // pair, which identifies the fixture properly.
+    var mid = r.MatchId != null ? String(r.MatchId) : null;
+    if (!mid){
+      var when = r.Date || r.Week || r.RoundName || '';
+      if (r.Opp){
+        var ta = normTeam(r.Team), tb = normTeam(r.Opp);
+        mid = (r.Year || '') + '|' + when + '|' + (ta < tb ? ta + '|' + tb : tb + '|' + ta);
+      } else mid = (r.Year || '') + '-' + when;
+    }
     if (!mid || !r.Team) return;
     (byGame[mid] = byGame[mid] || {});
     (byGame[mid][r.Team] = byGame[mid][r.Team] || []).push(r);
@@ -14508,6 +14556,7 @@ function simRender(){
 
 function simSection(key, g){
   var cfg = simCfg(key);
+  if (!simConfigured(key)) return '';   // no stats, no score, no business guessing at one
   if (!g || !g.home || !g.away) return '';
   if (!simHasScores(key, g.home, g.away)) return '';   // nothing to filter a scoreline on
   SIM_NOW = { key:key, g:g };
@@ -14590,7 +14639,11 @@ function simSection(key, g){
       shOpts.push(['shootout', 'High scoring'], ['grind', 'Low scoring']);
     if (!dropMargin && sh.amHi != null)
       shOpts.push(['homeup', abbrOf(key, g.home) + ' win'], ['awayup', abbrOf(key, g.away) + ' win']);
-    if (sh.style && sh.svHi != null) shOpts.push(['styleHi', sh.style.hi], ['styleLo', sh.style.lo]);
+    // svHi != null was not enough: a style stat the sport's gamelogs do not have comes out as
+    // zero in every sim, so both quartiles are 0 and the option filtered nothing while looking
+    // like it did. Offer it only where the games actually differ.
+    if (sh.style && sh.svHi != null && sh.svLo != null && sh.svHi > sh.svLo)
+      shOpts.push(['styleHi', sh.style.hi], ['styleLo', sh.style.lo]);
   }
   var shapeSel = '<select class="ob-sel" onchange="LAB.simShape(this.value)">'
     + shOpts.map(function(o){
@@ -16704,6 +16757,14 @@ window.LAB = {
     var el = document.getElementById('dv-card');
     if (!el) return;
     sharePng(snapElement(el, 'D\u00e9j\u00e0 Vu').catch(function(){ return null; }), 'jtt-dejavu.png');
+  },
+  // exposed for tests: which config a sport is actually simulated on. The NHL was silently
+  // simulated on basketball's - rebounds, threes, a "Three-happy" filter - because simCfg fell
+  // back to the NBA entry for any sport without one.
+  simCfgProbe: function(key){
+    var c = SIM_CFG[key];
+    return { configured: !!c, style: c ? c.style : null, big: c ? c.big : null,
+             score: c ? c.score : null, stats: c ? c.stats : null };
   },
   // exposed for tests: the simulator has several places it can silently find nothing
   simProbe: function(key, gi){
