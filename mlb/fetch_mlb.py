@@ -431,6 +431,73 @@ def team_recent(tid, date, season, n=8):
     games.sort(key=lambda x: x["date"], reverse=True)
     return games[:n]
 
+# ---------------------------------------------------------------- results (a whole season)
+def _schedule_results(payload, season):
+    """Parse a /schedule response into result rows. Pure, so it can be tested without the API.
+
+    WHY THIS EXISTS, rather than reusing team_recent()
+    results.json used to be stitched out of thirty calls to team_recent(), which is an eighteen-day
+    window capped at eight games a club. That is the right shape for a form guide and the wrong one
+    for a season: it published 86 games against roughly 2,400 played. results.json is where the
+    simulator reads its scorelines, so the simulator could price a scoreline for 3% of games and
+    hid itself for the rest - with nothing broken anywhere to say why.
+
+    Three things the per-team scrape could not give, which the schedule endpoint gives for free:
+      * the whole season, in one call a year instead of thirty rolling windows;
+      * who was ACTUALLY at home. team_recent is written from one club's point of view, so the
+        build recorded whichever club it happened to be reading as the home side. That was wrong
+        for about half the rows, on a field the page reads as the home score in six places;
+      * the game's own id (gamePk), which is the only thing that separates the two halves of a
+        doubleheader. Without it two games on one date collapse into one.
+    """
+    out = []
+    for day in (payload or {}).get("dates", []):
+        for g in day.get("games", []):
+            if (g.get("status") or {}).get("abstractGameState") != "Final":
+                continue
+            gt = g.get("teams", {})
+            home, away = gt.get("home", {}), gt.get("away", {})
+            ha = TEAM_ABBR.get((home.get("team") or {}).get("id"), "?")
+            aa = TEAM_ABBR.get((away.get("team") or {}).get("id"), "?")
+            if ha == "?" or aa == "?":
+                continue                      # an All-Star or exhibition side we do not carry
+            day_s = g.get("officialDate") or (g.get("gameDate") or "")[:10]
+            if not day_s:
+                continue
+            hs, as_ = home.get("score"), away.get("score")
+            if hs is None or as_ is None:
+                continue                      # Final with no score is a forfeit or a data hole
+            out.append({"gameId": g.get("gamePk"), "date": day_s,
+                        # gameNumber is 2 for the back half of a doubleheader, 1 otherwise
+                        "g": i(g.get("gameNumber"), 1),
+                        "home": ha, "away": aa, "hs": i(hs), "as": i(as_),
+                        "season": int(season),
+                        # yyyymmdd, matching the sort key the rest of the build uses
+                        "week": int(day_s.replace("-", ""))})
+    out.sort(key=lambda r: (r["date"], r["gameId"] or 0))
+    return out
+
+
+def season_results(season):
+    """Every finished regular-season game of one season."""
+    return _schedule_results(api("schedule", sportId=1, season=season, gameType="R"), season)
+
+
+# How many seasons of results to carry. The gamelogs span GAMELOG_SEASONS and the head-to-head
+# depth goes back H2H_EXTRA_SEASONS further, and a scoreline is wanted for anything either of
+# them can show - so cover the longer of the two. It is one API call per season.
+RESULT_SEASONS = max(GAMELOG_SEASONS, H2H_EXTRA_SEASONS + 1)
+
+
+def all_results(season):
+    rows = []
+    for yr in range(int(season) - RESULT_SEASONS + 1, int(season) + 1):
+        got = season_results(yr)
+        print(f"[JTT MLB]   results {yr}: {len(got)} finished games")
+        rows += got
+    return rows
+
+
 # ---------------------------------------------------------------- weather (Open-Meteo)
 def classify_weather(park, temp_f, wind_mph, wind_from_deg, precip_pct=0):
     """Turn raw conditions into a wind out/in read + an HR multiplier.
@@ -843,12 +910,18 @@ def main():
     print(f"[JTT MLB]   standings divisions={len(standings)} "
           f"trends avgTotal={trends.get('avgTotalPerGame')}")
 
+    # Every finished game of the seasons the gamelogs cover. This is what results.json is built
+    # from; the per-team `recent` arrays stay in the bundle because the form guide reads them.
+    results = all_results(season)
+    print(f"[JTT MLB]   results total={len(results)} games across {RESULT_SEASONS} season(s)")
+
     bundle = {
         "generated": int(time.time()), "season": season, "asOf": date,
         # every team's rates travel in the bundle - the ranking they feed needs a whole league
         "teams": {str(tid): t for tid, t in teams.items()},
         "parks": parks, "slate": slate, "batters": batters, "pitchers": pitchers,
         "standings": standings, "leagueLeaders": league_leaders, "trends": trends,
+        "results": results,
     }
     os.makedirs(os.path.join(HERE, "data"), exist_ok=True)
     with open(os.path.join(HERE, "data", "mlb_bundle.json"), "w") as fh:
@@ -857,7 +930,76 @@ def main():
         fh.write(str(bundle["generated"]))
     sz = os.path.getsize(os.path.join(HERE, "data", "mlb_bundle.json")) / 1024
     print(f"[JTT MLB] wrote data/mlb_bundle.json  games={len(slate)} "
-          f"batters={len(batters)} pitchers={len(pitchers)}  {sz:.0f}KB")
+          f"batters={len(batters)} pitchers={len(pitchers)} results={len(results)}  {sz:.0f}KB")
+
+def _selftest():
+    """Offline checks on the schedule parser.
+
+    The parser cannot be exercised against the live API from everywhere this runs, and it is the
+    piece that decides whether results.json is a season or a rumour - so its edge cases are
+    pinned here against a payload shaped exactly like statsapi's.
+    """
+    global TEAM_ABBR
+    TEAM_ABBR = {119: "LAD", 137: "SF", 112: "CHC", 158: "MIL"}
+    fails = []
+
+    def chk(name, cond, detail=""):
+        print(("  ok   " if cond else "  FAIL ") + name + ("  " + detail if detail else ""))
+        if not cond:
+            fails.append(name)
+
+    def game(pk, h, a, hs, as_, state="Final", date="2026-04-01", num=1, official=True):
+        g = {"gamePk": pk, "gameNumber": num,
+             "status": {"abstractGameState": state},
+             "teams": {"home": {"team": {"id": h}, "score": hs},
+                       "away": {"team": {"id": a}, "score": as_}}}
+        if official:
+            g["officialDate"] = date
+        else:
+            g["gameDate"] = date + "T23:10:00Z"
+        return g
+
+    payload = {"dates": [
+        {"games": [game(1, 119, 137, 5, 1),
+                   game(2, 137, 119, 3, 2, date="2026-04-02")]},
+        # a doubleheader: one date, one pair, two games
+        {"games": [game(10, 112, 158, 2, 1, date="2026-05-01", num=1),
+                   game(11, 112, 158, 7, 6, date="2026-05-01", num=2)]},
+        # things that must NOT become rows
+        {"games": [game(20, 119, 137, None, None, state="Preview", date="2026-06-01"),
+                   game(21, 119, 137, None, None, date="2026-06-02"),
+                   game(22, 999, 137, 4, 3, date="2026-06-03"),
+                   game(23, 119, 137, 1, 0, date="2026-06-04", official=False)]}]}
+    rows = _schedule_results(payload, 2026)
+    by = {r["gameId"]: r for r in rows}
+
+    chk("only finished, scored, known-team games become rows", len(rows) == 5,
+        "(%d rows from 8 games)" % len(rows))
+    chk("a game still to be played is skipped", 20 not in by)
+    chk("a Final with no score is skipped", 21 not in by, "(a forfeit or a data hole)")
+    chk("a team we do not carry is skipped", 22 not in by, "(All-Star and exhibition sides)")
+    chk("gameDate is accepted when officialDate is absent",
+        23 in by and by[23]["date"] == "2026-06-04")
+
+    chk("the HOME side is the home side, not whoever reported it",
+        by[1]["home"] == "LAD" and by[1]["away"] == "SF" and by[1]["hs"] == 5
+        and by[2]["home"] == "SF" and by[2]["away"] == "LAD" and by[2]["hs"] == 3,
+        "(the old per-team scrape got this wrong about half the time)")
+    chk("both halves of a doubleheader survive, numbered",
+        10 in by and 11 in by and by[10]["g"] == 1 and by[11]["g"] == 2)
+    chk("each row carries the game's own id", all(r["gameId"] for r in rows))
+    chk("week is the sortable yyyymmdd the rest of the build uses",
+        by[1]["week"] == 20260401, "(%s)" % by[1]["week"])
+    chk("rows come back in date order",
+        [r["date"] for r in rows] == sorted(r["date"] for r in rows))
+    chk("an empty or failed response is an empty list, not a crash",
+        _schedule_results({}, 2026) == [] and _schedule_results(None, 2026) == [])
+
+    print("\nselftest: " + ("FAILED - " + ", ".join(fails) if fails else "ALL PASS ok"))
+    return 1 if fails else 0
+
 
 if __name__ == "__main__":
+    if "--selftest" in sys.argv:
+        sys.exit(_selftest())
     main()
