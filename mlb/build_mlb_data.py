@@ -116,9 +116,16 @@ def merge_keep(name, fresh, key):
     28. The season-long pool is what those rankings are for, so a row is only replaced when this
     run has a newer version of it - never dropped because its team is idle.
 
+    `key` is a field name, or a function returning the key - a GROUP key, because replacement is
+    group-wise: every fresh row with that key is kept and every previous row with it is dropped.
+    That is what makes doubleheaders survive. MLB gamelogs have no game id, so rows are grouped by
+    player and date, and a player's two games on one day move together instead of one of them
+    being silently discarded as a duplicate.
+
     Rows whose key is missing are passed through untouched; a prior file that cannot be read is
     ignored, so a bad merge can never be worse than the plain write.
     """
+    kf = key if callable(key) else (lambda r: r.get(key))
     path = os.path.join(OUT, name)
     try:
         with open(path, encoding='utf-8') as fh:
@@ -129,7 +136,7 @@ def merge_keep(name, fresh, key):
         return fresh
     out, seen = [], set()
     for row in fresh:
-        k = row.get(key) if isinstance(row, dict) else None
+        k = kf(row) if isinstance(row, dict) else None
         if k is not None:
             seen.add(k)
         out.append(row)
@@ -137,7 +144,7 @@ def merge_keep(name, fresh, key):
     for row in prev:
         if not isinstance(row, dict):
             continue
-        k = row.get(key)
+        k = kf(row)
         if k is None or k in seen:
             continue
         out.append(row)
@@ -156,13 +163,23 @@ teams = merge_keep('teams.json', teams, 'team')
 dvp = merge_keep('dvp.json', dvp, 'team')
 w('players.json', players); w('teams.json', teams)
 # gamelogs split per season (Cloudflare Pages 25 MiB/file cap); shell loads meta.gamelogFiles
+#
+# THE GAMELOGS WERE NOT MERGED, and that is what collapsed the league. players, teams and dvp were
+# all protected above, so teams.json kept its thirty clubs while gamelogs.json held two - a file
+# big enough to look healthy, covering a World Series and nothing else. Every hit rate, streak and
+# matchup in the MLB tool was computed from whichever clubs happened to be playing that day.
+_glkey = lambda r: '%s|%s' % (r.get('Player'), r.get('Date'))
 _by_year = {}
 for _r in logs: _by_year.setdefault(_r['Year'], []).append(_r)
 _gl_files = []
 for _yr in sorted(_by_year, reverse=True):
-    _fn = 'gamelogs_%s.json' % _yr; w(_fn, _by_year[_yr]); _gl_files.append(_fn)
-w('gamelogs.json', _by_year.get(season, []))   # current-season fallback (kept under the file cap)
+    _fn = 'gamelogs_%s.json' % _yr
+    w(_fn, merge_keep(_fn, _by_year[_yr], _glkey)); _gl_files.append(_fn)
+w('gamelogs.json', merge_keep('gamelogs.json', _by_year.get(season, []), _glkey))
 meta['gamelogFiles'] = _gl_files
+# results narrowed the same way: twelve games across six days, against a full season of logs
+results = merge_keep('results.json', results,
+                     lambda r: '%s|%s|%s' % (r.get('date'), r.get('home'), r.get('away')))
 w('dvp.json', dvp); w('results.json', results); w('fixture.json', fixture)
 w('lineups.json', lineups); w('meta.json', meta)
 w('teams_form.json', teams)   # shell computes WWWLW from results; teams carries the rest
