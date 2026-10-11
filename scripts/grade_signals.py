@@ -19,7 +19,9 @@ import os
 import sys
 from collections import defaultdict
 
-SPORT_DIR = {'afl': 'AFL', 'nfl': 'nfl', 'epl': 'EPL', 'mlb': 'mlb', 'nbl': 'nbl', 'nhl': 'nhl'}
+# a sport missing here is never graded, so its signals sit in the ledger forever as 'pending'
+SPORT_DIR = {'afl': 'AFL', 'nfl': 'nfl', 'epl': 'EPL', 'mlb': 'mlb', 'nbl': 'nbl', 'nhl': 'nhl',
+             'nba': 'nba'}
 
 
 def load(path, default=None):
