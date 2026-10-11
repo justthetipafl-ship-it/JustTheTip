@@ -1968,7 +1968,7 @@ function buildIndexes(key){
   ix.hasUp = null;        // recomputed whenever the index is rebuilt, so a new fixture re-sorts
   TR_CACHE = { key:null, name:{}, vals:{} };     // trends cache is stale once the data changes
   ix.lgAvg = {}; ix.winAvg = {}; ix.matchOpp = null; ix.fs = null;
-  ix.pricedSet = null; ix.oddsName = null; ix.oddsIni = null; ix.vac = null; ix.bookList = null; ix.resIdx = null; ix.mlbLg = null; ix.lgRate = null; ix.scState = null; ix.nhlPim = null; ix.injIdx = null; ix.ww = null; ix.usg = null; ix.luRows = null; ix.foldName = null;
+  ix.pricedSet = null; ix.oddsName = null; ix.oddsIni = null; ix.vac = null; ix.bookList = null; ix.resIdx = null; ix.mlbLg = null; ix.lgRate = null; ix.scState = null; ix.nhlPim = null; ix.injIdx = null; ix.ww = null; ix.usg = null; ix.mrg = null; ix.luRows = null; ix.foldName = null;
   var logs = asArray(d.gamelogs) || [];
   ix.logsByName = {};
   // One row per player per game. NHL's build emits each game three times - Matias Maccelli had 213
@@ -13443,6 +13443,126 @@ function ddFirstRead(key, p, mkt){
    Two players on the same points line are different bets if one scores in the first six minutes
    and the other in garbage time, or if one lives at the rim and the other settles for long twos.
    Both files are built from the play-by-play by nba/build_nba_quarters.py and build_nba_zones.py.  */
+/* ===== MINUTES: THE CEILING ON EVERY COUNTING PROP ===========================================
+   A points line is a minutes line wearing a disguise, and the tool showed one number for minutes:
+   the average. Two things the average hides, both measured on the real data rather than assumed:
+
+   BLOWOUTS. The median NBA starter loses 5.3 minutes when a game is decided by 18 or more, and
+   the worst lose far more - Jamal Murray plays 38.6 in a close game and 27.1 in a blowout, an
+   eleven-minute swing that kills any over on its own. That is the single biggest reason a good
+   read on a player loses.
+
+   WHAT HE ACTUALLY PLAYS. An average of 34.8 covers a man who plays 29 one night and 40 the next.
+   The 20th-to-80th band says what a normal night looks like.
+
+   NOT INCLUDED, DELIBERATELY: back-to-backs. The obvious assumption is that starters get managed
+   on the second night; measured across 93 starters with a sample, the median change was -0.58 of
+   a minute. There is no effect on minutes to show, and a tile saying so would be a number
+   pretending to be a signal. (Whether he plays AT ALL on a back-to-back is a different question,
+   and that one lives in availability below.)                                                   */
+function nbaMarginIndex(key){
+  var S = state.sports[key];
+  if (S.idx.mrg) return S.idx.mrg;
+  var raw = S.data.results;
+  var all = Array.isArray(raw) ? raw : ((raw && (raw.games || raw.rows)) || []);
+  var m = {}, ds = [];
+  all.forEach(function(r){
+    var hs = r.hs != null ? +r.hs : (r.homeScore != null ? +r.homeScore : null);
+    var as = r.as != null ? +r.as : (r.awayScore != null ? +r.awayScore : null);
+    if (hs == null || as == null || !isFinite(hs) || !isFinite(as)) return;
+    var d = Math.abs(hs - as);
+    if (r.gameId != null) m[String(r.gameId)] = d;
+    ds.push(d);
+  });
+  ds.sort(function(a, b){ return a - b; });
+  // the thresholds come from the league's own spread, so "close" and "blowout" mean the same
+  // thing in a 225-point league and a 170-point one
+  var q = function(p){ return ds.length ? ds[Math.floor(p * (ds.length - 1))] : null; };
+  S.idx.mrg = { by:m, close:q(0.30), blow:q(0.75), n:ds.length };
+  return S.idx.mrg;
+}
+
+function nbaMinutesSection(key, name){
+  if (key !== 'nba' && key !== 'nbl') return '';
+  var S = state.sports[key];
+  var M = nbaMarginIndex(key);
+  if (!M.n || M.close == null) return '';
+  var logs = (asArray(S.data.gamelogs) || []).filter(function(r){
+    return r && r.Player === name && (+r.minutes || 0) > 0;
+  });
+  if (logs.length < 20) return '';
+  // one season, not a mixture: a role two years ago is a different player
+  var yrs = {};
+  logs.forEach(function(r){ yrs[String(r.Year)] = (yrs[String(r.Year)] || 0) + 1; });
+  var ks = Object.keys(yrs).sort();
+  var yr = ks[ks.length - 1];
+  if (yrs[yr] < 20 && ks.length > 1) yr = ks[ks.length - 2];
+  var mine = logs.filter(function(r){ return String(r.Year) === yr; });
+  if (mine.length < 20) return '';
+
+  var mins = mine.map(function(r){ return +r.minutes || 0; });
+  var mean = function(v){ return v.reduce(function(a, b){ return a + b; }, 0) / v.length; };
+  var pct = function(v, p){
+    var s2 = v.slice().sort(function(a, b){ return a - b; });
+    return s2[Math.floor(p * (s2.length - 1))];
+  };
+  var close = [], blow = [];
+  mine.forEach(function(r){
+    var d = M.by[String(r.MatchId)];
+    if (d == null) return;
+    if (d <= M.close) close.push(+r.minutes || 0);
+    else if (d >= M.blow) blow.push(+r.minutes || 0);
+  });
+
+  // availability, inside the stretch he was actually at the club - a man signed in January has
+  // not "missed" the first half of the season
+  var team = mine[mine.length - 1].Team;
+  var X = nbaWWIndex(key);
+  var gs = (X.games[team] || []);
+  var pk = cmbNameKey(name);
+  // Only this season's games for this club, and only between his first and last appearance -
+  // a man signed in January has not "missed" the first half of the year. A basketball box score
+  // lists everyone who got on the floor, so absent from one means he did not play.
+  var inWin = 0, playedN = 0;
+  var season = gs.filter(function(m2){ return X.yearOf[m2] === yr; });
+  var firstI = -1, lastI = -1;
+  season.forEach(function(m2, i){
+    if ((X.played[m2 + '|' + team] || {})[pk]){ if (firstI < 0) firstI = i; lastI = i; }
+  });
+  if (firstI >= 0){
+    for (var i2 = firstI; i2 <= lastI; i2++){
+      inWin++;
+      if ((X.played[season[i2] + '|' + team] || {})[pk]) playedN++;
+    }
+  }
+
+  var cells = pfCell('Minutes a game', mean(mins).toFixed(1),
+                     'usually ' + pct(mins, 0.2).toFixed(0) + '\u2013' + pct(mins, 0.8).toFixed(0)
+                     + ' \u00b7 ' + yr);
+  if (close.length >= 6)
+    cells += pfCell('In close games', mean(close).toFixed(1),
+                    'decided by ' + M.close + ' or less \u00b7 ' + close.length + ' games');
+  if (blow.length >= 6)
+    cells += pfCell('In blowouts', mean(blow).toFixed(1),
+                    'by ' + M.blow + '+ \u00b7 ' + blow.length + ' games',
+                    close.length >= 6 ? (mean(blow) >= mean(close) - 1 ? true : false) : null);
+  if (inWin >= 10)
+    cells += pfCell('Available', playedN + ' of ' + inWin,
+                    'while at ' + abbrOf(key, team) + ' \u00b7 ' + Math.round(playedN / inWin * 100) + '%');
+
+  var drop = (close.length >= 6 && blow.length >= 6) ? mean(close) - mean(blow) : null;
+  return '<div class="dd-sec"><div class="dd-h">Minutes</div><div class="pf-grid">' + cells + '</div>'
+    + '<div class="dd-note">'
+    + (drop != null && drop >= 2
+        ? 'He loses ' + drop.toFixed(1) + ' minutes when the game gets away from either side, which '
+          + 'is the usual reason a sound read on a player still loses. '
+        : drop != null
+        ? 'His minutes hold up in a blowout, which most starters\u2019 do not. '
+        : '')
+    + 'The band beside the average is what a normal night looks like for him \u2014 an average on '
+    + 'its own treats a short night and a long one as the same thing.</div></div>';
+}
+
 /* ===== USAGE AND PACE ========================================================================
    The two numbers that explain most of an NBA box score before any matchup read enters into it.
    PACE is how many possessions a team plays to; USAGE is the share of his team's possessions a
@@ -13564,11 +13684,12 @@ function nbaWWIndex(key){
   var S = state.sports[key];
   if (S.idx.ww) return S.idx.ww;
   var logs = asArray(S.data.gamelogs) || [];
-  var date = {}, order = {}, played = {}, byPl = {}, nice = {}, mins = {};
+  var date = {}, order = {}, played = {}, byPl = {}, nice = {}, mins = {}, yearOf = {};
   logs.forEach(function(r){
     if (!r || !r.MatchId || !r.Team || !r.Player) return;
     var k = cmbNameKey(r.Player);
     date[r.MatchId] = r.Date || '';
+    yearOf[r.MatchId] = String(r.Year);
     nice[k] = r.Player;
     var tk = r.MatchId + '|' + r.Team;
     (played[tk] = played[tk] || {});
@@ -13587,7 +13708,7 @@ function nbaWWIndex(key){
   });
   var avgMin = {};
   Object.keys(mins).forEach(function(k){ avgMin[k] = mins[k].t / mins[k].n; });
-  S.idx.ww = { games:games, played:played, byPl:byPl, nice:nice, avgMin:avgMin };
+  S.idx.ww = { games:games, played:played, byPl:byPl, nice:nice, avgMin:avgMin, yearOf:yearOf };
   return S.idx.ww;
 }
 
@@ -15435,13 +15556,14 @@ function teamProfile(key, team){
 function nbaScoringProfile(key, name){
   if (key !== 'nba') return '';
   var ww = nbaWWSection(key, name);
+  var mn = nbaMinutesSection(key, name);
   var S = state.sports[key];
   var p = (S.idx.byName || {})[name] || {};
   var z = nbaZones(key, name), q = nbaQuarters(key, name);
   var logs = sortLogsDesc(((S.idx.logsByName || {})[name] || []).slice())
     .filter(function(r){ return (+r.minutes || 0) > 0; });
-  if (!z && !q && !logs.length && !ww) return '';
-  var h = ww;
+  if (!z && !q && !logs.length && !ww && !mn) return '';
+  var h = mn + ww;
 
   // the shooting line, from his own game logs so it is current even before the zone build runs
   if (logs.length){
@@ -17063,6 +17185,28 @@ window.LAB = {
     var el = document.getElementById('dv-card');
     if (!el) return;
     sharePng(snapElement(el, 'D\u00e9j\u00e0 Vu').catch(function(){ return null; }), 'jtt-dejavu.png');
+  },
+  // exposed for tests: the minutes read, as numbers rather than parsed out of the rendered text
+  minProbe: function(key, name){
+    var M = nbaMarginIndex(key);
+    var S = state.sports[key];
+    var logs = (asArray(S.data.gamelogs) || []).filter(function(r){
+      return r && r.Player === name && (+r.minutes || 0) > 0; });
+    var yrs = {};
+    logs.forEach(function(r){ yrs[String(r.Year)] = (yrs[String(r.Year)] || 0) + 1; });
+    var ks = Object.keys(yrs).sort(), yr = ks[ks.length - 1];
+    if (ks.length > 1 && yrs[yr] < 20) yr = ks[ks.length - 2];
+    var mine = logs.filter(function(r){ return String(r.Year) === yr; });
+    var c = [], b = [];
+    mine.forEach(function(r){
+      var d = M.by[String(r.MatchId)];
+      if (d == null) return;
+      if (d <= M.close) c.push(+r.minutes || 0); else if (d >= M.blow) b.push(+r.minutes || 0);
+    });
+    var mean = function(v){ return v.length ? v.reduce(function(a, x){ return a + x; }, 0) / v.length : null; };
+    return { year:yr, games:mine.length, close:M.close, blow:M.blow,
+             closeMin:mean(c), closeN:c.length, blowMin:mean(b), blowN:b.length,
+             avg:mean(mine.map(function(r){ return +r.minutes || 0; })) };
   },
   // exposed for tests: usage. Five men share the floor, so the median qualified player must sit
   // on 20% - that identity is the sharpest check there is that the formula is right.
