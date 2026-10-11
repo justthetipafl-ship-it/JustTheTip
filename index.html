@@ -1968,7 +1968,7 @@ function buildIndexes(key){
   ix.hasUp = null;        // recomputed whenever the index is rebuilt, so a new fixture re-sorts
   TR_CACHE = { key:null, name:{}, vals:{} };     // trends cache is stale once the data changes
   ix.lgAvg = {}; ix.winAvg = {}; ix.matchOpp = null; ix.fs = null;
-  ix.pricedSet = null; ix.oddsName = null; ix.oddsIni = null; ix.vac = null; ix.bookList = null; ix.resIdx = null; ix.mlbLg = null; ix.lgRate = null; ix.scState = null; ix.nhlPim = null; ix.injIdx = null; ix.ww = null; ix.luRows = null; ix.foldName = null;
+  ix.pricedSet = null; ix.oddsName = null; ix.oddsIni = null; ix.vac = null; ix.bookList = null; ix.resIdx = null; ix.mlbLg = null; ix.lgRate = null; ix.scState = null; ix.nhlPim = null; ix.injIdx = null; ix.ww = null; ix.usg = null; ix.luRows = null; ix.foldName = null;
   var logs = asArray(d.gamelogs) || [];
   ix.logsByName = {};
   // One row per player per game. NHL's build emits each game three times - Matias Maccelli had 213
@@ -8426,6 +8426,7 @@ function focusPage(){
     + (S.t3 === 'ready' && !state.view.nerd ? goalieSection(key, g) : '')
     + (S.t3 === 'ready' && !state.view.nerd ? firstReadSection(key, g) : '')
     + (!state.view.nerd ? nbaRestSection(key, g) : '')
+    + (S.t3 === 'ready' && !state.view.nerd ? nbaPaceSection(key, g) : '')
     + (S.t3 === 'ready' && !state.view.nerd ? nbaOutSection(key, g) : '')
 
     // Nerd Mode replaces the signals rather than adding to them: it is a different read of the
@@ -13442,6 +13443,102 @@ function ddFirstRead(key, p, mkt){
    Two players on the same points line are different bets if one scores in the first six minutes
    and the other in garbage time, or if one lives at the rim and the other settles for long twos.
    Both files are built from the play-by-play by nba/build_nba_quarters.py and build_nba_zones.py.  */
+/* ===== USAGE AND PACE ========================================================================
+   The two numbers that explain most of an NBA box score before any matchup read enters into it.
+   PACE is how many possessions a team plays to; USAGE is the share of his team's possessions a
+   player ends. Possessions are the raw material of every counting prop - a line set on a 98-
+   possession team means something different on a 106-possession night - and neither number was
+   anywhere in the tool, though pace has been sitting unused in teams.json all along.
+
+   Usage is the standard formula, over totals rather than averaged per game so a short night does
+   not count the same as a long one:
+     USG% = 100 * (FGA + 0.44*FTA + TOV) * (team minutes / 5) / (minutes * team's own total)
+   Sanity check on the real data: Luka 38.3%, SGA 33.4%, and the league median lands on 20.1% -
+   which it has to, because five players on the floor share 100% of them. A median anywhere else
+   would mean the formula was wrong.                                                            */
+function nbaUsageIndex(key){
+  var S = state.sports[key];
+  if (S.idx.usg) return S.idx.usg;
+  var yr = String(curSeason(key));
+  var tm = {}, by = {};
+  (asArray(S.data.gamelogs) || []).forEach(function(r){
+    if (!r || String(r.Year) !== yr || !r.MatchId || !r.Team) return;
+    var k = r.MatchId + '|' + r.Team;
+    var t = tm[k] = tm[k] || { poss:0, min:0 };
+    t.poss += (+r.fga || 0) + 0.44 * (+r.fta || 0) + (+r.turnovers || 0);
+    t.min += (+r.minutes || 0);
+  });
+  (asArray(S.data.gamelogs) || []).forEach(function(r){
+    if (!r || String(r.Year) !== yr || (+r.minutes || 0) <= 0) return;
+    var t = tm[r.MatchId + '|' + r.Team];
+    if (!t || t.min <= 0 || t.poss <= 0) return;
+    var o = by[cmbNameKey(r.Player)] = by[cmbNameKey(r.Player)]
+      || { poss:0, min:0, tPoss:0, tMin:0, g:0 };
+    o.poss += (+r.fga || 0) + 0.44 * (+r.fta || 0) + (+r.turnovers || 0);
+    o.min += (+r.minutes || 0);
+    o.tPoss += t.poss; o.tMin += t.min; o.g++;
+  });
+  var usg = {}, rankable = [];
+  Object.keys(by).forEach(function(k){
+    var o = by[k];
+    if (o.min <= 0 || o.tPoss <= 0) return;
+    var v = 100 * (o.poss * (o.tMin / 5)) / (o.min * o.tPoss);
+    if (!isFinite(v)) return;
+    usg[k] = { usg:v, g:o.g, mpg:o.min / o.g };
+    // rank only against players with a real role; a man with four minutes in two games is not
+    // competing for the same league position
+    if (o.g >= 15 && o.min / o.g >= 20) rankable.push({ k:k, v:v });
+  });
+  rankable.sort(function(a, b){ return b.v - a.v; });
+  rankable.forEach(function(x, i){ usg[x.k].rank = i + 1; usg[x.k].of = rankable.length; });
+  S.idx.usg = usg;
+  return usg;
+}
+function nbaUsageFor(key, name){
+  if (key !== 'nba' && key !== 'nbl') return null;
+  return nbaUsageIndex(key)[cmbNameKey(name)] || null;
+}
+
+/* How many possessions this game projects to, and what that does to every line in it.
+   Both sides decide the pace of a basketball game, so it is not an average of the two: a fast
+   team meeting a fast team runs faster than either does on its own. The usual estimate scales
+   one by the other against the league. */
+function nbaPaceSection(key, g){
+  if (key !== 'nba' && key !== 'nbl') return '';
+  if (!g || !g.home || !g.away) return '';
+  var rows = teamRowsFor(key) || [];
+  var paced = rows.filter(function(t){ return typeof t.pace === 'number' && t.pace > 0; });
+  if (paced.length < 10) return '';
+  var lg = paced.reduce(function(a, t){ return a + t.pace; }, 0) / paced.length;
+  var find = function(tm){
+    return paced.filter(function(t){ return normTeam(t.team || t.name) === normTeam(tm); })[0];
+  };
+  var H = find(g.home), A = find(g.away);
+  if (!H || !A) return '';
+  var sorted = paced.slice().sort(function(a, b){ return b.pace - a.pace; });
+  var rankOf = function(t){ return sorted.indexOf(t) + 1; };
+  var proj = H.pace * A.pace / lg;
+  var d = proj - lg;
+  // the projection's own rank among every pairing is meaningless; what matters is where it sits
+  // against a normal night
+  var band = d >= 2.5 ? 'fast' : d <= -2.5 ? 'slow' : 'about normal';
+  return '<div class="dayband"><span>Game environment</span></div>'
+    + '<div class="pf-grid">'
+      // no colour on it: green for fast and red for slow would say a slow game is a worse bet,
+      // when it is only a different one - good for unders, bad for overs. The word carries it.
+      + pfCell('Projected possessions', proj.toFixed(1),
+               'league ' + lg.toFixed(1) + ' \u00b7 ' + band)
+      + pfCell(abbrOf(key, g.away) + ' pace', A.pace.toFixed(1),
+               ordinalish(rankOf(A)) + ' of ' + paced.length)
+      + pfCell(abbrOf(key, g.home) + ' pace', H.pace.toFixed(1),
+               ordinalish(rankOf(H)) + ' of ' + paced.length)
+    + '</div>'
+    + '<div class="deg-note">Possessions are the raw material of every counting prop: the same '
+    + 'line is a different bet on a ' + (lg - 4).toFixed(0) + '-possession night and a '
+    + (lg + 4).toFixed(0) + '-possession one. Both sides set the tempo, so this is not the average '
+    + 'of the two - a fast team meeting a fast team runs faster than either does alone.</div>';
+}
+
 /* ===== WHEN A TEAM-MATE SITS ==================================================================
    The read NBA props turn on. One man out does not just free his own shots - it moves minutes,
    usage and the ball, and the player it moves most is not always the obvious one.
@@ -15356,13 +15453,22 @@ function nbaScoringProfile(key, name){
     // same shot, and field-goal percentage treats them as if they were
     var ts = (fga + 0.44 * fta) > 0 ? pts / (2 * (fga + 0.44 * fta)) * 100 : null;
     var efg = fga > 0 ? (fgm + 0.5 * tpm) / fga * 100 : null;
-    h += '<div class="dd-sec"><div class="dd-h">Shooting</div><div class="pf-grid">'
+    h += '<div class="dd-sec"><div class="dd-h">Shooting &amp; usage</div><div class="pf-grid">'
       + [['Field goals', pct(fgm, fga), fgm + '/' + fga],
          ['Three point', pct(tpm, tpa), tpm + '/' + tpa],
          ['Free throws', pct(ftm, fta), ftm + '/' + fta],
+         (function(){
+           // usage says how much of the offence runs through him, which is the number that
+           // explains a raw scoring line before any matchup read does
+           var u = nbaUsageFor(key, name);
+           return u ? ['Usage', u.usg.toFixed(1) + '%',
+                       u.rank ? ordinalish(u.rank) + ' of ' + u.of : 'of his team\u2019s possessions']
+                    : null;
+         })(),
          ['Effective FG', efg != null ? efg.toFixed(1) + '%' : '\u2014', 'threes counted properly'],
          ['True shooting', ts != null ? ts.toFixed(1) + '%' : '\u2014', 'with free throws'],
          ['Points a game', (pts / logs.length).toFixed(1), logs.length + ' games']]
+        .filter(Boolean)                 // usage is absent for a player with no minutes on file
         .map(function(x){
           return '<div class="pf-cell"><b>' + esc(x[1]) + '</b><span>' + esc(x[0]) + '</span>'
             + '<i>' + esc(x[2]) + '</i></div>';
@@ -16958,6 +17064,18 @@ window.LAB = {
     if (!el) return;
     sharePng(snapElement(el, 'D\u00e9j\u00e0 Vu').catch(function(){ return null; }), 'jtt-dejavu.png');
   },
+  // exposed for tests: usage. Five men share the floor, so the median qualified player must sit
+  // on 20% - that identity is the sharpest check there is that the formula is right.
+  usgProbe: function(key){
+    var u = nbaUsageIndex(key);
+    var ranked = Object.keys(u).filter(function(k){ return u[k].rank; })
+      .map(function(k){ return u[k].usg; }).sort(function(a, b){ return a - b; });
+    return { n:Object.keys(u).length, ranked:ranked.length,
+             median: ranked.length ? ranked[ranked.length >> 1] : null,
+             hi: ranked.length ? ranked[ranked.length - 1] : null,
+             lo: ranked.length ? ranked[0] : null };
+  },
+  usgFor: function(key, name){ return nbaUsageFor(key, name); },
   // exposed for tests: the with/without split, and what it costs to compute
   wwProbe: function(key, name, team){
     var S = state.sports[key];
