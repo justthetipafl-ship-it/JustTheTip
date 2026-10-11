@@ -238,17 +238,25 @@ def build_players(logs, rosters, cfg, current):
                  [["PlayerId", "Team", "TeamFull", "pos"]])
     out = avg.merge(meta, on=["PlayerId", "Player"]).merge(latest, on="PlayerId", how="left")
 
-    # roster bio join (five-position, age, height, experience, headshot)
+    # roster bio join (five-position, age, height, experience, headshot) AND club
     bio = {}
+    by_rname = {}
     if rosters is not None and len(rosters):
         for _, r in rosters.iterrows():
-            bio[str(r.get("athlete_id"))] = dict(
+            tm = str(r.get("team_abbreviation") or "") or None
+            tmf = str(r.get("team_display_name") or "") or None
+            b = dict(
                 pos5=str(r.get("position_abbreviation") or "") or None,
                 age=(int(r["age"]) if pd.notna(r.get("age")) else None),
                 height=(str(r.get("height")) if pd.notna(r.get("height")) else None),
                 exp=(int(r["experience_years"]) if pd.notna(r.get("experience_years")) else None),
                 headshot=(str(r.get("headshot_href")) if pd.notna(r.get("headshot_href")) else None),
+                team=tm, teamFull=tmf,
             )
+            bio[str(r.get("athlete_id"))] = b
+            nm = str(r.get("display_name") or "").strip().lower()
+            if nm:
+                by_rname[nm] = b
 
     # league percentile thresholds for role classification (rate per minute)
     rates = {}
@@ -258,7 +266,7 @@ def build_players(logs, rosters, cfg, current):
     thr = {k: rates[k].quantile(0.80) for k in rates}
     tpa_share = (out["threesAtt"] / out["fga"].replace(0, pd.NA)).fillna(0)
 
-    players = []
+    players, moved = [], 0
     for i, r in out.iterrows():
         role = []
         if rates["fga"][i]      >= thr["fga"]:      role.append("Volume Scorer")
@@ -270,9 +278,19 @@ def build_players(logs, rosters, cfg, current):
             role.append("Two-Way")
         if r["starterPct"] < 0.4 and (r["minutes"] or 0) >= cfg["game_min"] * 0.4:
             role.append("Sixth Man")
-        b = bio.get(str(r["PlayerId"]), {})
+        b = bio.get(str(r["PlayerId"])) or by_rname.get(str(r["Player"]).strip().lower()) or {}
+        # WHO HE PLAYS FOR NOW, not who he played for last. The club came from his most recent
+        # GAME, which in October is last season - so a quarter of the league sat on the wrong
+        # team: Giannis in Milwaukee, LeBron a Laker, Dort in Oklahoma City. Every team filter,
+        # fixture player list, defence-vs-position matchup and simulator candidate read it.
+        # The published roster for the season about to start is the only thing that knows.
+        tm, tmf = r["Team"], r["TeamFull"]
+        if b.get("team"):
+            if b["team"] != tm:
+                moved += 1
+            tm, tmf = b["team"], (b.get("teamFull") or tmf)
         row = dict(playerId=_pid(r["PlayerId"]), name=r["Player"],
-                   team=r["Team"], teamFull=r["TeamFull"],
+                   team=tm, teamFull=tmf, rostered=(1 if b.get("team") else 0),
                    position=r["pos"], pos5=b.get("pos5"),
                    games=int(r["games"]), starterPct=round(float(r["starterPct"]), 3),
                    role=(role[0] if role else "Rotation"), roles=role,
@@ -282,6 +300,18 @@ def build_players(logs, rosters, cfg, current):
             v = r[k]
             row[k] = round(float(v), 2) if pd.notna(v) else None
         players.append(row)
+
+    if bio:
+        off = [p for p in players if not p["rostered"]]
+        # Only trust a roster that actually looks like a league. A half-published file would
+        # otherwise delete most of the player list.
+        if len(bio) >= 300:
+            players = [p for p in players if p["rostered"]]
+            print(f"  roster: {moved} player(s) moved club over summer; "
+                  f"{len(off)} no longer on an NBA roster (dropped)")
+        else:
+            print(f"  [warn] roster has only {len(bio)} players - using it for teams but "
+                  f"keeping everyone in the list")
     players.sort(key=lambda p: -(p.get("points") or 0))
     return players
 
@@ -624,6 +654,14 @@ def run_league(lg, seasons, current, outroot, password, src_local):
                 got.append("team box")
             except Exception:
                 pass
+            try:
+                # The NEW season's roster is published before a ball is bounced, and it is the
+                # only thing that knows who changed club over summer. Taken here it overrides
+                # the current-season one loaded below, which is last season's list.
+                rosters = load_frame(lg, "rosters", s, src_local)
+                got.append("rosters")
+            except Exception:
+                pass
             print(f"  [info] {s}: " + (", ".join(got) if got else "nothing published yet"))
             continue
         print(f"  loading {s}...", flush=True)
@@ -633,7 +671,7 @@ def run_league(lg, seasons, current, outroot, password, src_local):
         pb_frames.append(normalize_player_box(_rawpb))
         tb_frames.append(_team_game_rows(load_frame(lg, "team_box", s, src_local)))
         sc_frames.append(load_frame(lg, "schedules", s, src_local))
-        if s == current:
+        if s == current and rosters is None:
             try:
                 rosters = load_frame(lg, "rosters", s, src_local)
             except Exception as e:
@@ -747,6 +785,32 @@ def selftest():
     a1 = next(p for p in players if p["name"] == "Alpha One")
     assert a1["points"] == 35.0 and a1["games"] == 2, "average over rep games"
     assert a1["position"] == "G"
+    assert a1["team"] == "AAA", "no roster: club falls back to the last game played"
+
+    # THE CLUB COMES FROM THE ROSTER, NOT THE LAST GAME PLAYED. In October a player's most recent
+    # game is last season's, so everyone who moved over summer sat on the wrong team - measured at
+    # 135 of 550 players, Giannis and LeBron among them. A small roster is used for teams but must
+    # NOT empty the player list; a full one also drops players no longer on an NBA roster.
+    def _ros(aid, name, team, n_pad=0):
+        return dict(athlete_id=aid, display_name=name, team_abbreviation=team,
+                    team_display_name=team + " Full", position_abbreviation="G",
+                    age=25, height="6' 5\"", experience_years=3, headshot_href=None)
+    small = pd.DataFrame([_ros("1", "Alpha One", "ZZZ")])
+    moved = build_players(logs, small, cfg, 2026)
+    m1 = next(p for p in moved if p["name"] == "Alpha One")
+    assert m1["team"] == "ZZZ" and m1["teamFull"] == "ZZZ Full", "roster overrides the stale club"
+    assert m1["rostered"] == 1
+    assert any(p["name"] == "Beta Two" for p in moved), \
+        "a part-published roster must not delete the rest of the league"
+    assert next(p for p in moved if p["name"] == "Beta Two")["team"] == "AAA", \
+        "a player the roster does not mention keeps his last-played club"
+
+    full = pd.DataFrame([_ros("1", "Alpha One", "ZZZ")]
+                        + [_ros(str(1000 + i), "Filler %d" % i, "QQQ") for i in range(320)])
+    kept = build_players(logs, full, cfg, 2026)
+    assert next(p for p in kept if p["name"] == "Alpha One")["team"] == "ZZZ"
+    assert not any(p["name"] == "Beta Two" for p in kept), \
+        "a complete roster drops players who are no longer on one"
     dvp = build_dvp(logs, 2026)
     bbbG = next(r for r in dvp if r["team"] == "BBB" and r["pos"] == "G")
     # BBB allowed to G: g1 Alpha 30 (Beta is C), g2 Alpha 40 -> 35.0
