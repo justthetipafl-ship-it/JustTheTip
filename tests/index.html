@@ -1115,6 +1115,24 @@
      keeps the card in view */
   .sim-bar{display:grid;grid-template-columns:1fr 1fr;gap:8px;}
   .sim-bar .ob-sel{width:100%;min-width:0;}
+  .ww-row{padding:7px 0;border-top:1px solid var(--border);}
+  .ww-row:first-child{border-top:0;}
+  .ww-hd{display:flex;justify-content:space-between;align-items:baseline;gap:8px;
+    font-family:var(--font-display);font-size:12px;}
+  /* the name gives way, not the sample size: a long name pushed "154 with" off the right edge,
+     and the sample size is the part that tells you whether to believe the row */
+  .ww-hd>b{font-weight:inherit;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .ww-hd span{font-family:var(--font-mono);font-size:10px;color:var(--text-3);
+    white-space:nowrap;flex:0 0 auto;}
+  .ww-cells{display:flex;flex-wrap:wrap;gap:4px 12px;margin-top:3px;
+    font-family:var(--font-mono);font-size:11px;color:var(--text-3);}
+  .ww-c i{font-style:normal;color:var(--text-3);margin-right:4px;font-size:10px;}
+  .ww-c b{font-weight:600;color:var(--text);}
+  .ww-c.ww-up b{color:var(--accent);}
+  .ww-c.ww-dn b{color:#f97316;}
+  .ww-blk{padding:8px 0;}
+  .ww-out{font-family:var(--font-display);font-size:12px;letter-spacing:.02em;
+    color:var(--text);padding-bottom:4px;}
   .sim-sw{display:inline-flex;gap:0;margin:2px 0 6px;border:1px solid var(--border);
     border-radius:8px;overflow:hidden;}
   .sim-swb{font-family:var(--font-display);font-size:11px;letter-spacing:.04em;padding:4px 10px;
@@ -1250,6 +1268,23 @@
   .lt-leg.untracked{opacity:.5;} .lt-leg.untracked .lt-tag{color:var(--text-3);}
   .lt-leg.busted{opacity:.55;} .lt-leg.busted .lt-fill{background:#ef4444;} .lt-leg.busted .lt-tag{color:#ef4444;}
   .lt-multi{font-size:9px;color:var(--text-3);margin-top:4px;}
+  /* published pending bets - the live-tracked block on the Results page */
+  .pb-wrap{display:grid;gap:9px;}
+  .pb-bet{background:var(--surface-2);border:1px solid var(--border);border-radius:12px;padding:10px 11px;}
+  .pb-hdr{display:flex;gap:8px;align-items:baseline;}
+  .pb-ttl{font-weight:800;font-size:13px;line-height:1.3;}
+  .pb-tag{margin-left:auto;flex:none;font-size:8px;font-weight:800;letter-spacing:.05em;
+    text-transform:uppercase;padding:3px 7px;border-radius:999px;border:1px solid var(--border);
+    color:var(--text-3);white-space:nowrap;}
+  .pb-tag.pos{color:var(--accent);border-color:var(--accent);}
+  .pb-tag.neg{color:#ef4444;border-color:#ef4444;}
+  .pb-tag.mid{color:#f59e0b;border-color:#f59e0b;}
+  .pb-meta{font-size:10px;color:var(--text-3);margin:3px 0 8px;}
+  .pb-legs .lt-leg{background:var(--surface);}
+  .pb-legs .lt-leg:last-child{margin-bottom:0;}
+  .pb-why{font-size:10px;color:#f59e0b;margin-top:7px;}
+  .pb-bare{opacity:.72;} .pb-bare .pb-ttl{font-weight:700;font-size:12px;}
+  .pb-bare .pb-meta{margin-bottom:0;}
   .sc-filter{display:flex;gap:7px;align-items:center;margin-bottom:8px;}
   .sc-filter input{flex:1;min-width:0;background:var(--surface-2);border:1px solid var(--border);
     border-radius:9px;padding:9px 12px;color:var(--text);font-size:13px;font-family:inherit;outline:none;}
@@ -1950,7 +1985,7 @@ function buildIndexes(key){
   ix.hasUp = null;        // recomputed whenever the index is rebuilt, so a new fixture re-sorts
   TR_CACHE = { key:null, name:{}, vals:{} };     // trends cache is stale once the data changes
   ix.lgAvg = {}; ix.winAvg = {}; ix.matchOpp = null; ix.fs = null;
-  ix.pricedSet = null; ix.oddsName = null; ix.oddsIni = null; ix.vac = null; ix.bookList = null; ix.resIdx = null; ix.mlbLg = null; ix.lgRate = null; ix.scState = null; ix.nhlPim = null; ix.injIdx = null; ix.luRows = null; ix.foldName = null;
+  ix.pricedSet = null; ix.oddsName = null; ix.oddsIni = null; ix.vac = null; ix.bookList = null; ix.resIdx = null; ix.mlbLg = null; ix.lgRate = null; ix.scState = null; ix.nhlPim = null; ix.injIdx = null; ix.ww = null; ix.usg = null; ix.mrg = null; ix.luRows = null; ix.foldName = null;
   var logs = asArray(d.gamelogs) || [];
   ix.logsByName = {};
   // One row per player per game. NHL's build emits each game three times - Matias Maccelli had 213
@@ -8408,6 +8443,8 @@ function focusPage(){
     + (S.t3 === 'ready' && !state.view.nerd ? goalieSection(key, g) : '')
     + (S.t3 === 'ready' && !state.view.nerd ? firstReadSection(key, g) : '')
     + (!state.view.nerd ? nbaRestSection(key, g) : '')
+    + (S.t3 === 'ready' && !state.view.nerd ? nbaPaceSection(key, g) : '')
+    + (S.t3 === 'ready' && !state.view.nerd ? nbaOutSection(key, g) : '')
 
     // Nerd Mode replaces the signals rather than adding to them: it is a different read of the
     // same fixture (the market against itself), and stacking both made the page enormous.
@@ -11789,8 +11826,11 @@ var DEG_TRAIN = [1.30, 1.60], DEG_YANK = [1.40, 2.10], DEG_SGM = [2.5, 3.8], DEG
    and no hit rate can see it coming: the player's record only contains games he played.
    (Accuracy is NOT the reason - on short lines, low-usage players land within ~2pt of everyone
    else. It is availability, and only availability.)                                            */
-var ROLE_FIELD = { afl:'tog', nfl:'snapPct', nbl:'minutes', nhl:'toiMin', epl:'min' };
-var ROLE_FLOOR = { afl:75, nfl:55, nbl:18, nhl:12, epl:60 };
+// Mirrors scripts/build_ladder.py. A sport missing here gets NO role gate (roleOk returns true),
+// which is right for MLB - a batter has no minutes - and an oversight for anyone else. The NBA
+// was absent from both copies, so a six-minute bench man could carry a leg.
+var ROLE_FIELD = { afl:'tog', nfl:'snapPct', nbl:'minutes', nhl:'toiMin', epl:'min', nba:'minutes' };
+var ROLE_FLOOR = { afl:75, nfl:55, nbl:18, nhl:12, epl:60, nba:20 };
 function roleOk(key, p){
   var f = ROLE_FIELD[key];
   if (!f || !p) return true;                       // MLB has no minutes: the lineup check covers it
@@ -11800,7 +11840,8 @@ function roleOk(key, p){
 }
 // Pyramid default stat per sport (production's): a stat with enough range to stack three rungs -
 // MLB hits run 0-2, so a hits pyramid can never form
-var DEG_PYR_DEFAULT = { afl:'disposals', nfl:'recYds', epl:'shots', mlb:'K', nbl:'points', nhl:'shots' };
+var DEG_PYR_DEFAULT = { afl:'disposals', nfl:'recYds', epl:'shots', mlb:'K', nbl:'points',
+                        nhl:'shots', nba:'points' };
 var DEG_PYR_RUNG = { disposals:5, kicks:3, handballs:3, marks:2, tackles:2, goals:1, clearances:2,
   passYds:25, rushYds:15, recYds:15, receptions:1, rushRecYds:15, passAtt:5, rushAtt:3,
   points:4, rebounds:2, assists:2, threes:1, pra:6, pr:5, pa:5, ra:3, shots:1, H:1, TB:1, K:1, shotsOn:1 };
@@ -12120,6 +12161,312 @@ function degPage(){
   return h + degTrain(sc, book) + degPyramid(sc, book) + degYankee(sc, book) + degLadder(sc);
 }
 
+/* SETTLING A PUBLISHED BET =====================================================================
+   A tipped record is only worth looking at if its losers appear in it, and the quickest way to
+   lose that is a human deciding which bets are settled. These grade themselves from the game logs
+   the rest of the tool already runs on.
+
+   A bet only settles when it is unambiguous. Anything else stays pending and is flagged, because
+   a wrong settlement in a published record is far worse than a slow one:
+     - a leg whose game has not been played yet          -> still pending, obviously
+     - a leg landing exactly on its line                 -> a push, which most books refund
+     - a VOID leg inside a multi                         -> the book reduces the price and we do
+       not know the new one, so the whole bet is held back for a human rather than claiming a
+       return that was never paid
+     - a player we cannot find in the logs at all        -> held back, never quietly dropped
+
+   statOf is the same function every signal and hit rate in the tool uses to read a stat off a
+   game log, so a bet is graded by exactly the rule that was used to recommend it.             */
+/* A leg's sport is the lab's own key ('nfl'), while the bet row's sport is the display name
+   ('NFL') the entry tool's chips produce. The two are deliberately different things and the
+   entry tool writes both correctly, but a leg typed in by hand would reasonably carry 'NFL' -
+   and the symptom of that would be a bet that never settles and never says why. So the key is
+   folded rather than trusted. */
+function betSportKey(s){
+  var k = String(s == null ? '' : s).toLowerCase();
+  return state.sports[k] ? k : null;
+}
+function betLegRow(leg){
+  var key = leg && betSportKey(leg.sport);
+  var S = key && state.sports[key];
+  if (!S || S.status !== 'ready') return { state:'nodata' };
+  var logs = (S.idx.logsByName || {})[leg.player];
+  if (!logs){
+    // the name has to match the game logs exactly or the bet can never settle; that is the
+    // single most likely reason one sits pending for ever, so it is named rather than ignored
+    return { state:'noplayer' };
+  }
+  /* WHICH GAME. A leg has to point at one game and only one, or it settles off the wrong night -
+     and a player on a back-to-back has two games inside 48 hours, so "near enough" is not a
+     standard this can be held to. Three ways of pinning it, in order of how exact they are:
+
+       1. matchId     - the game's own id. NBL, NHL and NBA fixtures carry it (gameId); NFL and
+                        EPL ids are deterministic, so the entry tool builds them from the fixture
+                        ({season}_{week}_{away}_{home} and {date}|{home}|{away}).
+       2. date + opp  - for sports whose logs carry a date but no id the fixture shares (MLB).
+                        The opponent is what makes it exact on a day with a double-header.
+       3. nothing     - AFL game logs carry neither a date nor an id the fixture knows, so an AFL
+                        leg cannot be pinned and says so instead of guessing. It still tracks
+                        live; it just will not settle itself.                                   */
+  var row = null, dated = false;
+  var wantOpp = leg.opp ? String(leg.opp).toUpperCase() : null;
+  var wantDate = leg.date ? String(leg.date).slice(0, 10) : null;
+  for (var i = 0; i < logs.length; i++){
+    var r = logs[i];
+    if (leg.matchId){
+      if (String(r.MatchId) === String(leg.matchId)){ row = r; break; }
+      continue;
+    }
+    var d = String(r.Date || r.date || '').slice(0, 10);
+    if (d) dated = true;
+    if (!wantDate || d !== wantDate) continue;
+    if (wantOpp && String(r.Opp || r.opp || '').toUpperCase() !== wantOpp) continue;
+    row = r; break;
+  }
+  if (row) return { state:'played', row:row };
+  // No id and no date to match on is not "hasn't played yet" - it is a leg that can never settle,
+  // and calling it pending for ever is how a bet quietly disappears from a published record.
+  if (!leg.matchId && (!wantDate || !dated)) return { state:'unpinned' };
+  return { state:'notyet' };
+}
+
+function betSettleLeg(leg){
+  var f = betLegRow(leg);
+  if (f.state !== 'played') return { res:'pending', why:f.state };
+  var v = statOf(betSportKey(leg.sport), f.row, leg.market);
+  if (v == null) return { res:'void', why:'unverifiable', have:null };
+  var line = +leg.line;
+  if (!isFinite(line)) return { res:'pending', why:'noline', have:v };
+  if (v === line) return { res:'void', why:'push', have:v };
+  var over = String(leg.side || 'over') !== 'under';
+  var won = over ? v > line : v < line;
+  return { res: won ? 'win' : 'loss', have:v };
+}
+
+function betSettle(b){
+  var legs = (b && b.legs) || [];
+  if (!legs.length) return null;                       // a free-text bet: nothing to grade
+  var out = legs.map(betSettleLeg);
+  var pending = out.filter(function(x){ return x.res === 'pending'; });
+  var lost = out.filter(function(x){ return x.res === 'loss'; });
+  var voided = out.filter(function(x){ return x.res === 'void'; });
+  // one leg down settles a multi immediately - the rest cannot save it
+  if (lost.length) return { result:'loss', legs:out, ret:0 };
+  if (pending.length) return { result:'pending', legs:out, open:pending.length };
+  if (voided.length){
+    // A SINGLE is unambiguous: a push or a void is a refund, no re-pricing involved.
+    if (legs.length === 1)
+      return { result:'void', legs:out, ret: b.stake != null ? +(+b.stake).toFixed(2) : null };
+    // A MULTI is not. Every other leg landed, but the book dropped the void one and re-priced
+    // the rest, and we do not know what to - so it is held for a human rather than published as
+    // a win at odds nobody was paid.
+    return { result:'review', legs:out,
+             why:voided.length + ' leg' + (voided.length === 1 ? '' : 's') + ' voided - the book '
+                 + 'will have re-priced this, so it needs settling by hand' };
+  }
+  var odds = +b.odds;
+  return { result:'win', legs:out,
+           ret: isFinite(odds) && b.stake != null ? +(+b.stake * odds).toFixed(2) : null };
+}
+
+/* PENDING BETS, PUBLISHED ======================================================================
+   A record that only appears after the fact is the oldest trick in tipping: you publish the
+   winners on Monday and the losers never existed. These are the bets that are ON, in public,
+   before anyone knows how they went - every leg, with a live bar toward its line while the game
+   is being played.
+
+   It reuses the card's live tracker rather than growing a second one. The tracker read the CARD
+   global directly, so the three functions that did (liveGames, liveLegRows, liveBody) now take
+   an optional list; a published bet is mapped into the same shape the card uses and goes through
+   the identical code path, which means the two views can never disagree about whether a leg has
+   landed.
+
+   A bet needs legs to appear here. A row typed in as free text ("Daicos 30+ disposals") still
+   publishes as a pending line in the ledger; it just cannot be tracked or settled, because
+   nothing in it points at a player and a market.                                              */
+function betLegLabel(l){
+  var key = betSportKey(l.sport), S = key && state.sports[key];
+  if (l.label) return l.label;
+  return (S && S.config) ? mktLabel(key, l.market) : (l.market || '');
+}
+function betToCardish(b){
+  var legs = (b.legs || []).map(function(l){
+    return { key:betSportKey(l.sport) || l.sport || '', name:l.player || '', mkt:l.market || '',
+             label:betLegLabel(l), line:l.line, side:l.side || 'over' };
+  });
+  // a single is emitted as a single, so the tracker does not print the bet's own text under its
+  // one and only leg as if it were a parent multi
+  if (legs.length === 1){
+    var l0 = legs[0];
+    return { id:b.id, type:'single', key:l0.key, name:l0.name, mkt:l0.mkt, label:l0.label,
+             line:l0.line, side:l0.side, odds:b.odds, stake:b.stake, bet:b };
+  }
+  return { id:b.id, type:'multi', title:b.bet || (legs.length + '-leg multi'), legs:legs,
+           odds:b.odds, stake:b.stake, bet:b };
+}
+// EVERY pending bet, legs or not. No period filter on purpose: a pending bet is current by
+// definition, and hiding one because the reader has the page set to "30 days" would hide the
+// bets that are actually on - which is the one thing this block exists to stop.
+function betsPendingAll(sport){
+  var R = state.results;
+  if (!R || !R.bets) return [];
+  return R.bets.filter(function(b){
+    return b && b.result === 'pending' && (!sport || sport === 'all' || b.sport === sport);
+  });
+}
+// the ones with legs, which are the ones that can be tracked and settled
+function betsPending(sport){
+  return betsPendingAll(sport).filter(function(b){ return b.legs && b.legs.length; });
+}
+function betsLiveList(){ return betsPending().map(betToCardish); }
+
+/* Live bars need nothing but the feed; settling needs that sport's GAME LOGS, which are the heavy
+   tier - several megabytes for the NFL. The Results page used to cost one small JSON, so pulling
+   a season of logs the moment anyone opens it is not a free improvement, and on a phone on mobile
+   data it is a rude one.
+   So the logs are fetched only where they can actually say something: a leg whose game is still
+   to come cannot be settled by any amount of data, and that is the common case - a bet posted
+   this morning, read this afternoon. Only a leg whose game day has passed pulls its sport. */
+function betsEnsureSports(){
+  var want = {}, today = new Date(Date.now() - 36e5 * 6).toISOString().slice(0, 10);
+  betsPending().forEach(function(b){
+    (b.legs || []).forEach(function(l){
+      var k = l && betSportKey(l.sport);
+      if (!k) return;
+      var d = String(l.date || b.date || '').slice(0, 10);
+      if (d && d >= today) return;          // not played yet: nothing the logs could tell us
+      want[k] = 1;
+    });
+  });
+  Object.keys(want).forEach(ensureSport);
+}
+// One fetch and one poll for the published bets, started when the Results tab is actually open.
+function livePubEnsure(){
+  if (!livePubOpen() || !betsPending().length || LIVE.pubOn) return;
+  LIVE.pubOn = true;
+  liveFetch(); livePoll();
+}
+
+// What the game logs say about a bet that the ledger still has as pending. The logs land hours
+// before anyone re-runs the entry tool, so this is how a bet stops saying "pending" the moment
+// the game is over - marked clearly as not yet in the record, because it isn't.
+/* The two ways a bet silently never settles, said out loud. Both are entry mistakes rather than
+   bugs, and both look exactly like a bet that is simply still running - which is why a published
+   record needs them on the face of the bet rather than in a console somewhere. */
+function betFlags(b){
+  var seen = {}, out = [];
+  (b.legs || []).forEach(function(l){
+    var f = betLegRow(l), m = null;
+    if (f.state === 'noplayer')
+      m = '"' + l.player + '" is not a name in the ' + String(l.sport || '').toUpperCase()
+        + ' game logs, so this leg cannot settle itself';
+    else if (f.state === 'unpinned')
+      m = 'this leg names no game, so it cannot settle itself — it tracks live only';
+    if (m && !seen[m]){ seen[m] = 1; out.push(m); }
+  });
+  return out;
+}
+
+function betUnofficial(b){
+  var s = betSettle(b);
+  if (!s || s.result === 'pending') return null;
+  if (s.result === 'review') return { cls:'mid', txt:'needs settling by hand', why:s.why };
+  if (s.result === 'void') return { cls:'mid', txt:'void — stake back' };
+  return s.result === 'win'
+    ? { cls:'pos', txt:'won' + (s.ret != null ? ' · $' + s.ret.toFixed(2) + ' back' : '') }
+    : { cls:'neg', txt:'lost' };
+}
+
+function pendingBetsSection(unit, sport){
+  var pend = betsPending(sport);
+  var bare = betsPendingAll(sport).filter(function(b){ return !(b.legs && b.legs.length); });
+  if (!pend.length && !bare.length) return '';
+  var rows = pend.slice().sort(function(a, b){
+    return String(a.date).localeCompare(String(b.date)) || String(a.id).localeCompare(String(b.id));
+  });
+  var anyFeed = liveGames(betsLiveList()).length;
+  var body = !rows.length ? '' : rows.map(function(b){
+    var e = betToCardish(b);
+    var legs = liveLegRows([e]);
+    var u = b.units != null ? +b.units : (+b.stake || 0) / unit;
+    var un = betUnofficial(b);
+    /* TWO SOURCES, IN ORDER. While a game is on, the live feed is the only thing that knows what
+       a man has done; once it is over the feed drops the game and the game logs are the truth.
+       Without this the header read "WON" over two bars still saying "not started", because the
+       bet had been graded off the logs while the bars were still asking a feed with no game in
+       it. The logs fill in only where the feed is silent, so nothing in play is overwritten. */
+    var graded = betSettle(b);
+    legs.forEach(function(r, i){
+      var sl = graded && graded.legs && graded.legs[i];
+      if (r.have != null || !sl || sl.have == null) return;
+      r.have = sl.have; r.final = true;
+      r.pct = r.need ? Math.max(0, Math.min(1, r.have / r.need)) : 0;
+      // the grade is authoritative here, which also gets unders right - a bar alone cannot
+      if (sl.res === 'win') r.state = 'cashed';
+      else if (sl.res === 'loss') r.state = 'busted';
+    });
+    var landed = legs.filter(function(r){ return r.state === 'cashed'; }).length;
+    var gone = legs.filter(function(r){ return r.state === 'busted'; }).length;
+    var live = legs.filter(function(r){ return r.state === 'open'; }).length;
+    var tag = un ? '<span class="pb-tag ' + un.cls + '">' + esc(un.txt) + '</span>'
+      : gone ? '<span class="pb-tag neg">' + gone + ' leg' + (gone === 1 ? '' : 's') + ' gone</span>'
+      : live ? '<span class="pb-tag mid">' + live + ' live</span>'
+      : landed === legs.length ? '<span class="pb-tag pos">all legs landed</span>'
+      : '<span class="pb-tag">not started</span>';
+    return '<div class="pb-bet"><div class="pb-hdr">'
+      + '<span class="pb-ttl">' + esc(b.bet || (e.type === 'multi' ? e.title : e.name + ' ' + (e.label || ''))) + '</span>'
+      + tag + '</div>'
+      + '<div class="pb-meta">' + esc(String(b.date || '').slice(5)) + ' · ' + esc(b.sport || '')
+      + ' · ' + esc(b.type || (legs.length > 1 ? 'Multi' : 'Single'))
+      + (b.odds ? ' · $' + (+b.odds).toFixed(2) : '') + ' · ' + u.toFixed(2) + 'u'
+      + (landed || gone ? ' · ' + landed + '/' + legs.length + ' landed' : '') + '</div>'
+      + '<div class="pb-legs">' + legs.map(function(r){
+          return '<div class="lt-leg ' + r.state + '">'
+            + '<div class="lt-top"><span class="lt-nm">' + esc(r.name) + '</span>'
+            + '<span class="lt-bet">' + esc(r.label) + '</span></div>'
+            + '<div class="lt-bar"><div class="lt-fill" style="width:' + Math.round(r.pct * 100) + '%"></div></div>'
+            + '<div class="lt-bot"><span>' + (r.state === 'untracked' ? (r.why || 'not tracked')
+               : r.have == null ? 'not started'
+               : r.have + (r.final ? ' final' : ' so far')) + '</span>'
+            + '<span class="lt-tag">' + (r.state === 'cashed' ? 'LANDED' : r.state === 'busted' ? 'GONE'
+               : r.state === 'untracked' ? 'NOT TRACKED'
+               : r.have == null ? '—' : r.have + ' / ' + r.need) + '</span></div></div>';
+        }).join('') + '</div>'
+      + (un && un.why ? '<div class="pb-why">' + esc(un.why) + '</div>' : '')
+      + betFlags(b).map(function(m){ return '<div class="pb-why">' + esc(m) + '</div>'; }).join('')
+      + '</div>';
+  }).join('');
+  /* A bet typed as free text cannot be tracked or settled, but it is still a bet that is ON, and
+     leaving it out would mean the page shows some pending bets and not others - which is the shape
+     of the problem publishing them was meant to solve. So they appear, as a plain line, with no
+     bars and no claim about how they are going. */
+  var plain = bare.slice().sort(function(a, b){ return String(a.date).localeCompare(String(b.date)); })
+    .map(function(b){
+      var u = b.units != null ? +b.units : (+b.stake || 0) / unit;
+      return '<div class="pb-bet pb-bare"><div class="pb-hdr">'
+        + '<span class="pb-ttl">' + esc(b.bet || '') + '</span>'
+        + '<span class="pb-tag">settles by hand</span></div>'
+        + '<div class="pb-meta">' + esc(String(b.date || '').slice(5)) + ' · ' + esc(b.sport || '')
+        + ' · ' + esc(b.type || '') + (b.odds ? ' · $' + (+b.odds).toFixed(2) : '')
+        + ' · ' + u.toFixed(2) + 'u</div></div>';
+    }).join('');
+  var feeds = liveFeedNames();
+  return '<div class="dayband"><span>On right now · ' + (pend.length + bare.length)
+    + ' pending</span></div>'
+    + '<div class="pb-wrap">' + body + plain + '</div>'
+    + '<div class="deg-note">Every bet here was posted before its game. '
+    + (pend.length ? 'The ones with legs settle themselves from the game logs, so their losers '
+        + 'cannot be removed later. ' : '')
+    + (bare.length ? 'A bet shown without legs was typed as free text, so it needs settling by '
+        + 'hand and cannot be tracked. ' : '')
+    + (!pend.length ? ''
+        : anyFeed ? 'Bars move while the game is on, refreshing every 30 seconds. '
+        : feeds.length ? 'Live bars need a feed for the sport — so far ' + esc(feeds.join(', '))
+            + ' ' + (feeds.length === 1 ? 'has' : 'have') + ' one. ' : '')
+    + 'A result shown here before the ledger catches up is read straight from the game logs and '
+    + 'is not in the numbers above yet.</div>';
+}
+
 /* RESULTS ---------------------------------------------------------------------------
    The tipped record, from data/results.json (written by the bet-entry page). Everything is in
    UNITS: a stake divided by the unit size on the file. Dollars never reach this page - the stake
@@ -12262,6 +12609,8 @@ function signalRecordSection(){
 function resultsPage(){
   loadSignalRecord();
   loadResults();
+  betsEnsureSports();
+  livePubEnsure();
   var R = state.results;
   var h = '<div class="crew-head"><div class="crew-ttl res-ttl">'
     + '<img src="/AFL/assets/jtt-check.png" alt="" class="res-logo" onerror="this.style.display=\'none\'">'
@@ -12305,7 +12654,8 @@ function resultsPage(){
     + '<div class="res-note">'+st.n+' settled bet'+(st.n === 1 ? '' : 's')
     + (st.pend ? ' \u00b7 '+st.pend+' still pending (counted nowhere until they land)' : '')
     + ' \u00b7 past results do not indicate future results'
-    + (R.updated ? ' \u00b7 updated '+esc(String(R.updated).replace('T', ' ').replace('Z', ' UTC')) : '')+'</div>';
+    + (R.updated ? ' \u00b7 updated '+esc(String(R.updated).replace('T', ' ').replace('Z', ' UTC')) : '')+'</div>'
+    + pendingBetsSection(unit, f);
   var bySport = {}, byType = {};
   bets.forEach(function(b){
     (bySport[b.sport || 'Other'] = bySport[b.sport || 'Other'] || []).push(b);
@@ -12457,8 +12807,10 @@ function cardFab(){
 
 /* LIVE TRACKER ----------------------------------------------------------------------
    Every single on the card, matched to what the player has actually done so far, with a bar toward
-   his line. It reads the sport's live worker (config.liveWorker) - only MLB has one today, so the
-   others say so plainly rather than sitting on a spinner forever.
+   his line. It reads the sport's live worker (config.liveWorker); a sport without one says so
+   plainly rather than sitting on a spinner forever, and the list of which sports have a feed is
+   read off the configs rather than written into the sentence, because it was wrong within a week
+   of being written.
    "Pop out" uses the Document Picture-in-Picture API: a small always-on-top window you can leave
    beside the game. Chrome and Edge on desktop only; everywhere else keeps the in-page panel.     */
 var LIVE = { data:{}, at:{}, timer:null, err:null, loading:false };
@@ -12470,16 +12822,27 @@ function liveWorkerFor(key){
   var S = state.sports[key];
   return (((S && S.config) || {}).liveWorker || '').replace(/\/+$/, '');
 }
-function liveGames(){                       // sports on the card that have a live feed at all
+/* The tracker read the CARD global directly in all three of the functions below. That was fine
+   while the card was the only thing worth tracking; the published pending bets want exactly the
+   same treatment, so each now takes an optional list of entries and falls back to the card.    */
+function liveGames(src){                    // sports in the list that have a live feed at all
   var out = {};
-  CARD.forEach(function(e){
+  (src || CARD).forEach(function(e){
     var keys = e.type === 'multi' ? (e.legs || []).map(function(l){ return l.key; }) : [e.key];
     keys.forEach(function(k){ if (k && liveWorkerFor(k)) out[k] = 1; });
   });
   return Object.keys(out);
 }
+// One poll serves both panels: the card and anything published and still pending.
+function liveAllGames(){
+  var seen = {}, out = [];
+  liveGames(CARD).concat(liveGames(betsLiveList())).forEach(function(k){
+    if (!seen[k]){ seen[k] = 1; out.push(k); }
+  });
+  return out;
+}
 function liveFetch(){
-  var keys = liveGames();
+  var keys = liveAllGames();
   if (!keys.length) return;
   LIVE.loading = true;
   Promise.all(keys.map(function(k){
@@ -12487,11 +12850,16 @@ function liveFetch(){
       .then(function(r){ return r.ok ? r.json() : null; })
       .then(function(j){ if (j) { LIVE.data[k] = j; LIVE.at[k] = Date.now(); } })
       .catch(function(){ LIVE.err = 'Live feed unavailable'; });
-  })).then(function(){ LIVE.loading = false; if (state.view.liveOpen){ render(); livePaintPip(); } });
+  })).then(function(){
+    LIVE.loading = false;
+    if (state.view.liveOpen || livePubOpen()){ render(); livePaintPip(); }
+  });
 }
+// the published bets are live on the Results tab, so that counts as a reason to keep polling
+function livePubOpen(){ return state.view.tab === 'results' && !state.view.focus; }
 function livePoll(){
   clearTimeout(LIVE.timer);
-  if (!state.view.liveOpen && !LIVE.pip) return;
+  if (!state.view.liveOpen && !LIVE.pip && !livePubOpen()) return;
   LIVE.timer = setTimeout(function(){ liveFetch(); livePoll(); }, 30000);
 }
 function liveFind(j, name, kind){
@@ -12520,9 +12888,9 @@ function liveStatFor(key, name, mkt){
   if (!f || f.p[mkt] == null) return null;
   return { v:+f.p[mkt] || 0, game:f.g };
 }
-function liveLegRows(){
+function liveLegRows(src){
   var legs = [];
-  CARD.forEach(function(e){
+  (src || CARD).forEach(function(e){
     if (e.type === 'multi') (e.legs || []).forEach(function(l){ if (l.key) legs.push({ e:e, l:l, multi:e.title }); });
     else legs.push({ e:e, l:e, multi:null });
   });
@@ -12558,12 +12926,23 @@ function liveLegRows(){
              pct: (have == null || !need) ? 0 : Math.max(0, Math.min(1, have / need)) };
   });
 }
-function liveBody(compact){
-  var keys = liveGames();
-  if (!CARD.length) return '<div class="sig-empty">Nothing on your card to track.</div>';
-  if (!keys.length) return '<div class="sig-empty">No live feed for the sports on your card yet '
-    + '\u2014 only MLB has one. The card still tracks by hand.</div>';
-  var rows = liveLegRows();
+// which sports have a live feed at all, named - the message used to say "only MLB has one",
+// which stopped being true the day the second worker went up and would go stale again
+function liveFeedNames(){
+  return Object.keys(SPORTS).filter(function(k){ return liveWorkerFor(k); })
+    .map(function(k){ return SPORTS[k].name; });
+}
+function liveBody(compact, src){
+  var list = src || CARD, keys = liveGames(list);
+  if (!list.length) return '<div class="sig-empty">Nothing on your card to track.</div>';
+  if (!keys.length){
+    var have = liveFeedNames();
+    return '<div class="sig-empty">No live feed for the sports on your card yet'
+      + (have.length ? ' \u2014 so far only ' + esc(have.join(', ')) + ' ' + (have.length === 1 ? 'has' : 'have')
+          + ' one' : '')
+      + '. The card still tracks by hand.</div>';
+  }
+  var rows = liveLegRows(list);
   var done = rows.filter(function(r){ return r.state === 'cashed'; }).length;
   var gone = rows.filter(function(r){ return r.state === 'busted'; }).length;
   return '<div class="lt-sum"><b>'+done+'</b> landed \u00b7 <b>'+gone+'</b> gone \u00b7 '
@@ -13423,6 +13802,400 @@ function ddFirstRead(key, p, mkt){
    Two players on the same points line are different bets if one scores in the first six minutes
    and the other in garbage time, or if one lives at the rim and the other settles for long twos.
    Both files are built from the play-by-play by nba/build_nba_quarters.py and build_nba_zones.py.  */
+/* ===== MINUTES: THE CEILING ON EVERY COUNTING PROP ===========================================
+   A points line is a minutes line wearing a disguise, and the tool showed one number for minutes:
+   the average. Two things the average hides, both measured on the real data rather than assumed:
+
+   BLOWOUTS. The median NBA starter loses 5.3 minutes when a game is decided by 18 or more, and
+   the worst lose far more - Jamal Murray plays 38.6 in a close game and 27.1 in a blowout, an
+   eleven-minute swing that kills any over on its own. That is the single biggest reason a good
+   read on a player loses.
+
+   WHAT HE ACTUALLY PLAYS. An average of 34.8 covers a man who plays 29 one night and 40 the next.
+   The 20th-to-80th band says what a normal night looks like.
+
+   NOT INCLUDED, DELIBERATELY: back-to-backs. The obvious assumption is that starters get managed
+   on the second night; measured across 93 starters with a sample, the median change was -0.58 of
+   a minute. There is no effect on minutes to show, and a tile saying so would be a number
+   pretending to be a signal. (Whether he plays AT ALL on a back-to-back is a different question,
+   and that one lives in availability below.)                                                   */
+function nbaMarginIndex(key){
+  var S = state.sports[key];
+  if (S.idx.mrg) return S.idx.mrg;
+  var raw = S.data.results;
+  var all = Array.isArray(raw) ? raw : ((raw && (raw.games || raw.rows)) || []);
+  var m = {}, ds = [];
+  all.forEach(function(r){
+    var hs = r.hs != null ? +r.hs : (r.homeScore != null ? +r.homeScore : null);
+    var as = r.as != null ? +r.as : (r.awayScore != null ? +r.awayScore : null);
+    if (hs == null || as == null || !isFinite(hs) || !isFinite(as)) return;
+    var d = Math.abs(hs - as);
+    if (r.gameId != null) m[String(r.gameId)] = d;
+    ds.push(d);
+  });
+  ds.sort(function(a, b){ return a - b; });
+  // the thresholds come from the league's own spread, so "close" and "blowout" mean the same
+  // thing in a 225-point league and a 170-point one
+  var q = function(p){ return ds.length ? ds[Math.floor(p * (ds.length - 1))] : null; };
+  S.idx.mrg = { by:m, close:q(0.30), blow:q(0.75), n:ds.length };
+  return S.idx.mrg;
+}
+
+function nbaMinutesSection(key, name){
+  if (key !== 'nba' && key !== 'nbl') return '';
+  var S = state.sports[key];
+  var M = nbaMarginIndex(key);
+  if (!M.n || M.close == null) return '';
+  var logs = (asArray(S.data.gamelogs) || []).filter(function(r){
+    return r && r.Player === name && (+r.minutes || 0) > 0;
+  });
+  if (logs.length < 20) return '';
+  // one season, not a mixture: a role two years ago is a different player
+  var yrs = {};
+  logs.forEach(function(r){ yrs[String(r.Year)] = (yrs[String(r.Year)] || 0) + 1; });
+  var ks = Object.keys(yrs).sort();
+  var yr = ks[ks.length - 1];
+  if (yrs[yr] < 20 && ks.length > 1) yr = ks[ks.length - 2];
+  var mine = logs.filter(function(r){ return String(r.Year) === yr; });
+  if (mine.length < 20) return '';
+
+  var mins = mine.map(function(r){ return +r.minutes || 0; });
+  var mean = function(v){ return v.reduce(function(a, b){ return a + b; }, 0) / v.length; };
+  var pct = function(v, p){
+    var s2 = v.slice().sort(function(a, b){ return a - b; });
+    return s2[Math.floor(p * (s2.length - 1))];
+  };
+  var close = [], blow = [];
+  mine.forEach(function(r){
+    var d = M.by[String(r.MatchId)];
+    if (d == null) return;
+    if (d <= M.close) close.push(+r.minutes || 0);
+    else if (d >= M.blow) blow.push(+r.minutes || 0);
+  });
+
+  // availability, inside the stretch he was actually at the club - a man signed in January has
+  // not "missed" the first half of the season
+  var team = mine[mine.length - 1].Team;
+  var X = nbaWWIndex(key);
+  var gs = (X.games[team] || []);
+  var pk = cmbNameKey(name);
+  // Only this season's games for this club, and only between his first and last appearance -
+  // a man signed in January has not "missed" the first half of the year. A basketball box score
+  // lists everyone who got on the floor, so absent from one means he did not play.
+  var inWin = 0, playedN = 0;
+  var season = gs.filter(function(m2){ return X.yearOf[m2] === yr; });
+  var firstI = -1, lastI = -1;
+  season.forEach(function(m2, i){
+    if ((X.played[m2 + '|' + team] || {})[pk]){ if (firstI < 0) firstI = i; lastI = i; }
+  });
+  if (firstI >= 0){
+    for (var i2 = firstI; i2 <= lastI; i2++){
+      inWin++;
+      if ((X.played[season[i2] + '|' + team] || {})[pk]) playedN++;
+    }
+  }
+
+  var cells = pfCell('Minutes a game', mean(mins).toFixed(1),
+                     'usually ' + pct(mins, 0.2).toFixed(0) + '\u2013' + pct(mins, 0.8).toFixed(0)
+                     + ' \u00b7 ' + yr);
+  if (close.length >= 6)
+    cells += pfCell('In close games', mean(close).toFixed(1),
+                    'decided by ' + M.close + ' or less \u00b7 ' + close.length + ' games');
+  if (blow.length >= 6)
+    cells += pfCell('In blowouts', mean(blow).toFixed(1),
+                    'by ' + M.blow + '+ \u00b7 ' + blow.length + ' games',
+                    close.length >= 6 ? (mean(blow) >= mean(close) - 1 ? true : false) : null);
+  if (inWin >= 10)
+    cells += pfCell('Available', playedN + ' of ' + inWin,
+                    'while at ' + abbrOf(key, team) + ' \u00b7 ' + Math.round(playedN / inWin * 100) + '%');
+
+  var drop = (close.length >= 6 && blow.length >= 6) ? mean(close) - mean(blow) : null;
+  return '<div class="dd-sec"><div class="dd-h">Minutes</div><div class="pf-grid">' + cells + '</div>'
+    + '<div class="dd-note">'
+    + (drop != null && drop >= 2
+        ? 'He loses ' + drop.toFixed(1) + ' minutes when the game gets away from either side, which '
+          + 'is the usual reason a sound read on a player still loses. '
+        : drop != null
+        ? 'His minutes hold up in a blowout, which most starters\u2019 do not. '
+        : '')
+    + 'The band beside the average is what a normal night looks like for him \u2014 an average on '
+    + 'its own treats a short night and a long one as the same thing.</div></div>';
+}
+
+/* ===== USAGE AND PACE ========================================================================
+   The two numbers that explain most of an NBA box score before any matchup read enters into it.
+   PACE is how many possessions a team plays to; USAGE is the share of his team's possessions a
+   player ends. Possessions are the raw material of every counting prop - a line set on a 98-
+   possession team means something different on a 106-possession night - and neither number was
+   anywhere in the tool, though pace has been sitting unused in teams.json all along.
+
+   Usage is the standard formula, over totals rather than averaged per game so a short night does
+   not count the same as a long one:
+     USG% = 100 * (FGA + 0.44*FTA + TOV) * (team minutes / 5) / (minutes * team's own total)
+   Sanity check on the real data: Luka 38.3%, SGA 33.4%, and the league median lands on 20.1% -
+   which it has to, because five players on the floor share 100% of them. A median anywhere else
+   would mean the formula was wrong.                                                            */
+function nbaUsageIndex(key){
+  var S = state.sports[key];
+  if (S.idx.usg) return S.idx.usg;
+  var yr = String(curSeason(key));
+  var tm = {}, by = {};
+  (asArray(S.data.gamelogs) || []).forEach(function(r){
+    if (!r || String(r.Year) !== yr || !r.MatchId || !r.Team) return;
+    var k = r.MatchId + '|' + r.Team;
+    var t = tm[k] = tm[k] || { poss:0, min:0 };
+    t.poss += (+r.fga || 0) + 0.44 * (+r.fta || 0) + (+r.turnovers || 0);
+    t.min += (+r.minutes || 0);
+  });
+  (asArray(S.data.gamelogs) || []).forEach(function(r){
+    if (!r || String(r.Year) !== yr || (+r.minutes || 0) <= 0) return;
+    var t = tm[r.MatchId + '|' + r.Team];
+    if (!t || t.min <= 0 || t.poss <= 0) return;
+    var o = by[cmbNameKey(r.Player)] = by[cmbNameKey(r.Player)]
+      || { poss:0, min:0, tPoss:0, tMin:0, g:0 };
+    o.poss += (+r.fga || 0) + 0.44 * (+r.fta || 0) + (+r.turnovers || 0);
+    o.min += (+r.minutes || 0);
+    o.tPoss += t.poss; o.tMin += t.min; o.g++;
+  });
+  var usg = {}, rankable = [];
+  Object.keys(by).forEach(function(k){
+    var o = by[k];
+    if (o.min <= 0 || o.tPoss <= 0) return;
+    var v = 100 * (o.poss * (o.tMin / 5)) / (o.min * o.tPoss);
+    if (!isFinite(v)) return;
+    usg[k] = { usg:v, g:o.g, mpg:o.min / o.g };
+    // rank only against players with a real role; a man with four minutes in two games is not
+    // competing for the same league position
+    if (o.g >= 15 && o.min / o.g >= 20) rankable.push({ k:k, v:v });
+  });
+  rankable.sort(function(a, b){ return b.v - a.v; });
+  rankable.forEach(function(x, i){ usg[x.k].rank = i + 1; usg[x.k].of = rankable.length; });
+  S.idx.usg = usg;
+  return usg;
+}
+function nbaUsageFor(key, name){
+  if (key !== 'nba' && key !== 'nbl') return null;
+  return nbaUsageIndex(key)[cmbNameKey(name)] || null;
+}
+
+/* How many possessions this game projects to, and what that does to every line in it.
+   Both sides decide the pace of a basketball game, so it is not an average of the two: a fast
+   team meeting a fast team runs faster than either does on its own. The usual estimate scales
+   one by the other against the league. */
+function nbaPaceSection(key, g){
+  if (key !== 'nba' && key !== 'nbl') return '';
+  if (!g || !g.home || !g.away) return '';
+  var rows = teamRowsFor(key) || [];
+  var paced = rows.filter(function(t){ return typeof t.pace === 'number' && t.pace > 0; });
+  if (paced.length < 10) return '';
+  var lg = paced.reduce(function(a, t){ return a + t.pace; }, 0) / paced.length;
+  var find = function(tm){
+    return paced.filter(function(t){ return normTeam(t.team || t.name) === normTeam(tm); })[0];
+  };
+  var H = find(g.home), A = find(g.away);
+  if (!H || !A) return '';
+  var sorted = paced.slice().sort(function(a, b){ return b.pace - a.pace; });
+  var rankOf = function(t){ return sorted.indexOf(t) + 1; };
+  var proj = H.pace * A.pace / lg;
+  var d = proj - lg;
+  // the projection's own rank among every pairing is meaningless; what matters is where it sits
+  // against a normal night
+  var band = d >= 2.5 ? 'fast' : d <= -2.5 ? 'slow' : 'about normal';
+  return '<div class="dayband"><span>Game environment</span></div>'
+    + '<div class="pf-grid">'
+      // no colour on it: green for fast and red for slow would say a slow game is a worse bet,
+      // when it is only a different one - good for unders, bad for overs. The word carries it.
+      + pfCell('Projected possessions', proj.toFixed(1),
+               'league ' + lg.toFixed(1) + ' \u00b7 ' + band)
+      + pfCell(abbrOf(key, g.away) + ' pace', A.pace.toFixed(1),
+               ordinalish(rankOf(A)) + ' of ' + paced.length)
+      + pfCell(abbrOf(key, g.home) + ' pace', H.pace.toFixed(1),
+               ordinalish(rankOf(H)) + ' of ' + paced.length)
+    + '</div>'
+    + '<div class="deg-note">Possessions are the raw material of every counting prop: the same '
+    + 'line is a different bet on a ' + (lg - 4).toFixed(0) + '-possession night and a '
+    + (lg + 4).toFixed(0) + '-possession one. Both sides set the tempo, so this is not the average '
+    + 'of the two - a fast team meeting a fast team runs faster than either does alone.</div>';
+}
+
+/* ===== WHEN A TEAM-MATE SITS ==================================================================
+   The read NBA props turn on. One man out does not just free his own shots - it moves minutes,
+   usage and the ball, and the player it moves most is not always the obvious one.
+   Everything here is measured off games already played, so three things decide whether a split
+   is worth showing rather than my judgement about who matters:
+     - the ABSENT man has to be a rotation regular (24+ minutes when he plays). Ranking by raw
+       difference put a fifteenth man top of Jamal Murray's list on fourteen games of garbage time.
+     - the window is only the stretch the team-mate was actually AT the club. Games before he
+       arrived or after he left are a different squad, not him sitting out.
+     - the gap has to clear its own noise. A five-point swing over six games is nothing; the same
+       swing over forty is a read. Welch's t on each stat, and nothing under 2 is shown.
+   It is still an association on a modest sample, and the panel says so.                       */
+var WW_STATS = [['minutes', 'Min'], ['points', 'Pts'], ['rebounds', 'Reb'],
+                ['assists', 'Ast'], ['threes', '3PM']];
+var WW_MATE_MIN = 24;        // a team-mate whose absence could plausibly move anything
+var WW_MIN_WITH = 10, WW_MIN_WO = 8, WW_T = 2.2;
+// Minutes are shown on every row because they explain the rest, but a minute and a half either
+// way is not a finding - it topped Tyrese Maxey's list ahead of what his scoring actually did.
+// Minutes only get to RANK a row when the move is big enough to matter on its own.
+var WW_MIN_SWING = 2.0;
+
+function nbaWWIndex(key){
+  var S = state.sports[key];
+  if (S.idx.ww) return S.idx.ww;
+  var logs = asArray(S.data.gamelogs) || [];
+  var date = {}, order = {}, played = {}, byPl = {}, nice = {}, mins = {}, yearOf = {};
+  logs.forEach(function(r){
+    if (!r || !r.MatchId || !r.Team || !r.Player) return;
+    var k = cmbNameKey(r.Player);
+    date[r.MatchId] = r.Date || '';
+    yearOf[r.MatchId] = String(r.Year);
+    nice[k] = r.Player;
+    var tk = r.MatchId + '|' + r.Team;
+    (played[tk] = played[tk] || {});
+    if ((+r.minutes || 0) > 0){
+      played[tk][k] = 1;
+      var m = mins[k] = mins[k] || { n:0, t:0 };
+      m.n++; m.t += (+r.minutes || 0);
+    }
+    (byPl[k] = byPl[k] || {})[r.MatchId] = r;
+    (order[r.Team] = order[r.Team] || {})[r.MatchId] = 1;
+  });
+  var games = {};
+  Object.keys(order).forEach(function(t){
+    games[t] = Object.keys(order[t]).sort(function(a, b){
+      return String(date[a]).localeCompare(String(date[b])); });
+  });
+  var avgMin = {};
+  Object.keys(mins).forEach(function(k){ avgMin[k] = mins[k].t / mins[k].n; });
+  S.idx.ww = { games:games, played:played, byPl:byPl, nice:nice, avgMin:avgMin, yearOf:yearOf };
+  return S.idx.ww;
+}
+
+function _wwMean(v){ var s2 = 0; for (var i = 0; i < v.length; i++) s2 += v[i]; return s2 / v.length; }
+function _wwVar(v){
+  if (v.length < 2) return 0;
+  var m = _wwMean(v), s2 = 0;
+  for (var i = 0; i < v.length; i++) s2 += (v[i] - m) * (v[i] - m);
+  return s2 / (v.length - 1);
+}
+
+/* Top team-mates whose absence moves this player, strongest first. */
+function nbaWW(key, name, team){
+  if (key !== 'nba' && key !== 'nbl') return [];
+  var X = nbaWWIndex(key), pk = cmbNameKey(name);
+  var gs = X.games[team] || X.games[normTeam(team)] || [];
+  if (!gs.length) return [];
+  var mine = gs.filter(function(m){ return (X.played[m + '|' + team] || {})[pk]; });
+  if (mine.length < 15) return [];
+  var at = {};
+  gs.forEach(function(m, i){ at[m] = i; });
+  var mates = {};
+  mine.forEach(function(m){
+    var pl = X.played[m + '|' + team] || {};
+    Object.keys(pl).forEach(function(k){ if (k !== pk) mates[k] = 1; });
+  });
+  var out = [];
+  Object.keys(mates).forEach(function(mk){
+    if ((X.avgMin[mk] || 0) < WW_MATE_MIN) return;
+    var his = gs.filter(function(m){ return (X.played[m + '|' + team] || {})[mk]; });
+    if (his.length < 10) return;
+    var lo = at[his[0]], hi = at[his[his.length - 1]];
+    var W = [], O = [];
+    mine.forEach(function(m){
+      var i = at[m];
+      if (i < lo || i > hi) return;                 // he was not at the club yet, or had gone
+      ((X.played[m + '|' + team] || {})[mk] ? W : O).push(m);
+    });
+    if (W.length < WW_MIN_WITH || O.length < WW_MIN_WO) return;
+    var per = {}, best = 0;
+    WW_STATS.forEach(function(st){
+      var f = st[0];
+      var A = W.map(function(m){ return +((X.byPl[pk] || {})[m] || {})[f] || 0; });
+      var B = O.map(function(m){ return +((X.byPl[pk] || {})[m] || {})[f] || 0; });
+      var se = Math.sqrt(_wwVar(A) / A.length + _wwVar(B) / B.length);
+      var t = se > 0 ? (_wwMean(B) - _wwMean(A)) / se : 0;
+      per[f] = { w:_wwMean(A), o:_wwMean(B), t:t };
+      var ranks = f !== 'minutes' || Math.abs(per[f].o - per[f].w) >= WW_MIN_SWING;
+      if (ranks && Math.abs(t) > Math.abs(best)) best = t;
+    });
+    if (Math.abs(best) < WW_T) return;
+    out.push({ mate:X.nice[mk] || mk, mateKey:mk, withN:W.length, woN:O.length, per:per, best:best });
+  });
+  out.sort(function(a, b){ return Math.abs(b.best) - Math.abs(a.best); });
+  return out;
+}
+
+/* One team-mate's effect, as a line of before-and-after. Only the stats that actually moved get
+   a number; printing all five every time buried the one that mattered. */
+function wwRow(r, lead){
+  var cells = WW_STATS.filter(function(st){
+    return st[0] === 'minutes' || Math.abs(r.per[st[0]].t) >= WW_T;
+  }).map(function(st){
+    var p = r.per[st[0]], d = p.o - p.w;
+    var cls = Math.abs(p.t) >= WW_T ? (d > 0 ? ' ww-up' : ' ww-dn') : '';
+    return '<span class="ww-c' + cls + '"><i>' + st[1] + '</i>' + p.w.toFixed(1)
+      + ' \u2192 <b>' + p.o.toFixed(1) + '</b></span>';
+  }).join('');
+  return '<div class="ww-row"><div class="ww-hd"><b>' + esc(lead) + '</b>'
+    + '<span>' + r.woN + ' without \u00b7 ' + r.withN + ' with</span></div>'
+    + '<div class="ww-cells">' + cells + '</div></div>';
+}
+
+function nbaWWSection(key, name){
+  var S = state.sports[key];
+  var team = (S.idx.playerTeam || {})[name] || ((S.idx.byName || {})[name] || {}).team;
+  if (!team) return '';
+  var rows = nbaWW(key, name, team).slice(0, 3);
+  if (!rows.length) return '';
+  return '<div class="dd-sec"><div class="dd-h">When a team-mate sits</div>'
+    + rows.map(function(r){ return wwRow(r, 'Without ' + r.mate); }).join('')
+    + '<div class="dd-note">His own average with that man playing, against his average without. '
+    + 'Only rotation regulars, only inside the stretch they were actually team-mates, and only '
+    + 'gaps big enough for the sample to mean something. It is what happened, not a promise.</div></div>';
+}
+
+/* The same read pointed at tonight: who is ruled out, and whose numbers that has moved. */
+function nbaOutSection(key, g){
+  if (key !== 'nba' && key !== 'nbl') return '';
+  var S = state.sports[key];
+  var inj = asArray(S.data.injury) || [];
+  if (!inj.length || !g || !g.home || !g.away) return '';
+  var sides = [g.home, g.away];
+  var full = sides.map(function(t){ return normTeam(teamFullName(key, t)); });
+  var blocks = [];
+  inj.forEach(function(r){
+    var st = String(r.Status || r.status || '');
+    if (!/^out$/i.test(st)) return;
+    // Match on the INJURY FEED's own club, which is current, rather than on our player record -
+    // a player who moved over summer carries last season's club until he plays a game.
+    var rt = normTeam(r.Team || r.team || '');
+    var si = full.indexOf(rt);
+    if (si < 0) si = sides.map(normTeam).indexOf(rt);
+    if (si < 0) return;
+    var team = sides[si];
+    var who = r.Player || r.player;
+    var X = nbaWWIndex(key), mk = cmbNameKey(who);
+    if ((X.avgMin[mk] || 0) < WW_MATE_MIN) return;      // a deep-bench absence moves nothing
+    // whose numbers has this man's absence moved, among the squad
+    var hits = [];
+    playersOnTeam(key, team).forEach(function(p){
+      if (!p || !p.name || cmbNameKey(p.name) === mk) return;
+      var w = nbaWW(key, p.name, team).filter(function(x){ return x.mateKey === mk; })[0];
+      if (w) hits.push({ p:p, w:w });
+    });
+    if (!hits.length) return;
+    hits.sort(function(a, b){ return Math.abs(b.w.best) - Math.abs(a.w.best); });
+    blocks.push('<div class="ww-blk"><div class="ww-out">' + esc(abbrOf(key, team)) + ' \u00b7 '
+      + esc(who) + ' out' + (r.Injury ? ' (' + esc(r.Injury) + ')' : '') + '</div>'
+      + hits.slice(0, 3).map(function(h){ return wwRow(h.w, h.p.name); }).join('') + '</div>');
+  });
+  if (!blocks.length) return '';
+  return '<div class="dayband"><span>Who it helps</span></div>' + blocks.join('')
+    + '<div class="deg-note">Players ruled out tonight, and the team-mates whose numbers have '
+    + 'moved most when they have sat before. Measured on games already played, so a gap has to '
+    + 'clear its own noise to appear here at all.</div>';
+}
+
 function nbaQuarters(key, name){
   if (key !== 'nba') return null;
   var S = state.sports[key], q = S.data.quarters;
@@ -15141,13 +15914,15 @@ function teamProfile(key, team){
 }
 function nbaScoringProfile(key, name){
   if (key !== 'nba') return '';
+  var ww = nbaWWSection(key, name);
+  var mn = nbaMinutesSection(key, name);
   var S = state.sports[key];
   var p = (S.idx.byName || {})[name] || {};
   var z = nbaZones(key, name), q = nbaQuarters(key, name);
   var logs = sortLogsDesc(((S.idx.logsByName || {})[name] || []).slice())
     .filter(function(r){ return (+r.minutes || 0) > 0; });
-  if (!z && !q && !logs.length) return '';
-  var h = '';
+  if (!z && !q && !logs.length && !ww && !mn) return '';
+  var h = mn + ww;
 
   // the shooting line, from his own game logs so it is current even before the zone build runs
   if (logs.length){
@@ -15159,13 +15934,22 @@ function nbaScoringProfile(key, name){
     // same shot, and field-goal percentage treats them as if they were
     var ts = (fga + 0.44 * fta) > 0 ? pts / (2 * (fga + 0.44 * fta)) * 100 : null;
     var efg = fga > 0 ? (fgm + 0.5 * tpm) / fga * 100 : null;
-    h += '<div class="dd-sec"><div class="dd-h">Shooting</div><div class="pf-grid">'
+    h += '<div class="dd-sec"><div class="dd-h">Shooting &amp; usage</div><div class="pf-grid">'
       + [['Field goals', pct(fgm, fga), fgm + '/' + fga],
          ['Three point', pct(tpm, tpa), tpm + '/' + tpa],
          ['Free throws', pct(ftm, fta), ftm + '/' + fta],
+         (function(){
+           // usage says how much of the offence runs through him, which is the number that
+           // explains a raw scoring line before any matchup read does
+           var u = nbaUsageFor(key, name);
+           return u ? ['Usage', u.usg.toFixed(1) + '%',
+                       u.rank ? ordinalish(u.rank) + ' of ' + u.of : 'of his team\u2019s possessions']
+                    : null;
+         })(),
          ['Effective FG', efg != null ? efg.toFixed(1) + '%' : '\u2014', 'threes counted properly'],
          ['True shooting', ts != null ? ts.toFixed(1) + '%' : '\u2014', 'with free throws'],
          ['Points a game', (pts / logs.length).toFixed(1), logs.length + ' games']]
+        .filter(Boolean)                 // usage is absent for a player with no minutes on file
         .map(function(x){
           return '<div class="pf-cell"><b>' + esc(x[1]) + '</b><span>' + esc(x[0]) + '</span>'
             + '<i>' + esc(x[2]) + '</i></div>';
@@ -16327,7 +17111,12 @@ window.LAB = {
     });
   },
   liveOpen: function(){ state.view.liveOpen = true; state.view.cardOpen = false; render(); liveFetch(); livePoll(); },
-  liveClose: function(){ state.view.liveOpen = false; clearTimeout(LIVE.timer); render(); },
+  // closing the card's tracker must not stop the published bets polling behind it
+  liveClose: function(){
+    state.view.liveOpen = false;
+    if (!LIVE.pip && !livePubOpen()) clearTimeout(LIVE.timer);
+    render();
+  },
   liveRefresh: function(){ liveFetch(); },
   livePop: function(){
     if (!('documentPictureInPicture' in window)) return;
@@ -16431,6 +17220,12 @@ window.LAB = {
   },
   tab: function(t){
     state.view.tab = t;
+    // the published bets poll only while the Results tab is open; leaving it stops the poll, and
+    // clearing the latch lets it start again on the way back in
+    if (t !== 'results'){
+      LIVE.pubOn = false;
+      if (!state.view.liveOpen && !LIVE.pip) clearTimeout(LIVE.timer);
+    }
     render();
     if (t === 'odds') ensureTier2();        // pull odds only when the page is actually opened
   },
@@ -16760,6 +17555,71 @@ window.LAB = {
     var el = document.getElementById('dv-card');
     if (!el) return;
     sharePng(snapElement(el, 'D\u00e9j\u00e0 Vu').catch(function(){ return null; }), 'jtt-dejavu.png');
+  },
+  // exposed for tests: settling a published bet
+  betProbe: function(b){ return betSettle(b); },
+  // exposed for tests: the published-bet plumbing, without going through the rendered page
+  betPubProbe: function(bets, sport){
+    var was = state.results;
+    if (bets) state.results = { unitSize:25, bets:bets, missing:false };
+    try {
+      var pend = betsPending(sport);
+      return {
+        pending: pend.length,
+        mapped: pend.map(betToCardish),
+        legs: liveLegRows(betsLiveList()),
+        feeds: liveGames(betsLiveList()),
+        html: pendingBetsSection(25, sport),
+        unofficial: pend.reduce(function(m, b){ m[b.id] = betUnofficial(b); return m; }, {})
+      };
+    } finally { state.results = was; }
+  },
+  liveProbe: function(src){ return { rows: liveLegRows(src), games: liveGames(src), feeds: liveFeedNames() }; },
+  // exposed for tests: the minutes read, as numbers rather than parsed out of the rendered text
+  minProbe: function(key, name){
+    var M = nbaMarginIndex(key);
+    var S = state.sports[key];
+    var logs = (asArray(S.data.gamelogs) || []).filter(function(r){
+      return r && r.Player === name && (+r.minutes || 0) > 0; });
+    var yrs = {};
+    logs.forEach(function(r){ yrs[String(r.Year)] = (yrs[String(r.Year)] || 0) + 1; });
+    var ks = Object.keys(yrs).sort(), yr = ks[ks.length - 1];
+    if (ks.length > 1 && yrs[yr] < 20) yr = ks[ks.length - 2];
+    var mine = logs.filter(function(r){ return String(r.Year) === yr; });
+    var c = [], b = [];
+    mine.forEach(function(r){
+      var d = M.by[String(r.MatchId)];
+      if (d == null) return;
+      if (d <= M.close) c.push(+r.minutes || 0); else if (d >= M.blow) b.push(+r.minutes || 0);
+    });
+    var mean = function(v){ return v.length ? v.reduce(function(a, x){ return a + x; }, 0) / v.length : null; };
+    return { year:yr, games:mine.length, close:M.close, blow:M.blow,
+             closeMin:mean(c), closeN:c.length, blowMin:mean(b), blowN:b.length,
+             avg:mean(mine.map(function(r){ return +r.minutes || 0; })) };
+  },
+  // exposed for tests: usage. Five men share the floor, so the median qualified player must sit
+  // on 20% - that identity is the sharpest check there is that the formula is right.
+  usgProbe: function(key){
+    var u = nbaUsageIndex(key);
+    var ranked = Object.keys(u).filter(function(k){ return u[k].rank; })
+      .map(function(k){ return u[k].usg; }).sort(function(a, b){ return a - b; });
+    return { n:Object.keys(u).length, ranked:ranked.length,
+             median: ranked.length ? ranked[ranked.length >> 1] : null,
+             hi: ranked.length ? ranked[ranked.length - 1] : null,
+             lo: ranked.length ? ranked[0] : null };
+  },
+  usgFor: function(key, name){ return nbaUsageFor(key, name); },
+  // exposed for tests: the with/without split, and what it costs to compute
+  wwProbe: function(key, name, team){
+    var S = state.sports[key];
+    team = team || (S.idx.playerTeam || {})[name] || ((S.idx.byName || {})[name] || {}).team;
+    var a = Date.now(); nbaWWIndex(key); var tIdx = Date.now() - a;
+    a = Date.now(); var r = nbaWW(key, name, team); var tRun = Date.now() - a;
+    return { team:team, idxMs:tIdx, runMs:tRun, n:r.length,
+             top: r.slice(0, 3).map(function(x){
+               return { mate:x.mate, woN:x.woN, withN:x.withN, t:+x.best.toFixed(2),
+                        pts:[+x.per.points.w.toFixed(1), +x.per.points.o.toFixed(1)],
+                        min:[+x.per.minutes.w.toFixed(1), +x.per.minutes.o.toFixed(1)] }; }) };
   },
   // exposed for tests: which config a sport is actually simulated on. The NHL was silently
   // simulated on basketball's - rebounds, threes, a "Three-happy" filter - because simCfg fell
