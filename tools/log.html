@@ -351,13 +351,88 @@ function lgLoadConfig(key){
     s.src = '/' + LG_DIRS[key] + '/config.js?cb=' + Date.now();
     s.onload = function(){
       var c = window.SPORT_CONFIG || {};
-      done((c.oddsMkts || c.multiMkts || []).slice());
+      done(lgMarkets(c));
       s.remove();
     };
     s.onerror = function(){ done([]); s.remove(); };
     document.head.appendChild(s);
   });
 }
+// EVERY market this sport can SETTLE, not just the ones we price.
+// The list used to be oddsMkts, which is the odds board - what JTT puts a price on. A bet placed
+// at a book is not limited to that: pass completions is a market every book offers, the gamelogs
+// carry passComp, and statOf would grade it perfectly - but it could not be picked here, so it
+// could not be logged at all.
+// So the vocabulary is the union of every list the config keeps: the odds board, the multi
+// builder, the prop-calculator chips, and the label map. Labels come from the most human source
+// available, in that order, because pcStats is abbreviated for a chip ("PaYds") and mktNames is
+// written for a person ("Pass Yds").
+// SAFETY: a market offered here that the gamelogs do not actually carry would be WORSE than a
+// missing one. NFL's COVER_FIELD returns 0 rather than null for an absent field, so such a bet
+// would silently settle as a loss instead of being held. tests/admin_test.js asserts that every
+// market this returns is a real field in that sport's game logs, which is what makes widening
+// the list safe rather than merely generous.
+// Markets a config names but the GAME LOGS cannot settle, so there is no point offering them:
+// firstScorer is resolved from firsttd.json, not a gamelog column, and ERA is a season rate
+// rather than a per-game count. A bet on either is held as unverifiable rather than settled
+// (the page stopped inventing a zero for an unknown column), so this is about not walking
+// someone into a tip that can never grade - tests/admin_test.js fails if the list goes stale.
+var LG_NO_SETTLE = { firstScorer:1, ERA:1 };
+
+/* MARKETS YOU CAN BET BUT WE DO NOT PRICE.
+   The config's lists describe the odds board and the page's own tiles - what JTT puts a number
+   on. A bet placed at a book is not limited to that, and the gap is not small: pass completions,
+   cards, batter strikeouts, minutes, rebounds split by end. Every one of them is already in the
+   game logs and would grade perfectly; none of them could be picked here, so none could be
+   logged at all.
+   These are the ones worth offering: real markets books post, not the internal rates the build
+   also carries (snapPct, cpoe, expected-yards and so on), which would be noise in a dropdown.
+   The labels travel with the leg, so the site shows these words without needing to know the
+   market itself. Every key is checked against that sport's real game logs by
+   tests/admin_test.js, so a typo or a renamed column fails the suite rather than quietly
+   producing a tip that can never settle. */
+var LG_EXTRA_MKTS = {
+  nfl: [['passComp','Pass Completions'],['rushTds','Rush TDs'],['recTds','Rec TDs'],
+        ['targets','Targets'],['totalTds','Total TDs'],['fgAtt','FG Attempts'],
+        ['patMade','Extra Points'],['tfl','Tackles For Loss'],['astTk','Assisted Tackles']],
+  epl: [['yellowCard','Yellow Card'],['redCard','Red Card'],['min','Minutes Played']],
+  mlb: [['SO','Batter Strikeouts'],['ER','Earned Runs'],['outs','Outs Recorded']],
+  nba: [['threesAtt','Three Attempts'],['fgm','FG Made'],['fga','FG Attempts'],
+        ['ftm','FT Made'],['fta','FT Attempts'],['oreb','Off Rebounds'],
+        ['dreb','Def Rebounds'],['fouls','Fouls'],['minutes','Minutes'],
+        ['plusMinus','Plus/Minus']],
+  nbl: [['threesAtt','Three Attempts'],['fgm','FG Made'],['fga','FG Attempts'],
+        ['ftm','FT Made'],['fta','FT Attempts'],['oreb','Off Rebounds'],
+        ['dreb','Def Rebounds'],['fouls','Fouls'],['minutes','Minutes'],
+        ['twosMade','Twos Made'],['plusMinus','Plus/Minus']],
+  nhl: [['ppGoals','Power Play Goals'],['plusMinus','Plus/Minus'],['toiMin','Time On Ice'],
+        ['shotsAgainst','Shots Against'],['goalsAgainst','Goals Against'],['shutouts','Shutouts']],
+  afl: [['behinds','Behinds'],['hitouts','Hitouts'],['shotsAtGoal','Shots At Goal'],
+        ['goalAssists','Goal Assists'],['inside50s','Inside 50s'],
+        ['marksInside50','Marks Inside 50'],['contestedMarks','Contested Marks'],
+        ['rebound50s','Rebound 50s'],['metresGained','Metres Gained'],
+        ['supercoach','SuperCoach'],['ratingPoints','AFL Rating Points']]
+};
+
+function lgMarkets(c){
+  c = c || {};
+  var label = {}, order = [];
+  var add = function(k, lbl){
+    if (!k || LG_NO_SETTLE[k]) return;
+    if (!label[k]) order.push(k);
+    if (lbl && (!label[k] || label[k] === k)) label[k] = lbl;
+    else if (!label[k]) label[k] = k;
+  };
+  // best labels first so they win
+  Object.keys(c.mktNames || {}).forEach(function(k){ add(k, c.mktNames[k]); });
+  (c.oddsMkts || []).forEach(function(m){ add(m[0], m[1]); });
+  (c.multiMkts || []).forEach(function(m){ add(m[0], m[1]); });
+  (c.pcStats || []).forEach(function(m){ add(m[0], m[1]); });
+  (LG_EXTRA_MKTS[lgSport] || []).forEach(function(m){ add(m[0], m[1]); });
+  return order.sort(function(a, b){ return label[a].localeCompare(label[b]); })
+              .map(function(k){ return [k, label[k]]; });
+}
+
 function lgLoad(key){
   if (LGC[key]) return Promise.resolve(LGC[key]);
   var d = LG_DIRS[key];
