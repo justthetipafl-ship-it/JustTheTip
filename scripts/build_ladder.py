@@ -108,8 +108,13 @@ def hit_rate(rec, field, line):
     return _wilson_lower(hits, n)
 
 
-ROLE_FIELD = {'AFL': 'tog', 'nfl': 'snapPct', 'nbl': 'minutes', 'nhl': 'toiMin', 'EPL': 'min'}
-ROLE_FLOOR = {'AFL': 75, 'nfl': 55, 'nbl': 18, 'nhl': 12, 'EPL': 60}
+# A sport missing from here gets NO role gate at all (role_ok returns True), which is right for
+# MLB - a batter has no minutes - and wrong for everyone else. The NBA was absent, so its ladder
+# legs could have come from a man who averages six minutes and might not leave the bench.
+# 20 minutes is NBL's 18 scaled from a 40-minute game to a 48-minute one.
+ROLE_FIELD = {'AFL': 'tog', 'nfl': 'snapPct', 'nbl': 'minutes', 'nhl': 'toiMin', 'EPL': 'min',
+              'nba': 'minutes'}
+ROLE_FLOOR = {'AFL': 75, 'nfl': 55, 'nbl': 18, 'nhl': 12, 'EPL': 60, 'nba': 20}
 
 
 def role_ok(rec, base):
