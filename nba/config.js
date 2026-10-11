@@ -56,7 +56,8 @@ window.SPORT_CONFIG = {
 
   // ---- market menus (Scanner / CMB / Multi / Nerd / Settings / FXP / DV) ----
   oddsMkts: [["points","Points"],["rebounds","Rebounds"],["assists","Assists"],["threes","Threes"],
-             ["pra","PRA"],["steals","Steals"],["blocks","Blocks"]],
+             ["pra","PRA"],["pr","P+R"],["pa","P+A"],["ra","R+A"],
+             ["steals","Steals"],["blocks","Blocks"]],
   multiMkts: [["points","Points"],["rebounds","Rebounds"],["assists","Assists"],["threes","Threes"],["pra","PRA"]],
   nerdMkts: [["points","Points"],["rebounds","Rebounds"],["assists","Assists"],["threes","Threes"],["pra","PRA"]],
   settingsMkts: [["points","Points"],["rebounds","Rebounds"],["assists","Assists"],["threes","Threes"],
@@ -81,7 +82,9 @@ window.SPORT_CONFIG = {
                        ["threes","Threes"],["pra","PRA"]],
              noPlayerOdds: false },
 
-  liveWorker: "",
+  // The shared live worker, reading ESPN's basketball box scores. NBA is the same feed shape the
+  // NBL already used - same groups, same stat keys - so it needed nothing there but its own path.
+  liveWorker: "https://jtt-live.justthetipafl.workers.dev/nba",
   viewDefaults: { sortKey:"points", statsStat:"points", teamsSort:"points" },
   dataFiles: {},               // shell defaults + meta.gamelogFiles drive loading
 
