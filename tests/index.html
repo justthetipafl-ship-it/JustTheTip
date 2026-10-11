@@ -1283,6 +1283,21 @@
   .pb-legs .lt-leg{background:var(--surface);}
   .pb-legs .lt-leg:last-child{margin-bottom:0;}
   .pb-why{font-size:10px;color:#f59e0b;margin-top:7px;}
+  /* Live Tips: the hero strip and the filter rows */
+  .tip-hero{display:flex;gap:8px;flex-wrap:wrap;background:var(--surface-2);border:1px solid var(--border);
+    border-radius:12px;padding:11px 13px;margin-bottom:10px;}
+  .tip-hero > div{flex:1 1 68px;min-width:0;display:flex;flex-direction:column;gap:1px;}
+  .tip-hero b{font-family:var(--font-display);font-size:19px;line-height:1.1;}
+  .tip-hero b.pos{color:var(--accent);} .tip-hero b.neg{color:#ef4444;}
+  .tip-hero span{font-size:9px;font-weight:800;letter-spacing:.05em;text-transform:uppercase;
+    color:var(--text-3);}
+  .tip-fl{flex:0 0 auto;align-self:center;font-size:9px;font-weight:800;letter-spacing:.05em;
+    text-transform:uppercase;color:var(--text-3);margin-right:2px;}
+  .tip-n{font-style:normal;opacity:.55;margin-left:5px;font-size:10px;}
+  .sl-chip.tip-live.on{border-color:#f59e0b;color:#f59e0b;}
+  .sl-chip.tip-won.on{border-color:var(--accent);color:var(--accent);}
+  .sl-chip.tip-lost.on,.sl-chip.tip-slipping.on{border-color:#ef4444;color:#ef4444;}
+  .res-point{margin:10px 0 2px;}
   .pb-bare{opacity:.72;} .pb-bare .pb-ttl{font-weight:700;font-size:12px;}
   .pb-bare .pb-meta{margin-bottom:0;}
   .sc-filter{display:flex;gap:7px;align-items:center;margin-bottom:8px;}
@@ -1549,7 +1564,7 @@
       <a class="auth-join-b" href="https://dubclub.win/JustTheTipAUS/" target="_blank" rel="noopener">
         Sign up on DubClub <i class="ti ti-external-link"></i></a>
       <div class="auth-join-p">$7.50 a month, or $60 a year</div>
-      <a class="auth-guide" href="/guide.html">Read the guide first \u2192</a>
+      <a class="auth-guide" href="/guide.html">Read the guide first →</a>
     </div>
     <div class="auth-footer"><b>A research tool, not betting advice. 18+. Gamble responsibly.</b><br>
       One password unlocks every Just The Tip tool.</div>
@@ -12190,7 +12205,15 @@ function betLegRow(leg){
   var key = leg && betSportKey(leg.sport);
   var S = key && state.sports[key];
   if (!S || S.status !== 'ready') return { state:'nodata' };
-  var logs = (S.idx.logsByName || {})[leg.player];
+  // S.status is TIER ONE. The game logs arrive with tier three, and the two are not the same
+  // readiness: with tier one up and tier three still to come, logsByName is empty and every
+  // player in the world looks like a name that does not exist. That shipped as a warning on the
+  // face of each tip saying Mike Evans is not in the NFL game logs, which is both wrong and
+  // exactly the warning that must never cry wolf - it is the one that means "this tip can never
+  // settle". No logs loaded is NODATA: quiet, and true.
+  var byName = S.idx.logsByName;
+  if (!byName || !Object.keys(byName).length) return { state:'nodata' };
+  var logs = byName[leg.player];
   if (!logs){
     // the name has to match the game logs exactly or the bet can never settle; that is the
     // single most likely reason one sits pending for ever, so it is named rather than ignored
@@ -12377,9 +12400,126 @@ function betUnofficial(b){
     : { cls:'neg', txt:'lost' };
 }
 
-function pendingBetsSection(unit, sport){
-  var pend = betsPending(sport);
-  var bare = betsPendingAll(sport).filter(function(b){ return !(b.legs && b.legs.length); });
+/* THE RUNNING TIPS, on a page of their own -----------------------------------------------------
+   The Results page is the settled record: what happened, and what it cost or paid. This is the
+   other half - what is ON, before anyone knows. They were one page for a while and it read badly,
+   because the two answer different questions and only one of them changes while you watch it.
+
+   Filters are the point of a page like this. On a busy Saturday the list is forty legs across a
+   dozen games, and "how is the Cowboys game going" is the question actually being asked. Every
+   filter is built FROM the tips on the page rather than from a fixed list, so a sport or a bet
+   type appears as a chip the day it first has a tip on it and disappears when it does not.      */
+function tipFilters(pend){
+  var f = { sport:{}, type:{}, game:{} };
+  pend.forEach(function(b){
+    if (b.sport) f.sport[b.sport] = (f.sport[b.sport] || 0) + 1;
+    var ty = b.type || 'Other';
+    f.type[ty] = (f.type[ty] || 0) + 1;
+    tipGames(b).forEach(function(g){ f.game[g] = (f.game[g] || 0) + 1; });
+  });
+  return f;
+}
+// a bet's games, from its legs. A multi can span several, which is why this is a list.
+function tipGames(b){
+  var seen = {}, out = [];
+  (b.legs || []).forEach(function(l){
+    var g = l && (l.game || (l.opp ? 'v ' + l.opp : ''));
+    if (g && !seen[g]){ seen[g] = 1; out.push(g); }
+  });
+  return out;
+}
+// where a tip stands right now, for the status filter and the sort
+function tipState(b){
+  var un = betUnofficial(b);
+  if (un) return un.cls === 'pos' ? 'won' : un.cls === 'neg' ? 'lost' : 'review';
+  var legs = liveLegRows([betToCardish(b)]);
+  if (legs.some(function(r){ return r.state === 'busted'; })) return 'slipping';
+  if (legs.some(function(r){ return r.state === 'open' || r.state === 'cashed'; })) return 'live';
+  return 'soon';
+}
+var TIP_STATES = [['live', 'In play'], ['soon', 'Not started'], ['slipping', 'A leg down'],
+                  ['won', 'Landed'], ['lost', 'Gone'], ['review', 'Needs a look']];
+
+function tipsPage(){
+  loadResults();
+  betsEnsureSports();
+  livePubEnsure();
+  var R = state.results;
+  var h = '<div class="crew-head"><div class="crew-ttl res-ttl">'
+    + '<img src="/AFL/assets/jtt-check.png" alt="" class="res-logo" onerror="this.style.display=\'none\'">'
+    + 'JustTheTip <b>Live Tips</b></div></div>';
+  if (!R) return h + '<div class="empty"><i class="ti ti-loader"></i>Loading tips\u2026</div>';
+
+  var all = betsPendingAll();
+  if (!all.length) return h + '<div class="sig-empty">Nothing running right now. Every tip that '
+    + 'has been settled is on the <a href="#" onclick="LAB.tab(\'results\');return false">Results</a> '
+    + 'page.</div>';
+
+  var v = state.view, fSport = v.tipSport || 'all', fType = v.tipType || 'all',
+      fGame = v.tipGame || 'all', fState = v.tipState || 'all';
+  var opts = tipFilters(all);
+  var pend = all.filter(function(b){
+    if (fSport !== 'all' && b.sport !== fSport) return false;
+    if (fType !== 'all' && (b.type || 'Other') !== fType) return false;
+    if (fGame !== 'all' && tipGames(b).indexOf(fGame) < 0) return false;
+    if (fState !== 'all' && tipState(b) !== fState) return false;
+    return true;
+  });
+
+  var chips = function(key, label, map, cur, setter){
+    var keys = Object.keys(map).sort();
+    if (keys.length < 2) return '';                 // a filter with one option filters nothing
+    return '<div class="sl-bar"><span class="tip-fl">' + label + '</span>'
+      + '<button class="sl-chip' + (cur === 'all' ? ' on' : '') + '" onclick="LAB.' + setter + '(\'all\')">All</button>'
+      + keys.map(function(k){
+          return '<button class="sl-chip' + (cur === k ? ' on' : '') + '" onclick="LAB.' + setter
+            + '(' + JSON.stringify(k).replace(/"/g, '&quot;') + ')">' + esc(k)
+            + '<i class="tip-n">' + map[k] + '</i></button>';
+        }).join('') + '</div>';
+  };
+  var stateMap = {};
+  all.forEach(function(b){ var st2 = tipState(b); stateMap[st2] = (stateMap[st2] || 0) + 1; });
+  var stateBar = Object.keys(stateMap).length < 2 ? '' :
+    '<div class="sl-bar"><span class="tip-fl">Status</span>'
+    + '<button class="sl-chip' + (fState === 'all' ? ' on' : '') + '" onclick="LAB.tipState(\'all\')">All</button>'
+    + TIP_STATES.filter(function(o){ return stateMap[o[0]]; }).map(function(o){
+        return '<button class="sl-chip tip-' + o[0] + (fState === o[0] ? ' on' : '') + '" onclick="LAB.tipState(\''
+          + o[0] + '\')">' + o[1] + '<i class="tip-n">' + stateMap[o[0]] + '</i></button>';
+      }).join('') + '</div>';
+
+  h += chips('sport', 'Sport', opts.sport, fSport, 'tipSport')
+     + chips('type', 'Bet type', opts.type, fType, 'tipType')
+     + chips('game', 'Game', opts.game, fGame, 'tipGame')
+     + stateBar;
+
+  var unit = (R.unitSize) || 25;
+  if (!pend.length) return h + '<div class="sig-empty">No tip matches those filters. '
+    + '<button class="sl-chip" onclick="LAB.tipClear()">Clear them</button></div>';
+
+  // the headline: legs, not bets, because a leg is the thing that is actually moving
+  var legs = liveLegRows(pend.filter(function(b){ return b.legs && b.legs.length; }).map(betToCardish));
+  var landed = legs.filter(function(r){ return r.state === 'cashed'; }).length;
+  var gone = legs.filter(function(r){ return r.state === 'busted'; }).length;
+  var open = legs.filter(function(r){ return r.state === 'open'; }).length;
+  var staked = pend.reduce(function(a, b){
+    return a + (b.units != null ? +b.units : (+b.stake || 0) / unit); }, 0);
+  h += '<div class="tip-hero"><div><b>' + pend.length + '</b><span>tip'
+     + (pend.length === 1 ? '' : 's') + ' running</span></div>'
+     + '<div><b>' + staked.toFixed(2) + 'u</b><span>at risk</span></div>'
+     + (legs.length ? '<div><b>' + landed + '/' + legs.length + '</b><span>legs landed</span></div>'
+        + '<div><b class="' + (open ? 'pos' : '') + '">' + open + '</b><span>in play</span></div>'
+        + (gone ? '<div><b class="neg">' + gone + '</b><span>gone</span></div>' : '') : '')
+     + '</div>';
+
+  return h + pendingBetsSection(unit, null, pend);
+}
+
+function pendingBetsSection(unit, sport, only){
+  // `only` is a list the caller has already filtered (the Live Tips page). Without it the section
+  // works out its own, which is how the Results page used it before the two were split.
+  var src = only || betsPendingAll(sport);
+  var pend = src.filter(function(b){ return b.legs && b.legs.length; });
+  var bare = src.filter(function(b){ return !(b.legs && b.legs.length); });
   if (!pend.length && !bare.length) return '';
   var rows = pend.slice().sort(function(a, b){
     return String(a.date).localeCompare(String(b.date)) || String(a.id).localeCompare(String(b.id));
@@ -12451,8 +12591,8 @@ function pendingBetsSection(unit, sport){
         + ' · ' + u.toFixed(2) + 'u</div></div>';
     }).join('');
   var feeds = liveFeedNames();
-  return '<div class="dayband"><span>On right now · ' + (pend.length + bare.length)
-    + ' pending</span></div>'
+  return '<div class="dayband"><span>' + (only ? 'Showing ' + (pend.length + bare.length)
+      : 'On right now · ' + (pend.length + bare.length) + ' pending') + '</span></div>'
     + '<div class="pb-wrap">' + body + plain + '</div>'
     + '<div class="deg-note">Every bet here was posted before its game. '
     + (pend.length ? 'The ones with legs settle themselves from the game logs, so their losers '
@@ -12620,8 +12760,13 @@ function resultsPage(){
     ? 'No results file yet \u2014 data/results.json appears once the first bets are logged.'
     : 'No bets logged yet.')+'</div>';
   var unit = R.unitSize || 25;
+  // SETTLED bets decide what this page offers. Built from every row, a sport whose only bet is
+  // still running got a filter chip and a 0-0 0.0u split row - a sport with no record, presented
+  // as a record. Its tips are on the Live Tips tab, which is where they belong.
   var sports = [];
-  R.bets.forEach(function(b){ if (b.sport && sports.indexOf(b.sport) < 0) sports.push(b.sport); });
+  R.bets.forEach(function(b){
+    if (b.result !== 'pending' && b.sport && sports.indexOf(b.sport) < 0) sports.push(b.sport);
+  });
   var f = state.view.resSport || 'all', per = state.view.resPeriod || 'all';
   // A week, not a day. Bets are dated where the game is played, so a single calendar day never
   // lines up with an Australian reader's idea of "today" - two attempts at it were both wrong in
@@ -12652,17 +12797,24 @@ function resultsPage(){
     + '</div></div>'
     + resultsCurve(st.curve)
     + '<div class="res-note">'+st.n+' settled bet'+(st.n === 1 ? '' : 's')
-    + (st.pend ? ' \u00b7 '+st.pend+' still pending (counted nowhere until they land)' : '')
+    + (st.pend ? ' \u00b7 '+st.pend+' running, counted nowhere until they land' : '')
     + ' \u00b7 past results do not indicate future results'
     + (R.updated ? ' \u00b7 updated '+esc(String(R.updated).replace('T', ' ').replace('Z', ' UTC')) : '')+'</div>'
-    + pendingBetsSection(unit, f);
+    // the running tips live on their own tab now - this page is the settled record
+    + (st.pend ? '<div class="res-point"><button class="sl-chip on" onclick="LAB.tab(\'tips\')">'
+        + '<i class="ti ti-antenna-bars-5"></i> ' + st.pend + ' tip' + (st.pend === 1 ? '' : 's')
+        + ' still running \u2014 track them live</button></div>' : '');
   var bySport = {}, byType = {};
   bets.forEach(function(b){
+    if (b.result === 'pending') return;            // no result, nothing to break down
     (bySport[b.sport || 'Other'] = bySport[b.sport || 'Other'] || []).push(b);
     (byType[b.type || 'Other'] = byType[b.type || 'Other'] || []).push(b);
   });
   h += '<div class="res-splits">'+resultsSplit('By sport', bySport, unit)+resultsSplit('By bet type', byType, unit)+'</div>';
-  var recent = bets.slice().sort(function(a,b){ return String(b.date).localeCompare(String(a.date)) || String(b.id).localeCompare(String(a.id)); }).slice(0, 25);
+  // SETTLED only. A pending row in a results ledger is noise: it has no profit, no outcome and
+  // nothing to compare, and it is the thing the Live Tips tab exists to show properly.
+  var recent = bets.filter(function(b){ return b.result !== 'pending'; })
+    .sort(function(a,b){ return String(b.date).localeCompare(String(a.date)) || String(b.id).localeCompare(String(a.id)); }).slice(0, 25);
   h += '<div class="dayband"><span>Recent bets</span></div>'
     + recent.map(function(b){
         var u = b.units != null ? +b.units : (+b.stake || 0)/unit;
@@ -12855,8 +13007,8 @@ function liveFetch(){
     if (state.view.liveOpen || livePubOpen()){ render(); livePaintPip(); }
   });
 }
-// the published bets are live on the Results tab, so that counts as a reason to keep polling
-function livePubOpen(){ return state.view.tab === 'results' && !state.view.focus; }
+// the published tips are live on their own tab, so that counts as a reason to keep polling
+function livePubOpen(){ return state.view.tab === 'tips' && !state.view.focus; }
 function livePoll(){
   clearTimeout(LIVE.timer);
   if (!state.view.liveOpen && !LIVE.pip && !livePubOpen()) return;
@@ -16918,7 +17070,7 @@ function render(){
   var loading = Object.keys(SPORTS).filter(function(k){ return state.sports[k].status==='loading'; });
   $('status').textContent = loading.length ? ('loading '+loading.join(', ')+'…') : 'ready';
 
-  var tabs = [['fixture','ti-calendar','Fixture'],['crew','ti-flame','Degen Crew'],['odds','ti-coin','Odds'],['stats','ti-chart-bar','Stats'],['results','ti-trophy','Results']];
+  var tabs = [['fixture','ti-calendar','Fixture'],['crew','ti-flame','Degen Crew'],['odds','ti-coin','Odds'],['stats','ti-chart-bar','Stats'],['tips','ti-antenna-bars-5','Live Tips'],['results','ti-trophy','Results']];
   var h = '<div class="tabs">'+tabs.map(function(t){
     return '<button class="tab'+(state.view.tab===t[0]?' on':'')+'" onclick="LAB.tab(\''+t[0]+'\')">'
       +'<i class="ti '+t[1]+'"></i>'+t[2]+'</button>'; }).join('')+'</div>';
@@ -16929,7 +17081,9 @@ function render(){
     $('app').innerHTML = configBanner() + h + playerPanel() + teamPanel() + booksPanel() + cmbFab() + cmbPanel() + cardFab() + cardPanel() + livePanel() + deepPanel() + mrPanel();
     return;
   }
-  if (state.view.tab === 'results'){
+  if (state.view.tab === 'tips'){
+    h += tipsPage();
+  } else if (state.view.tab === 'results'){
     h += resultsPage();
   } else if (state.view.tab === 'crew'){
     h += crewPage();
@@ -17222,12 +17376,20 @@ window.LAB = {
     state.view.tab = t;
     // the published bets poll only while the Results tab is open; leaving it stops the poll, and
     // clearing the latch lets it start again on the way back in
-    if (t !== 'results'){
+    if (t !== 'tips'){
       LIVE.pubOn = false;
       if (!state.view.liveOpen && !LIVE.pip) clearTimeout(LIVE.timer);
     }
     render();
     if (t === 'odds') ensureTier2();        // pull odds only when the page is actually opened
+  },
+  tipSport: function(v){ state.view.tipSport = v; render(); },
+  tipType:  function(v){ state.view.tipType = v; render(); },
+  tipGame:  function(v){ state.view.tipGame = v; render(); },
+  tipState: function(v){ state.view.tipState = v; render(); },
+  tipClear: function(){
+    state.view.tipSport = state.view.tipType = state.view.tipGame = state.view.tipState = 'all';
+    render();
   },
   mkt: function(k, m){ state.view.mkt[k] = m; render(); },
   match: function(k, id){ state.view.match[k] = id; render(); },
@@ -17575,6 +17737,27 @@ window.LAB = {
     } finally { state.results = was; }
   },
   liveProbe: function(src){ return { rows: liveLegRows(src), games: liveGames(src), feeds: liveFeedNames() }; },
+  // exposed for tests: the Live Tips page with a given ledger and a given set of filters
+  tipsProbe: function(bets, filters){
+    var wasR = state.results, wasT = state.view.tab;
+    var keep = { s:state.view.tipSport, t:state.view.tipType, g:state.view.tipGame, st:state.view.tipState };
+    if (bets) state.results = { unitSize:25, bets:bets, missing:false };
+    filters = filters || {};
+    state.view.tipSport = filters.sport || 'all'; state.view.tipType = filters.type || 'all';
+    state.view.tipGame = filters.game || 'all';   state.view.tipState = filters.state || 'all';
+    state.view.tab = 'tips';
+    try {
+      var all = betsPendingAll();
+      return { html: tipsPage(), opts: tipFilters(all),
+               states: all.map(function(b){ return { id:b.id, state:tipState(b) }; }),
+               games: all.map(function(b){ return { id:b.id, games:tipGames(b) }; }),
+               results: resultsPage() };
+    } finally {
+      state.results = wasR; state.view.tab = wasT;
+      state.view.tipSport = keep.s; state.view.tipType = keep.t;
+      state.view.tipGame = keep.g;  state.view.tipState = keep.st;
+    }
+  },
   // exposed for tests: the minutes read, as numbers rather than parsed out of the rendered text
   minProbe: function(key, name){
     var M = nbaMarginIndex(key);
