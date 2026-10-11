@@ -1291,6 +1291,17 @@
   .tip-hero b.pos{color:var(--accent);} .tip-hero b.neg{color:#ef4444;}
   .tip-hero span{font-size:9px;font-weight:800;letter-spacing:.05em;text-transform:uppercase;
     color:var(--text-3);}
+  .tip-filters{display:flex;gap:7px;flex-wrap:wrap;align-items:flex-end;margin-bottom:10px;}
+  .tip-sel{flex:1 1 128px;min-width:0;display:flex;flex-direction:column;gap:3px;}
+  .tip-sel > span{font-size:9px;font-weight:800;letter-spacing:.05em;text-transform:uppercase;
+    color:var(--text-3);padding-left:2px;}
+  .tip-sel select{width:100%;background:var(--surface-2);border:1px solid var(--border);
+    border-radius:9px;color:var(--text);font:inherit;font-size:13px;font-weight:700;
+    padding:9px 10px;outline:none;appearance:none;cursor:pointer;
+    background-image:url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%236f7d8f' stroke-width='1.6' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");
+    background-repeat:no-repeat;background-position:right 10px center;padding-right:26px;}
+  .tip-sel.on select{border-color:var(--accent);color:var(--accent);}
+  .tip-clear{align-self:flex-end;flex:0 0 auto;}
   .tip-fl{flex:0 0 auto;align-self:center;font-size:9px;font-weight:800;letter-spacing:.05em;
     text-transform:uppercase;color:var(--text-3);margin-right:2px;}
   .tip-n{font-style:normal;opacity:.55;margin-left:5px;font-size:10px;}
@@ -12446,11 +12457,50 @@ function tipFilters(pend){
   });
   return f;
 }
+/* WHICH MATCH A LEG BELONGS TO.
+   The entry tool writes `game` ("PHI @ JAX") when it builds a leg, but that field is newer than
+   the first tips that were logged - and a leg without it was falling back to "v PHI", so the
+   same round of games appeared in the filter twice: once as real matches and once as a row of
+   one-sided "v TEAM" entries that could never line up with them.
+   The matchId already says who played, so none of that was necessary. NFL and EPL build theirs
+   out of the teams; the other sports use the fixture's own id, which the fixture can be asked
+   about. "v TEAM" survives only as the last resort, for a leg with nothing else to go on.      */
+function legMatch(l){
+  if (!l) return '';
+  if (l.game) return l.game;
+  var id = l.matchId == null ? '' : String(l.matchId);
+  // NFL: {season}_{week}_{away}_{home}
+  var m = id.match(/^\d{4}_\d{1,2}_([A-Za-z]{2,4})_([A-Za-z]{2,4})$/);
+  if (m) return m[1] + ' @ ' + m[2];
+  // EPL: {date}|{home}|{away}
+  if (id.indexOf('|') > 0){
+    var bits = id.split('|');
+    if (bits.length === 3 && bits[1] && bits[2]) return bits[2] + ' @ ' + bits[1];
+  }
+  // the rest carry the fixture's own id, so ask the fixture
+  var key = betSportKey(l.sport), S = key && state.sports[key];
+  var fx = (S && asArray(S.data.fixture)) || [];
+  for (var i = 0; i < fx.length; i++){
+    var g = fx[i];
+    if (!g || !g.home || !g.away) continue;
+    if (id && g.gameId != null && String(g.gameId) === id) return g.away + ' @ ' + g.home;
+  }
+  // no id to match on (MLB): the date plus the opponent names the pair
+  if (l.date && l.opp){
+    for (var j = 0; j < fx.length; j++){
+      var g2 = fx[j];
+      if (!g2 || !g2.home || !g2.away) continue;
+      if (String(g2.date || '').slice(0, 10) !== String(l.date).slice(0, 10)) continue;
+      if (g2.home === l.opp || g2.away === l.opp) return g2.away + ' @ ' + g2.home;
+    }
+  }
+  return l.opp ? 'v ' + l.opp : '';
+}
 // a bet's games, from its legs. A multi can span several, which is why this is a list.
 function tipGames(b){
   var seen = {}, out = [];
   (b.legs || []).forEach(function(l){
-    var g = l && (l.game || (l.opp ? 'v ' + l.opp : ''));
+    var g = legMatch(l);
     if (g && !seen[g]){ seen[g] = 1; out.push(g); }
   });
   return out;
@@ -12466,6 +12516,9 @@ function tipState(b){
 }
 var TIP_STATES = [['live', 'In play'], ['soon', 'Not started'], ['slipping', 'A leg down'],
                   ['won', 'Landed'], ['lost', 'Gone'], ['review', 'Needs a look']];
+// the dropdown shows words, not the internal keys those states are stored under
+var TIP_LABEL = {};
+TIP_STATES.forEach(function(o){ TIP_LABEL[o[0]] = o[1]; });
 
 function tipsPage(){
   loadResults();
@@ -12493,31 +12546,40 @@ function tipsPage(){
     return true;
   });
 
-  var chips = function(key, label, map, cur, setter){
-    var keys = Object.keys(map).sort();
+  /* DROPDOWNS, not chips. A Saturday slate put eighteen games in the Game row and it wrapped
+     over three lines, which is most of a phone screen spent on a filter nobody had used yet.
+     A select collapses to one line, scrolls natively, and on a phone opens as the OS picker -
+     which beats a wrap of tap targets at any list length. The four sit on one row and wrap only
+     when they must. Counts stay, inside each option. */
+  var sel = function(label, map, cur, setter, order){
+    var keys = order || Object.keys(map).sort();
     if (keys.length < 2) return '';                 // a filter with one option filters nothing
-    return '<div class="sl-bar"><span class="tip-fl">' + label + '</span>'
-      + '<button class="sl-chip' + (cur === 'all' ? ' on' : '') + '" onclick="LAB.' + setter + '(\'all\')">All</button>'
+    // "All" is how many TIPS there are, not the sum of the options: a multi spanning two games
+    // is counted under both, so adding the options up read "All (24)" over nineteen tips
+    var n = all.length;
+    return '<label class="tip-sel' + (cur !== 'all' ? ' on' : '') + '">'
+      + '<span>' + label + '</span>'
+      + '<select onchange="LAB.' + setter + '(this.value)">'
+      + '<option value="all"' + (cur === 'all' ? ' selected' : '') + '>All (' + n + ')</option>'
       + keys.map(function(k){
-          return '<button class="sl-chip' + (cur === k ? ' on' : '') + '" onclick="LAB.' + setter
-            + '(' + JSON.stringify(k).replace(/"/g, '&quot;') + ')">' + esc(k)
-            + '<i class="tip-n">' + map[k] + '</i></button>';
-        }).join('') + '</div>';
+          return '<option value="' + esc(k) + '"' + (cur === k ? ' selected' : '') + '>'
+            + esc(TIP_LABEL[k] || k) + ' (' + map[k] + ')</option>';
+        }).join('')
+      + '</select></label>';
   };
   var stateMap = {};
   all.forEach(function(b){ var st2 = tipState(b); stateMap[st2] = (stateMap[st2] || 0) + 1; });
-  var stateBar = Object.keys(stateMap).length < 2 ? '' :
-    '<div class="sl-bar"><span class="tip-fl">Status</span>'
-    + '<button class="sl-chip' + (fState === 'all' ? ' on' : '') + '" onclick="LAB.tipState(\'all\')">All</button>'
-    + TIP_STATES.filter(function(o){ return stateMap[o[0]]; }).map(function(o){
-        return '<button class="sl-chip tip-' + o[0] + (fState === o[0] ? ' on' : '') + '" onclick="LAB.tipState(\''
-          + o[0] + '\')">' + o[1] + '<i class="tip-n">' + stateMap[o[0]] + '</i></button>';
-      }).join('') + '</div>';
+  var stateKeys = TIP_STATES.filter(function(o){ return stateMap[o[0]]; })
+                            .map(function(o){ return o[0]; });
 
-  h += chips('sport', 'Sport', opts.sport, fSport, 'tipSport')
-     + chips('type', 'Bet type', opts.type, fType, 'tipType')
-     + chips('game', 'Game', opts.game, fGame, 'tipGame')
-     + stateBar;
+  h += '<div class="tip-filters">'
+     + sel('Sport', opts.sport, fSport, 'tipSport')
+     + sel('Bet type', opts.type, fType, 'tipType')
+     + sel('Game', opts.game, fGame, 'tipGame')
+     + sel('Status', stateMap, fState, 'tipState', stateKeys)
+     + ((fSport !== 'all' || fType !== 'all' || fGame !== 'all' || fState !== 'all')
+        ? '<button class="sl-chip tip-clear" onclick="LAB.tipClear()">Clear</button>' : '')
+     + '</div>';
 
   var unit = (R.unitSize) || 25;
   if (!pend.length) return h + '<div class="sig-empty">No tip matches those filters. '
@@ -17763,6 +17825,7 @@ window.LAB = {
       };
     } finally { state.results = was; }
   },
+  legProbe: function(l){ return legMatch(l); },
   liveProbe: function(src){ return { rows: liveLegRows(src), games: liveGames(src), feeds: liveFeedNames() }; },
   // exposed for tests: the Live Tips page with a given ledger and a given set of filters
   tipsProbe: function(bets, filters){
