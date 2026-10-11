@@ -17,7 +17,12 @@
  */
 const fs = require('fs'), path = require('path'), zlib = require('zlib'), vm = require('vm');
 const ROOT = process.env.JTT_ROOT || path.resolve(__dirname, '..');
-const SPORTS = [['afl','AFL'], ['nfl','nfl'], ['epl','EPL'], ['mlb','mlb'], ['nbl','nbl'], ['nhl','nhl']];
+// Every sport the tool ships has to be in this list. The NBA was built after these
+// pipelines and was added to none of them, so it had no odds feed, no odds history, no
+// grading and no calibration - all of which fail silently, because an absent sport just
+// never appears. tests/odds_wiring_test.js checks this list against the shipped sports.
+const SPORTS = [['afl','AFL'], ['nfl','nfl'], ['epl','EPL'], ['mlb','mlb'], ['nbl','nbl'],
+                ['nhl','nhl'], ['nba','nba']];
 const nt = s => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
 const argEV = (() => { const i = process.argv.indexOf('--min-ev'); return i > 0 ? +process.argv[i+1] / 100 : 0.03; })();
 const COVER = { epl: 'passes' };
