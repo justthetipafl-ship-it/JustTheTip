@@ -323,6 +323,41 @@ def build_snap_idx(sc):
         out[(_norm(g(r, nm, "")), int(g(r, se)), int(g(r, wk)))] = r1(max(vals)) if vals else None
     return out
 
+def build_played_idx(sc):
+    """(pname, season, week) -> team, for every player who took a snap in a REG game.
+
+    WHY THIS EXISTS. nflverse weekly player stats only carry a row for a player who RECORDED
+    something. A tight end who played eight offensive snaps and was not thrown at simply is not in
+    the file that week - not as a zero, not at all. Every streak, hit rate and average downstream
+    was therefore computed over "games he turned up in the stat sheet", not games he played.
+
+    Tanner Hudson read as a 20-game streak of 1+ reception. He played six offensive snaps in week
+    18 of 2025 and caught nothing; that game is absent, so the streak jumped over it. The real
+    streak was three. Across 2024-2026 this affects 15.4% of the player-games we track - about
+    6,400 games over 1,400 players, and it bites hardest on exactly the low-volume pass catchers
+    a 1+ reception streak board is made of.
+
+    Snap counts have a row for everyone who was on the field, so they tell us the difference that
+    matters: played and did nothing (the bet lost) versus did not play (the bet was voided).
+    """
+    if sc is None or getattr(sc, "empty", True):
+        return {}
+    nm = col(sc, "player", "player_name", "pfr_player_name")
+    se = col(sc, "season"); wk = col(sc, "week"); tm = col(sc, "team")
+    gt = col(sc, "game_type")
+    out = {}
+    for _, r in sc.iterrows():
+        if gt is not None and str(g(r, gt, "REG")).upper() != "REG":
+            continue
+        try:
+            key = (_pname(g(r, nm, "")), int(g(r, se)), int(g(r, wk)))
+        except (TypeError, ValueError):
+            continue
+        if not key[0]:
+            continue
+        out[key] = _nfl_team(g(r, tm, ""))
+    return out
+
 # ?? PFR advanced defense ? Clamp Watch CB feed (dbs.json) ???????????????????
 PFR_TEAM = {"GNB": "GB", "KAN": "KC", "NWE": "NE", "NOR": "NO", "SFO": "SF",
             "TAM": "TB", "LVR": "LV", "SDG": "LAC", "STL": "LA", "OAK": "LV",
@@ -647,7 +682,8 @@ def build_pbp_derived(pbp, short_idx):
     return out, firsttd, longest
 
 # ?? players + gamelogs ??????????????????????????????????????????????????????
-def build_players_gamelogs(ps, snap_idx, game_idx, current, ros=None, ngs_idx=None):
+def build_players_gamelogs(ps, snap_idx, game_idx, current, ros=None, ngs_idx=None,
+                           played_idx=None):
     ngs_idx = ngs_idx or {}
     name_c = col(ps, "player_display_name", "player_name")
     id_c = col(ps, "player_id")
@@ -772,6 +808,80 @@ def build_players_gamelogs(ps, snap_idx, game_idx, current, ros=None, ngs_idx=No
         prev = short_idx.get(sk, "__unset__")
         if prev == "__unset__": short_idx[sk] = name
         elif prev != name: short_idx[sk] = None   # ambiguous on this team
+
+    # ?? THE GAMES THAT WEREN'T THERE ???????????????????????????????????????????
+    # Everything above comes from nflverse weekly stats, which only has a row for a player who
+    # RECORDED something. A player who was on the field and did nothing is absent, so a streak or
+    # a hit rate counted "games he appeared in the stat sheet", not games he played - and silently
+    # jumped the gap. Snap counts know who was out there, so every played-but-absent game is
+    # written back in as the zero it actually was.
+    #
+    # Only a game the player PLAYED becomes a zero. A game he missed stays missing, because a book
+    # voids that bet rather than settling it - which is the same distinction a punter makes.
+    zeros = 0
+    if played_idx:
+        # Two tracked players can share a name key once suffixes are stripped - David Long and
+        # David Long Jr., Byron Murphy and Byron Murphy II, three more besides - and attributing
+        # one man's missed game to the other is worse than leaving the gap. The team tells them
+        # apart, so the lookup is by name AND team, with the bare name used only where it is
+        # unambiguous (which also covers a player traded mid-season).
+        by_pname, by_pt = {}, {}
+        for k, P in agg.items():
+            pk = _pname(P["name"])
+            by_pname[pk] = k if pk not in by_pname else None
+            for x in P["rows"]:
+                tk = (pk, x["Team"])
+                by_pt[tk] = k if by_pt.get(tk, k) == k else None
+        ambiguous = sum(1 for v in by_pt.values() if v is None)
+        if ambiguous:
+            print(f"  {ambiguous} name+team key(s) shared by more than one player - skipped")
+        have = {(_pname(r["Player"]), int(r["Year"]), int(r["Week"])) for r in gamelogs}
+        seasons_of = {}
+        for r in gamelogs:
+            seasons_of.setdefault(_pname(r["Player"]), set()).add(int(r["Year"]))
+        for (pn, season, week), team in played_idx.items():
+            if (pn, season, week) in have:
+                continue
+            key = by_pt.get((pn, team), "__none__")
+            if key == "__none__":
+                key = by_pname.get(pn)         # not seen on this team; fall back if the name is unique
+            if key is None:
+                continue                       # not a player we track, or the name is shared
+            if season not in seasons_of.get(pn, ()):
+                continue                       # not on our books that season; don't invent a year
+            gi = game_idx.get((season, week, team))
+            if not gi:
+                continue                       # no such game in the schedule we loaded
+            P = agg[key]
+            tmpl = None                        # copy the shape from one of his own real rows
+            for x in P["rows"]:
+                if int(x["Year"]) == season:
+                    tmpl = x
+                    break
+            if tmpl is None:
+                tmpl = P["rows"][0] if P["rows"] else None
+            if tmpl is None:
+                continue
+            row = {}
+            for k, v in tmpl.items():
+                row[k] = 0.0 if isinstance(v, (int, float)) and not isinstance(v, bool) else v
+            row.update({"Year": str(season), "Week": week,
+                        "MatchId": gi.get("matchId", f"{season}_{week:02d}_{team}"),
+                        "Player": P["name"], "Team": team,
+                        "Opp": gi.get("opp", ""), "home": gi.get("home", 0)})
+            sn = snap_idx.get((_norm(P["name"]), season, week))
+            row["snapPct"] = sn if sn is not None else 0.0
+            row["zeroGame"] = 1                # traceable: this row was reconstructed, not reported
+            gamelogs.append(row)
+            P["rows"].append(row)
+            zeros += 1
+    print(f"  played-but-statless games written back in: {zeros}")
+
+    # Chronological order, because the page reads "last N games" straight off this list and the
+    # rows just added would otherwise all sit at the end, making every recent-form window wrong.
+    gamelogs.sort(key=lambda x: (str(x["Year"]), int(x["Week"])))
+    for P in agg.values():
+        P["rows"].sort(key=lambda x: (str(x["Year"]), int(x["Week"])))
 
     # headline averages (current season; fall back one season, then all)
     players = []
@@ -1197,10 +1307,13 @@ def run_build(frames, out_dir, seasons, current, password, skip_weather=False):
     results = build_results(sch)
     fixture, next_week = build_fixture(sch)
     snap_idx = build_snap_idx(sc)
+    played_idx = build_played_idx(sc)
+    print(f"  snap rows (played games): {len(played_idx)}")
     ngs_idx = build_ngs_idx(ngs)
     if ngs_idx:
         print(f"  next gen stats: {len(ngs_idx)} player-weeks")
-    players, gamelogs, short_idx = build_players_gamelogs(ps, snap_idx, game_idx, current, ros=ros, ngs_idx=ngs_idx)
+    players, gamelogs, short_idx = build_players_gamelogs(ps, snap_idx, game_idx, current, ros=ros,
+                                                          ngs_idx=ngs_idx, played_idx=played_idx)
     rz_usage, firsttd, longest = build_pbp_derived(pbp, short_idx)
     redzone = build_redzone(pbp, short_idx, current)
     # stamp per-game red-zone volume onto each gamelog row so the tool can window it
