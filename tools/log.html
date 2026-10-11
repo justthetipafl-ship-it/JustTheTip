@@ -84,6 +84,32 @@
   <div class="tot" id="calc"></div>
 </div>
 
+<!-- LEGS. Everything in here is picked from a list rather than typed, because the one way a
+     published bet silently never settles is a player name that does not match the game logs
+     exactly - and a typo looks identical to a bet that is simply still running. -->
+<div class="card">
+  <div style="display:flex;align-items:baseline"><b style="font-size:13px">Legs</b>
+    <span class="note" style="margin-left:auto">optional</span></div>
+  <div class="note" style="margin:3px 0 10px">Add the legs and the bet tracks live on the site while
+    the game is on, then settles itself from the game logs. Leave it empty and the bet still
+    publishes — it just has to be settled by hand.</div>
+  <div class="row">
+    <div><label>Sport</label><select id="lgSport"></select></div>
+    <div><label>Game</label><select id="lgGame"><option value="">—</option></select></div>
+  </div>
+  <div class="row">
+    <div><label>Player</label><select id="lgPlayer"><option value="">—</option></select></div>
+  </div>
+  <div class="row">
+    <div><label>Market</label><select id="lgMkt"><option value="">—</option></select></div>
+    <div style="flex:0 0 86px"><label>Line</label><input id="lgLine" inputmode="decimal" placeholder="24.5"></div>
+  </div>
+  <div class="chips" id="lgSideChips"></div>
+  <div id="lgWarn"></div>
+  <button class="ghost" id="lgAdd" style="margin-top:10px;width:100%">Add this leg</button>
+  <div id="lgList"></div>
+</div>
+
 <button class="go" id="add">Add to the batch</button>
 
 <div class="card" id="batchCard" style="display:none">
@@ -112,10 +138,12 @@
 (function(){
 'use strict';
 var REPO = 'justthetipafl-ship-it/JustTheTip', FILE = 'data/results.json', BRANCH = 'main';
-var SPORTS = ['AFL','NFL','EPL','MLB','NBL','NHL','Other'];
+// NBA was missing here while SPORT_ALIAS below already mapped it, so an NBA bet could be imported
+// from the spreadsheet but not typed in by hand.
+var SPORTS = ['AFL','NFL','EPL','MLB','NBL','NHL','NBA','Other'];
 var TYPES  = ['Prop','Multi','SGM','Ladder','Futures','Other'];
 var RESULTS = [['win','Win'],['loss','Loss'],['void','Void / push'],['pending','Pending']];
-var sel = { sport:'AFL', type:'Prop', result:'win' };
+var sel = { sport:'AFL', type:'Prop', result:'win', lgSide:'over' };
 var unitSize = 25;                                 // dollars per unit; the dashboard shows units only
 var batch = [];
 var $ = function(id){ return document.getElementById(id); };
@@ -157,6 +185,10 @@ function drawBatch(){
       // imported rows are already in units; typed ones are in dollars. Showing "$undefined" for
       // the first kind was just this line reaching for the wrong field.
       + '</span><span class="mono">'+(b.units != null ? b.units+'u' : '$'+b.stake)+' @ '+b.odds+'</span><span class="mono">'+b.result
+      // say so when the legs attached, because a bet saved without them will never settle itself
+      // and there is nothing else on the row to show it
+      + (b.legs && b.legs.length ? ' <span style="color:var(--accent)">' + b.legs.length + ' leg'
+          + (b.legs.length === 1 ? '' : 's') + '</span>' : '')
       + '</span><button class="p-x" data-i="'+i+'">&times;</button></div>';
   }).join('');
   Array.prototype.forEach.call($('batch').querySelectorAll('.p-x'), function(x){
@@ -169,16 +201,20 @@ $('add').onclick = function(){
   if (!bet) return msg('err', 'Type the bet first.');
   if (st == null) return msg('err', 'Stake is missing.');
   if (od == null && sel.result !== 'void' && num('ret') == null) return msg('err', 'Odds are missing (or fill in Returned).');
-  batch.push({ id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
-               date: $('date').value || new Date().toISOString().slice(0, 10),
-               sport: sel.sport, type: sel.type, bet: bet, stake: st, odds: od,
-               // Frozen at entry: the dashboard reads these and never divides by a file-wide unit
-               // size again. That division is what let one change to the unit field rescale every
-               // bet ever logged - a 0.5u bet reading as 1u, and the whole profit curve doubling.
-               units: (num('unit') || unitSize) > 0 ? +(st / (num('unit') || unitSize)).toFixed(4) : null,
-               result: sel.result, returned: payout() });
+  var row = { id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
+              date: $('date').value || new Date().toISOString().slice(0, 10),
+              sport: sel.sport, type: sel.type, bet: bet, stake: st, odds: od,
+              // Frozen at entry: the dashboard reads these and never divides by a file-wide unit
+              // size again. That division is what let one change to the unit field rescale every
+              // bet ever logged - a 0.5u bet reading as 1u, and the whole profit curve doubling.
+              units: (num('unit') || unitSize) > 0 ? +(st / (num('unit') || unitSize)).toFixed(4) : null,
+              result: sel.result, returned: payout() };
+  // Legs are what make a pending bet track live and settle itself. A row without them is exactly
+  // what it always was, so nothing already in the file changes shape.
+  if (lgLegs.length) row.legs = lgLegs.slice();
+  batch.push(row);
   saveDraft(); drawBatch(); msg('ok', 'Added. It is not saved to GitHub until you press Save.');
-  $('bet').value = ''; $('ret').value = ''; calc();
+  $('bet').value = ''; $('ret').value = ''; lgLegs = []; lgBetTextPrev = ''; lgDrawLegs(); calc();
 };
 $('clear').onclick = function(){ batch = []; saveDraft(); drawBatch(); };
 $('savetok').onclick = function(){ try { localStorage.setItem('jtt_tok', $('tok').value.trim()); msg('ok', 'Token remembered on this device.'); } catch(e){ msg('err', 'Could not store the token.'); } };
@@ -272,6 +308,196 @@ function parsePaste(text){
   return { rows:out, warn:warn, col:col };
 }
 // stable id from the row itself, so re-pasting the same history cannot duplicate it
+/* ---- LEG BUILDER ------------------------------------------------------------------------------
+   A published bet settles itself from the game logs, which means every leg has to say exactly
+   which player, which market and WHICH GAME. All three are picked from the site's own data files
+   rather than typed, for one reason: a name that does not match the game logs character for
+   character can never settle, and a bet stuck on "pending" for ever looks identical to a bet that
+   is simply still running. The one failure mode nobody would notice is the one worth designing
+   out, so nothing here is free text except the line.
+
+   WHICH GAME is the other half of it. A player on a back-to-back has two games inside 48 hours,
+   so the leg carries the hardest identifier the sport can give:
+
+     nba / nhl / nbl   the fixture's own gameId, which IS the game logs' MatchId
+     nfl               {season}_{week}_{away}_{home}, which is how nflverse builds it
+     epl               {date}|{home}|{away}, which is how our EPL build makes its id
+     mlb               date + opponent; the logs carry a date and no shared id
+     afl               neither - AFL game logs carry no date and no id the fixture knows, so an
+                       AFL leg tracks live but will not settle itself, and the tool says so
+                       rather than letting it sit pending for ever.
+   Verified against the real game logs: the two constructed ids match rows in the files.        */
+var LG_DIRS = { afl:'AFL', nfl:'nfl', epl:'EPL', mlb:'mlb', nbl:'nbl', nhl:'nhl', nba:'nba' };
+var LG_NAMES = { afl:'AFL', nfl:'NFL', epl:'EPL', mlb:'MLB', nbl:'NBL', nhl:'NHL', nba:'NBA' };
+// which sports cannot pin a game, and so cannot settle themselves
+var LG_UNPINNABLE = { afl:1 };
+var lgSport = 'nfl', lgLegs = [], lgBetTextPrev = '';
+var LGC = {};                                   // per-sport cache: { fixture, players, mkts }
+
+function lgArr(j, key){
+  if (Array.isArray(j)) return j;
+  if (j && Array.isArray(j[key])) return j[key];
+  return (j && typeof j === 'object') ? Object.keys(j).map(function(k){ return j[k]; }) : [];
+}
+function lgFetch(url){
+  return fetch(url, { cache:'no-store' }).then(function(r){ return r.ok ? r.json() : null; })
+    .catch(function(){ return null; });
+}
+// config.js sets window.SPORT_CONFIG; loading it as a script is how the site itself reads it, so
+// there is no second parser here to drift from the real one.
+function lgLoadConfig(key){
+  return new Promise(function(done){
+    var s = document.createElement('script');
+    s.src = '/' + LG_DIRS[key] + '/config.js?cb=' + Date.now();
+    s.onload = function(){
+      var c = window.SPORT_CONFIG || {};
+      done((c.oddsMkts || c.multiMkts || []).slice());
+      s.remove();
+    };
+    s.onerror = function(){ done([]); s.remove(); };
+    document.head.appendChild(s);
+  });
+}
+function lgLoad(key){
+  if (LGC[key]) return Promise.resolve(LGC[key]);
+  var d = LG_DIRS[key];
+  $('lgGame').innerHTML = '<option value="">loading…</option>';
+  return Promise.all([
+    lgFetch('/' + d + '/data/fixture.json?cb=' + Date.now()),
+    lgFetch('/' + d + '/data/players.json?cb=' + Date.now()),
+    lgLoadConfig(key)
+  ]).then(function(r){
+    LGC[key] = { fixture: lgArr(r[0], 'fixture'), players: lgArr(r[1], 'players'), mkts: r[2] || [] };
+    return LGC[key];
+  });
+}
+function lgGameDate(g){ return String(g.date || g.utc || '').slice(0, 10); }
+// the game's id in the game logs, built the way that sport's build writes it - or null
+function lgMatchId(key, g){
+  if (g.gameId != null) return String(g.gameId);
+  if (key === 'nfl' && g.season && g.week) return g.season + '_' + ('0' + g.week).slice(-2) + '_' + g.away + '_' + g.home;
+  if (key === 'epl') return lgGameDate(g) + '|' + g.home + '|' + g.away;
+  return null;
+}
+function lgDrawGames(){
+  var C = LGC[lgSport];
+  if (!C) return;
+  var today = new Date(Date.now() - 36e5 * 6).toISOString().slice(0, 10);   // keep today in view
+  var games = C.fixture.filter(function(g){ return g && g.home && g.away; })
+    .sort(function(a, b){ return lgGameDate(a).localeCompare(lgGameDate(b)); });
+  var soon = games.filter(function(g){ return lgGameDate(g) >= today; });
+  if (soon.length) games = soon.concat(games.filter(function(g){ return lgGameDate(g) < today; }).reverse());
+  $('lgGame').innerHTML = '<option value="">—</option>' + games.map(function(g, i){
+    return '<option value="' + i + '">' + lgGameDate(g).slice(5) + '  ' + g.away + ' @ ' + g.home + '</option>';
+  }).join('');
+  $('lgGame')._games = games;
+  $('lgMkt').innerHTML = '<option value="">—</option>' + C.mkts.map(function(m){
+    return '<option value="' + m[0] + '">' + m[1] + '</option>';
+  }).join('');
+  lgDrawPlayers();
+}
+function lgDrawPlayers(){
+  var C = LGC[lgSport], g = lgGame();
+  if (!C) return;
+  // narrowed to the two clubs in the chosen game, which is what makes picking from a list quick
+  // enough to be worth doing - 2,259 NFL names in one dropdown is not a list anyone scrolls
+  // No game picked means no list: the placeholder says to pick one. This used to fall through to
+  // the whole sport - 2,260 NFL names in one dropdown, which is not a list anybody scrolls, and
+  // it implied a player could be chosen without a game, which is exactly what makes a leg
+  // unsettleable.
+  var pool = g ? C.players.filter(function(p){
+    return p && p.name && (p.team === g.home || p.team === g.away);
+  }) : [];
+  pool.sort(function(a, b){ return String(a.name).localeCompare(String(b.name)); });
+  $('lgPlayer').innerHTML = '<option value="">' + (g ? '—' : 'pick a game first') + '</option>'
+    + pool.map(function(p){
+        return '<option value="' + esc(p.name) + '">' + esc(p.name) + (p.team ? '  (' + esc(p.team) + ')' : '')
+          + (p.position ? ' ' + esc(p.position) : '') + '</option>';
+      }).join('');
+}
+function lgGame(){
+  var i = $('lgGame').value, gs = $('lgGame')._games || [];
+  return i === '' ? null : gs[+i] || null;
+}
+function esc(s){ return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;'); }
+function lgWarn(){
+  var bits = [];
+  if (LG_UNPINNABLE[lgSport])
+    bits.push(LG_NAMES[lgSport] + ' game logs carry no date or game id, so a leg here tracks live '
+      + 'but cannot settle itself — it will need settling by hand.');
+  var C = LGC[lgSport];
+  if (C && !C.players.length) bits.push('No players file loaded for ' + LG_NAMES[lgSport] + '.');
+  if (C && !C.mkts.length) bits.push('No markets found in ' + LG_NAMES[lgSport] + '’s config.');
+  $('lgWarn').innerHTML = bits.length
+    ? '<div class="msg err" style="margin:9px 0 0">' + bits.join(' ') + '</div>' : '';
+}
+function lgDrawLegs(){
+  $('lgList').innerHTML = !lgLegs.length ? '' : lgLegs.map(function(l, i){
+    return '<div class="pend"><b>' + esc(l.player) + '</b>'
+      + '<span>' + (l.side === 'under' ? 'Under ' : 'Over ') + l.line + ' ' + esc(l.label) + '</span>'
+      + '<span class="mono">' + esc(String(l.sport).toUpperCase())
+      + (l.matchId ? '' : l.date ? ' ' + l.date.slice(5) : ' no game') + '</span>'
+      + '<button class="p-x" data-i="' + i + '">&times;</button></div>';
+  }).join('');
+  Array.prototype.forEach.call($('lgList').querySelectorAll('.p-x'), function(x){
+    x.onclick = function(){ lgLegs.splice(+x.dataset.i, 1); lgDrawLegs(); };
+  });
+}
+// the bet's own text, composed from the legs, so the published line reads the way the card does
+function lgBetText(){
+  return lgLegs.map(function(l){
+    return l.player + ' ' + (l.side === 'under' ? 'u' + l.line : (Math.ceil(+l.line) + '+'))
+      + ' ' + l.label;
+  }).join(' / ');
+}
+$('lgSport').innerHTML = Object.keys(LG_DIRS).map(function(k){
+  return '<option value="' + k + '"' + (k === lgSport ? ' selected' : '') + '>' + LG_NAMES[k] + '</option>';
+}).join('');
+$('lgSport').onchange = function(){
+  lgSport = $('lgSport').value;
+  lgLoad(lgSport).then(function(){ lgDrawGames(); lgWarn(); });
+};
+$('lgGame').onchange = lgDrawPlayers;
+chips('lgSideChips', [['over','Over'],['under','Under']], 'lgSide');
+$('lgAdd').onclick = function(){
+  var g = lgGame(), p = $('lgPlayer').value, mk = $('lgMkt').value, line = parseFloat($('lgLine').value);
+  if (!p) return msg('err', 'Pick the player from the list — a typed name will not match the game logs.');
+  if (!mk) return msg('err', 'Pick the market.');
+  if (!isFinite(line)) return msg('err', 'The line is missing.');
+  var C = LGC[lgSport], lbl = (C.mkts.filter(function(m){ return m[0] === mk; })[0] || [mk, mk])[1];
+  var who = (C.players.filter(function(x){ return x.name === p; })[0] || {});
+  var leg = { sport: lgSport, player: p, market: mk, label: lbl, line: line, side: sel.lgSide || 'over' };
+  if (g){
+    var id = lgMatchId(lgSport, g);
+    if (id) leg.matchId = id;
+    leg.date = lgGameDate(g);
+    leg.opp = who.team === g.home ? g.away : who.team === g.away ? g.home : null;
+    if (!leg.opp) delete leg.opp;
+  }
+  lgLegs.push(leg); lgDrawLegs();
+  /* Keep the bet's own fields honest with its legs. A screenshot of the first build caught this:
+     the sport chip still said AFL while both legs were NFL, which would have published an AFL bet
+     on two NFL players - and the dashboard's by-sport breakdown reads that chip, not the legs. */
+  if (LG_NAMES[lgSport]){ sel.sport = LG_NAMES[lgSport]; chips('sportChips', SPORTS, 'sport'); }
+  // a multi out of one game is an SGM, which is the row the by-type breakdown wants
+  if (lgLegs.length > 1){
+    var ids = lgLegs.map(function(x){ return x.matchId || x.date || ''; });
+    var same = ids.every(function(x){ return x && x === ids[0]; });
+    sel.type = same ? 'SGM' : 'Multi';
+    chips('typeChips', TYPES, 'type');
+  }
+  // date the bet where the game is played, which is what the dashboard's period filter reads
+  if (leg.date) $('date').value = leg.date;
+  msg('ok', 'Leg added. It goes on the bet when you add it to the batch.');
+  $('lgLine').value = '';
+  // keep the game and sport: a multi is usually several legs out of the same game
+  // the bet line writes itself from the legs, but never overwrites something typed by hand
+  if (!$('bet').value.trim() || $('bet').value.trim() === lgBetTextPrev){
+    $('bet').value = lgBetText(); lgBetTextPrev = lgBetText();
+  }
+};
+lgLoad(lgSport).then(function(){ lgDrawGames(); lgWarn(); });
+
 function rowKeyId(str){
   var h = 0;
   for (var i = 0; i < str.length; i++){ h = ((h << 5) - h + str.charCodeAt(i)) | 0; }
@@ -322,6 +548,12 @@ $('save').onclick = function(){
     // merge by id so a double-tap can't duplicate a bet, and an edited one replaces the old
     // One-time migration: any older row still priced in dollars is converted with the file's own
     // unit size and frozen, so no future change to the unit field can move it.
+    // Rows saved before the rename still say "Single", which splits the by-type breakdown in two.
+    // Same one-time treatment as the units: fix them on the next save.
+    var renamed = 0;
+    existing.forEach(function(b){
+      if (b && (b.type === 'Single' || b.type === 'single')){ b.type = 'Prop'; renamed++; }
+    });
     var migrated = 0;
     if (fileUnit > 0){
       existing.forEach(function(b){
@@ -397,6 +629,14 @@ try { var us = parseFloat(localStorage.getItem('jtt_unit')); if (us > 0){ unitSi
 $('unit').value = unitSize;
 chips('sportChips', SPORTS, 'sport'); chips('typeChips', TYPES, 'type'); chips('resChips', RESULTS, 'result', true);
 drawBatch(); calc();
+
+/* A small window onto the two things that matter and have no other way to be inspected: the legs
+   being built and the batch waiting to save. tests/admin_test.js drives this page end to end and
+   then looks for the game id it produced in the real game logs, which needs a handle on the leg
+   the page actually stored rather than a re-derivation of it. Read-only, and handy from the phone's
+   console on the night something looks wrong. */
+window.JTT_ADMIN = { legs: function(){ return lgLegs; }, batch: function(){ return batch; },
+                     games: function(){ return $('lgGame')._games || []; }, matchId: lgMatchId };
 })();
 </script>
 </body></html>
