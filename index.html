@@ -1115,6 +1115,24 @@
      keeps the card in view */
   .sim-bar{display:grid;grid-template-columns:1fr 1fr;gap:8px;}
   .sim-bar .ob-sel{width:100%;min-width:0;}
+  .ww-row{padding:7px 0;border-top:1px solid var(--border);}
+  .ww-row:first-child{border-top:0;}
+  .ww-hd{display:flex;justify-content:space-between;align-items:baseline;gap:8px;
+    font-family:var(--font-display);font-size:12px;}
+  /* the name gives way, not the sample size: a long name pushed "154 with" off the right edge,
+     and the sample size is the part that tells you whether to believe the row */
+  .ww-hd>b{font-weight:inherit;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .ww-hd span{font-family:var(--font-mono);font-size:10px;color:var(--text-3);
+    white-space:nowrap;flex:0 0 auto;}
+  .ww-cells{display:flex;flex-wrap:wrap;gap:4px 12px;margin-top:3px;
+    font-family:var(--font-mono);font-size:11px;color:var(--text-3);}
+  .ww-c i{font-style:normal;color:var(--text-3);margin-right:4px;font-size:10px;}
+  .ww-c b{font-weight:600;color:var(--text);}
+  .ww-c.ww-up b{color:var(--accent);}
+  .ww-c.ww-dn b{color:#f97316;}
+  .ww-blk{padding:8px 0;}
+  .ww-out{font-family:var(--font-display);font-size:12px;letter-spacing:.02em;
+    color:var(--text);padding-bottom:4px;}
   .sim-sw{display:inline-flex;gap:0;margin:2px 0 6px;border:1px solid var(--border);
     border-radius:8px;overflow:hidden;}
   .sim-swb{font-family:var(--font-display);font-size:11px;letter-spacing:.04em;padding:4px 10px;
@@ -1950,7 +1968,7 @@ function buildIndexes(key){
   ix.hasUp = null;        // recomputed whenever the index is rebuilt, so a new fixture re-sorts
   TR_CACHE = { key:null, name:{}, vals:{} };     // trends cache is stale once the data changes
   ix.lgAvg = {}; ix.winAvg = {}; ix.matchOpp = null; ix.fs = null;
-  ix.pricedSet = null; ix.oddsName = null; ix.oddsIni = null; ix.vac = null; ix.bookList = null; ix.resIdx = null; ix.mlbLg = null; ix.lgRate = null; ix.scState = null; ix.nhlPim = null; ix.injIdx = null; ix.luRows = null; ix.foldName = null;
+  ix.pricedSet = null; ix.oddsName = null; ix.oddsIni = null; ix.vac = null; ix.bookList = null; ix.resIdx = null; ix.mlbLg = null; ix.lgRate = null; ix.scState = null; ix.nhlPim = null; ix.injIdx = null; ix.ww = null; ix.luRows = null; ix.foldName = null;
   var logs = asArray(d.gamelogs) || [];
   ix.logsByName = {};
   // One row per player per game. NHL's build emits each game three times - Matias Maccelli had 213
@@ -8408,6 +8426,7 @@ function focusPage(){
     + (S.t3 === 'ready' && !state.view.nerd ? goalieSection(key, g) : '')
     + (S.t3 === 'ready' && !state.view.nerd ? firstReadSection(key, g) : '')
     + (!state.view.nerd ? nbaRestSection(key, g) : '')
+    + (S.t3 === 'ready' && !state.view.nerd ? nbaOutSection(key, g) : '')
 
     // Nerd Mode replaces the signals rather than adding to them: it is a different read of the
     // same fixture (the market against itself), and stacking both made the page enormous.
@@ -13423,6 +13442,183 @@ function ddFirstRead(key, p, mkt){
    Two players on the same points line are different bets if one scores in the first six minutes
    and the other in garbage time, or if one lives at the rim and the other settles for long twos.
    Both files are built from the play-by-play by nba/build_nba_quarters.py and build_nba_zones.py.  */
+/* ===== WHEN A TEAM-MATE SITS ==================================================================
+   The read NBA props turn on. One man out does not just free his own shots - it moves minutes,
+   usage and the ball, and the player it moves most is not always the obvious one.
+   Everything here is measured off games already played, so three things decide whether a split
+   is worth showing rather than my judgement about who matters:
+     - the ABSENT man has to be a rotation regular (24+ minutes when he plays). Ranking by raw
+       difference put a fifteenth man top of Jamal Murray's list on fourteen games of garbage time.
+     - the window is only the stretch the team-mate was actually AT the club. Games before he
+       arrived or after he left are a different squad, not him sitting out.
+     - the gap has to clear its own noise. A five-point swing over six games is nothing; the same
+       swing over forty is a read. Welch's t on each stat, and nothing under 2 is shown.
+   It is still an association on a modest sample, and the panel says so.                       */
+var WW_STATS = [['minutes', 'Min'], ['points', 'Pts'], ['rebounds', 'Reb'],
+                ['assists', 'Ast'], ['threes', '3PM']];
+var WW_MATE_MIN = 24;        // a team-mate whose absence could plausibly move anything
+var WW_MIN_WITH = 10, WW_MIN_WO = 8, WW_T = 2.2;
+// Minutes are shown on every row because they explain the rest, but a minute and a half either
+// way is not a finding - it topped Tyrese Maxey's list ahead of what his scoring actually did.
+// Minutes only get to RANK a row when the move is big enough to matter on its own.
+var WW_MIN_SWING = 2.0;
+
+function nbaWWIndex(key){
+  var S = state.sports[key];
+  if (S.idx.ww) return S.idx.ww;
+  var logs = asArray(S.data.gamelogs) || [];
+  var date = {}, order = {}, played = {}, byPl = {}, nice = {}, mins = {};
+  logs.forEach(function(r){
+    if (!r || !r.MatchId || !r.Team || !r.Player) return;
+    var k = cmbNameKey(r.Player);
+    date[r.MatchId] = r.Date || '';
+    nice[k] = r.Player;
+    var tk = r.MatchId + '|' + r.Team;
+    (played[tk] = played[tk] || {});
+    if ((+r.minutes || 0) > 0){
+      played[tk][k] = 1;
+      var m = mins[k] = mins[k] || { n:0, t:0 };
+      m.n++; m.t += (+r.minutes || 0);
+    }
+    (byPl[k] = byPl[k] || {})[r.MatchId] = r;
+    (order[r.Team] = order[r.Team] || {})[r.MatchId] = 1;
+  });
+  var games = {};
+  Object.keys(order).forEach(function(t){
+    games[t] = Object.keys(order[t]).sort(function(a, b){
+      return String(date[a]).localeCompare(String(date[b])); });
+  });
+  var avgMin = {};
+  Object.keys(mins).forEach(function(k){ avgMin[k] = mins[k].t / mins[k].n; });
+  S.idx.ww = { games:games, played:played, byPl:byPl, nice:nice, avgMin:avgMin };
+  return S.idx.ww;
+}
+
+function _wwMean(v){ var s2 = 0; for (var i = 0; i < v.length; i++) s2 += v[i]; return s2 / v.length; }
+function _wwVar(v){
+  if (v.length < 2) return 0;
+  var m = _wwMean(v), s2 = 0;
+  for (var i = 0; i < v.length; i++) s2 += (v[i] - m) * (v[i] - m);
+  return s2 / (v.length - 1);
+}
+
+/* Top team-mates whose absence moves this player, strongest first. */
+function nbaWW(key, name, team){
+  if (key !== 'nba' && key !== 'nbl') return [];
+  var X = nbaWWIndex(key), pk = cmbNameKey(name);
+  var gs = X.games[team] || X.games[normTeam(team)] || [];
+  if (!gs.length) return [];
+  var mine = gs.filter(function(m){ return (X.played[m + '|' + team] || {})[pk]; });
+  if (mine.length < 15) return [];
+  var at = {};
+  gs.forEach(function(m, i){ at[m] = i; });
+  var mates = {};
+  mine.forEach(function(m){
+    var pl = X.played[m + '|' + team] || {};
+    Object.keys(pl).forEach(function(k){ if (k !== pk) mates[k] = 1; });
+  });
+  var out = [];
+  Object.keys(mates).forEach(function(mk){
+    if ((X.avgMin[mk] || 0) < WW_MATE_MIN) return;
+    var his = gs.filter(function(m){ return (X.played[m + '|' + team] || {})[mk]; });
+    if (his.length < 10) return;
+    var lo = at[his[0]], hi = at[his[his.length - 1]];
+    var W = [], O = [];
+    mine.forEach(function(m){
+      var i = at[m];
+      if (i < lo || i > hi) return;                 // he was not at the club yet, or had gone
+      ((X.played[m + '|' + team] || {})[mk] ? W : O).push(m);
+    });
+    if (W.length < WW_MIN_WITH || O.length < WW_MIN_WO) return;
+    var per = {}, best = 0;
+    WW_STATS.forEach(function(st){
+      var f = st[0];
+      var A = W.map(function(m){ return +((X.byPl[pk] || {})[m] || {})[f] || 0; });
+      var B = O.map(function(m){ return +((X.byPl[pk] || {})[m] || {})[f] || 0; });
+      var se = Math.sqrt(_wwVar(A) / A.length + _wwVar(B) / B.length);
+      var t = se > 0 ? (_wwMean(B) - _wwMean(A)) / se : 0;
+      per[f] = { w:_wwMean(A), o:_wwMean(B), t:t };
+      var ranks = f !== 'minutes' || Math.abs(per[f].o - per[f].w) >= WW_MIN_SWING;
+      if (ranks && Math.abs(t) > Math.abs(best)) best = t;
+    });
+    if (Math.abs(best) < WW_T) return;
+    out.push({ mate:X.nice[mk] || mk, mateKey:mk, withN:W.length, woN:O.length, per:per, best:best });
+  });
+  out.sort(function(a, b){ return Math.abs(b.best) - Math.abs(a.best); });
+  return out;
+}
+
+/* One team-mate's effect, as a line of before-and-after. Only the stats that actually moved get
+   a number; printing all five every time buried the one that mattered. */
+function wwRow(r, lead){
+  var cells = WW_STATS.filter(function(st){
+    return st[0] === 'minutes' || Math.abs(r.per[st[0]].t) >= WW_T;
+  }).map(function(st){
+    var p = r.per[st[0]], d = p.o - p.w;
+    var cls = Math.abs(p.t) >= WW_T ? (d > 0 ? ' ww-up' : ' ww-dn') : '';
+    return '<span class="ww-c' + cls + '"><i>' + st[1] + '</i>' + p.w.toFixed(1)
+      + ' \u2192 <b>' + p.o.toFixed(1) + '</b></span>';
+  }).join('');
+  return '<div class="ww-row"><div class="ww-hd"><b>' + esc(lead) + '</b>'
+    + '<span>' + r.woN + ' without \u00b7 ' + r.withN + ' with</span></div>'
+    + '<div class="ww-cells">' + cells + '</div></div>';
+}
+
+function nbaWWSection(key, name){
+  var S = state.sports[key];
+  var team = (S.idx.playerTeam || {})[name] || ((S.idx.byName || {})[name] || {}).team;
+  if (!team) return '';
+  var rows = nbaWW(key, name, team).slice(0, 3);
+  if (!rows.length) return '';
+  return '<div class="dd-sec"><div class="dd-h">When a team-mate sits</div>'
+    + rows.map(function(r){ return wwRow(r, 'Without ' + r.mate); }).join('')
+    + '<div class="dd-note">His own average with that man playing, against his average without. '
+    + 'Only rotation regulars, only inside the stretch they were actually team-mates, and only '
+    + 'gaps big enough for the sample to mean something. It is what happened, not a promise.</div></div>';
+}
+
+/* The same read pointed at tonight: who is ruled out, and whose numbers that has moved. */
+function nbaOutSection(key, g){
+  if (key !== 'nba' && key !== 'nbl') return '';
+  var S = state.sports[key];
+  var inj = asArray(S.data.injury) || [];
+  if (!inj.length || !g || !g.home || !g.away) return '';
+  var sides = [g.home, g.away];
+  var full = sides.map(function(t){ return normTeam(teamFullName(key, t)); });
+  var blocks = [];
+  inj.forEach(function(r){
+    var st = String(r.Status || r.status || '');
+    if (!/^out$/i.test(st)) return;
+    // Match on the INJURY FEED's own club, which is current, rather than on our player record -
+    // a player who moved over summer carries last season's club until he plays a game.
+    var rt = normTeam(r.Team || r.team || '');
+    var si = full.indexOf(rt);
+    if (si < 0) si = sides.map(normTeam).indexOf(rt);
+    if (si < 0) return;
+    var team = sides[si];
+    var who = r.Player || r.player;
+    var X = nbaWWIndex(key), mk = cmbNameKey(who);
+    if ((X.avgMin[mk] || 0) < WW_MATE_MIN) return;      // a deep-bench absence moves nothing
+    // whose numbers has this man's absence moved, among the squad
+    var hits = [];
+    playersOnTeam(key, team).forEach(function(p){
+      if (!p || !p.name || cmbNameKey(p.name) === mk) return;
+      var w = nbaWW(key, p.name, team).filter(function(x){ return x.mateKey === mk; })[0];
+      if (w) hits.push({ p:p, w:w });
+    });
+    if (!hits.length) return;
+    hits.sort(function(a, b){ return Math.abs(b.w.best) - Math.abs(a.w.best); });
+    blocks.push('<div class="ww-blk"><div class="ww-out">' + esc(abbrOf(key, team)) + ' \u00b7 '
+      + esc(who) + ' out' + (r.Injury ? ' (' + esc(r.Injury) + ')' : '') + '</div>'
+      + hits.slice(0, 3).map(function(h){ return wwRow(h.w, h.p.name); }).join('') + '</div>');
+  });
+  if (!blocks.length) return '';
+  return '<div class="dayband"><span>Who it helps</span></div>' + blocks.join('')
+    + '<div class="deg-note">Players ruled out tonight, and the team-mates whose numbers have '
+    + 'moved most when they have sat before. Measured on games already played, so a gap has to '
+    + 'clear its own noise to appear here at all.</div>';
+}
+
 function nbaQuarters(key, name){
   if (key !== 'nba') return null;
   var S = state.sports[key], q = S.data.quarters;
@@ -15141,13 +15337,14 @@ function teamProfile(key, team){
 }
 function nbaScoringProfile(key, name){
   if (key !== 'nba') return '';
+  var ww = nbaWWSection(key, name);
   var S = state.sports[key];
   var p = (S.idx.byName || {})[name] || {};
   var z = nbaZones(key, name), q = nbaQuarters(key, name);
   var logs = sortLogsDesc(((S.idx.logsByName || {})[name] || []).slice())
     .filter(function(r){ return (+r.minutes || 0) > 0; });
-  if (!z && !q && !logs.length) return '';
-  var h = '';
+  if (!z && !q && !logs.length && !ww) return '';
+  var h = ww;
 
   // the shooting line, from his own game logs so it is current even before the zone build runs
   if (logs.length){
@@ -16760,6 +16957,18 @@ window.LAB = {
     var el = document.getElementById('dv-card');
     if (!el) return;
     sharePng(snapElement(el, 'D\u00e9j\u00e0 Vu').catch(function(){ return null; }), 'jtt-dejavu.png');
+  },
+  // exposed for tests: the with/without split, and what it costs to compute
+  wwProbe: function(key, name, team){
+    var S = state.sports[key];
+    team = team || (S.idx.playerTeam || {})[name] || ((S.idx.byName || {})[name] || {}).team;
+    var a = Date.now(); nbaWWIndex(key); var tIdx = Date.now() - a;
+    a = Date.now(); var r = nbaWW(key, name, team); var tRun = Date.now() - a;
+    return { team:team, idxMs:tIdx, runMs:tRun, n:r.length,
+             top: r.slice(0, 3).map(function(x){
+               return { mate:x.mate, woN:x.woN, withN:x.withN, t:+x.best.toFixed(2),
+                        pts:[+x.per.points.w.toFixed(1), +x.per.points.o.toFixed(1)],
+                        min:[+x.per.minutes.w.toFixed(1), +x.per.minutes.o.toFixed(1)] }; }) };
   },
   // exposed for tests: which config a sport is actually simulated on. The NHL was silently
   // simulated on basketball's - rebounds, threes, a "Three-happy" filter - because simCfg fell
