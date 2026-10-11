@@ -5,6 +5,104 @@ Batters + pitchers merge into one `players` pool (role: 'bat'|'pitch'); platoon 
 batter-vs-pitcher (bvp) and h2h are preserved for mlb/scoring.js."""
 import json, sys, os, hashlib
 
+if '--selftest' in sys.argv:
+    # Runs THIS script against synthetic bundles and asserts on what it writes. It exists because
+    # every MLB data fault so far has been silent - a file that was valid, non-empty and wrong -
+    # and the results path is the one most recently caught doing it.
+    import subprocess, tempfile, shutil
+    _tmp = tempfile.mkdtemp()
+    _fails = []
+
+    def _run(bundle, out, prev=None):
+        os.makedirs(out, exist_ok=True)
+        if prev is not None:
+            with open(os.path.join(out, 'results.json'), 'w') as fh:
+                json.dump(prev, fh)
+        bp = os.path.join(_tmp, 'b_%d.json' % len(os.listdir(_tmp)))
+        with open(bp, 'w') as fh:
+            json.dump(bundle, fh)
+        r = subprocess.run([sys.executable, os.path.abspath(__file__), bp, out],
+                           capture_output=True, text=True)
+        if r.returncode != 0:
+            raise AssertionError('build failed: ' + (r.stderr or '')[-400:])
+        with open(os.path.join(out, 'results.json'), encoding='utf-8') as fh:
+            return json.load(fh), r.stdout
+
+    def _check(name, cond, detail=''):
+        print(('  ok   ' if cond else '  FAIL ') + name + ('  ' + detail if detail else ''))
+        if not cond:
+            _fails.append(name)
+
+    def _sched(rows):
+        return [{'gameId': g, 'date': d, 'g': n, 'home': h, 'away': a, 'hs': hs, 'as': a_s,
+                 'season': 2026, 'week': int(d.replace('-', ''))}
+                for (g, d, n, h, a, hs, a_s) in rows]
+
+    _base = {'season': 2026, 'teams': {}, 'batters': {}, 'pitchers': {}, 'slate': [], 'parks': {}}
+
+    # 1. the schedule block is used, and used whole
+    full = _sched([(1, '2026-04-01', 1, 'LAD', 'SF', 5, 1),
+                   (2, '2026-04-02', 1, 'SF', 'LAD', 3, 2),
+                   (3, '2026-04-03', 1, 'NYY', 'BOS', 0, 4)])
+    got, out = _run(dict(_base, results=full), os.path.join(_tmp, 'o1'))
+    _check('the schedule block becomes results.json', len(got) == 3, '(%d rows)' % len(got))
+    _check('home and away survive as written',
+           any(r['home'] == 'LAD' and r['away'] == 'SF' and r['hs'] == 5 for r in got)
+           and any(r['home'] == 'SF' and r['away'] == 'LAD' and r['hs'] == 3 for r in got),
+           '(the same pair, both ways round, on different days - two real games)')
+
+    # 2. a doubleheader is two rows, not one
+    dh = _sched([(10, '2026-05-01', 1, 'CHC', 'STL', 2, 1),
+                 (11, '2026-05-01', 2, 'CHC', 'STL', 7, 6)])
+    got, _ = _run(dict(_base, results=dh), os.path.join(_tmp, 'o2'))
+    _check('a doubleheader stays two games', len(got) == 2, '(%d rows)' % len(got))
+
+    # 3. THE BUG THIS WAS WRITTEN FOR: one game reported from both clubs is ONE row
+    dup = _sched([(20, '2026-06-01', 1, 'LAD', 'SF', 5, 1)]) + \
+          [{'date': '2026-06-01', 'home': 'SF', 'away': 'LAD', 'hs': 1, 'as': 5, 'season': 2026}]
+    got, _ = _run(dict(_base, results=dup), os.path.join(_tmp, 'o3'))
+    _check('one game reported from both sides collapses to one row', len(got) == 1,
+           '(%d rows - the old key counted it twice)' % len(got))
+
+    # 4. a covered season SUPERSEDES what was on disk, mis-oriented legacy rows included
+    # The legacy rows are of two kinds, and only one of them is removed by the de-duplication
+    # above - which is what made the first version of this check pass while testing nothing:
+    #   a) the same game the fresh fetch has, written the wrong way round
+    #   b) a 2026 game the fresh fetch does NOT list at all
+    # (b) is the one that needs the season filter. A re-fetched season is published whole, so a
+    # row it does not contain is a row that should not survive; without the filter it lives on
+    # for ever, and a game the schedule has since corrected or voided can never be withdrawn.
+    legacy = [{'date': '2026-04-01', 'home': 'SF', 'away': 'LAD', 'hs': 1, 'as': 5, 'season': 2026},
+              {'date': '2026-08-08', 'home': 'TEX', 'away': 'SEA', 'hs': 9, 'as': 9, 'season': 2026},
+              {'date': '2025-09-09', 'home': 'NYM', 'away': 'ATL', 'hs': 3, 'as': 2, 'season': 2025}]
+    got, _ = _run(dict(_base, results=full), os.path.join(_tmp, 'o4'), prev=legacy)
+    _check('a re-fetched season replaces the rows already on disk',
+           sum(1 for r in got if r.get('season') == 2026) == 3,
+           '(%d rows for 2026, want the 3 from the schedule)'
+           % sum(1 for r in got if r.get('season') == 2026))
+    _check('the same game written the wrong way round is dropped',
+           not any(r.get('date') == '2026-04-01' and r.get('home') == 'SF' for r in got))
+    _check('a row from that season the fetch no longer lists is dropped too',
+           not any(r.get('date') == '2026-08-08' for r in got),
+           '(this is the one the de-duplication cannot do on its own)')
+    _check('while a season the fetch did not cover is left alone',
+           any(r.get('season') == 2025 for r in got))
+
+    # 5. an older bundle with no schedule still builds, from the per-team recent arrays
+    teams = {'1': {'abbr': 'LAD', 'name': 'Dodgers', 'recent': [
+                {'date': '2026-07-01', 'opp': 'SF', 'rf': 4, 'ra': 2, 'res': 'W'}]},
+             '2': {'abbr': 'SF', 'name': 'Giants', 'recent': [
+                {'date': '2026-07-01', 'opp': 'LAD', 'rf': 2, 'ra': 4, 'res': 'L'}]}}
+    got, out5 = _run(dict(_base, teams=teams), os.path.join(_tmp, 'o5'))
+    _check('an old bundle still builds through the fallback', len(got) >= 1, '(%d rows)' % len(got))
+    _check('and the fallback says so in the log', 'fell back' in out5)
+    _check('and the same game from two clubs is still one row', len(got) == 1,
+           '(%d rows)' % len(got))
+
+    shutil.rmtree(_tmp, ignore_errors=True)
+    print('\nselftest: ' + ('FAILED - ' + ', '.join(_fails) if _fails else 'ALL PASS ok'))
+    sys.exit(1 if _fails else 0)
+
 SRC = sys.argv[1] if len(sys.argv) > 1 else 'mlb_bundle.json'
 OUT = sys.argv[2] if len(sys.argv) > 2 else 'data'
 os.makedirs(OUT, exist_ok=True)
@@ -177,9 +275,59 @@ for _yr in sorted(_by_year, reverse=True):
     w(_fn, merge_keep(_fn, _by_year[_yr], _glkey)); _gl_files.append(_fn)
 w('gamelogs.json', merge_keep('gamelogs.json', _by_year.get(season, []), _glkey))
 meta['gamelogFiles'] = _gl_files
-# results narrowed the same way: twelve games across six days, against a full season of logs
-results = merge_keep('results.json', results,
-                     lambda r: '%s|%s|%s' % (r.get('date'), r.get('home'), r.get('away')))
+# ---- RESULTS ---------------------------------------------------------------------------------
+# `results` above is stitched out of each club's `recent` array - an eighteen-day window, eight
+# games a club. As a form guide that is the right shape. As the file the SIMULATOR reads its
+# scorelines from, it was never close: 86 games against roughly 2,400 played, so a scoreline could
+# be priced for 3% of games and the panel hid itself for the rest, with nothing broken anywhere to
+# say why.
+#
+# fetch_mlb.py now puts every finished game of the covered seasons into the bundle, from the
+# schedule endpoint, with the real home side and the game's own id. Where that is present it is
+# AUTHORITATIVE for the seasons it covers - no merge, because a full-season fetch cannot be
+# improved by remembering what a narrower run thought. Seasons the fetch no longer reaches are
+# kept untouched.
+#
+# The fallback keeps an older bundle working, and the merge key is fixed either way. It used to be
+# `date|home|away`, which is orientation-dependent: because `recent` names whichever club it was
+# read from as "home", one game arrived as both LAD|SF and SF|LAD and accumulated as two rows that
+# disagreed with each other. The key is now the date plus the two clubs in a fixed order, so a game
+# is one row whichever side reported it.
+def _res_pairkey(r):
+    a, b2 = str(r.get('home') or ''), str(r.get('away') or '')
+    lo, hi = (a, b2) if a <= b2 else (b2, a)
+    # `g` is 2 for the back half of a doubleheader: two games, one date, one pair of clubs
+    return '%s|%s|%s|%s' % (r.get('date'), lo, hi, r.get('g') or 1)
+
+
+_sched = B.get('results') or []
+if _sched:
+    _covered = set(r.get('season') for r in _sched)
+    try:
+        with open(os.path.join(OUT, 'results.json'), encoding='utf-8') as _fh:
+            _prev = json.load(_fh) or []
+        if not isinstance(_prev, list):
+            _prev = []
+    except Exception:
+        _prev = []
+    # anything from a season the fetch covered is superseded, INCLUDING the mis-oriented rows the
+    # old build wrote - that is the migration, and it needs no separate pass
+    _keep = [r for r in _prev if isinstance(r, dict) and r.get('season') not in _covered]
+    _seen, results = set(), []
+    for r in _sched + _keep:
+        k = _res_pairkey(r)
+        if k in _seen:
+            continue
+        _seen.add(k)
+        results.append(r)
+    results.sort(key=lambda r: (str(r.get('date') or ''), r.get('gameId') or 0))
+    print('results: %d from the schedule (season %s), %d older rows kept'
+          % (len(_sched), ','.join(str(x) for x in sorted(_covered, key=str)), len(_keep)))
+else:
+    # an older bundle with no schedule block: keep accumulating, with the key fixed
+    results = merge_keep('results.json', results, _res_pairkey)
+    print('results: no schedule in the bundle - fell back to the per-team recent scrape '
+          '(%d rows). Re-run fetch_mlb.py to publish a full season.' % len(results))
 w('dvp.json', dvp); w('results.json', results); w('fixture.json', fixture)
 w('lineups.json', lineups); w('meta.json', meta)
 w('teams_form.json', teams)   # shell computes WWWLW from results; teams carries the rest
