@@ -2021,6 +2021,30 @@ function buildIndexes(key){
   });
   ix.dupLogRows = dropped;
 
+  /* WHICH STAT FIELDS THIS SPORT'S GAME LOGS ACTUALLY CARRY.
+     statOf falls back to 0 for a sport with a COVER_FIELD (NFL, EPL) when a row has no value for
+     a market: "he played and didn't record one", which is right for a receiver with no catches.
+     It is badly wrong for a market the logs do not carry AT ALL - a bet on it would settle as a
+     confident zero, and on an over that is a silent LOSS, where the honest answer is that we
+     cannot verify it. Knowing the vocabulary is what tells the two apart.
+     Sampled with a stride rather than from the top, because a sport can write different columns
+     for different kinds of player - MLB's batting rows and pitching rows share almost no stats,
+     and the first few hundred rows are all batters. */
+  ix.logFields = {};
+  (function(){
+    var n = logs.length, step = Math.max(1, Math.floor(n / 3000));
+    for (var i = 0; i < n; i += step){
+      var r = logs[i];
+      if (!r) continue;
+      for (var k in r) if (Object.prototype.hasOwnProperty.call(r, k)) ix.logFields[k] = 1;
+    }
+    // always include the tail: the last rows are the newest and may carry a new column
+    for (var j = Math.max(0, n - 200); j < n; j++){
+      var r2 = logs[j];
+      if (r2) for (var k2 in r2) if (Object.prototype.hasOwnProperty.call(r2, k2)) ix.logFields[k2] = 1;
+    }
+  })();
+
   var od = d.odds || {};
   ix.oddsIdx = {}; ix.bookIdx = {};
   (od.lines || []).forEach(function(r){
@@ -3650,6 +3674,9 @@ function statOf(key, row, mkt){
   if (v != null && isFinite(+v)) return +v;
   var cf = COVER_FIELD[key];
   if (!cf || !row) return null;
+  // a market this sport's logs do not carry is UNVERIFIABLE, not a zero - see ix.logFields
+  var lf = ((state.sports[key] || {}).idx || {}).logFields;
+  if (lf && Object.keys(lf).length && !lf[mkt]) return null;
   var cv = row[cf.field];
   if (cv == null || !isFinite(+cv)) return null;                      // no coverage: unverifiable
   if (cf.min != null && +cv < cf.min) return null;                    // on the sheet but never played
