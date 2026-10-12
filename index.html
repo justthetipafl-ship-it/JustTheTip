@@ -12294,8 +12294,21 @@ function betLegRow(leg){
 function betSettleLeg(leg){
   var f = betLegRow(leg);
   if (f.state !== 'played') return { res:'pending', why:f.state };
-  var v = statOf(betSportKey(leg.sport), f.row, leg.market);
-  if (v == null) return { res:'void', why:'unverifiable', have:null };
+  var key = betSportKey(leg.sport);
+  /* TWO VERY DIFFERENT REASONS A STAT READS AS NOTHING, and they do not settle the same way.
+       he was named but did not take the field  -> a VOID, which books refund. Correct.
+       the logs do not carry this market at all -> we do not know what happened. Refunding that
+                                                   publishes a neutral result for a bet that had
+                                                   a real outcome, which is a wrong answer rather
+                                                   than a cautious one. It is HELD.
+     Both came back as null and both became a refund until the two graders were put side by side
+     over the same bets. */
+  var lf = ((state.sports[key] || {}).idx || {}).logFields;
+  var fld = mktField(key, leg.market);
+  if (lf && Object.keys(lf).length && !lf[fld])
+    return { res:'pending', why:'unverifiable', have:null };
+  var v = statOf(key, f.row, leg.market);
+  if (v == null) return { res:'void', why:'didnotplay', have:null };
   var line = +leg.line;
   if (!isFinite(line)) return { res:'pending', why:'noline', have:v };
   if (v === line) return { res:'void', why:'push', have:v };
