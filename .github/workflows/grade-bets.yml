@@ -1,0 +1,74 @@
+name: Grade bets
+
+# Settle the published bet ledger from the game logs.
+#
+# The page already grades a running tip in the browser so a reader can watch it land, but that is
+# computed on the fly and written nowhere. Nothing else writes data/results.json: only the entry
+# tool, by hand, and the entry tool has no screen for settling a bet it already saved. Without
+# this job every tip stays 'pending' for ever and the published record never moves.
+#
+# It runs AFTER the data builds rather than on a clock of its own, because a bet can only be
+# graded once that sport's game logs have the finished game in them - grading before the build
+# is just a wasted run that finds nothing. The nightly fallback catches a day when a build was
+# triggered by hand or the schedules drifted.
+#
+# It only ever writes outcomes that are beyond argument. A multi with a voided leg, a player whose
+# name does not match the logs, a market the logs cannot see: all left pending and printed in the
+# job summary, because a wrong settlement in a published record is far worse than a slow one.
+
+on:
+  workflow_run:
+    # the real workflow names, copied from each file's own `name:` - a name that does not match
+    # one exactly is silently never a trigger, which is the quiet way a job like this does nothing
+    workflows:
+      - "JTT NFL — split data refresh (advanced)"
+      - "JTT MLB daily data update"
+      - "JTT NHL — data refresh"
+      - "JTT NBA — data refresh (advanced)"
+      - "NBL Data"
+      - "AFL data (CSV ingest + build)"
+      - "EPL Build"
+    types: [completed]
+  schedule:
+    - cron: '35 14 * * *'        # 00:35 Brisbane, after the overnight builds have landed
+  workflow_dispatch:
+
+# Two builds finishing at once would otherwise race to commit the same file.
+concurrency:
+  group: grade-bets
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  grade:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # The rules also live in index.html so the page can grade a tip live. These are the
+      # synthetic cases that keep this copy honest on its own; tests/grader_test.js is what
+      # proves the two still agree with each other.
+      - name: Grader selftest
+        run: python3 scripts/grade_bets.py --selftest
+
+      - name: Grade the ledger
+        run: python3 scripts/grade_bets.py --root . | tee grade.log
+
+      - name: Commit anything that settled
+        run: |
+          if git diff --quiet -- data/results.json; then
+            echo "nothing settled this run" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/results.json
+          git commit -m "Grade bets: settle what the game logs decided"
+          # a data build may have pushed while this ran; rebase rather than fail the job
+          for i in 1 2 3; do
+            git pull --rebase --autostash origin main && git push origin HEAD:main && break
+            sleep 5
+          done
+          { echo '### Settled'; echo '```'; cat grade.log; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
