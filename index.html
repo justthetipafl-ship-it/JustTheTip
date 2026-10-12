@@ -1291,6 +1291,29 @@
   .tip-hero b.pos{color:var(--accent);} .tip-hero b.neg{color:#ef4444;}
   .tip-hero span{font-size:9px;font-weight:800;letter-spacing:.05em;text-transform:uppercase;
     color:var(--text-3);}
+  /* Bet DNA */
+  .dna-bet{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;margin-bottom:10px;}
+  .dna-bet b{font-size:16px;} .dna-bet span{font-size:12px;color:var(--text-2);}
+  .dna-note{font-size:11px;line-height:1.55;color:var(--text-2);background:var(--surface-2);
+    border:1px solid var(--border);border-radius:10px;padding:10px 12px;margin-bottom:12px;}
+  .dna-note b{color:var(--text);}
+  .dna-row{padding:9px 0;border-bottom:1px solid var(--border);}
+  .dna-row:last-of-type{border-bottom:0;}
+  .dna-top{display:flex;gap:8px;align-items:baseline;}
+  .dna-lbl{font-size:12.5px;font-weight:700;}
+  .dna-worth{margin-left:auto;flex:none;font-family:var(--font-display);font-size:14px;}
+  .dna-worth.pos{color:var(--accent);} .dna-worth.neg{color:#ef4444;}
+  .dna-track{height:6px;border-radius:3px;background:var(--border);overflow:hidden;margin:6px 0 5px;}
+  .dna-fill{height:100%;background:var(--accent);}
+  .dna-fill.neg{background:#ef4444;}
+  .dna-bot{display:flex;gap:8px;align-items:center;font-size:10px;color:var(--text-3);}
+  .dna-rate b{color:var(--text-2);font-family:var(--font-mono);}
+  .dna-l5{display:inline-flex;gap:3px;align-items:center;}
+  .dna-l5 i{width:7px;height:7px;border-radius:2px;background:var(--border);display:inline-block;}
+  .dna-l5 i.on{background:var(--accent);}
+  .dna-n{margin-left:auto;flex:none;font-family:var(--font-mono);}
+  .dna-also{font-size:9.5px;color:var(--text-3);margin:-4px 0 2px;font-style:italic;}
+  .dd-acts{margin:10px 0 4px;}
   .tip-filters{display:flex;gap:7px;flex-wrap:wrap;align-items:flex-end;margin-bottom:10px;}
   .tip-sel{flex:1 1 128px;min-width:0;display:flex;flex-direction:column;gap:3px;}
   .tip-sel > span{font-size:9px;font-weight:800;letter-spacing:.05em;text-transform:uppercase;
@@ -10310,6 +10333,7 @@ function cmbPanel(){
                + '<div class="cmb-acts">'
                + '<button class="cmb-go" onclick="LAB.cmbAdd()"><i class="ti ti-plus"></i> Add to multi</button>'
                + '<button class="sl-chip" onclick="LAB.cmbDeep()"><i class="ti ti-telescope"></i> Deep dive</button>'
+               + '<button class="sl-chip" onclick="LAB.cmbDna()"><i class="ti ti-fingerprint"></i> Bet DNA</button>'
                + '<button class="sl-chip" onclick="LAB.cmbToCard()"><i class="ti ti-receipt"></i> Add to card</button>'
                + '<button class="sl-chip" onclick="LAB.cmbShare()"><i class="ti ti-share"></i> Share</button>'
                + '</div>')) : '')
@@ -12707,6 +12731,226 @@ function pendingBetsSection(unit, sport, only){
             + ' ' + (feeds.length === 1 ? 'has' : 'have') + ' one. ' : '')
     + 'A result shown here before the ledger catches up is read straight from the game logs and '
     + 'is not in the numbers above yet.</div>';
+}
+
+/* BET DNA =====================================================================================
+   What this bet NEEDS to go right, with a number on each thing, measured where there is enough
+   evidence to measure it.
+
+   WHY IT READS THE WAY IT DOES
+   The obvious build looks at one player's own history and reports the conditions his hits
+   happened under. That cannot work. He has twenty to forty games; ask thirty questions of thirty
+   games and a pattern appears whether or not one exists. Simulated against a player who is a
+   pure coin flip with no edge at all, the best-looking condition averages a 71-point separation
+   and something at 80% or better turns up a fifth of the time. All chance, all indistinguishable
+   from the real thing on the page.
+
+   So the strands are measured across every main line in the league - thousands of graded bets -
+   by scripts/build_dna.py, and this panel reads that table. Each strand's number is how far the
+   bets inside it beat THE PRICE THEY WERE POSTED AT, which is the only comparison that means
+   anything: a strand that merely tracks something the book already prices is worth nothing to a
+   reader, however large it looks.
+
+   Measured that way, nothing knowable before kickoff survives - not home, not the line moving,
+   not the matchup. The book has them. What survives is what the bet needs to HAPPEN: he has to
+   be used more than usual, in a game that goes over. That is what this panel shows, and the flat
+   pre-game row is shown too, because "there is no angle here" is worth knowing before you talk
+   yourself into one.                                                                           */
+var DNA = { by:{}, loading:{} };
+
+function dnaLoad(key){
+  if (DNA.by[key] || DNA.loading[key]) return;
+  DNA.loading[key] = true;
+  fetch(sportPath(key, 'data/dna.json') + '?cb=' + Date.now(), { cache:'reload' })
+    .then(function(r){ return r.ok ? r.json() : null; })
+    .then(function(j){ DNA.by[key] = j || { missing:true }; DNA.loading[key] = false; render(); })
+    .catch(function(){ DNA.by[key] = { missing:true }; DNA.loading[key] = false; });
+}
+
+/* The strands for a market, preferring that market's own table and falling back to the pooled
+   one. A per-market table is the better answer where the sample supports it; the pooled table is
+   still every graded main line in the sport, so it is a long way from a guess. */
+function dnaTable(key, mkt){
+  var d = DNA.by[key];
+  if (!d || d.missing || !d.all) return null;
+  var m = (d.markets || {})[mkt];
+  return { strands:(m ? m.strands : d.all), n:(m ? m.n : d.n), base:(m ? m.base : d.base),
+           perMarket:!!m, allN:d.n, built:d.built };
+}
+
+/* HOW OFTEN THIS PLAYER MEETS A STRAND. The population says what a strand is worth; this says
+   how often he actually delivers it, which is the half that makes it about his bet. Evaluated
+   off his own game logs against his own usual, never against the league's.                    */
+function dnaPlayerRate(key, name, strand){
+  var S = state.sports[key];
+  var logs = ((S.idx.logsByName || {})[name] || []);
+  if (!logs.length) return null;
+  var id = strand.id, col = id.indexOf('u_') === 0 ? id.slice(2) : null;
+  var vals = [];
+  if (col){
+    logs.forEach(function(r){ var v = +r[col]; if (isFinite(v)) vals.push(v); });
+    if (vals.length < 6) return null;
+    var sorted = vals.slice().sort(function(a, b){ return a - b; });
+    var med = sorted[Math.floor(sorted.length / 2)];
+    var seq = logs.map(function(r){ var v = +r[col]; return isFinite(v) ? (v > med ? 1 : 0) : null; });
+    return dnaRateOf(seq);
+  }
+  // the game-state strands need the scoreline, which the simulator's index already resolves
+  var f = DNA_GAME_TEST[id];
+  if (!f) return null;
+  var seq2 = logs.map(function(r){
+    var sc = null;
+    try {
+      sc = simScoreFor(key, { team:r.Team, opp:r.Opp, home:r.home, date:r.Date || r.date,
+                              id:r.MatchId, year:r.Year, week:r.Week });
+    } catch(e){}
+    return f(r, sc, key);
+  });
+  return dnaRateOf(seq2);
+}
+function dnaRateOf(seq){
+  var known = seq.filter(function(x){ return x != null; });
+  if (known.length < 6) return null;
+  var hit = known.filter(function(x){ return x; }).length;
+  // his last five, newest first - gamelogs are oldest-first, so take from the end
+  var tail = seq.filter(function(x){ return x != null; }).slice(-5).reverse();
+  return { n:known.length, hit:hit, rate:hit / known.length, last5:tail };
+}
+// the median total in that sport's own results, so "high-scoring" means high for this sport
+function dnaTotMed(key){
+  var S = state.sports[key];
+  if (S.idx.dnaTotMed !== undefined) return S.idx.dnaTotMed;
+  var raw = S.data.results, all = Array.isArray(raw) ? raw : ((raw && raw.games) || []);
+  var tot = [];
+  all.forEach(function(r){
+    var h = +r.hs, a = +r.as;
+    if (isFinite(h) && isFinite(a)) tot.push(h + a);
+  });
+  tot.sort(function(a, b){ return a - b; });
+  S.idx.dnaTotMed = tot.length >= 20 ? tot[Math.floor(tot.length / 2)] : null;
+  return S.idx.dnaTotMed;
+}
+var DNA_GAME_TEST = {
+  shootout: function(r, sc, k){
+    var m = dnaTotMed(k);
+    return (sc == null || m == null) ? null : ((sc.me + sc.them) > m ? 1 : 0);
+  },
+  won:      function(r, sc){ return sc == null ? null : (sc.me > sc.them ? 1 : 0); },
+  trailed:  function(r, sc){ return sc == null ? null : (sc.me < sc.them ? 1 : 0); },
+  close:    function(r, sc, k){ return sc == null ? null : (Math.abs(sc.me - sc.them) <= dnaCloseBy(k) ? 1 : 0); },
+  blowout:  function(r, sc, k){ return sc == null ? null : (Math.abs(sc.me - sc.them) >= dnaCloseBy(k) * 2 ? 1 : 0); },
+  home:     function(r){ return r.home == null ? null : (+r.home ? 1 : 0); }
+};
+var DNA_CLOSE = { nfl:7, nba:6, nbl:6, nhl:1, mlb:2, afl:12, epl:1 };
+function dnaCloseBy(key){ return DNA_CLOSE[key] || 7; }
+
+// a strand is worth putting on the page when the population says it is real and it is not just
+// restating the market - the price strands are the control, not a finding
+var DNA_HIDE = { short_price:1, long_price:1, line_up:1, line_down:1, price_short:1, price_drift:1 };
+function dnaNeeds(key, mkt){
+  var t = dnaTable(key, mkt);
+  if (!t) return null;
+  var real = t.strands.filter(function(s){ return s.real && s.lift > 0 && !DNA_HIDE[s.id]; });
+  var pre = t.strands.filter(function(s){ return s.when === 'before' && !DNA_HIDE[s.id]; });
+  var preReal = pre.filter(function(s){ return s.real; });
+  return { t:t, needs:real, pre:pre, preReal:preReal };
+}
+
+/* THE PANEL. Opened from Deep Dive and from Check My Bet, never on its own, because it is always
+   about a specific bet. */
+function dnaOpen(key, name, mkt, line, side, odds){
+  state.view.dna = { key:key, name:name, mkt:mkt, line:+line, side:side || 'over', odds:odds || null };
+  dnaLoad(key);
+  render();
+}
+function dnaClose(){ state.view.dna = null; render(); }
+
+function dnaBar(s, rate, scale){
+  // Two numbers on one row: what the strand is worth against the price, and how often he delivers
+  // it. A wide bar with nobody standing in it is not an opportunity.
+  // The bar is scaled to the BIGGEST strand on this panel, not to a fixed points-per-pixel. A
+  // fixed scale saturated at about 31 points, so a +47 and a +40 drew as the same full bar and
+  // the chart stopped saying anything exactly where the differences mattered most.
+  var worth = Math.round(s.lift * 1000) / 10;
+  var w = Math.max(4, Math.min(100, Math.abs(s.lift) / (scale || 0.5) * 100));
+  return '<div class="dna-row">'
+    + '<div class="dna-top"><span class="dna-lbl">' + esc(s.label) + '</span>'
+    + '<span class="dna-worth' + (s.lift >= 0 ? ' pos' : ' neg') + '">'
+    + (s.lift >= 0 ? '+' : '') + worth.toFixed(1) + ' pts</span></div>'
+    + '<div class="dna-track"><div class="dna-fill' + (s.lift >= 0 ? '' : ' neg')
+    + '" style="width:' + w.toFixed(1) + '%"></div></div>'
+    + '<div class="dna-bot">'
+    + (rate ? '<span class="dna-rate"><b>' + Math.round(rate.rate * 100) + '%</b> of his games'
+        + ' · ' + rate.hit + '/' + rate.n + '</span>'
+        + '<span class="dna-l5">' + rate.last5.map(function(x){
+            return '<i class="' + (x ? 'on' : '') + '"></i>'; }).join('') + ' last 5</span>'
+      : '<span class="dna-rate">no read on how often he does this</span>')
+    + '<span class="dna-n">' + s.inN.toLocaleString() + ' bets</span></div></div>';
+}
+
+function dnaPanel(){
+  var d = state.view.dna;
+  if (!d) return '';
+  var key = d.key, S = state.sports[key];
+  var lab = mktLabel(key, d.mkt);
+  var betTxt = (d.side === 'under' ? 'Under ' + d.line : Math.ceil(d.line) + '+') + ' ' + lab;
+  var head = '<div class="cmb-hdr"><i class="ti ti-fingerprint"></i><h2>Bet DNA</h2>'
+    + '<button class="cmb-close" onclick="LAB.dnaClose()">&times;</button></div>';
+  var wrap = function(body){
+    return '<div class="cmb-overlay open" onclick="if(event.target===this)LAB.dnaClose()">'
+      + '<div class="cmb-modal">' + head + '<div class="cmb-body">'
+      + '<div class="dna-bet"><b>' + esc(d.name) + '</b><span>' + esc(betTxt) + '</span></div>'
+      + body + '</div></div></div>';
+  };
+  if (DNA.loading[key] || (!DNA.by[key] && !DNA.by[key])) { dnaLoad(key); }
+  var dd = DNA.by[key];
+  if (!dd) return wrap('<div class="empty"><i class="ti ti-loader"></i>Reading the DNA…</div>');
+  if (dd.missing) return wrap('<div class="sig-empty">No DNA table for '
+    + esc(SPORTS[key] ? SPORTS[key].name : key) + ' yet. It is built from the odds-history '
+    + 'snapshots, so it appears once that sport has enough graded main lines.</div>');
+
+  var N = dnaNeeds(key, d.mkt);
+  if (!N || !N.t) return wrap('<div class="sig-empty">Nothing measured for this market yet.</div>');
+
+  /* COLLAPSE STRANDS THAT PICK OUT THE SAME GAMES FOR HIM. Targets, target share and air yards
+     are three strands in the population table with three different numbers, and for one player
+     they are usually the same twelve games - three rows saying one thing, which makes the DNA
+     look richer than it is. The strongest keeps the row; the others are named underneath it. */
+  var seen = {}, kept = [];
+  N.needs.forEach(function(s){
+    var rate = dnaPlayerRate(key, d.name, s);
+    var sig = rate ? rate.n + ':' + rate.hit + ':' + rate.last5.join('') : 'none:' + s.id;
+    if (seen[sig]){ seen[sig].also.push(s.label); return; }
+    var row = { s:s, rate:rate, also:[] };
+    seen[sig] = row; kept.push(row);
+  });
+  var top = kept.slice(0, 8).reduce(function(m, r){ return Math.max(m, Math.abs(r.s.lift)); }, 0.01);
+  var needs = kept.slice(0, 8).map(function(r){
+    return dnaBar(r.s, r.rate, top)
+      + (r.also.length ? '<div class="dna-also">same games as ' + esc(r.also.join(', ')) + '</div>' : '');
+  }).join('');
+
+  var pre = N.preReal.length
+    ? '<div class="dna-note">' + N.preReal.length + ' of the things you can check before kickoff '
+      + 'does beat the price here: ' + N.preReal.map(function(s){ return esc(s.label); }).join(', ')
+      + '.</div>'
+    : '<div class="dna-note"><b>Nothing you can know before kickoff beats this price.</b> '
+      + 'Home or away, the line moving, the matchup — all of it is already in the number the '
+      + 'book posted. Measured across ' + N.t.allN.toLocaleString() + ' graded main lines, none of '
+      + 'them separates a winner from a loser. What is below is what the bet needs to HAPPEN.</div>';
+
+  var foot = '<div class="cmb-corr">Each number is how far bets inside that strand beat the price '
+    + 'they were posted at, across ' + N.t.n.toLocaleString() + ' graded main-line bets'
+    + (N.t.perMarket ? ' in this market' : ' across the sport') + '. '
+    + 'A strand is only listed when it clears chance at that sample. The percentage beside it is '
+    + 'how often HE has delivered it, from his own game logs. '
+    + (N.t.built ? 'Table built ' + esc(String(N.t.built).replace('T', ' ')) + '.' : '') + '</div>';
+
+  if (!N.needs.length)
+    return wrap(pre + '<div class="sig-empty">Nothing clears chance for this market yet — '
+      + N.t.n.toLocaleString() + ' graded bets so far. It builds every week.</div>' + foot);
+
+  return wrap(pre + '<div class="dayband"><span>What this bet needs</span></div>' + needs + foot);
 }
 
 /* RESULTS ---------------------------------------------------------------------------
@@ -16408,6 +16652,13 @@ function deepPanel(){
           })()
         + '</div>' : '');
 
+  // Bet DNA opens from here with the same bet already in hand - it is always about one bet, so
+  // it is never reachable on its own
+  head += '<div class="dd-acts"><button class="sl-chip on" onclick="LAB.dnaOpen(\'' + key + '\','
+    + JSON.stringify(name).replace(/"/g, '&quot;') + ',' + JSON.stringify(mkt).replace(/"/g, '&quot;')
+    + ',' + line + ',\'' + (side || 'over') + '\'' + (price ? ',' + price : '') + ')">'
+    + '<i class="ti ti-fingerprint"></i> Bet DNA \u2014 what this bet needs</button></div>';
+
   // ---- the worm: his last 20 against this line ----
   var worm = '<div class="dd-sec"><div class="dd-h">Last '+Math.min(20, dat.all.length)+' games against '+esc(String(line))+'</div>'
     + ddBars(dat.all, line, 320, 74)
@@ -17180,7 +17431,7 @@ function render(){
 
   if (state.view.focus){
     h = '' + focusPage();                       // focused fixture replaces the page
-    $('app').innerHTML = configBanner() + h + playerPanel() + teamPanel() + booksPanel() + cmbFab() + cmbPanel() + cardFab() + cardPanel() + livePanel() + deepPanel() + mrPanel();
+    $('app').innerHTML = configBanner() + h + playerPanel() + teamPanel() + booksPanel() + cmbFab() + cmbPanel() + cardFab() + cardPanel() + livePanel() + deepPanel() + dnaPanel() + mrPanel();
     return;
   }
   if (state.view.tab === 'tips'){
@@ -17213,7 +17464,7 @@ function render(){
       });
     }
   }
-  $('app').innerHTML = configBanner() + h + playerPanel() + teamPanel() + booksPanel() + cmbFab() + cmbPanel() + cardFab() + cardPanel() + livePanel() + deepPanel();
+  $('app').innerHTML = configBanner() + h + playerPanel() + teamPanel() + booksPanel() + cmbFab() + cmbPanel() + cardFab() + cardPanel() + livePanel() + deepPanel() + dnaPanel();
 }
 
 /* ---- public ------------------------------------------------------------- */
@@ -17838,6 +18089,23 @@ window.LAB = {
       };
     } finally { state.results = was; }
   },
+  dnaOpen: function(k, n, m, l, sd, o){ dnaOpen(k, n, m, l, sd, o); },
+  // from Check My Bet, with the leg it has already parsed
+  cmbDna: function(){
+    // the same leg cmbDeep uses - cmbResult, not cmbRes, which is a field that does not exist
+    var r = state.view.cmbResult, l = r && r.leg;
+    if (!l) return;
+    var key = l.key || (l.p && l.p.key) || state.view.cmbSport;
+    dnaOpen(key, (l.p && l.p.name) || l.name, l.mkt, l.line, l.side || 'over',
+            l.price || (l.od && l.od.price) || null);
+  },
+  dnaClose: function(){ dnaClose(); },
+  dnaProbe: function(k, n, m){ var N = dnaNeeds(k, m);
+    return !N ? null : { n:N.t.n, perMarket:N.t.perMarket, allN:N.t.allN,
+      needs:N.needs.map(function(s){ return { id:s.id, label:s.label, lift:s.lift, z:s.z,
+        inN:s.inN, rate:dnaPlayerRate(k, n, s) }; }),
+      preReal:N.preReal.map(function(s){ return s.id; }),
+      pre:N.pre.map(function(s){ return { id:s.id, z:s.z, real:s.real }; }) }; },
   legProbe: function(l){ return legMatch(l); },
   liveProbe: function(src){ return { rows: liveLegRows(src), games: liveGames(src), feeds: liveFeedNames() }; },
   // exposed for tests: the Live Tips page with a given ledger and a given set of filters
