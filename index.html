@@ -577,7 +577,26 @@
     border-radius:9px;padding:5px 7px;}
   .pc-step button{background:var(--surface-2);border:1px solid var(--border);color:var(--text);width:28px;
     height:28px;border-radius:7px;font-size:15px;line-height:1;cursor:pointer;}
-  .pc-line{min-width:52px;text-align:center;font-family:var(--font-display);font-size:17px;font-weight:800;}
+  /* The line is typed, not only stepped: nudging from 20 to 48 is 28 taps, and a reader who
+     already knows the line the book is posting wants to put it in. The input keeps the look of
+     the text it replaced - no frame, no spinner arrows - so the stepper still reads as one
+     control rather than a form field wedged between two buttons.
+     "20+" and "U20" have to stay ONE word. The number used to be a span the whole label centred
+     inside; an input has a width of its own, so the number is pushed hard against the affix
+     instead - right-aligned under a trailing '+', left-aligned after a leading 'U' - and the pair
+     is centred as a unit. Fixed width, not sized to the digits: a box that resizes as you type
+     scrolls the number out of sight mid-entry. */
+  .pc-val{min-width:52px;display:flex;align-items:center;justify-content:center;}
+  /* the ring goes round the whole word, not round the digits - an outline on the input alone
+     cuts between "30" and its "+" and reads as two controls */
+  .pc-val:focus-within{outline:2px solid var(--accent);outline-offset:3px;border-radius:6px;}
+  .pc-line{width:3ch;font-family:var(--font-display);font-size:17px;font-weight:800;
+    background:transparent;border:0;padding:0;color:var(--text);-moz-appearance:textfield;}
+  .pc-line::-webkit-outer-spin-button,.pc-line::-webkit-inner-spin-button{-webkit-appearance:none;margin:0;}
+  .pc-line:focus{outline:none;}
+  /* the '+' of "20+" and the 'U' of "U20" - part of the reading, not of the number */
+  .pc-fix{font-family:var(--font-display);font-size:17px;font-weight:800;font-style:normal;
+    color:var(--text);}
   .pc-hr{flex:1;text-align:right;}
   .pc-hr b{display:block;font-family:var(--font-display);font-size:20px;}
   .pc-hr span{font-family:var(--font-mono);font-size:9px;color:var(--text-3);}
@@ -8558,6 +8577,11 @@ function ppOpponent(key, name){
 /* Player modal: prop calculator, ported from the AFL tool. Dial any line on any market, see the
    hit rate over a chosen window, the posted price at that exact line where one exists, and the
    edge the calibrated model makes of it. Adds straight to the multi slip.                     */
+/* Every route to the line - the two buttons and the typed box - goes through here, so the stepper
+   and the keyboard cannot disagree about what a legal line is. The ceiling is well clear of any
+   real market (NFL passing yards top out around 600) and exists only to stop a mistyped 20000
+   from flattening the bar chart against its own scale. */
+function pcClampLine(n){ return Math.max(1, Math.min(999, Math.round(n) || 1)); }
 function pcDefaultLine(key, name, mkt){
   // The MAIN line, not the best price. bestPriceFor returns the longest odds, which on a milestone
   // ladder is the furthest rung - so an anytime-TD market opened on "3+" at $151 and showed 0/10,
@@ -8622,9 +8646,19 @@ function ppCalc(key, name){
         return '<button class="sl-chip'+(m[0] === st.mkt ? ' on' : '')+'" onclick="LAB.pcMkt(\'' + m[0] + '\')">'
           + esc(m[1])+'</button>'; }).join('')+'</div>'
     + '<div class="pc-row"><span class="pc-step">'
-      + '<button onclick="LAB.pcLine(-1)">\u2212</button>'
-      + '<span class="pc-line">'+(over ? st.line+'+' : 'U'+st.line)+'</span>'
-      + '<button onclick="LAB.pcLine(1)">+</button></span>'
+      + '<button onclick="LAB.pcLine(-1)" aria-label="Lower the line">\u2212</button>'
+      + '<span class="pc-val">'
+        + (over ? '' : '<i class="pc-fix">U</i>')
+        // onchange, not oninput: the page re-renders on every state change, and re-rendering on
+        // each keystroke would tear the field out from under the caret after the first digit
+        + '<input class="pc-line" type="number" inputmode="numeric" min="1" max="999" step="1"'
+          + ' style="text-align:'+(over ? 'right' : 'left')+'"'
+          + ' aria-label="Line" value="'+st.line+'" onfocus="this.select()"'
+          + ' onchange="LAB.pcLineSet(this.value)"'
+          + ' onkeydown="if(event.key===\'Enter\'){event.preventDefault();this.blur();}">'
+        + (over ? '<i class="pc-fix">+</i>' : '')
+      + '</span>'
+      + '<button onclick="LAB.pcLine(1)" aria-label="Raise the line">+</button></span>'
       + '<span class="pc-hr"><b>'+(rate == null ? '\u2014' : Math.round(rate*100)+'%')+'</b>'
       + '<span>'+hits+'/'+vals.length+' '+esc(st.scope === 'h2h' ? 'v '+(opp ? abbrOf(key, opp) : 'opp')
           : (st.scope === 'season' ? 'this season' : st.scope.toUpperCase()))+'</span></span></div>'
@@ -17791,8 +17825,38 @@ window.LAB = {
     var st = state.view.pc; if (!st) return;
     st.mkt = m; st.line = pcDefaultLine(state.view.player.sport, st.name, m); render();
   },
-  pcLine: function(d){ var st = state.view.pc; if (!st) return; st.line = Math.max(1, st.line + d); render(); },
+  pcLine: function(d){ var st = state.view.pc; if (!st) return; st.line = pcClampLine(st.line + d); render(); },
+  /* The typed line. A line the calculator cannot work with is REFUSED rather than coerced: an
+     empty box, a word, a negative - any of those would otherwise land in state.view.pc.line and
+     come out the far end as a 0% hit rate and a flat row of bars, which reads like an answer. The
+     re-render puts the last good number back in the box instead.
+     A typed half line resolves to the threshold typed: the calculator holds whole lines and reads
+     "20+" as over 19.5, so 20.5 rounds to 21 and tests at exactly 20.5. */
+  pcLineSet: function(v){
+    var st = state.view.pc; if (!st) return;
+    var n = Math.round(parseFloat(v));
+    if (isFinite(n)) st.line = pcClampLine(n);
+    render();
+  },
   pcSide: function(sd){ var st = state.view.pc; if (!st) return; st.side = sd; render(); },
+  /* exposed for tests: the prop calculator for one player, rendered, plus the line state it ended
+     on. The line is typable now, and what has to hold is that a box the reader can put anything
+     into cannot put a line the calculator will silently mis-answer into the state. */
+  pcProbe: function(key, name, typed, side){
+    var wasP = state.view.player, wasC = state.view.pc;
+    try {
+      state.view.player = { sport:key, name:name };
+      state.view.pc = null;
+      var first = ppCalc(key, name);                 // settles on the default line
+      if (side) state.view.pc.side = side;
+      // an array types one value after another into the same panel, which is the only way to ask
+      // "what happens when a good line is replaced by a bad one"
+      if (typed !== undefined)
+        (Array.isArray(typed) ? typed : [typed]).forEach(function(v){ LAB.pcLineSet(v); });
+      return { html:ppCalc(key, name), line:(state.view.pc || {}).line, first:first,
+               side:(state.view.pc || {}).side };
+    } finally { state.view.player = wasP; state.view.pc = wasC; }
+  },
   pcScope: function(sc){ var st = state.view.pc; if (!st) return; st.scope = sc; render(); },
   pcAdd: function(){
     var st = state.view.pc, pv = state.view.player;
