@@ -1,17 +1,24 @@
 name: JTT Signal Ledger
 
 # Two jobs on one file:
-#   snapshot - every 30 minutes, record the signals the tool is showing for any game about an hour
-#              out. A fixed lead time is the point: grading "whatever is showing" would make the
-#              record depend on when the grader looked, and the window could be tuned afterwards to
-#              flatter the results.
+#   snapshot - record the signals the tool is showing for any game between 15 minutes and 4 hours
+#              out, and keep for each game the snapshot taken CLOSEST to the hour mark. The window
+#              used to be 35 minutes wide, which only works if the run actually happens: GitHub's
+#              scheduled runs arrive late and get dropped, and in the ledger's first week that cost
+#              every NFL game that was played. Every row now carries the lead time it was taken at,
+#              so the fixed lead is a recorded fact rather than something a punctual cron enforces.
 #   grade    - settle the rows whose game has been played and publish the per-tile record.
 
 on:
   schedule:
-    - cron: "*/30 * * * *"     # catch every game once, an hour before it starts
+    - cron: "*/30 * * * *"     # catch every game as near the hour mark as a run allows
     - cron: "15 13 * * *"      # and settle yesterday's once the gamelogs have landed
   workflow_dispatch:
+    inputs:
+      regrade:
+        description: "Re-settle rows previously written off as void (wins and losses are never touched)"
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -37,17 +44,26 @@ jobs:
         with:
           python-version: "3.12"
 
+      # continue-on-error, not "|| true": both of these used to swallow their own exit code, so a
+      # crashed snapshot and a snapshot that found no games looked identical - a green tick and an
+      # unchanged file. The job still reaches the commit step either way, but a failure now shows.
       - name: Snapshot the signals showing now
+        continue-on-error: true
         run: |
           # the page reads its data from the repo itself, so --serve is the checkout
           node --max-old-space-size=6000 scripts/snapshot_signals.js \
             --serve . --page index.html --out data/signal_log.json \
-            --lead 60 --window 35 || true
+            --lead 60 --min-lead 15 --max-lead 240
 
+      # --regrade void is for the one case a grader is allowed to revisit: a row written off as
+      # "did not play" when the real cause was a bug or a feed that had not caught up. A win or a
+      # loss is history and is never re-cut. Run it from the Actions tab with the box ticked.
       - name: Grade what has been played
+        continue-on-error: true
         run: |
           python3 scripts/grade_signals.py \
-            --log data/signal_log.json --root . --out data/signal_report.json || true
+            --log data/signal_log.json --root . --out data/signal_report.json \
+            --regrade ${{ (github.event_name == 'workflow_dispatch' && inputs.regrade) && 'void' || 'none' }}
 
       - name: Commit
         run: |
