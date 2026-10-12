@@ -13034,7 +13034,21 @@ function resultsSplit(title, groups, unit){
    A tile with too few graded bets shows NOTHING rather than a number: 3 from 4 is not a 75% signal,
    and printing it would be worse than printing nothing.                                          */
 var SIG_REC_MIN = 30;        // graded bets before a record is worth showing
-var SIG_REC = { loaded:false, byTile:{}, updated:null };
+var SIG_REC = { loaded:false, byTile:{}, updated:null, waiting:null };
+/* Signals captured but not settled, per sport. A sport whose rows are ALL still open has no line
+   in the table below, and for three weeks that is how the record hid its own worst bug: eight MLB
+   rows were voided for a feed that stops at the end of the regular season, and the table simply
+   did not mention MLB. An unsettled row is now said out loud. */
+function signalWaitingNote(){
+  var w = SIG_REC.waiting; if (!w) return '';
+  var parts = Object.keys(w).sort().map(function(s){
+    var v = w[s] || {}, n = +v.open || 0; if (!n) return null;
+    return n + ' ' + String(s).toUpperCase()
+      + (v.stalled ? ' (' + v.stalled + ' waiting on the game logs)' : '');
+  }).filter(Boolean);
+  if (!parts.length) return '';
+  return 'Still to settle: ' + parts.join(', ') + '. Those are not counted above. ';
+}
 function loadSignalRecord(){
   if (SIG_REC.loaded || SIG_REC.loading) return;
   SIG_REC.loading = true;
@@ -13044,6 +13058,7 @@ function loadSignalRecord(){
       SIG_REC.loaded = true; SIG_REC.loading = false;
       if (!j || !j.tiles) return;
       SIG_REC.updated = j.updated || null;
+      SIG_REC.waiting = j.waiting || null;
       j.tiles.forEach(function(t){
         var decided = (+t.w || 0) + (+t.l || 0);
         SIG_REC.byTile[(t.sport || '') + '|' + (t.tile || '')] = {
@@ -13071,7 +13086,13 @@ function signalRecordSection(){
     return { sport:bits[0], tile:bits[1], r:r };
   }).filter(function(x){ return x.r.decided > 0; })
     .sort(function(a, b){ return b.r.u - a.r.u; });
-  if (!rows.length) return '';
+  var waitNote = signalWaitingNote();
+  // nothing settled yet, but rows are logged and waiting: say so rather than show an empty page
+  if (!rows.length) return waitNote
+    ? '<div class="dayband"><span>How the signals have done</span></div>'
+      + '<div class="deg-note">Nothing has settled yet. ' + waitNote
+      + (SIG_REC.updated ? 'Checked ' + esc(SIG_REC.updated) + '.' : '') + '</div>'
+    : '';
   var thin = rows.filter(function(x){ return x.r.decided < SIG_REC_MIN; }).length;
   var body = rows.map(function(x){
     var r = x.r, pos = r.u >= 0, young = r.decided < SIG_REC_MIN;
@@ -13086,10 +13107,12 @@ function signalRecordSection(){
   return '<div class="dayband"><span>How the signals have done</span></div>'
     + '<div class="st-wrap"><table class="st-t sr-t-tbl"><thead><tr><th>Signal</th><th>Bets</th>'
     + '<th>Hit</th><th>Units</th><th>ROI</th></tr></thead><tbody>' + body + '</tbody></table></div>'
-    + '<div class="deg-note">Every signal is recorded an hour before its game and settled from the '
-    + 'game logs, at one unit a bet. A player who did not take the field is a void, not a loss. '
+    + '<div class="deg-note">Every signal is recorded as close to an hour before its game as the '
+    + 'snapshot gets, and settled from the game logs at one unit a bet. A player who did not take '
+    + 'the field is a void, not a loss. '
     + (thin ? 'Rows in grey have fewer than ' + SIG_REC_MIN + ' settled bets \u2014 too few to read '
         + 'anything into. ' : '')
+    + waitNote
     + (SIG_REC.updated ? 'Updated ' + esc(SIG_REC.updated) + '.' : '') + '</div>';
 }
 function resultsPage(){
@@ -18106,6 +18129,26 @@ window.LAB = {
         inN:s.inN, rate:dnaPlayerRate(k, n, s) }; }),
       preReal:N.preReal.map(function(s){ return s.id; }),
       pre:N.pre.map(function(s){ return { id:s.id, z:s.z, real:s.real }; }) }; },
+  /* exposed for tests: the signal record rendered from a given report, without a fetch. The
+     report's shape is the contract between the grader and this page, and the thing that has to
+     hold is that a sport with nothing settled is still MENTIONED - a silently absent sport is
+     how eight wrongly-voided MLB rows went unnoticed for three weeks. */
+  sigRecProbe: function(report){
+    var keepT = SIG_REC.byTile, keepU = SIG_REC.updated, keepW = SIG_REC.waiting;
+    try {
+      SIG_REC.byTile = {}; SIG_REC.updated = (report && report.updated) || null;
+      SIG_REC.waiting = (report && report.waiting) || null;
+      ((report && report.tiles) || []).forEach(function(t){
+        var decided = (+t.w || 0) + (+t.l || 0);
+        SIG_REC.byTile[(t.sport || '') + '|' + (t.tile || '')] = {
+          n:+t.n || 0, decided:decided, w:+t.w || 0, l:+t.l || 0, v:+t.v || 0, u:+t.u || 0,
+          hit:decided ? (+t.w || 0) / decided : null,
+          roi:decided ? (+t.u || 0) / decided : null };
+      });
+      return { html:signalRecordSection(), waiting:signalWaitingNote(),
+               tiles:Object.keys(SIG_REC.byTile).length };
+    } finally { SIG_REC.byTile = keepT; SIG_REC.updated = keepU; SIG_REC.waiting = keepW; }
+  },
   legProbe: function(l){ return legMatch(l); },
   liveProbe: function(src){ return { rows: liveLegRows(src), games: liveGames(src), feeds: liveFeedNames() }; },
   // exposed for tests: the Live Tips page with a given ledger and a given set of filters
