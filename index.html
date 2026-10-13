@@ -13090,20 +13090,34 @@ function loadSignalRecord(){
     .then(function(r){ return r.ok ? r.json() : null; })
     .then(function(j){
       SIG_REC.loaded = true; SIG_REC.loading = false;
+      sigRecAbsorb(j);
+      render();
+    })
+    .catch(function(){ SIG_REC.loaded = true; SIG_REC.loading = false; });
+}
+/* The report's shape, read in ONE place. This used to be written out twice - once here and once
+   in the test probe - and the copies drifted: the probe never learned about the priced count, so
+   it rendered dashes for tiles that had perfectly good units and proved nothing. */
+function sigRecAbsorb(j){
       if (!j || !j.tiles) return;
+      SIG_REC.byTile = {};
       SIG_REC.updated = j.updated || null;
       SIG_REC.waiting = j.waiting || null;
       j.tiles.forEach(function(t){
         var decided = (+t.w || 0) + (+t.l || 0);
+        /* 'p' is how many of those decided bets carry a price. Units and ROI are measured over
+           THOSE, not over every bet: three Elite Matchups signals were logged with the line in
+           the price field, and reporting their units as if they were real is what put +305.0u
+           and +10167% on this table. A report written before 'p' existed is read as fully
+           priced, which is what it meant at the time. */
+        var priced = t.p == null ? decided : (+t.p || 0);
         SIG_REC.byTile[(t.sport || '') + '|' + (t.tile || '')] = {
-          n:+t.n || 0, decided:decided, w:+t.w || 0, l:+t.l || 0, v:+t.v || 0, u:+t.u || 0,
+          n:+t.n || 0, decided:decided, priced:priced,
+          w:+t.w || 0, l:+t.l || 0, v:+t.v || 0, u:+t.u || 0,
           hit:decided ? (+t.w || 0) / decided : null,
-          roi:decided ? (+t.u || 0) / decided : null
+          roi:priced ? (+t.u || 0) / priced : null
         };
       });
-      render();
-    })
-    .catch(function(){ SIG_REC.loaded = true; SIG_REC.loading = false; });
 }
 function tileRecord(key, title){
   var r = SIG_REC.byTile[key + '|' + title];
@@ -13128,14 +13142,19 @@ function signalRecordSection(){
       + (SIG_REC.updated ? 'Checked ' + esc(SIG_REC.updated) + '.' : '') + '</div>'
     : '';
   var thin = rows.filter(function(x){ return x.r.decided < SIG_REC_MIN; }).length;
+  // a tile whose rows carry no price knows whether the signals came in, and nothing about what
+  // they paid. It says the first and declines the second, rather than printing a 0 that reads
+  // like a break-even record.
+  var unpriced = rows.filter(function(x){ return x.r.priced < x.r.decided; });
   var body = rows.map(function(x){
-    var r = x.r, pos = r.u >= 0, young = r.decided < SIG_REC_MIN;
+    var r = x.r, pos = r.u >= 0, young = r.decided < SIG_REC_MIN, none = !r.priced;
     return '<tr class="' + (young ? 'sr-young' : '') + '">'
       + '<td class="sr-t">' + esc(x.tile) + '<i>' + esc(String(x.sport).toUpperCase()) + '</i></td>'
       + '<td>' + r.decided + '</td>'
       + '<td>' + (r.hit != null ? Math.round(r.hit * 100) + '%' : '\u2014') + '</td>'
-      + '<td class="' + (pos ? 'good' : 'bad') + '">' + (pos ? '+' : '') + r.u.toFixed(1) + 'u</td>'
-      + '<td class="' + (pos ? 'good' : 'bad') + '">' + (r.roi != null
+      + '<td class="' + (none ? '' : pos ? 'good' : 'bad') + '">'
+        + (none ? '\u2014' : (pos ? '+' : '') + r.u.toFixed(1) + 'u') + '</td>'
+      + '<td class="' + (none ? '' : pos ? 'good' : 'bad') + '">' + (r.roi != null
           ? (r.roi >= 0 ? '+' : '') + Math.round(r.roi * 100) + '%' : '\u2014') + '</td></tr>';
   }).join('');
   return '<div class="dayband"><span>How the signals have done</span></div>'
@@ -13146,6 +13165,9 @@ function signalRecordSection(){
     + 'the field is a void, not a loss. '
     + (thin ? 'Rows in grey have fewer than ' + SIG_REC_MIN + ' settled bets \u2014 too few to read '
         + 'anything into. ' : '')
+    + (unpriced.length ? 'A dash under units means the price those signals were posted at was not '
+        + 'recorded, so what they returned is unknown \u2014 they still count toward the hit rate. '
+        : '')
     + waitNote
     + (SIG_REC.updated ? 'Updated ' + esc(SIG_REC.updated) + '.' : '') + '</div>';
 }
@@ -18239,17 +18261,12 @@ window.LAB = {
   sigRecProbe: function(report){
     var keepT = SIG_REC.byTile, keepU = SIG_REC.updated, keepW = SIG_REC.waiting;
     try {
-      SIG_REC.byTile = {}; SIG_REC.updated = (report && report.updated) || null;
-      SIG_REC.waiting = (report && report.waiting) || null;
-      ((report && report.tiles) || []).forEach(function(t){
-        var decided = (+t.w || 0) + (+t.l || 0);
-        SIG_REC.byTile[(t.sport || '') + '|' + (t.tile || '')] = {
-          n:+t.n || 0, decided:decided, w:+t.w || 0, l:+t.l || 0, v:+t.v || 0, u:+t.u || 0,
-          hit:decided ? (+t.w || 0) / decided : null,
-          roi:decided ? (+t.u || 0) / decided : null };
-      });
+      // the SAME reader the live fetch uses, so this can never prove something about a shape the
+      // page does not actually read
+      SIG_REC.byTile = {}; SIG_REC.updated = null; SIG_REC.waiting = null;
+      sigRecAbsorb(report);
       return { html:signalRecordSection(), waiting:signalWaitingNote(),
-               tiles:Object.keys(SIG_REC.byTile).length };
+               tiles:Object.keys(SIG_REC.byTile).length, byTile:SIG_REC.byTile };
     } finally { SIG_REC.byTile = keepT; SIG_REC.updated = keepU; SIG_REC.waiting = keepW; }
   },
   legProbe: function(l){ return legMatch(l); },
