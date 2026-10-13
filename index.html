@@ -13417,16 +13417,51 @@ function livePoll(){
   if (!state.view.liveOpen && !LIVE.pip && !livePubOpen()) return;
   LIVE.timer = setTimeout(function(){ liveFetch(); livePoll(); }, 30000);
 }
-function liveFind(j, name, kind){
-  var want = cmbNameKey(name), games = (j && j.games) || [];
+/* OUR NAME FOR A MAN AND THE FEED'S NAME FOR HIM ARE NOT THE SAME NAME.
+   Our data has "James Cook"; ESPN's live boxscore has "James Cook III". cmbNameKey strips the
+   punctuation but keeps the suffix, so the keys differed by three letters and the tracker reported
+   a man playing in front of him as "not in the live feed". It runs both ways - 113 of our own NFL
+   players carry a suffix the feed may drop.
+   The last word is only dropped when there is something in front of it to keep: a two-word name is
+   never cut down to one. */
+var LIVE_SUFFIX = { jr:1, sr:1, ii:1, iii:1, iv:1, v:1, vi:1 };
+function cmbNameBase(x){
+  var parts = String(x || '').normalize('NFD').replace(/[̀-ͯ]/g, '')
+    .toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim().split(' ');
+  while (parts.length > 2 && LIVE_SUFFIX[parts[parts.length - 1]]) parts.pop();
+  return parts.join('');
+}
+/* THE SUFFIX IS NOT NOISE. Byron Murphy is a Vikings corner and Byron Murphy II is a Seahawks
+   tackle; Chris Smith, DJ Turner, David Long and Michael Carter all have a II or a Jr. who is a
+   different man. Five pairs in the NFL list alone would collapse into one if the suffix were
+   simply thrown away, and the tracker would put one man's tackles against a bet on the other -
+   a wrong number stated confidently, which is worse than the blank it replaced.
+   So an exact key always wins, and the suffix-tolerant match is used ONLY when it can mean one
+   man. Two candidates and it refuses, and the panel says why. */
+function liveLookup(j, name, kind){
+  var want = cmbNameKey(name), base = cmbNameBase(name), games = (j && j.games) || [];
+  var loose = [];
   for (var i = 0; i < games.length; i++){
     var arr = (games[i][kind] || games[i].players || []);
     for (var n = 0; n < arr.length; n++){
-      if (cmbNameKey(arr[n].name || '') === want) return { p:arr[n], g:games[i] };
+      var nm = arr[n].name || '';
+      if (cmbNameKey(nm) === want) return { hit:{ p:arr[n], g:games[i] }, loose:0 };
+      if (base && cmbNameBase(nm) === base) loose.push({ p:arr[n], g:games[i] });
     }
   }
-  return null;
+  return { hit:(loose.length === 1 ? loose[0] : null), loose:loose.length };
 }
+// every kind the feeds use, so "is he in the feed at all" asks the same question as the lookup
+function liveLookupAny(j, name){
+  var best = { hit:null, loose:0 };
+  ['players', 'batters', 'pitchers'].forEach(function(k){
+    var r = liveLookup(j, name, k);
+    if (r.hit && !best.hit) best.hit = r.hit;
+    if (r.loose > best.loose) best.loose = r.loose;
+  });
+  return best;
+}
+function liveFind(j, name, kind){ return liveLookup(j, name, kind).hit; }
 function liveStatFor(key, name, mkt){
   var j = LIVE.data[key]; if (!j) return null;
   // MLB's feed splits batters and pitchers and uses its own abbreviations; every other sport's
@@ -13465,10 +13500,14 @@ function liveLegRows(src){
     if (!untracked && have == null && l.key !== 'other'){
       var live = (feed && feed.games || []).filter(function(gm){ return (gm.players || []).length; });
       if (live.length){
-        var known = false;
-        live.forEach(function(gm){ (gm.players || []).forEach(function(pl){
-          if (!known && cmbNameKey(pl.name) === cmbNameKey(l.name)) known = true; }); });
-        if (!known){ untracked = true; why = 'not in the live feed for ' + (SPORTS[l.key] ? SPORTS[l.key].name : 'this sport'); }
+        // the same question the lookup asks, so the message can never contradict the bar above it
+        var look = liveLookupAny(feed, l.name);
+        if (!look.hit){
+          untracked = true;
+          why = look.loose > 1
+            ? 'more than one ' + l.name + ' in the live feed — not guessing which'
+            : 'not in the live feed for ' + (SPORTS[l.key] ? SPORTS[l.key].name : 'this sport');
+        }
       }
     }
     if (l.key === 'other'){ untracked = true; why = 'no live feed for this sport'; }
@@ -18215,6 +18254,13 @@ window.LAB = {
   },
   legProbe: function(l){ return legMatch(l); },
   liveProbe: function(src){ return { rows: liveLegRows(src), games: liveGames(src), feeds: liveFeedNames() }; },
+  // exposed for tests: drive the tracker against a given live payload instead of the network
+  liveFeedProbe: function(key, feed, src){
+    var was = LIVE.data[key];
+    try { LIVE.data[key] = feed; return liveLegRows(src); }
+    finally { if (was === undefined) delete LIVE.data[key]; else LIVE.data[key] = was; }
+  },
+  liveNameProbe: function(feed, name){ return liveLookupAny(feed, name); },
   // exposed for tests: the Live Tips page with a given ledger and a given set of filters
   tipsProbe: function(bets, filters){
     var wasR = state.results, wasT = state.view.tab;
