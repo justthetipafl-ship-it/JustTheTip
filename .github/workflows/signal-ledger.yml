@@ -19,6 +19,10 @@ on:
         description: "Re-settle rows previously written off as void (wins and losses are never touched)"
         type: boolean
         default: false
+      repair_prices:
+        description: "Clear prices on Elite Matchups / Bunnies / Bogey rows that recorded the line instead of the odds"
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -63,7 +67,8 @@ jobs:
         run: |
           python3 scripts/grade_signals.py \
             --log data/signal_log.json --root . --out data/signal_report.json \
-            --regrade ${{ (github.event_name == 'workflow_dispatch' && inputs.regrade) && 'void' || 'none' }}
+            --regrade ${{ (github.event_name == 'workflow_dispatch' && inputs.regrade) && 'void' || 'none' }} \
+            ${{ (github.event_name == 'workflow_dispatch' && inputs.repair_prices) && '--repair-prices' || '' }}
 
       - name: Commit
         run: |
