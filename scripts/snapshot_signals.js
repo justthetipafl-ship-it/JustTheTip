@@ -193,9 +193,17 @@ const wait = ms => new Promise(r => setTimeout(r, ms));
           try { spec = btn ? JSON.parse(btn.getAttribute('data-d')) : null; } catch (e) {}
           const name = ((row.querySelector('.gl-nm b, .stk-nm b, .elm-nm b, .h2h-sig-nm b') || {}).textContent || '').trim();
           if (!name) return;
-          // every row type names its price box differently
+          /* every row type names its price box differently, and they do not all put the price
+             first. Elite Matchups, Bunnies and Bogey render "270+ $3.05 Sportsbet" - the LINE,
+             then the price. The dollar sign used to be optional in this pattern, so those rows
+             logged 270 as the price, and the ledger paid a winner at 269-to-1: three NFL signals
+             came out at +305 units and the published record said Elite Matchups was running at
+             +10167% ROI.
+             The dollar sign is now required. Every box that holds a price prints one, so a number
+             without it is not a price, and null is the right answer - a missing price costs the
+             row its units, a wrong one poisons the whole tile. */
           const priceTxt = ((row.querySelector('.gl-odds, .stk-odds, .elm-odds, .h2h-sig-odds') || {}).textContent || '');
-          const price = parseFloat((priceTxt.match(/\$?([\d.]+)/) || [])[1]);
+          const price = parseFloat((priceTxt.match(/\$\s*([\d.]+)/) || [])[1]);
           const evTxt = ((row.querySelector('.gl-ev') || {}).textContent || '');
           const ev = parseFloat(evTxt.replace('%', ''));
           // the key is the BET, not the moment: one row per player-market-line-fixture
