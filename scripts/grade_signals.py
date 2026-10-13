@@ -41,6 +41,7 @@ wrong answer.
 import argparse
 import datetime
 import json
+import math
 import os
 import re
 import sys
@@ -286,22 +287,77 @@ def grade(rows, root, regrade='none'):
     return settled, dict(hows), {k: v for k, v in waiting.items()}
 
 
+def price_of(b):
+    """The row's price, or None when it does not have one worth counting.
+
+    Decimal odds are always greater than 1. Anything else - a missing price, a zero, a 1.00 that
+    pays nothing back - is not a price, and must not be quietly read as even money: `price or 1`
+    used to turn a priceless winner into a bet that returned exactly its stake.
+    """
+    try:
+        p = float(b.get('price'))
+    except (TypeError, ValueError):
+        return None
+    return p if p > 1 else None
+
+
 def report_of(rows, stake):
-    tiles = defaultdict(lambda: {'n': 0, 'w': 0, 'l': 0, 'v': 0, 'u': 0.0})
+    """Per tile: bets, record, and units over the rows that HAVE a price.
+
+    'p' counts the decided rows that carry one. Units and ROI are measured over those alone, so a
+    row whose price was lost still counts toward the hit rate - the signal either came in or it
+    did not - without inventing a return for it.
+    """
+    tiles = defaultdict(lambda: {'n': 0, 'w': 0, 'l': 0, 'v': 0, 'u': 0.0, 'p': 0})
     for b in rows:
         if not b.get('result'):
             continue
         t = tiles[(b.get('sport'), b.get('tile'))]
         t['n'] += 1
+        price = price_of(b)
         if b['result'] == 'win':
             t['w'] += 1
-            t['u'] += (float(b.get('price') or 1) - 1) * stake
+            if price is not None:
+                t['u'] += (price - 1) * stake
+                t['p'] += 1
         elif b['result'] == 'loss':
             t['l'] += 1
-            t['u'] -= stake
+            if price is not None:
+                t['u'] -= stake
+                t['p'] += 1
         else:
             t['v'] += 1
     return sorted(tiles.items(), key=lambda kv: -kv[1]['u'])
+
+
+# The three tiles that rendered the line in front of the price, so every price the snapshot read
+# off them was the line. The price at the moment of capture is gone - it is not in the ledger and
+# re-reading it from a later odds file would be a different number wearing the same label - so the
+# repair is to admit it is missing, not to replace it.
+LINE_FIRST_TILES = {'elite matchups', 'bunnies', 'bogey'}
+
+
+def repair_prices(rows):
+    """Null the prices that are provably the line. Returns how many were cleared."""
+    n = 0
+    for b in rows:
+        if str(b.get('tile') or '').strip().lower() not in LINE_FIRST_TILES:
+            continue
+        price, line = price_of(b), b.get('line')
+        if price is None or line is None:
+            continue
+        try:
+            line = float(line)
+        except (TypeError, ValueError):
+            continue
+        # the box printed ceil(line) for an over - line+1 where the line is already whole - and the
+        # bare line for an under. Both conditions together with the tile, so a genuine $3.00 on a
+        # 2.5 line in any OTHER tile is never touched.
+        ask = line + 1 if line == int(line) else math.ceil(line)
+        if abs(price - ask) < 1e-9 or abs(price - line) < 1e-9:
+            b['price'] = None
+            n += 1
+    return n
 
 
 def main():
@@ -313,6 +369,9 @@ def main():
     ap.add_argument('--regrade', choices=['none', 'void'], default='none',
                     help="'void' clears rows previously written off and settles them again; wins "
                          "and losses are never revisited")
+    ap.add_argument('--repair-prices', action='store_true',
+                    help='clear the prices on Elite Matchups / Bunnies / Bogey rows that are '
+                         'actually the line (see LINE_FIRST_TILES)')
     ap.add_argument('--dry-run', action='store_true', help='grade and report, write nothing')
     ap.add_argument('--selftest', action='store_true')
     a = ap.parse_args()
@@ -326,6 +385,9 @@ def main():
         print('signal ledger is empty - nothing to grade')
         return 0
 
+    fixed = repair_prices(rows) if a.repair_prices else 0
+    if a.repair_prices:
+        print('repaired %d row(s) whose price was the line' % fixed)
     settled, hows, waiting = grade(rows, a.root, a.regrade)
     order = report_of(rows, a.stake)
 
@@ -333,9 +395,12 @@ def main():
     for (sport, tile), t in order:
         decided = t['w'] + t['l']
         hit = ('%.0f%%' % (t['w'] / decided * 100)) if decided else '-'
-        staked = decided * a.stake
+        # staked over the PRICED rows only - the ones the units were actually measured on
+        staked = t['p'] * a.stake
         roi = ('%+.1f%%' % (t['u'] / staked * 100)) if staked else '-'
-        print('%-6s %-22s %5d %6s %+8.2f %8s' % (sport, (tile or '?')[:22], t['n'], hit, t['u'], roi))
+        note = '' if t['p'] == decided else '  (%d of %d priced)' % (t['p'], decided)
+        print('%-6s %-22s %5d %6s %+8.2f %8s%s'
+              % (sport, (tile or '?')[:22], t['n'], hit, t['u'], roi, note))
 
     tiles = [t for _, t in order]
     tot_u = sum(t['u'] for t in tiles)
@@ -515,6 +580,46 @@ def selftest():
     (_, t), = report_of(rows, 1.0)
     ok('a void is not a loss in the units', abs(t['u'] - 0.5) < 1e-9, '(+1.5 -1.0, void ignored)')
     ok('and is not counted in the hit rate', t['w'] + t['l'] == 2 and t['v'] == 1)
+
+    print('THE PRICE THAT WAS NOT A PRICE')
+    # Elite Matchups renders "270+ $3.05" - the line, then the price - and the scrape took the
+    # first number it saw. A 269.5-yard passing line came back as a price of 270, and one winner
+    # paid 269 units. The published table read +305.0u at +10167% ROI.
+    rows = [bet(result='win', tile='Elite Matchups', market='passYds', line=269.5, price=270),
+            bet(result='win', tile='Elite Matchups', market='passAtt', line=37.5, price=38),
+            bet(result='loss', tile='Elite Matchups', market='recYds', line=59.5, price=60)]
+    n = repair_prices(rows)
+    ok('a price that is only the line rounded up is cleared', n == 3
+       and all(b['price'] is None for b in rows), '(270 on a 269.5 line is not odds)')
+    (_, t), = report_of(rows, 1.0)
+    ok('and the tile then claims no units at all', t['u'] == 0 and t['p'] == 0,
+       '(was +305.0u from three bets)')
+    ok('but the signals still count toward the record',
+       t['n'] == 3 and t['w'] == 2 and t['l'] == 1,
+       '(the bets happened; only what they paid is unknown)')
+
+    # a priceless winner must not be read as even money
+    rows = [bet(result='win', tile='T', price=None), bet(result='loss', tile='T', price=None)]
+    (_, t), = report_of(rows, 1.0)
+    ok('a row with no price is kept out of the units entirely',
+       t['u'] == 0 and t['p'] == 0 and t['w'] + t['l'] == 2,
+       '(a missing price used to be read as 1.00 - a winner that returned the stake)')
+    rows = [bet(result='win', tile='T', price=1.0)]
+    (_, t), = report_of(rows, 1.0)
+    ok('and so is a price of 1.00, which pays nothing', t['p'] == 0)
+
+    # the repair is scoped: an identical-looking price in another tile is left alone
+    rows = [bet(result='win', tile='Shot Machines', market='shots', line=2.5, price=3.0)]
+    ok('a genuine $3.00 on a 2.5 line in another tile is untouched',
+       repair_prices(rows) == 0 and rows[0]['price'] == 3.0,
+       '(only the three tiles that printed the line first)')
+    rows = [bet(result='win', tile='Bunnies', market='shots', line=2.5, price=3.4)]
+    ok('and a real price in an affected tile survives too',
+       repair_prices(rows) == 0 and rows[0]['price'] == 3.4,
+       '(3.4 is not ceil(2.5))')
+    rows = [bet(result='win', tile='Bogey', market='recYds', line=59.5, price=59.5, side='under')]
+    ok('an under row that logged the bare line is cleared as well',
+       repair_prices(rows) == 1 and rows[0]['price'] is None, '("U59.5 $2.10")')
 
     print(('\nFAILED: ' + ', '.join(fails)) if fails else '\nall good')
     return 1 if fails else 0
