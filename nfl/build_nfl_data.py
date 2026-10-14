@@ -102,6 +102,69 @@ def _short(full):
     if len(parts) < 2: return _norm(full)
     return _norm(parts[0][0] + "." + " ".join(parts[1:]))
 
+NAME_SUFFIX = {"jr", "jr.", "sr", "sr.", "ii", "iii", "iv", "v", "vi"}
+
+def _short_keys(full):
+    """Every short form the play-by-play might use for this man, best first.
+
+    The pbp writes 'K.Walker'. The roster writes 'Kenneth Walker III', and _short carried the
+    suffix straight into the key - 'k.walker iii' - which the pbp will never send. Every player
+    with a generational suffix therefore failed to resolve and had his play skipped: on the 2026
+    file, 0 of 7 suffixed names with 15+ targets reached redzone.json against 94% of the 108
+    without one - Kenneth Walker III, Chris Godwin Jr., Deebo Samuel Sr., Harold Fannin Jr.,
+    Luther Burden III, Oronde Gadsden II and Ted Hurst III, none with a single red-zone carry or
+    target on file.
+
+    The raw form stays first and stays indexed, so no key that resolves today changes.
+    """
+    raw = _short(full)
+    out = [raw]
+    parts = str(full or "").strip().split()
+    while len(parts) > 2 and _norm(parts[-1]) in NAME_SUFFIX:
+        parts = parts[:-1]
+    if len(parts) >= 2:
+        stripped = _norm(parts[0][0] + "." + " ".join(parts[1:]))
+        if stripped != raw:
+            out.append(stripped)
+    return out
+
+
+def resolve_pbp_name(team, short_raw, pid_raw, short_idx, id_idx):
+    """One man, found by id where the feed gives one and by short name otherwise.
+
+    The id is tried first because it is the only thing that survives two players sharing a short
+    name. Atlanta carry Bijan Robinson and Brian Robinson; both are 'b.robinson', so the name
+    index marks that key ambiguous and - quite rightly, since guessing would put one man's carries
+    on the other - drops every play for both. That silently removed the league's leading rusher
+    from every red-zone number on the site. An id tells them apart and needs no guess.
+
+    Returns (full_name_or_None, why) so the caller can say which plays went unmatched and why.
+    """
+    pid = str(pid_raw or "").strip()
+    if pid and pid in id_idx:
+        return id_idx[pid], "id"
+    sn = _norm(short_raw)
+    if not sn:
+        return None, "noname"
+    hit = short_idx.get((team, sn))
+    if hit:
+        return hit, "name"
+    # key absent (nobody by that short name) vs explicitly None (two men share it)
+    return None, ("ambiguous" if (team, sn) in short_idx else "unknown")
+
+
+def _unresolved_note(label, unresolved):
+    """Name them. 'N short names unresolved' was true and useless: it was printed on every build
+    while the leading rusher was missing from the boards, and nothing in it said who."""
+    if not unresolved:
+        return
+    shown = sorted(unresolved)[:12]
+    print(f"  ({label}: {len(unresolved)} unresolved - skipped)")
+    for team, sn, why in shown:
+        print(f"      {team} {sn} ({why})")
+    if len(unresolved) > len(shown):
+        print(f"      ... and {len(unresolved) - len(shown)} more")
+
 def write_json(path, obj):
     with open(path, "w") as f:
         json.dump(obj, f, separators=(",", ":"))
@@ -456,7 +519,7 @@ def build_dbs(adv, ros, current, players=None):
     return out[:16]
 
 # ?? pbp ? Tuddy Targets red-zone splits (season totals, zone splits, team share %) ??
-def build_redzone(pbp, short_idx, current):
+def build_redzone(pbp, short_idx, current, id_idx=None):
     """Tuddy Targets boards. Zones: rz (<=20), i10 (<=10), i5 (<=5, rushing only).
     Shares are the player's slice of his TEAM's zone volume.
 
@@ -471,7 +534,13 @@ def build_redzone(pbp, short_idx, current):
     gidc = col(pbp, "game_id")
     rusher = col(pbp, "rusher_player_name", "rusher")
     recv = col(pbp, "receiver_player_name", "receiver")
+    # the ids, where the pull carries them. col() returns None for a column that is not there and
+    # g() hands back the default for a None column, so a pbp frame without ids falls straight
+    # through to the name path and behaves exactly as it did before.
+    rusher_id = col(pbp, "rusher_player_id")
+    recv_id = col(pbp, "receiver_player_id")
     posteam = col(pbp, "posteam")
+    id_idx = id_idx or {}
     comp = col(pbp, "complete_pass"); ptd = col(pbp, "pass_touchdown"); rtd = col(pbp, "rush_touchdown")
 
     # how many distinct weeks of the CURRENT season are already in the pbp pool?
@@ -536,11 +605,11 @@ def build_redzone(pbp, short_idx, current):
             try: return int(float(v or 0)) == 1
             except (TypeError, ValueError): return False
         if ptv == "pass":
-            sn = _norm(g(r, recv, ""))
-            if not sn: continue
-            full = short_idx.get((team, sn))
+            raw = g(r, recv, "")
+            if not _norm(raw): continue
+            full, why = resolve_pbp_name(team, raw, g(r, recv_id, ""), short_idx, id_idx)
             if full is None:
-                unresolved.add((team, sn)); continue
+                unresolved.add((team, _norm(raw), why)); continue
             p = pl(full, team)
             caught = onev(comp); scored = onev(ptd)
             tt["rzTgt"] += 1
@@ -551,11 +620,11 @@ def build_redzone(pbp, short_idx, current):
                 p["i10Tgt"] += 1; p["i10Rec"] += 1 if caught else 0; p["i10RecTd"] += 1 if scored else 0
                 _q["i10Tgt"] += 1
         else:
-            sn = _norm(g(r, rusher, ""))
-            if not sn: continue
-            full = short_idx.get((team, sn))
+            raw = g(r, rusher, "")
+            if not _norm(raw): continue
+            full, why = resolve_pbp_name(team, raw, g(r, rusher_id, ""), short_idx, id_idx)
             if full is None:
-                unresolved.add((team, sn)); continue
+                unresolved.add((team, _norm(raw), why)); continue
             p = pl(full, team)
             scored = onev(rtd)
             tt["rzAtt"] += 1
@@ -569,8 +638,7 @@ def build_redzone(pbp, short_idx, current):
                 tt["i5Att"] += 1
                 p["i5Att"] += 1; p["i5RushTd"] += 1 if scored else 0
                 _q["i5Att"] += 1
-    if unresolved:
-        print(f"  (redzone: {len(unresolved)} short names unresolved - skipped)")
+    _unresolved_note("redzone", unresolved)
     build_redzone.per_game = PG        # consumed by main() to stamp per-game red-zone onto gamelogs
     print(f"  redzone per-game rows: {len(PG)}")
     out = []
@@ -587,7 +655,7 @@ def build_redzone(pbp, short_idx, current):
     return out
 
 # ?? pbp ? red-zone / goal-line usage + first-TD log ?????????????????????????
-def build_pbp_derived(pbp, short_idx):
+def build_pbp_derived(pbp, short_idx, id_idx=None):
     """pbp names are short ('P.Nacua'); resolve to full names via short_idx
     {(TEAM, short_norm): full_name}. Returns (usage: fullname->rates, firsttd,
     longest: (matchId, TEAM, fullname) -> {longRec, longRush, longComp})."""
@@ -607,6 +675,9 @@ def build_pbp_derived(pbp, short_idx):
     posteam = col(pbp, "posteam")
     ygain = col(pbp, "yards_gained"); comp = col(pbp, "complete_pass")
     passer = col(pbp, "passer_player_name", "passer")
+    rusher_id = col(pbp, "rusher_player_id"); recv_id = col(pbp, "receiver_player_id")
+    passer_id = col(pbp, "passer_player_id"); tdp_id = col(pbp, "td_player_id")
+    id_idx = id_idx or {}
     def _bump(gidv, team, full, key, yards):
         d = longest.setdefault((gidv, team, full),
                                {"longRec": None, "longRush": None, "longComp": None,
@@ -623,37 +694,36 @@ def build_pbp_derived(pbp, short_idx):
         y100 = g(r, yl, None); ptv = str(g(r, pt, "") or "")
         # usage
         team_now = str(g(r, posteam, "") or "").upper()
-        def _resolve(short_raw):
-            sn = _norm(short_raw)
-            if not sn: return None
-            full = short_idx.get((team_now, sn))
+        def _resolve(short_raw, pid_col=None):
+            if not _norm(short_raw): return None
+            full, why = resolve_pbp_name(team_now, short_raw, g(r, pid_col, ""), short_idx, id_idx)
             if full is None:
-                unresolved.add((team_now, sn))
+                unresolved.add((team_now, _norm(short_raw), why))
             return full
         # longest reception / rush / completion per game (any field position)
         try: yg = float(g(r, ygain))
         except (TypeError, ValueError): yg = None
         if yg is not None and yg == yg:
             if ptv == "run":
-                nm = _resolve(g(r, rusher, ""))
+                nm = _resolve(g(r, rusher, ""), rusher_id)
                 if nm: _bump(gidv, team_now, nm, "longRush", yg)
             elif ptv == "pass":
                 cv = g(r, comp, 0)
                 try: caught = int(float(cv or 0)) == 1
                 except (TypeError, ValueError): caught = False
                 if caught:
-                    nm = _resolve(g(r, recv, ""))
+                    nm = _resolve(g(r, recv, ""), recv_id)
                     if nm: _bump(gidv, team_now, nm, "longRec", yg)
-                    qb = _resolve(g(r, passer, ""))
+                    qb = _resolve(g(r, passer, ""), passer_id)
                     if qb: _bump(gidv, team_now, qb, "longComp", yg)
         if isinstance(y100, float) and y100 <= 20:
             if ptv == "run":
-                nm = _resolve(g(r, rusher, ""))
+                nm = _resolve(g(r, rusher, ""), rusher_id)
                 if nm:
                     usage[nm]["rzCarry"] += 1; usage[nm]["games"].add(gidv)
                     if y100 <= 5: usage[nm]["glCarry"] += 1
             elif ptv == "pass":
-                nm = _resolve(g(r, recv, ""))
+                nm = _resolve(g(r, recv, ""), recv_id)
                 if nm:
                     usage[nm]["rzTgt"] += 1; usage[nm]["games"].add(gidv)
         # first TD log
@@ -667,12 +737,15 @@ def build_pbp_derived(pbp, short_idx):
             if team in sf:
                 continue
             sf.add(team); sf.add("_game")
-            full = short_idx.get((team, _norm(player)), player)
+            # this one falls back to the raw short name rather than skipping, so an unresolved
+            # scorer has always been logged as "K.Walker" rather than dropped. Same resolver and
+            # same fallback: the ids and the suffix aliases just mean it fires far less often.
+            hit, _why = resolve_pbp_name(team, player, g(r, tdp_id, ""), short_idx, id_idx)
+            full = hit or player
             firsttd.append({"season": season, "week": week, "matchId": gidv,
                             "team": team, "player": full,
                             "qtr": int(g(r, qtr, 0)), "gameFirst": game_first})
-    if unresolved:
-        print(f"  (pbp: {len(unresolved)} short names unresolved - usage skipped for them)")
+    _unresolved_note("pbp usage", unresolved)
     # collapse usage to per-game rates
     out = {}
     for nm, u in usage.items():
@@ -749,6 +822,8 @@ def build_players_gamelogs(ps, snap_idx, game_idx, current, ros=None, ngs_idx=No
     gamelogs = []
     agg = {}
     short_idx = {}          # (TEAM, short_norm) -> full name; None = ambiguous
+    id_idx = {}             # gsis player_id -> full name; the only key that survives a name clash
+    alias_pend = {}         # (TEAM, stripped_short) -> name or None, filled only where free
     for _, r in ps.iterrows():
         pos = str(g(r, pos_c, "")).strip().upper()
         pos = pos if pos in POSITIONS else DEF_GROUP.get(pos)
@@ -804,10 +879,25 @@ def build_players_gamelogs(ps, snap_idx, game_idx, current, ros=None, ngs_idx=No
         if pid in roster_espn: P["espnId"] = roster_espn[pid]
         P["rawPos"] = str(g(r, pos_c, "")).strip().upper()
         P["rows"].append(row)
-        sk = (team, _short(name))
+        if pid: id_idx[pid] = name
+        keys = _short_keys(name)
+        sk = (team, keys[0])                      # the raw form, exactly as before
         prev = short_idx.get(sk, "__unset__")
         if prev == "__unset__": short_idx[sk] = name
         elif prev != name: short_idx[sk] = None   # ambiguous on this team
+        # the suffix-stripped form is held back and only applied where it does not touch a key
+        # the raw pass already owns - so adding it cannot stop anything resolving today
+        for alt in keys[1:]:
+            ak = (team, alt)
+            ap = alias_pend.get(ak, "__unset__")
+            if ap == "__unset__": alias_pend[ak] = name
+            elif ap != name: alias_pend[ak] = None
+
+    # merge the aliases in, but never over a key the raw pass set - that key already resolves and
+    # changing it is the one thing this fix is not allowed to do
+    for ak, nm in alias_pend.items():
+        if ak not in short_idx:
+            short_idx[ak] = nm
 
     # ?? THE GAMES THAT WEREN'T THERE ???????????????????????????????????????????
     # Everything above comes from nflverse weekly stats, which only has a row for a player who
@@ -919,8 +1009,11 @@ def build_players_gamelogs(ps, snap_idx, game_idx, current, ros=None, ngs_idx=No
         p["rzTgt"] = 0.0; p["rzCarry"] = 0.0; p["glCarry"] = 0.0
         players.append(p)
     players.sort(key=lambda x: -x["fanPts"])
-    short_idx = {k: v for k, v in short_idx.items() if v}
-    return players, gamelogs, short_idx
+    # The ambiguous keys used to be stripped here. Every consumer reads this with .get(), which
+    # returns None for a missing key and for a key set to None alike - so keeping them changes no
+    # lookup, and it lets the resolver tell "two men share this short name" apart from "never
+    # heard of him". Those are different problems and the build should say which one it hit.
+    return players, gamelogs, short_idx, id_idx
 
 # ?? team aggregation (offense + allowed) ????????????????????????????????????
 def _stat_season(gamelogs, current):
@@ -1312,10 +1405,10 @@ def run_build(frames, out_dir, seasons, current, password, skip_weather=False):
     ngs_idx = build_ngs_idx(ngs)
     if ngs_idx:
         print(f"  next gen stats: {len(ngs_idx)} player-weeks")
-    players, gamelogs, short_idx = build_players_gamelogs(ps, snap_idx, game_idx, current, ros=ros,
-                                                          ngs_idx=ngs_idx, played_idx=played_idx)
-    rz_usage, firsttd, longest = build_pbp_derived(pbp, short_idx)
-    redzone = build_redzone(pbp, short_idx, current)
+    players, gamelogs, short_idx, id_idx = build_players_gamelogs(
+        ps, snap_idx, game_idx, current, ros=ros, ngs_idx=ngs_idx, played_idx=played_idx)
+    rz_usage, firsttd, longest = build_pbp_derived(pbp, short_idx, id_idx)
+    redzone = build_redzone(pbp, short_idx, current, id_idx)
     # stamp per-game red-zone volume onto each gamelog row so the tool can window it
     # (Season / L10 / L5) instead of only ever showing season aggregates
     _pg = getattr(build_redzone, "per_game", {}) or {}
@@ -1603,6 +1696,62 @@ def selftest():
     assert len(dbs_t) == 1 and dbs_t[0]["player"] == "Elite Corner"          # sieve + position filter
     assert dbs_t[0]["team"] == "GB" and dbs_t[0]["role"] == "top"            # GNB -> GB mapping
     assert dbs_t[0]["tgt"] == 36 and dbs_t[0]["grade"] < 60                  # components aggregated, elite rating
+    # ?? the two ways a man went missing from the red zone ?????????????????????
+    # Both of these dropped real players off every red-zone board on the site, silently, for as
+    # long as the build has existed. Bijan Robinson - the league's leading rusher at the time -
+    # had 85 carries and not one red-zone carry on file.
+    print("  resolver: short-name keys")
+    assert _short_keys("Puka Nacua") == ["p.nacua"]
+    assert _short_keys("Kenneth Walker III") == ["k.walker iii", "k.walker"]
+    assert _short_keys("Chris Godwin Jr.") == ["c.godwin jr.", "c.godwin"]
+    assert _short_keys("Deebo Samuel Sr.") == ["d.samuel sr.", "d.samuel"]
+    # a two-word name is never cut to one, so a bare surname cannot become a key
+    assert _short_keys("Prince Jr.") == ["p.jr."]
+
+    si = {("KC", "k.walker iii"): "Kenneth Walker III", ("KC", "k.walker"): "Kenneth Walker III",
+          ("ATL", "b.robinson"): None,                      # two men share it
+          ("ATL", "t.allgeier"): "Tyler Allgeier"}
+    ii = {"00-BIJAN": "Bijan Robinson", "00-BRIAN": "Brian Robinson"}
+    assert resolve_pbp_name("KC", "K.Walker", "", si, ii) == ("Kenneth Walker III", "name")
+    assert resolve_pbp_name("ATL", "B.Robinson", "", si, ii)[0] is None          # no id: still refused
+    assert resolve_pbp_name("ATL", "B.Robinson", "", si, ii)[1] == "ambiguous"
+    assert resolve_pbp_name("ATL", "B.Robinson", "00-BIJAN", si, ii) == ("Bijan Robinson", "id")
+    assert resolve_pbp_name("ATL", "B.Robinson", "00-BRIAN", si, ii) == ("Brian Robinson", "id")
+    assert resolve_pbp_name("ATL", "Z.Nobody", "", si, ii)[1] == "unknown"
+    assert resolve_pbp_name("ATL", "T.Allgeier", "99-UNKNOWN", si, ii)[1] == "name"  # bad id -> name
+
+    print("  resolver: a red-zone build over both failure modes")
+    rz_pbp = pd.DataFrame([
+        # a suffixed man, with NO id in the feed: the alias has to carry him
+        {"season": 2025, "week": 1, "game_id": "G1", "yardline_100": 3.0, "play_type": "run",
+         "rusher_player_name": "K.Walker", "receiver_player_name": None, "posteam": "KC",
+         "complete_pass": 0, "pass_touchdown": 0, "rush_touchdown": 1},
+        # two men who share a short name, told apart by id alone
+        {"season": 2025, "week": 1, "game_id": "G1", "yardline_100": 8.0, "play_type": "run",
+         "rusher_player_name": "B.Robinson", "rusher_player_id": "00-BIJAN",
+         "receiver_player_name": None, "posteam": "ATL",
+         "complete_pass": 0, "pass_touchdown": 0, "rush_touchdown": 0},
+        {"season": 2025, "week": 1, "game_id": "G1", "yardline_100": 2.0, "play_type": "run",
+         "rusher_player_name": "B.Robinson", "rusher_player_id": "00-BRIAN",
+         "receiver_player_name": None, "posteam": "ATL",
+         "complete_pass": 0, "pass_touchdown": 0, "rush_touchdown": 1},
+    ])
+    got = {x["player"]: x for x in build_redzone(rz_pbp, si, 2025, ii)}
+    assert "Kenneth Walker III" in got, "a suffixed name still cannot be resolved"
+    assert got["Kenneth Walker III"]["rzAtt"] == 1 and got["Kenneth Walker III"]["i5Att"] == 1
+    assert "Bijan Robinson" in got and "Brian Robinson" in got, "the id did not separate them"
+    assert got["Bijan Robinson"]["rzAtt"] == 1 and got["Bijan Robinson"]["i5Att"] == 0
+    assert got["Brian Robinson"]["rzAtt"] == 1 and got["Brian Robinson"]["i5RushTd"] == 1
+    # and they split their team's red-zone carries rather than one taking the lot
+    assert got["Bijan Robinson"]["rzRushPct"] == 50.0 and got["Brian Robinson"]["rzRushPct"] == 50.0
+
+    # without ids the shared short name is STILL refused - a guess would put one man's carries on
+    # the other, which is worse than the gap it replaces
+    noid = rz_pbp.drop(columns=["rusher_player_id"])
+    got2 = {x["player"] for x in build_redzone(noid, si, 2025, ii)}
+    assert "Kenneth Walker III" in got2, "the suffix alias must work with no ids at all"
+    assert "Bijan Robinson" not in got2 and "Brian Robinson" not in got2
+
     print("SELFTEST PASSED - all schema + numeric assertions hold.")
 
 # ?? cli ?????????????????????????????????????????????????????????????????????
