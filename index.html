@@ -1371,6 +1371,9 @@
   .st-wrap{background:var(--surface-2);border:1px solid var(--border);border-radius:10px;overflow:auto;
     -webkit-overflow-scrolling:touch;}
   table.st-t{width:100%;border-collapse:collapse;font-size:11px;white-space:nowrap;}
+  /* a season-to-date column, marked so it cannot be read as part of the windowed average beside it */
+  .st-sdot{font-style:normal;color:var(--text-3);font-size:9px;vertical-align:super;margin-left:1px;}
+  table.st-t td.st-sea{color:var(--text-2);}
   table.st-t th{position:sticky;top:0;background:var(--surface-2);font-size:8px;font-weight:800;
     letter-spacing:.05em;text-transform:uppercase;color:var(--text-3);padding:8px 7px;text-align:right;
     border-bottom:1px solid var(--border);cursor:pointer;}
@@ -10599,9 +10602,142 @@ function playerImgP(key, nameOrP, size){
   return '<span class="pimg" style="width:'+sz+'px;height:'+sz+'px"><img src="'+esc(url)+'" alt="" '
     + 'loading="lazy" onerror="this.parentNode.outerHTML=\''+iniAttr+'\'"></span>';
 }
-function stCols(key){
+/* THE SCANNER'S COLUMNS, BY POSITION -------------------------------------------------------------
+   The board used to show one set of eight columns to everybody, taken off the front of the sport's
+   market list. A quarterback and a cornerback therefore both got Receptions, Targets and Rec Yds:
+   one of them has never caught a pass in his life, and the three numbers that actually describe
+   his game - completion percentage over expected, time to throw, how often he goes aggressive into
+   coverage - were sitting in the gamelogs unread.
+
+   A column is one of two things, and the difference matters to the reader:
+     g: a gamelog field, averaged over whichever window the chips are set to.
+     s: a season-to-date figure from a supporting file, which has no per-game form to window over.
+   Season columns are marked with a dot in the header and called out underneath, so nobody reads a
+   target share as "his last five". Formats: p1 is a 0-1 rate shown as a percentage, p100 is one
+   already on a 0-100 scale, n2/n1/int are plain numbers.                                        */
+var ST_POS_COLS = {
+  nfl: {
+    QB: [
+      { id:'passYds', label:'PaYd', g:'passYds' }, { id:'passAtt', label:'Att', g:'passAtt' },
+      { id:'passComp', label:'Cmp', g:'passComp' }, { id:'passTds', label:'PaTD', g:'passTds', f:'n2' },
+      { id:'passInt', label:'INT', g:'passInt', f:'n2' }, { id:'sacks', label:'Sk', g:'sacks', f:'n2' },
+      { id:'cpoe', label:'CPOE', g:'cpoe', f:'n1', t:'Completion % over expected' },
+      { id:'ttt', label:'TTT', g:'timeToThrow', f:'n2', t:'Time to throw, seconds' },
+      { id:'agg', label:'AGG', g:'aggressiveness', f:'n1', t:'Throws into tight coverage, %' },
+      { id:'longComp', label:'Lng', g:'longComp' },
+      { id:'rushYds', label:'RuYd', g:'rushYds' }, { id:'rushAtt', label:'Car', g:'rushAtt', f:'n1' },
+      { id:'p_adot', label:'aDOT', s:function(a){ return a.pass && a.pass.adot; }, f:'n1' },
+      { id:'p_deep', label:'Deep', s:function(a){ return a.pass && a.pass.deepRate; }, f:'p1' },
+      { id:'p_pa', label:'PA', s:function(a){ return a.pass && a.pass.paRate; }, f:'p1',
+        t:'Play-action rate' },
+      { id:'p_oop', label:'OOP', s:function(a){ return a.pass && a.pass.outOfPocket; }, f:'p1',
+        t:'Out of pocket' },
+      /* profiles.json carries a blitzRate too, and it is 0.000 for all forty quarterbacks in the
+         file - the field is written but never filled. Left off deliberately: a column of zeroes
+         reads as "nobody blitzes him", which is a claim, rather than as "we do not have this". */
+      { id:'fanPts', label:'FP', g:'fanPts' }, { id:'snapPct', label:'Snap', g:'snapPct', f:'p100' }
+    ],
+    RB: [
+      { id:'rushYds', label:'RuYd', g:'rushYds' }, { id:'rushAtt', label:'Car', g:'rushAtt', f:'n1' },
+      { id:'rushTds', label:'RuTD', g:'rushTds', f:'n2' }, { id:'longRush', label:'Lng', g:'longRush', f:'n1' },
+      { id:'ypc', label:'YPC', s:function(a){ return a.pl && a.pl.ypc; }, f:'n2' },
+      { id:'carryShare', label:'Car%', s:function(a){ return a.rush && a.rush.carryShare; }, f:'p1' },
+      { id:'avgBox', label:'Box', s:function(a){ return a.rush && a.rush.avgBox; }, f:'n2',
+        t:'Average defenders in the box' },
+      { id:'stacked', label:'Stkd', s:function(a){ return a.rush && a.rush.stackedRate; }, f:'p1',
+        t:'Carries into a stacked box' },
+      { id:'rzAtt', label:'RZ', s:function(a){ return a.rz && a.rz.rzAtt; }, f:'int',
+        t:'Red-zone carries this season' },
+      { id:'i5Att', label:'i5', s:function(a){ return a.rz && a.rz.i5Att; }, f:'int',
+        t:'Carries inside the five' },
+      { id:'rzRushPct', label:'RZ%', s:function(a){ return a.rz && a.rz.rzRushPct; }, f:'p100',
+        t:'Share of his team’s red-zone carries' },
+      { id:'receptions', label:'Rec', g:'receptions', f:'n1' }, { id:'targets', label:'Tgt', g:'targets', f:'n1' },
+      { id:'recYds', label:'ReYd', g:'recYds' }, { id:'rushRecYds', label:'R+R', g:'rushRecYds' },
+      { id:'fanPts', label:'FP', g:'fanPts' }, { id:'snapPct', label:'Snap', g:'snapPct', f:'p100' }
+    ],
+    WR: [
+      { id:'receptions', label:'Rec', g:'receptions', f:'n1' }, { id:'targets', label:'Tgt', g:'targets', f:'n1' },
+      { id:'recYds', label:'ReYd', g:'recYds' }, { id:'recTds', label:'ReTD', g:'recTds', f:'n2' },
+      { id:'tgtShare', label:'Tgt%', g:'tgtShare', f:'p100' },
+      { id:'airYds', label:'AirY', g:'airYds' }, { id:'longRec', label:'Lng', g:'longRec', f:'n1' },
+      { id:'r_adot', label:'aDOT', s:function(a){ return a.rec && a.rec.adot; }, f:'n1' },
+      { id:'r_catch', label:'Catch', s:function(a){ return a.rec && a.rec.catchRate; }, f:'p1' },
+      { id:'r_ypt', label:'YPT', s:function(a){ return a.rec && a.rec.ypt; }, f:'n2' },
+      { id:'r_deep', label:'Deep', s:function(a){ return a.rec && a.rec.deepRate; }, f:'p1' },
+      { id:'r_air', label:'AirSh', s:function(a){ return a.rec && a.rec.airShare; }, f:'p1',
+        t:'Share of his team’s air yards' },
+      { id:'r_screen', label:'Scrn', s:function(a){ return a.rec && a.rec.screenShare; }, f:'p1',
+        t:'Share of his targets that are screens' },
+      { id:'r_pa', label:'PA', s:function(a){ return a.rec && a.rec.paShare; }, f:'p1',
+        t:'Share of his targets off play action' },
+      { id:'fr_first', label:'1Rd', s:function(a){ return a.fr && a.fr.firstShare; }, f:'p1',
+        t:'Share of his targets where he was the first read' },
+      // the two first-read numbers answer different questions: how often he is the read when
+      // thrown at, and how much of the offence's first look he commands. The second is the volume
+      // signal, and the one the reference export calls 1READ %.
+      { id:'fr_team', label:'1RdTm', s:function(a){ return a.fr && a.fr.teamFirstShare; }, f:'p1',
+        t:'His share of the team’s first reads' },
+      { id:'rzTgt', label:'RZ', s:function(a){ return a.rz && a.rz.rzTgt; }, f:'int',
+        t:'Red-zone targets this season' },
+      { id:'fanPts', label:'FP', g:'fanPts' }, { id:'snapPct', label:'Snap', g:'snapPct', f:'p100' }
+    ],
+    /* The tight end reads the same way a receiver does - the difference between them is the route
+       mix, and routes are the one thing the free feeds do not publish (profiles.json says so in
+       its own notes). Same columns rather than a thinner set that pretends otherwise. */
+    DEF: [
+      { id:'tackles', label:'Tk+A', g:'tackles', f:'n1' }, { id:'soloTk', label:'Solo', g:'soloTk', f:'n1' },
+      { id:'astTk', label:'Ast', g:'astTk', f:'n1' }, { id:'tfl', label:'TFL', g:'tfl', f:'n2' },
+      { id:'defSacks', label:'Sack', g:'defSacks', f:'n2' },
+      { id:'snapPct', label:'Snap', g:'snapPct', f:'p100' }
+    ]
+  }
+};
+ST_POS_COLS.nfl.TE = ST_POS_COLS.nfl.WR;
+['LB', 'DL', 'DB'].forEach(function(p){ ST_POS_COLS.nfl[p] = ST_POS_COLS.nfl.DEF; });
+
+/* Every supporting file that keys on a player name, joined once per sport. All of them match the
+   player list essentially exactly - 173/173 receiving, 72/72 rushing, 40/40 passing, 393/393
+   red zone, 238/239 first read - so this is a plain name join rather than anything cleverer. */
+function stAdvIndex(key){
+  var S = state.sports[key];
+  if (S.idx.adv) return S.idx.adv;
+  var adv = {};
+  var at = function(n){ return adv[n] || (adv[n] = {}); };
+  (S.idx.players || []).forEach(function(p){ if (p && p.name) at(p.name).pl = p; });
+  var prof = S.data.profiles || {};
+  [['receiving', 'rec'], ['rushing', 'rush'], ['passing', 'pass']].forEach(function(x){
+    (asArray(prof[x[0]]) || []).forEach(function(r){ if (r && r.name) at(r.name)[x[1]] = r; });
+  });
+  (asArray(S.data.redzone) || []).forEach(function(r){ if (r && r.player) at(r.player).rz = r; });
+  var fr = S.data.firstRead || {};
+  (asArray(fr.players) || []).forEach(function(r){ if (r && r.name) at(r.name).fr = r; });
+  S.idx.adv = adv;
+  return adv;
+}
+function stFmt(v, f){
+  if (v == null || !isFinite(v)) return '—';
+  if (f === 'p1') return Math.round(v * 100) + '%';
+  if (f === 'p100') return Math.round(v) + '%';
+  if (f === 'int') return String(Math.round(v));
+  if (f === 'n2') return (+v).toFixed(2);
+  if (f === 'n1') return (+v).toFixed(1);
+  return Math.abs(v) < 3 ? (+v).toFixed(2) : (+v).toFixed(1);
+}
+// the position filter decides the columns; a sport with no set, or the All chip, keeps what the
+// board has always shown
+function stColsFor(key, pos){
+  var set = (ST_POS_COLS[key] || {})[pos];
+  if (set) return set;
   var cfg = state.sports[key].config || {};
-  return (cfg.pcStats || cfg.oddsMkts || cfg.dvpStats || []).slice(0, 8);
+  return (cfg.pcStats || cfg.oddsMkts || cfg.dvpStats || []).slice(0, 8)
+    .map(function(c){ return { id:c[0], label:c[1], g:c[0] }; });
+}
+/* teamsView still asks for [field, label] pairs as its fallback when a sport's config names no
+   teamCols, so this keeps the old shape rather than quietly handing it objects it would read as
+   undefined. */
+function stCols(key){
+  return stColsFor(key, null).map(function(c){ return [c.g || c.id, c.label]; });
 }
 function stSortRows(rows, sortKey, dir){
   return rows.sort(function(a,b){
@@ -10613,32 +10749,48 @@ function stSortRows(rows, sortKey, dir){
 }
 function scannerView(key){
   var S = state.sports[key], v = state.view;
-  var cols = stCols(key);
-  if (!cols.length) return secNote('Scanner', SPORTS[key].name+' config.js lists no stat columns.');
   var positions = [''].concat(((S.config || {}).posOrder || []));
   var posF = v.stPosF || '';
+  var cols = stColsFor(key, posF || null);
+  if (!cols.length) return secNote('Scanner', SPORTS[key].name+' config.js lists no stat columns.');
+  var adv = stAdvIndex(key);
+  var hasSeason = cols.some(function(c){ return c.s; });
   var q = String(v.stQ || '').trim().toLowerCase();
   var win = v.stWin || 'season';
   var thin = false;
   var rows = (S.idx.players || []).map(function(p){
-    var vals = {}, any = false, games = 0;
+    var vals = {}, any = false, games = 0, a = adv[p.name] || {};
     cols.forEach(function(c){
-      var board = windowAvg(key, c[0], win);
-      if (board._thin) thin = true;
-      var e = board[p.name];
-      vals[c[0]] = e && e.games >= 1 ? e.avg : null;
-      if (vals[c[0]] != null){ any = true; if (e.games > games) games = e.games; }
+      var val = null;
+      if (c.g){
+        var board = windowAvg(key, c.g, win);
+        if (board._thin) thin = true;
+        var e = board[p.name];
+        if (e && e.games >= 1){ val = e.avg; if (e.games > games) games = e.games; }
+      } else if (c.s){
+        // a season figure is whatever the supporting file says, with no window to average over
+        try { var sv = c.s(a); val = (sv == null || sv === '' || !isFinite(+sv)) ? null : +sv; }
+        catch (err) { val = null; }
+      }
+      vals[c.id] = val;
+      if (val != null) any = true;
     });
     return any ? { p:p, vals:vals, games:games } : null;
   }).filter(Boolean);
   if (posF) rows = rows.filter(function(r){ return (r.p.position || r.p.pos) === posF; });
   if (q) rows = rows.filter(function(r){
     return r.p.name.toLowerCase().indexOf(q) >= 0 || String(r.p.team||'').toLowerCase().indexOf(q) >= 0; });
-  var sortKey = v.stSort || cols[0][0], dir = v.stDir === 1 ? 1 : -1;
+  // a sort left over from another position's columns would sort on a field this table does not
+  // have, which silently orders every row the same
+  var sortKey = (v.stSort && cols.some(function(c){ return c.id === v.stSort; })) ? v.stSort : cols[0].id;
+  var dir = v.stDir === 1 ? 1 : -1;
   rows = stSortRows(rows, sortKey, dir).slice(0, 200);
-  var th = function(k, l){
-    return '<th class="'+(sortKey===k?'on':'')+'" onclick="LAB.stSort(\''+k+'\')">'+esc(l)
-      + (sortKey===k ? (dir < 0 ? ' \u25be' : ' \u25b4') : '')+'</th>'; };
+  var th = function(c){
+    return '<th class="'+(sortKey===c.id?'on':'')+'" onclick="LAB.stSort(\''+c.id+'\')"'
+      + (c.t ? ' title="'+esc(c.t)+(c.s ? ' \u00b7 season to date' : '')+'"'
+             : (c.s ? ' title="Season to date"' : ''))+'>'
+      + esc(c.label) + (c.s ? '<i class="st-sdot">\u00b0</i>' : '')
+      + (sortKey===c.id ? (dir < 0 ? ' \u25be' : ' \u25b4') : '')+'</th>'; };
   var h = '<div class="sc-filter"><input id="stSearch" placeholder="Search player or team\u2026" '
     + 'value="'+esc(v.stQ||'')+'" oninput="LAB.stQ(this.value)" autocomplete="off"></div>'
     + '<div class="sl-bar">'+positions.map(function(p2){
@@ -10653,7 +10805,7 @@ function scannerView(key){
   if (!rows.length) return h + '<div class="empty"><i class="ti ti-search-off"></i>No players match.</div>';
   h += '<div class="st-wrap" id="stTbl"><table class="st-t"><thead><tr><th>Player</th>'
     + '<th class="'+(sortKey==='games'?'on':'')+'" onclick="LAB.stSort(\'games\')">GP</th>'
-    + cols.map(function(c){ return th(c[0], c[1]); }).join('')+'</tr></thead><tbody>'
+    + cols.map(th).join('')+'</tr></thead><tbody>'
     + rows.map(function(r){
         var face = playerImgP(key, r.p, 24);
         return '<tr onclick="LAB.player(\''+key+'\',\''+esc(r.p.name).replace(/'/g,"\\'")+'\')">'
@@ -10663,8 +10815,7 @@ function scannerView(key){
           + '</span></span></span></td>'
           + '<td>'+r.games+'</td>'
           + cols.map(function(c){
-              var val = r.vals[c[0]];
-              return '<td>'+(val == null ? '\u2014' : (val < 3 ? val.toFixed(2) : val.toFixed(1)))+'</td>';
+              return '<td'+(c.s ? ' class="st-sea"' : '')+'>'+stFmt(r.vals[c.id], c.f)+'</td>';
             }).join('')+'</tr>';
       }).join('')+'</tbody></table></div>'
     + '<div class="cmb-corr">'+rows.length+' shown \u00b7 per-game from gamelogs \u00b7 '
@@ -10672,7 +10823,13 @@ function scannerView(key){
                                  + 'including last season'
                                 : 'this season only')
        : (win === 'all' ? 'all games on file' : 'last '+(win === 'l10' ? 10 : 5)+' games'))
-    + '. Tap a row for the full read.</div>';
+    + '. '
+    // the window chips move the gamelog columns and cannot move the season ones. Say so, rather
+    // than let a target share be read as "his last five".
+    + (hasSeason ? 'Columns marked \u00b0 are season to date and do not move with the window above. '
+                 : '')
+    + (posF ? '' : 'Pick a position for the stats that suit it. ')
+    + 'Tap a row for the full read.</div>';
   return h;
 }
 
@@ -11046,6 +11203,40 @@ function weeklyReport(key){
               + 'nothing to rank. This fills in as the season goes.</div>')
     + '</div>';
 }
+/* EXTRA TEAM COLUMNS -----------------------------------------------------------------------------
+   The team file already holds more than the board was showing. Two of these are arithmetic on
+   columns that were already there - yards per play, completion percentage - and the rest come from
+   the coverage block inside teams.json and from profiles.json's team table, neither of which had
+   ever reached the page.
+   `side` matters: how often a defence plays man is a fact about that defence, so it belongs on the
+   Allowed view and nowhere else. `season` marks the ones with no per-game form to window over, the
+   same dot the scanner uses.                                                                     */
+function teamCovOf(S, team){
+  var row = (asArray(S.data.teams) || []).filter(function(t){ return t.team === team; })[0];
+  return (row && row.cov) || null;
+}
+function teamProfOf(S, team){ return (((S.data.profiles || {}).teams) || {})[team] || null; }
+var TEAM_EXTRA = {
+  nfl: [
+    { id:'yp', label:'Y/P', side:'both', f:'n2', t:'Yards per play',
+      get:function(t, al){ var s = al ? '_a' : '', p = +t['plays' + s] || 0;
+        return p ? ((+t['passYds' + s] || 0) + (+t['rushYds' + s] || 0)) / p : null; } },
+    { id:'cmpPct', label:'Cmp%', side:'both', f:'p100', t:'Completion percentage',
+      get:function(t, al){ var s = al ? '_a' : '', a = +t['passAtt' + s] || 0;
+        return a ? (+t['passComp' + s] || 0) / a * 100 : null; } },
+    { id:'proe', label:'PROE', side:'both', f:'n1', season:true,
+      t:'Pass rate over expected — how much more they throw than the situation calls for',
+      get:function(t, al, S){ var p = teamProfOf(S, t.team);
+        return p ? (al ? p.proeAllowed : p.proe) : null; } },
+    { id:'man', label:'Man', side:'allowed', f:'p100', season:true, t:'Man coverage rate',
+      get:function(t, al, S){ var c = teamCovOf(S, t.team); return c ? c.manRate : null; } },
+    { id:'zone', label:'Zone', side:'allowed', f:'p100', season:true, t:'Zone coverage rate',
+      get:function(t, al, S){ var c = teamCovOf(S, t.team); return c ? c.zoneRate : null; } },
+    { id:'deepA', label:'Deep', side:'allowed', f:'p1', season:true,
+      t:'Share of passes against them thrown deep',
+      get:function(t, al, S){ var p = teamProfOf(S, t.team); return p ? p.deepAllowed : null; } }
+  ]
+};
 function teamsView(key){
   var S = state.sports[key], v = state.view;
   // The Teams tab was reading teams_form - a rolling last-five-games file - so "GP 5" looked like
@@ -11057,19 +11248,48 @@ function teamsView(key){
   var teams = (winRows && winRows.rows.length) ? winRows.rows : seasonT;
   var fellBack = !(winRows && winRows.rows.length);
   if (!teams.length) return secNote('Teams', 'teams.json returned nothing for '+SPORTS[key].name+'.');
-  var cols = ((S.config || {}).teamCols || stCols(key)).slice(0, 10);
   var allowed = !!v.stAllowed, suf = allowed ? '_a' : '';
+  /* One shape for every column: the config's plain pairs read a field off the row, the extras
+     bring their own getter. Without this the two kinds would need two code paths through the
+     sort, the league average and the heat colouring - three places to disagree. */
+  var cols = ((S.config || {}).teamCols || stCols(key)).slice(0, 10)
+    .map(function(c){
+      return { id:c[0], label:c[1],
+               get:function(t, al){ var x = +t[c[0] + (al ? '_a' : '')]; return isFinite(x) ? x : null; } };
+    })
+    .concat((TEAM_EXTRA[key] || []).filter(function(c){
+      return c.side === 'both' || (c.side === 'allowed') === allowed;
+    }));
   // does this file even carry the allowed side?
-  var hasAllowed = teams.some(function(t){ return cols.some(function(c){ return t[c[0]+'_a'] != null; }); });
-  var sortKey = (v.stTeamSort && cols.some(function(c){ return c[0] === v.stTeamSort; })) ? v.stTeamSort : cols[0][0];
+  // does this file even carry the allowed side? Asked of the raw fields the config names, not of
+  // the derived columns - those compute a number from the row either way and would answer yes for
+  // a file that has no allowed side at all.
+  var hasAllowed = teams.some(function(t){
+    return ((S.config || {}).teamCols || []).some(function(c){ return t[c[0] + '_a'] != null; });
+  });
+  var sortKey = (v.stTeamSort && cols.some(function(c){ return c.id === v.stTeamSort; }))
+    ? v.stTeamSort : cols[0].id;
+  var colOf = {}; cols.forEach(function(c){ colOf[c.id] = c; });
+  var valOf = function(t, c){
+    try { var x = c.get(t, allowed, S); return (x == null || !isFinite(+x)) ? null : +x; }
+    catch (e) { return null; }
+  };
   var tq = String(v.stTeamQ || '').trim().toLowerCase();
   var rows = teams.slice().filter(function(t){
     if (!tq) return true;
     return (String(t.team || '') + ' ' + teamFullName(key, t.team)).toLowerCase().indexOf(tq) >= 0;
-  }).sort(function(a,b){ return (+b[sortKey+suf]||0) - (+a[sortKey+suf]||0); });
+  }).sort(function(a,b){
+    var x = valOf(a, colOf[sortKey]), y = valOf(b, colOf[sortKey]);
+    if (x == null && y == null) return 0;
+    if (x == null) return 1;                      // a team the file has nothing for sinks
+    if (y == null) return -1;
+    return y - x;
+  });
+  // the league average a cell is coloured against, over the teams that HAVE the number
   var avg = {};
   cols.forEach(function(c){
-    avg[c[0]] = rows.reduce(function(a,t){ return a + (+t[c[0]+suf]||0); }, 0) / rows.length;
+    var vals = rows.map(function(t){ return valOf(t, c); }).filter(function(x){ return x != null; });
+    avg[c.id] = vals.length ? vals.reduce(function(a, b){ return a + b; }, 0) / vals.length : null;
   });
   var h = '<div class="st-bar"><span class="st-seg">'
     + '<button class="'+(!allowed?'on':'')+'" onclick="LAB.stAllowed(false)">For</button>'
@@ -11114,8 +11334,11 @@ function teamsView(key){
       })()
     + '<div class="st-wrap"><table class="st-t"><thead><tr><th>Team</th><th>GP</th>'
     + cols.map(function(c){
-        return '<th class="'+(sortKey===c[0]?'on':'')+'" onclick="LAB.stTeamSort(\''+c[0]+'\')">'
-          + esc(c[1])+(sortKey===c[0]?' \u25be':'')+'</th>'; }).join('')+'</tr></thead><tbody>'
+        return '<th class="'+(sortKey===c.id?'on':'')+'" onclick="LAB.stTeamSort(\''+c.id+'\')"'
+          + (c.t ? ' title="'+esc(c.t)+(c.season ? ' \u00b7 season to date' : '')+'"'
+                 : (c.season ? ' title="Season to date"' : ''))+'>'
+          + esc(c.label)+(c.season ? '<i class="st-sdot">\u00b0</i>' : '')
+          + (sortKey===c.id?' \u25be':'')+'</th>'; }).join('')+'</tr></thead><tbody>'
     + rows.map(function(t){
         // the board is the obvious place to click a club, so open the profile from here too
         return '<tr class="tp-link" onclick="LAB.teamView(\''+key+'\',\''
@@ -11124,10 +11347,11 @@ function teamsView(key){
           + '<span>'+esc(teamFullName(key, t.team))+'</span></span></td>'
           + '<td>'+(t.matches || 0)+'</td>'
           + cols.map(function(c){
-              var val = +t[c[0]+suf] || 0, a = avg[c[0]];
-              var d = a ? (val - a) / a * 100 : 0;
-              var cls = Math.abs(d) < 4 ? '' : (d > 0 ? 'hi' : 'lo');
-              return '<td class="'+cls+'">'+(val < 3 ? val.toFixed(2) : val.toFixed(1))+'</td>';
+              var val = valOf(t, c), a = avg[c.id];
+              var d = (val != null && a) ? (val - a) / a * 100 : 0;
+              var cls = (val == null || Math.abs(d) < 4) ? '' : (d > 0 ? 'hi' : 'lo');
+              if (c.season) cls += (cls ? ' ' : '') + 'st-sea';
+              return '<td class="'+cls+'">'+stFmt(val, c.f)+'</td>';
             }).join('')+'</tr>';
       }).join('')+'</tbody></table></div>';
   return h;
@@ -18382,6 +18606,33 @@ window.LAB = {
                }),
                head: OD_COLS.map(function(c){ return odHdCell(key, c); }).join('') };
     } finally { if (was === undefined) delete state.view.odSort[key]; else state.view.odSort[key] = was; }
+  },
+  // exposed for tests: the scanner's columns and rows for one position, as data
+  stScanProbe: function(key, pos, win){
+    var v = state.view, keep = { p:v.stPosF, w:v.stWin, s:v.stSort, t:v.stSport, m:v.stMode, tb:v.tab, f:v.focus };
+    try {
+      v.focus = null; v.stSport = key; v.stMode = 'scanner'; v.tab = 'stats';
+      v.stPosF = pos || ''; v.stWin = win || 'season'; v.stSort = null;
+      var cols = stColsFor(key, pos || null), adv = stAdvIndex(key);
+      return { cols: cols.map(function(c){
+                 return { id:c.id, label:c.label, kind:c.g ? 'g' : 's', f:c.f || null }; }),
+               html: scannerView(key),
+               advN: Object.keys(adv).length };
+    } finally {
+      v.stPosF = keep.p; v.stWin = keep.w; v.stSort = keep.s; v.stSport = keep.t;
+      v.stMode = keep.m; v.tab = keep.tb; v.focus = keep.f;
+    }
+  },
+  stTeamProbe: function(key, allowed){
+    var v = state.view, keep = { a:v.stAllowed, t:v.stSport, m:v.stMode, tb:v.tab, f:v.focus, s:v.stTeamSort };
+    try {
+      v.focus = null; v.stSport = key; v.stMode = 'teams'; v.tab = 'stats';
+      v.stAllowed = !!allowed; v.stTeamSort = null;
+      return { html: teamsView(key) };
+    } finally {
+      v.stAllowed = keep.a; v.stSport = keep.t; v.stMode = keep.m; v.tab = keep.tb;
+      v.focus = keep.f; v.stTeamSort = keep.s;
+    }
   },
   legProbe: function(l){ return legMatch(l); },
   liveProbe: function(src){ return { rows: liveLegRows(src), games: liveGames(src), feeds: liveFeedNames() }; },
