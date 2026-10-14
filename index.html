@@ -155,6 +155,17 @@
   .od-bk{min-width:68px;text-align:right;font-size:9px;color:var(--text-3);text-transform:uppercase;
     white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
   .od-list{margin-bottom:6px;}
+  /* The header cells are buttons now. They inherit the column classes so the widths still line up
+     with the rows underneath, and everything else is stripped back to looking like the label it
+     replaced - until you hover it, or it is the one doing the sorting. */
+  .od-sort{background:none;border:0;padding:0;margin:0;cursor:pointer;color:inherit;font:inherit;
+    letter-spacing:inherit;text-transform:inherit;}
+  .od-hd .od-sort{text-align:right;}
+  .od-hd .od-sort.od-nm{text-align:left;}
+  .od-sort:hover{color:var(--text);}
+  .od-sort.on{color:var(--accent);}
+  .od-sort:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:3px;}
+  .od-more{font-size:9px;color:var(--text-3);padding:2px 10px 8px;}
   .mt-chips{display:flex;flex-wrap:wrap;gap:4px;margin:0 0 8px;}
   .mt-chip{font-size:9px;font-weight:700;letter-spacing:.03em;padding:5px 9px;border-radius:6px;
     border:1px solid var(--border);background:var(--surface-2);color:var(--text-3);cursor:pointer;white-space:nowrap;}
@@ -1709,7 +1720,7 @@ var TIER1 = { fixture:'data/fixture.json', teams:'data/teams.json', meta:'data/m
 
 var state = {
   sports: {},                               // sports[key] = {data:{}, idx:{}, status:''}
-  view:   { active: {}, tab: 'fixture', mkt: {}, match: {}, player: null, books: null, showDone: false, focus: null, h2hMode: 'for',
+  view:   { active: {}, tab: 'fixture', mkt: {}, match: {}, odSort: {}, player: null, books: null, showDone: false, focus: null, h2hMode: 'for',
              slMkt: {}, slWin: 'season', dvpMkt: {}, ppTab: 'form',
              cmbQ: '', cmbSel: null, cmbRecent: [],
              cmbOpen: false, cmbMode: 'single', cmbLegs: [], cmbResult: null, cmbSugOff: false,
@@ -11487,20 +11498,87 @@ function trendsBoard(key){
    draws what is posted, so the work is bounded - which is why these belong here rather than on a
    second page that had to rebuild the same list from scratch.
    Rates are his record against THIS line: L5, L10, and the season. Cached per player-market. */
-function odHit(key, bookName, mkt, line){
-  var nm = trName(key, bookName);
-  var vals = trVals(key, nm, mkt);
-  if (vals.length < 3) return '<span class="od-hr">\u2014</span><span class="od-hr">\u2014</span>'
-    + '<span class="od-hr">\u2014</span>';
-  var season = String(curSeason(key));
-  var cell = function(rows){
-    if (!rows.length) return '<span class="od-hr">\u2014</span>';
-    var pct = Math.round(rows.filter(function(x){ return x.v > line; }).length / rows.length * 100);
-    var cls = pct >= 70 ? ' hot' : (pct >= 50 ? '' : ' cold');
-    return '<span class="od-hr' + cls + '">' + pct + '%</span>';
+/* The three hit rates as NUMBERS. They used to be worked out inside the markup, which was fine
+   while nothing but the eye read them - but a sortable column has to compare the same figure the
+   cell prints, and a second copy of the sum is a second place for it to be wrong. trVals is cached
+   per player and market, so asking for every row on the board costs one pass over each man's own
+   games, not a scan of the logs. */
+function odHitVals(key, player, mkt, line){
+  var vals = trVals(key, trName(key, player), mkt);
+  if (vals.length < 3) return { l5:null, l10:null, yr:null };
+  var pct = function(rows){
+    return rows.length
+      ? Math.round(rows.filter(function(x){ return x.v > line; }).length / rows.length * 100)
+      : null;
   };
-  return cell(vals.slice(0, 5)) + cell(vals.slice(0, 10))
-    + cell(vals.filter(function(x){ return String(x.g.Year || x.g.year) === season; }));
+  var season = String(curSeason(key));
+  return { l5: pct(vals.slice(0, 5)), l10: pct(vals.slice(0, 10)),
+           yr: pct(vals.filter(function(x){ return String(x.g.Year || x.g.year) === season; })) };
+}
+function odHitCell(pct){
+  if (pct == null) return '<span class="od-hr">\u2014</span>';
+  var cls = pct >= 70 ? ' hot' : (pct >= 50 ? '' : ' cold');
+  return '<span class="od-hr' + cls + '">' + pct + '%</span>';
+}
+function odHit(key, player, mkt, line){
+  var v = odHitVals(key, player, mkt, line);
+  return odHitCell(v.l5) + odHitCell(v.l10) + odHitCell(v.yr);
+}
+/* SORTING THE BOARD ------------------------------------------------------------------------------
+   One row per column, so the header, the comparison and the arrow can never describe different
+   things. `get` returns the value to sort on - null where the row has nothing, which always sinks
+   to the bottom whichever way the column is pointing, because a man with no posted under is not
+   the best under on the board. `dir` is the direction the FIRST click gives you: the useful one,
+   which for a price or a hit rate is biggest-first and for a name is A-Z.                        */
+function odNum(v){ var n = v == null || v === '' ? NaN : +v; return isFinite(n) ? n : null; }
+var OD_COLS = [
+  { id:'player', label:'Player', cls:'od-nm', dir:1,
+    get:function(r){ return String(r.player || '').toLowerCase(); } },
+  { id:'line',   label:'Line',   cls:'od-ln', dir:-1, get:function(r){ return odNum(r.line); } },
+  { id:'over',   label:'Over',   cls:'od-o',  dir:-1, get:function(r){ return odNum(r.over); } },
+  { id:'under',  label:'Under',  cls:'od-u',  dir:-1, get:function(r){ return odNum(r.under); } },
+  { id:'l5',     label:'L5',     cls:'od-hr', dir:-1, get:function(r, h){ return h.l5; } },
+  { id:'l10',    label:'L10',    cls:'od-hr', dir:-1, get:function(r, h){ return h.l10; } },
+  { id:'yr',     label:'Yr',     cls:'od-hr', dir:-1, get:function(r, h){ return h.yr; } },
+  { id:'book',   label:'Book',   cls:'od-bk', dir:1,
+    get:function(r){ return String(r.book || '').toLowerCase(); } }
+];
+function odColOf(id){
+  for (var i = 0; i < OD_COLS.length; i++) if (OD_COLS[i].id === id) return OD_COLS[i];
+  return null;
+}
+/* The board shows the first 60 rows, so the sort has to happen BEFORE that cut, not after. Sorting
+   the 60 would only ever re-order whatever the default already chose - ask for the longest price
+   on the board and you would get the longest of the sixty shortest lines, which is a different
+   question with a plausible-looking answer. */
+function odSortRows(key, mkt, rows){
+  var s = (state.view.odSort || {})[key], col = s && odColOf(s.col);
+  if (!col) return rows;
+  var dir = s.dir;
+  var hit = {};                                     // one hit-rate read per row, not one per compare
+  var need = col.id === 'l5' || col.id === 'l10' || col.id === 'yr';
+  if (need) rows.forEach(function(r){ hit[r.player + '|' + r.line] = odHitVals(key, r.player, mkt, r.line); });
+  var keyed = rows.map(function(r, i){
+    return { r:r, i:i, v:col.get(r, need ? hit[r.player + '|' + r.line] : {}) };
+  });
+  keyed.sort(function(a, b){
+    var av = a.v, bv = b.v;
+    var an = av == null || av === '' || (typeof av === 'number' && !isFinite(av));
+    var bn = bv == null || bv === '' || (typeof bv === 'number' && !isFinite(bv));
+    if (an || bn) return an && bn ? a.i - b.i : (an ? 1 : -1);   // nothing to show sinks, either way
+    if (av === bv) return a.i - b.i;                             // ties keep the order underneath
+    return (av < bv ? -1 : 1) * dir;
+  });
+  return keyed.map(function(x){ return x.r; });
+}
+function odHdCell(key, col){
+  var s = (state.view.odSort || {})[key] || {};
+  var on = s.col === col.id;
+  var arrow = on ? (s.dir < 0 ? ' ▾' : ' ▴') : '';
+  return '<button class="' + col.cls + ' od-sort' + (on ? ' on' : '') + '" type="button"'
+    + ' aria-sort="' + (on ? (s.dir < 0 ? 'descending' : 'ascending') : 'none') + '"'
+    + ' title="Sort by ' + esc(col.label) + '"'
+    + ' onclick="LAB.odSort(\'' + key + '\',\'' + col.id + '\')">' + esc(col.label) + arrow + '</button>';
 }
 function oddsPage(){
   var on = sportOrder().filter(function(k){ return state.view.active[k]; });
@@ -11527,12 +11605,14 @@ function oddsPage(){
     }).join('');
     var mSel = state.view.match[k] || '';
     var pt = S.idx.playerTeam || {};
-    var rows = bestPrices(k, sel).filter(function(r){
+    var all = bestPrices(k, sel).filter(function(r){
       if (!mSel) return true;
       var t = pt[r.player]; if (!t) return false;
       var parts = mSel.split('|');
       return t === parts[0] || t === parts[1];
-    }).slice(0, 60);
+    });
+    // sorted first, then cut to 60 - the other way round sorts the sixty the default picked
+    var rows = odSortRows(k, sel, all).slice(0, 60);
     var body = rows.length ? rows.map(function(r){
       var lad = altLadder(k, r.player, sel);
       var nb = bookRows(k, r.player, sel, r.line).length;
@@ -11571,11 +11651,14 @@ function oddsPage(){
       +  '<div class="od-selbar">'+mSelHtml+kSelHtml+'</div>'
       +  mchips
       +  '<div class="mkt-chips">'+chips+'</div>'
-      +  '<div class="od-hd"><span class="od-nm">Player</span><span class="od-ln">Line</span>'
-      +  '<span class="od-o">Over</span><span class="od-u">Under</span>'
-      +  '<span class="od-hr">L5</span><span class="od-hr">L10</span><span class="od-hr">Yr</span>'
-      +  '<span class="od-bk">Book</span></div>'
-      +  '<div class="od-list">'+body+'</div>';
+      +  '<div class="od-hd">'
+      +    OD_COLS.map(function(c){ return odHdCell(k, c); }).join('')
+      +  '</div>'
+      +  '<div class="od-list">'+body+'</div>'
+      +  (all.length > rows.length
+          ? '<div class="od-more">Showing ' + rows.length + ' of ' + all.length
+            + ' — narrow it with a match, or sort to bring what you want to the top.</div>'
+          : '');
   });
   return h;
 }
@@ -17864,6 +17947,18 @@ window.LAB = {
   },
   mkt: function(k, m){ state.view.mkt[k] = m; render(); },
   match: function(k, id){ state.view.match[k] = id; render(); },
+  /* Click a column to sort by it, click it again to turn it round, and a third time to drop back
+     to the board's own order - highest line, then shortest price. Three states rather than two,
+     because once you have sorted by L10 there is otherwise no way back to the default short of
+     reloading the page. */
+  odSort: function(k, col){
+    var c = odColOf(col); if (!c) return;
+    var s = state.view.odSort[k];
+    if (!s || s.col !== col) state.view.odSort[k] = { col:col, dir:c.dir };
+    else if (s.dir === c.dir) state.view.odSort[k] = { col:col, dir:-c.dir };
+    else delete state.view.odSort[k];
+    render();
+  },
   player: function(k, name){ state.view.player = k ? {sport:k, name:name} : null; render(); },
   teamView: function(k, team){ state.view.teamView = k ? {sport:k, team:team} : null; render(); },
   focus: function(k, i){
@@ -18268,6 +18363,25 @@ window.LAB = {
       return { html:signalRecordSection(), waiting:signalWaitingNote(),
                tiles:Object.keys(SIG_REC.byTile).length, byTile:SIG_REC.byTile };
     } finally { SIG_REC.byTile = keepT; SIG_REC.updated = keepU; SIG_REC.waiting = keepW; }
+  },
+  /* exposed for tests: the odds board for one sport and market, as data. Returns the FULL sorted
+     set as well as the 60 the page draws, because the thing worth proving is that the sort runs
+     before the cut. */
+  odProbe: function(key, mkt, sort){
+    var was = state.view.odSort[key];
+    try {
+      if (sort === null) delete state.view.odSort[key];
+      else if (sort) state.view.odSort[key] = sort;
+      var all = bestPrices(key, mkt);
+      var sorted = odSortRows(key, mkt, all);
+      return { n:all.length,
+               rows: sorted.map(function(r){
+                 var h = odHitVals(key, r.player, mkt, r.line);
+                 return { player:r.player, line:odNum(r.line), over:odNum(r.over),
+                          under:odNum(r.under), book:r.book || '', l5:h.l5, l10:h.l10, yr:h.yr };
+               }),
+               head: OD_COLS.map(function(c){ return odHdCell(key, c); }).join('') };
+    } finally { if (was === undefined) delete state.view.odSort[key]; else state.view.odSort[key] = was; }
   },
   legProbe: function(l){ return legMatch(l); },
   liveProbe: function(src){ return { rows: liveLegRows(src), games: liveGames(src), feeds: liveFeedNames() }; },
