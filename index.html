@@ -495,19 +495,15 @@
   .elm-odds{margin-top:7px;display:inline-block;font-family:var(--font-mono);font-size:10px;color:var(--text);
     border:1px solid var(--border);border-radius:5px;padding:3px 7px;}
   .elm-book{display:block;font-family:var(--font-mono);font-size:7px;color:var(--text-3);margin-top:3px;}
-  /* Buy Low / Sell High: the line move is the headline, because it is the half of the signal a
-     reader cannot work out by looking at the matchup. */
-  .sw-row .elm-right{width:96px;}
-  .sw-move{font-family:var(--font-display);font-size:18px;line-height:1;}
-  .sw-move.dn{color:var(--accent);} .sw-move.up{color:#f97316;}
-  .sw-detail{opacity:.85;}
-  .sw-of{color:var(--text-3);}
   /* Volumes: the gap between the line and the opportunity behind it is the headline, because the
      hot streak that pushed it there is the one thing a reader WILL already have noticed. */
   .vl-row .elm-right{width:104px;}
   .vl-gap{font-family:var(--font-display);font-size:18px;line-height:1;color:#f97316;}
   .vl-detail{opacity:.85;}
   .vl-of{color:var(--text-3);}
+  /* the matchup is the strongest read on the row, so it gets the accent rather than the dimming
+     the other supporting lines carry */
+  .vl-opp{opacity:.95;} .vl-opp i{color:var(--accent);font-style:normal;}
   .h2h-sig-row{display:flex;gap:10px;padding:10px 12px;border-top:1px solid var(--border);align-items:center;cursor:pointer;}
   .h2h-sig-left{flex:1;min-width:0;}
   .h2h-sig-nm{font-size:12px;font-weight:700;display:flex;align-items:center;gap:6px;min-width:0;}
@@ -1941,10 +1937,6 @@ var TIER3 = { gamelogs:'data/gamelogs.json', dvp:'data/dvp.json', teams_form:'da
               injury:'data/injury.json', lineups:'data/lineups.json', results:'data/results.json',
               oddsOpen:'data/odds_open.json', goalies:'data/goalies.json',
               firstRead:'data/firstread.json',
-              // Buy Low / Sell High, built by scripts/build_swing.py. A sport without one 404s
-              // here exactly as goalies.json does for everything but the NHL, and its two tiles
-              // then render nothing rather than an empty shell.
-              swing:'data/swing.json',
               // Volumes, built by scripts/build_volumes.py. Same deal: absent for a sport with no
               // build and the tile renders nothing rather than an empty shell.
               volumes:'data/volumes.json',
@@ -4072,85 +4064,6 @@ function eliteRow(key, r){
     + '</div></div>';
 }
 
-/* BUY LOW / SELL HIGH ----------------------------------------------------------------------------
-   A player runs into two hard defences in a row, his numbers fall, the book moves his line down -
-   and then he draws a soft one. If the fall was the DEFENCES rather than the player, the line is
-   now cheap against a matchup that should not hold him. Sell High is the mirror.
-
-   The whole signal rests on one test, and it is worth saying out loud: a man's yards fall for two
-   reasons that look identical in a box score - he was held, or he was barely out there. Only the
-   first comes back when the matchup softens. A back who lost his job and ran for 20 yards is not a
-   buy at any price, and his line is low for a reason that is still true next week. So the dip only
-   counts as a matchup effect when the usage behind it held up, and scripts/build_swing.py refuses
-   every row where it did not.
-
-   The arithmetic - defensive ranks, the weekly closing lines out of odds-history, the usage test -
-   is all done in that builder, because it reads twenty-odd daily odds snapshots and that is not
-   something to do in a phone browser. This reads the result.                                     */
-function swingRows(key, g, side){
-  var S = state.sports[key], d = S.data.swing;
-  if (!d || !d.rows || !d.rows.length) return [];
-  var home = g && (g.home || g.homeAbbr), away = g && (g.away || g.awayAbbr);
-  return d.rows.filter(function(r){
-    if (r.side !== side) return false;
-    return !g || r.team === home || r.team === away;
-  });
-}
-function swingRow(key, r){
-  var buy = r.side === 'buy';
-  var ask = Math.ceil(r.lineNow) === r.lineNow ? r.lineNow + 1 : Math.ceil(r.lineNow);
-  var price = buy ? r.over : r.under;
-  var btns = price ? rowBtns(key, { name:r.player, mkt:r.market, line:r.lineNow,
-                       side: buy ? 'over' : 'under', odds:price, book:r.book,
-                       opp:r.nextOpp.team, team:r.team, label:mktLabel(key, r.market) }) : '';
-  var faced = (r.runOpps || []).map(function(o){
-    return esc(abbrOf(key, o.team)) + ' <i>#' + o.rank + '</i>';
-  }).join(' · ');
-  var moved = Math.round(Math.abs(r.move) * 100);
-  return '<div class="elm-row sw-row" onclick="LAB.player(\'' + key + '\',\''
-    + esc(r.player).replace(/'/g, "\\'") + '\')">'
-    + btns
-    + playerImgP(key, r.player, 28)
-    + '<div class="elm-left">'
-      + '<div class="elm-nm"><b>' + esc(r.player) + '</b>'
-        + '<span class="elm-rk">' + esc(mktLabel(key, r.market)) + '</span></div>'
-      + '<div class="elm-stat">' + faced + ' → <b>' + esc(abbrOf(key, r.nextOpp.team))
-        + ' #' + r.nextOpp.rank + '</b> of ' + r.nextOpp.of + '</div>'
-      // the two numbers that make it a swing rather than a slump: what the defences cost him,
-      // and that he was still out there getting the ball while they did it
-      /* Both halves need the usage, but they need it to say different things. On a buy the
-         question is whether the role survived the slump; on a sell it is whether the big numbers
-         were just extra volume, which would not be a matchup effect at all. */
-      + '<div class="elm-stat sw-detail">' + r.basePerGame + ' → ' + r.runPerGame
-        + ' per game · ' + esc(mktLabel(key, r.usageStat))
-        + (buy ? ' held' : ' no spike') + ': <span class="sw-of">' + r.usageBase + ' → </span>'
-        + r.usageRun + '</div>'
-    + '</div>'
-    + '<div class="elm-right">'
-      + '<div class="sw-move ' + (buy ? 'dn' : 'up') + '">' + (buy ? '↓' : '↑')
-        + moved + '%</div>'
-      + '<div class="elm-dvpl">' + r.linePrior + ' → ' + r.lineNow + '</div>'
-      + (price ? '<div class="elm-odds">' + (buy ? ask + '+' : 'U' + r.lineNow)
-          + ' $' + (+price).toFixed(2) + (r.book ? ' <i>' + esc(r.book) + '</i>' : '') + '</div>' : '')
-    + '</div></div>';
-}
-function swingTiles(key, g){
-  var S = state.sports[key];
-  if (!S.data.swing) return '';            // the sport has no swing build; say nothing at all
-  var why = function(side){
-    return 'Nobody here has run into two ' + (side === 'buy' ? 'hard' : 'soft')
-      + ' defences in a row, ' + (side === 'buy' ? 'dipped' : 'spiked')
-      + ' on them with their usage intact, had the market move, and now draw a '
-      + (side === 'buy' ? 'soft' : 'hard') + ' one.';
-  };
-  return sigTile('ti-trending-down', 'Buy Low',
-      'Two hard defences, a line that fell with him, and a soft one next',
-      swingRows(key, g, 'buy').map(function(r){ return swingRow(key, r); }), why('buy'))
-    + sigTile('ti-trending-up', 'Sell High',
-      'Two soft defences, a line that rose with him, and a hard one next',
-      swingRows(key, g, 'sell').map(function(r){ return swingRow(key, r); }), why('sell'));
-}
-
 /* VOLUMES: a line the market has pushed above the opportunity behind it.
 
    Shots, targets, carries and minutes barely move week to week. The percentage a player converts
@@ -4196,6 +4109,13 @@ function volumeRow(key, r){
       // then the thing that must come back down
       + '<div class="elm-stat vl-detail">' + esc(r.rateLabel) + ' <b>' + volRate(r, r.recRate)
         + '</b> vs ' + volRate(r, r.rate) + ' long-run</div>'
+      /* And who he meets next, which turned out to carry more than anything else on the row: a
+         line inflated by a hot run is not mispriced if the next defence is one he should score on
+         anyway. The builder already refuses the softest third, so every rank shown here is one
+         that passed - it is on the row because it is the reason to trust the bet, not decoration. */
+      + (r.nextOpp ? '<div class="elm-stat vl-opp">vs <b>' + esc(abbrOf(key, r.nextOpp.team))
+          + '</b>' + (r.nextOpp.rank ? ' <i>#' + r.nextOpp.rank + '</i> of ' + r.nextOpp.of
+              + ' vs ' + esc(r.pos || 'his spot') : '') + '</div>' : '')
     + '</div>'
     + '<div class="elm-right">'
       + '<div class="vl-gap">↑' + gap + '%</div>'
@@ -8621,7 +8541,6 @@ function signalsSection(key, g){
     + (function(){ var lc = letsClimb(key, g);
         return sigTile('ti-stairs-up', 'Let\u2019s Climb', 'One staked ladder: main line, then value rungs up',
           lc.rows.map(function(r){ return climbRow(key, r); }), lc.why); })()
-    + swingTiles(key, g)
     + volumeTiles(key, g);
   SIG_PHASE = 'sp';                                   // tiles below belong to the sport's own band
   var nfl = nflSignals(key, g) + aflSignals(key, g) + eplSignals(key, g) + mlbSignals(key, g) + nblSignals(key, g) + nhlSignals(key, g) + nbaSignals(key, g);
@@ -18799,18 +18718,6 @@ window.LAB = {
     }
   },
   legProbe: function(l){ return legMatch(l); },
-  // exposed for tests: the Buy Low / Sell High tiles for a given build and a given game
-  swingProbe: function(key, swing, game){
-    var S = state.sports[key], was = S.data.swing;
-    try {
-      if (swing === null) delete S.data.swing; else S.data.swing = swing;
-      // an empty tile renders nothing and files its reason in the quiet list, so a test of the
-      // empty case has to look where the reason actually goes
-      var wasQ = SIG_QUIET; SIG_QUIET = [];
-      try { return { html: swingTiles(key, game), quiet: SIG_QUIET.slice() }; }
-      finally { SIG_QUIET = wasQ; }
-    } finally { if (was === undefined) delete S.data.swing; else S.data.swing = was; }
-  },
   // exposed for tests: the Volumes tile for a given build and a given game
   volProbe: function(key, volumes, game){
     var S = state.sports[key], was = S.data.volumes;
