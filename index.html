@@ -502,6 +502,12 @@
   .sw-move.dn{color:var(--accent);} .sw-move.up{color:#f97316;}
   .sw-detail{opacity:.85;}
   .sw-of{color:var(--text-3);}
+  /* Volumes: the gap between the line and the opportunity behind it is the headline, because the
+     hot streak that pushed it there is the one thing a reader WILL already have noticed. */
+  .vl-row .elm-right{width:104px;}
+  .vl-gap{font-family:var(--font-display);font-size:18px;line-height:1;color:#f97316;}
+  .vl-detail{opacity:.85;}
+  .vl-of{color:var(--text-3);}
   .h2h-sig-row{display:flex;gap:10px;padding:10px 12px;border-top:1px solid var(--border);align-items:center;cursor:pointer;}
   .h2h-sig-left{flex:1;min-width:0;}
   .h2h-sig-nm{font-size:12px;font-weight:700;display:flex;align-items:center;gap:6px;min-width:0;}
@@ -1939,6 +1945,9 @@ var TIER3 = { gamelogs:'data/gamelogs.json', dvp:'data/dvp.json', teams_form:'da
               // here exactly as goalies.json does for everything but the NHL, and its two tiles
               // then render nothing rather than an empty shell.
               swing:'data/swing.json',
+              // Volumes, built by scripts/build_volumes.py. Same deal: absent for a sport with no
+              // build and the tile renders nothing rather than an empty shell.
+              volumes:'data/volumes.json',
               quarters:'data/quarters.json', zones:'data/zones.json',
               profiles:'data/profiles.json',
               specialTeams:'data/special_teams.json',
@@ -4140,6 +4149,69 @@ function swingTiles(key, g){
     + sigTile('ti-trending-up', 'Sell High',
       'Two soft defences, a line that rose with him, and a hard one next',
       swingRows(key, g, 'sell').map(function(r){ return swingRow(key, r); }), why('sell'));
+}
+
+/* VOLUMES: a line the market has pushed above the opportunity behind it.
+
+   Shots, targets, carries and minutes barely move week to week. The percentage a player converts
+   them at swings wildly, and the market prices the OUTPUT - so three hot games drag a line up past
+   anything the underlying opportunity supports. The opportunity is still there next week; the
+   percentage is not. Hence the under.
+
+   Only the sell side exists, and that is deliberate rather than unfinished. The mirror case - cold
+   run, volume intact, cheap over - reads better and loses money: -8.9% against three weeks of real
+   NFL lines, and worse the tighter the logic got. Conversion has a ceiling and no floor, so a hot
+   run must come down while a cold one might just be a player who is finished.
+
+   scripts/build_volumes.py does the work; this renders the result. Two numbers carry the row: that
+   the volume held (so the line is not high for a reason that is still true) and that the
+   conversion rate behind it ran hot (so there is something to come down). A row where the recent
+   rate is at or below the long-run rate is refused by the builder - it would be a model
+   disagreeing with the market, which is a different claim than the one this tile makes.          */
+function volumeRows(key, g){
+  var S = state.sports[key], d = S.data.volumes;
+  if (!d || !d.rows || !d.rows.length) return [];
+  var home = g && (g.home || g.homeAbbr), away = g && (g.away || g.awayAbbr);
+  return d.rows.filter(function(r){ return !g || r.team === home || r.team === away; });
+}
+function volRate(r, v){
+  // a catch rate reads as a percentage; yards per target does not
+  return r.ratePct ? Math.round(v * 100) + '%' : (+v).toFixed(2);
+}
+function volumeRow(key, r){
+  var btns = r.under ? rowBtns(key, { name:r.player, mkt:r.market, line:r.line, side:'under',
+                       odds:r.under, book:r.book, team:r.team,
+                       label:mktLabel(key, r.market) }) : '';
+  var gap = Math.round(Math.abs(r.edge) * 100);
+  return '<div class="elm-row vl-row" onclick="LAB.player(\'' + key + '\',\''
+    + esc(r.player).replace(/'/g, "\\'") + '\')">'
+    + btns
+    + playerImgP(key, r.player, 28)
+    + '<div class="elm-left">'
+      + '<div class="elm-nm"><b>' + esc(r.player) + '</b>'
+        + '<span class="elm-rk">' + esc(mktLabel(key, r.market)) + '</span></div>'
+      // the gate first: the chances are still coming, so the line is not low-risk for a real reason
+      + '<div class="elm-stat">' + esc(r.volLabel) + ' held: <span class="vl-of">'
+        + r.volBase + ' → </span>' + r.volRec + ' over ' + r.games + '</div>'
+      // then the thing that must come back down
+      + '<div class="elm-stat vl-detail">' + esc(r.rateLabel) + ' <b>' + volRate(r, r.recRate)
+        + '</b> vs ' + volRate(r, r.rate) + ' long-run</div>'
+    + '</div>'
+    + '<div class="elm-right">'
+      + '<div class="vl-gap">↑' + gap + '%</div>'
+      + '<div class="elm-dvpl">proj ' + r.proj + '</div>'
+      + (r.under ? '<div class="elm-odds">U' + r.line + ' $' + (+r.under).toFixed(2)
+          + (r.book ? ' <i>' + esc(r.book) + '</i>' : '') + '</div>' : '')
+    + '</div></div>';
+}
+function volumeTiles(key, g){
+  var S = state.sports[key];
+  if (!S.data.volumes) return '';          // the sport has no volumes build; say nothing at all
+  return sigTile('ti-chart-bar', 'Volumes',
+    'A line pushed above the opportunity behind it by a hot conversion run',
+    volumeRows(key, g).map(function(r){ return volumeRow(key, r); }),
+    'Nobody here is converting above their long-run rate on normal volume with a line that has '
+    + 'followed them up.');
 }
 
 /* BUNNIES / BOGEY: a player's record against the specific team in front of them.
@@ -8549,7 +8621,8 @@ function signalsSection(key, g){
     + (function(){ var lc = letsClimb(key, g);
         return sigTile('ti-stairs-up', 'Let\u2019s Climb', 'One staked ladder: main line, then value rungs up',
           lc.rows.map(function(r){ return climbRow(key, r); }), lc.why); })()
-    + swingTiles(key, g);
+    + swingTiles(key, g)
+    + volumeTiles(key, g);
   SIG_PHASE = 'sp';                                   // tiles below belong to the sport's own band
   var nfl = nflSignals(key, g) + aflSignals(key, g) + eplSignals(key, g) + mlbSignals(key, g) + nblSignals(key, g) + nhlSignals(key, g) + nbaSignals(key, g);
   SIG_PHASE = 'u';
@@ -18737,6 +18810,16 @@ window.LAB = {
       try { return { html: swingTiles(key, game), quiet: SIG_QUIET.slice() }; }
       finally { SIG_QUIET = wasQ; }
     } finally { if (was === undefined) delete S.data.swing; else S.data.swing = was; }
+  },
+  // exposed for tests: the Volumes tile for a given build and a given game
+  volProbe: function(key, volumes, game){
+    var S = state.sports[key], was = S.data.volumes;
+    try {
+      if (volumes === null) delete S.data.volumes; else S.data.volumes = volumes;
+      var wasQ = SIG_QUIET; SIG_QUIET = [];
+      try { return { html: volumeTiles(key, game), quiet: SIG_QUIET.slice() }; }
+      finally { SIG_QUIET = wasQ; }
+    } finally { if (was === undefined) delete S.data.volumes; else S.data.volumes = was; }
   },
   liveProbe: function(src){ return { rows: liveLegRows(src), games: liveGames(src), feeds: liveFeedNames() }; },
   // exposed for tests: drive the tracker against a given live payload instead of the network
