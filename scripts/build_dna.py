@@ -116,12 +116,57 @@ def gamelogs_for(root, sport):
     return out
 
 
-def main_lines(root, sport):
-    """One posted line per (season, week, player, market), with how it moved before kickoff.
+# WHICH SPORTS COUNT TIME IN WEEKS
+# The NFL plays once a week and its snapshots carry a week number, so a week IS a round and
+# everything can be keyed on one. No other sport's snapshots carry a week at all - NBA, NBL, NHL,
+# MLB and EPL fixtures all have `week: null` - and most of them play two to four times a week, so
+# a week number would not identify a game even if it were there. Those are keyed on the DATE of
+# the game the line was posted for.
+#
+# This is why every sport but the NFL graded exactly zero main lines: the snapshot loop below
+# required fixture[].week and skipped every snapshot that did not have one, which was all of them.
+WEEKLY = ('nfl',)
+
+# EPL needs no exception and gets none: it is on the date path and works, but it will keep
+# reporting nothing for as long as its board stays one-way. Of 17,885 EPL player rows across the
+# last four snapshots, ZERO carried both an over and an under - the market is anytime scorer,
+# fouls, cards and assists, all one-sided. A main line has to be de-vigged against its other side,
+# so there is nothing here to measure. That is an empty result, not a failure, and the error string
+# below says which of the two it is.
+#
+# AFL is deliberately absent from both paths. Its gamelogs carry no Date - only Year and a
+# RoundName like "Preliminary Finals" - and its results.json counts rounds as integers where 29
+# means the Grand Final, so neither joins to the other without guessing an alignment between two
+# differently-shaped round labels. It is also the one sport with no Opp field. Rather than invent
+# a bridge on an assumption, AFL reports no DNA and says so; it is out of season until March.
+
+
+def period_of_log(sport, row):
+    """The one key that identifies which game a gamelog row is - per sport, comparably."""
+    if sport in WEEKLY:
+        return (num(row.get('Year')), num(row.get('Week')))
+    return str(row.get('Date') or row.get('date') or '')
+
+
+def period_of_result(sport, r):
+    if sport in WEEKLY:
+        return (num(r.get('season')), num(r.get('week')))
+    return str(r.get('date') or '')
+
+
+def main_lines(root, sport, next_game=None):
+    """One posted line per (period, player, market), with how it moved before kickoff.
 
     The snapshots are daily, so the same line is seen many times. The LAST sighting before the
     games is the main line a reader would have bet into; the first is where it opened. The gap
     between them is the market's own opinion, which is usually the strongest strand there is.
+
+    `period` is a week for the NFL and a game DATE everywhere else (see WEEKLY above). For the
+    date-based sports the snapshot alone cannot say which game a line belongs to - a snapshot
+    lists several fixtures and the odds rows do not name a team - so `next_game(player, day)`
+    resolves it from the player's own gamelogs: the first game he actually played on or after the
+    day the line was seen. Because the snapshots are daily, the last one before a game wins, which
+    is both the sharpest line and the only one that can be settled against that game.
     """
     d = os.path.join(root, SPORT_DIR.get(sport, sport), 'odds-history')
     if not os.path.isdir(d):
@@ -133,11 +178,18 @@ def main_lines(root, sport):
         snap = load(os.path.join(d, fn))
         if not isinstance(snap, dict):
             continue
-        fx = [g for g in (snap.get('fixture') or []) if isinstance(g, dict) and g.get('week')]
-        if not fx:
+        day = fn[:10]
+        if sport in WEEKLY:
+            fx = [g for g in (snap.get('fixture') or []) if isinstance(g, dict) and g.get('week')]
+            if not fx:
+                continue
+            week = min(g['week'] for g in fx)
+            season = min((g.get('season') or 0) for g in fx) or None
+            period = (season, week)
+        elif next_game is None:
             continue
-        week = min(g['week'] for g in fx)
-        season = min((g.get('season') or 0) for g in fx) or None
+        else:
+            period = None            # resolved per player below
         # A SNAPSHOT CARRIES THE WHOLE ALT LADDER - up to 32 rungs for one player and market,
         # from 224.5 to 424.5 passing yards. The main line is ONE of them: the two-way rung
         # priced closest to even money, which is the one the book is actually balancing.
@@ -159,7 +211,10 @@ def main_lines(root, sport):
             if k not in best or bal < best[k][0]:
                 best[k] = (bal, line, ov, un)
         for (p, m), (_, line, ov, un) in best.items():
-            k = (season, week, p, m)
+            per = period if period is not None else next_game(p, day)
+            if per is None:
+                continue            # he has not played since; nothing to settle this line against
+            k = (per, p, m)
             e = out.get(k)
             if e is None:
                 out[k] = {'open': line, 'line': line, 'openOver': ov,
@@ -192,13 +247,50 @@ def wilson(h, n):
     return (p, max(0.0, centre - half), min(1.0, centre + half))
 
 
-def build(root, sport, min_n=60):
+# THE SAMPLE FLOORS, of which there are two and only one was doing anything
+#
+# min_n gates a MARKET: how many graded main lines it has before it gets its own strand table at
+# all. It was 60 and is now 100.
+#
+# MIN_STRAND gates a STRAND inside that table, and it was the one that mattered. It was 25 - so a
+# strand measured on twenty-five bets could clear z=2.5 and be published to a reader as "what this
+# bet needs". That is precisely the failure this file's own docstring is about: at n=71 the
+# standard error on a hit rate is about 5.9 points, so clearing z=2.5 there means showing a
+# fifteen-point swing, which is roughly what the largest of twenty-odd comparisons looks like on a
+# coin flip and nothing like the three-point effects argued above as the real ones. The NFL recYds
+# table was shipping u_airShare on 71 inside observations at z=4.45 for exactly this reason.
+#
+# tests/dna_test.js asserts the floor independently at 100, which is how the gap surfaced - a good
+# argument for a test keeping its own copy of a number that matters rather than importing it.
+MIN_STRAND = 100
+
+
+def build(root, sport, min_n=100):
     base = os.path.join(root, SPORT_DIR.get(sport, sport), 'data')
-    lines = main_lines(root, sport)
-    if not lines:
-        return {'sport': sport, 'error': 'no odds-history to measure main lines from',
-                'strands': [], 'n': 0}
     logs = gamelogs_for(root, sport)
+
+    # The date-based sports need the gamelogs BEFORE the lines, because which game a line belongs
+    # to is answered from the player's own appearances rather than from the snapshot.
+    by_day = collections.defaultdict(list)
+    for r in logs:
+        p, day = r.get('Player'), str(r.get('Date') or r.get('date') or '')
+        if p and day:
+            by_day[p].append(day)
+    for p in by_day:
+        by_day[p].sort()
+
+    def next_game(player, day):
+        for d in by_day.get(player, ()):
+            if d >= day:
+                return d
+        return None
+
+    lines = main_lines(root, sport, None if sport in WEEKLY else next_game)
+    if not lines:
+        why = ('no odds-history to measure main lines from' if sport in WEEKLY else
+               'no odds-history, or the gamelogs carry no Date to tie a line to a game')
+        return {'sport': sport, 'error': why, 'strands': [], 'n': 0}
+
     fields = set()
     for r in logs[:4000]:
         fields.update(r.keys())
@@ -207,15 +299,25 @@ def build(root, sport, min_n=60):
         p = r.get('Player')
         if not p:
             continue
-        by_pw[(num(r.get('Year')), num(r.get('Week')), p)] = r
+        by_pw[(period_of_log(sport, r), p)] = r
 
     results = load(os.path.join(base, 'results.json'), []) or []
     score = {}
     for r in results:
         if isinstance(r, dict) and r.get('home') and r.get('away'):
-            k = (num(r.get('season')), num(r.get('week')))
-            score[(k, str(r['home']).upper())] = (num(r.get('hs')), num(r.get('as')))
-            score[(k, str(r['away']).upper())] = (num(r.get('as')), num(r.get('hs')))
+            k = period_of_result(sport, r)
+            # Scores are named two ways across the files: hs/as in the NFL, NBA, NBL, NHL and MLB
+            # results, homeScore/awayScore in the EPL and AFL ones. Reading only the first pair
+            # left every margin, total, close-game and blowout strand silently absent for the
+            # sports that use the second - present in the output, measured on nothing.
+            hs = num(r.get('hs'))
+            as_ = num(r.get('as'))
+            if hs is None:
+                hs = num(r.get('homeScore'))
+            if as_ is None:
+                as_ = num(r.get('awayScore'))
+            score[(k, str(r['home']).upper())] = (hs, as_)
+            score[(k, str(r['away']).upper())] = (as_, hs)
 
     dvp = load(os.path.join(base, 'dvp.json'), []) or []
     dvp_rank = {}
@@ -248,8 +350,8 @@ def build(root, sport, min_n=60):
            for p, cols in own.items()}
 
     rows = []
-    for (season, week, player, market), od in lines.items():
-        row = by_pw.get((num(season), num(week), player))
+    for (period, player, market), od in lines.items():
+        row = by_pw.get((period, player))
         if row is None:
             continue
         v = stat_of(sport, row, market, fields)
@@ -258,7 +360,7 @@ def build(root, sport, min_n=60):
         line = od['line']
         hit = v > line                              # main lines are graded as the over
         team = str(row.get('Team') or '').upper()
-        sc = score.get(((num(season), num(week)), team))
+        sc = score.get((period, team))
         marg = (sc[0] - sc[1]) if (sc and sc[0] is not None and sc[1] is not None) else None
         tot = (sc[0] + sc[1]) if (sc and sc[0] is not None and sc[1] is not None) else None
         pos = pos_of.get(player, 'ALL')
@@ -367,7 +469,7 @@ def build(root, sport, min_n=60):
                     ins.append(r['edge']); inn += 1; inh += r['hit']
                 else:
                     outs.append(r['edge']); outn += 1; outh += r['hit']
-            if inn < 25 or outn < 25:
+            if inn < MIN_STRAND or outn < MIN_STRAND:
                 continue
             pin, lo_in, hi_in = wilson(inh, inn)
             pout, _, _ = wilson(outh, outn)
