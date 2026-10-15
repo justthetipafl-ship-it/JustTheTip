@@ -555,6 +555,9 @@
   .dx-games td{padding:3px 7px;border-top:1px solid var(--border);}
   .dx-games td i{font-style:normal;color:var(--text-3);}
   .dx-g-cov td:first-child{box-shadow:inset 2px 0 0 var(--accent);}
+  /* the games that sat on the covering side of THIS strand's cut, whichever way it points */
+  .dx-g-met{color:var(--text-1);font-weight:700;background:rgba(127,127,127,.09);}
+  .dx-games th i{font-style:normal;color:var(--text-3);font-weight:400;}
   .dx-g-mis{opacity:.6;}
   /* the match: a description of how much of his profile is on the board, never a probability */
   .dx-score{border:1px solid var(--border);border-radius:8px;padding:10px;margin:0 0 12px;
@@ -2737,7 +2740,11 @@ var LOW_COUNT_KEYS = {goals:1,passTds:1,rushTds:1,passInt:1,sacks:1,assists:1,re
 // (a team leading on cards or sacks taken is not winning that row).
 var INVERSE_KEYS = {cards:1,foulsCommitted:1,passInt:1,sacks:1,SO:1,ga:1};
 // League average per stat, so each team's figure can be shown as a % above/below par.
-function leagueAvg(key, k){
+/* The league average of a column in the TEAM table. This was also called leagueAvg, and so was the
+   per-player version two thousand lines below; the later declaration won, so the one caller here
+   received a map of players where it expected a number, every (v - lg) / lg came out NaN, and the
+   head-to-head table printed "par" against every stat in every fixture. It never threw. */
+function teamLeagueAvg(key, k){
   var teams = asArray(state.sports[key].data.teams) || [];
   var v = [];
   teams.forEach(function(t){ var x = t && t[k]; if (x != null && isFinite(+x)) v.push(+x); });
@@ -2784,7 +2791,7 @@ function h2hSection(key, g){
     var homeBetter = lowerWins ? (hn <= an) : (hn >= an);
     var awayBetter = lowerWins ? (an < hn)  : (an > hn);
 
-    var lg = leagueAvg(key, k+suf);
+    var lg = teamLeagueAvg(key, k+suf);
     var pct = function(v){
       if (!lg) return '';
       var d = Math.round((v - lg) / lg * 100);
@@ -13445,6 +13452,19 @@ var CDNA_DECOMP = { recYds:{ ydsPerTgt:1, ydsPerCatch:1, aDOT:1, catchRate:1, lo
                     points:{ fga:1, fgm:1, ftm:1, threes:1 } };
 
 var CDNA_LABEL = {
+  /* Any field that reaches the panel without a label prints its raw column name - "rzTd_g" sat in
+     the list looking like a bug, which for a reader it is. These are the rest of the columns the
+     gamelogs carry. */
+  longRush:'Longest run', expRush:'Explosive runs', rzTd_g:'Red-zone TDs', rushTds:'Rushing TDs',
+  boxCount:'Defenders in the box', timeToLos:'Time behind the line', ryoe:'Rush yards over expected',
+  i10Att_g:'Inside-10 carries', passYds:'Passing yards', passAtt:'Pass attempts',
+  passComp:'Completions', passTds:'Passing TDs', passInt:'Interceptions thrown',
+  longComp:'Longest completion', sacks:'Sacks taken', soloTk:'Solo tackles', astTk:'Assisted tackles',
+  tfl:'Tackles for loss', defSacks:'Sacks made', fanPts:'Fantasy points',
+  anytimeTd:'Scored a touchdown', rushRecYds:'Rush + receiving yards',
+  kickingPts:'Kicking points', fgMade:'Field goals made', fgAtt:'Field goals attempted',
+  fgLong:'Longest field goal', patMade:'Extra points made', patAtt:'Extra points attempted',
+  stocks:'Steals + blocks', turnovers:'Turnovers',
   receptions:'Receptions', targets:'Targets', recYds:'Receiving yards', airYds:'Air yards',
   tgtShare:'Target share %', snapPct:'Snap share %', longRec:'Longest catch', recTds:'Receiving TDs',
   totalTds:'Total TDs', rzTgt_g:'Red-zone targets', i10Tgt_g:'Inside-10 targets',
@@ -13499,7 +13519,7 @@ var CDNA_DVP_MAX   = { longRec:1, longRush:1, longComp:1, fgLong:1 };
 var CDNA_DVP_RATIO = { ydsPerTgt:['recYds','targets'], catchRate:['receptions','targets'],
                        ydsPerCatch:['recYds','receptions'], ydsPerCarry:['rushYds','rushAtt'],
                        shootPct:['fgm','fga'], qb_compPct:['passComp','passAtt'],
-                       fgPct:['fgMade','fgAtt'] };
+                       fgPct:['fgMade','fgAtt'], aDOT:['airYds','targets'] };
 /* Columns whose values are PERCENTAGES on a 0-100 scale, checked against the real gamelogs rather
    than guessed from the name: a threshold of "needs 66.3" where the figure is a completion rate is
    the kind of number a reader silently misreads as a count. sep, cushion and aDotNgs look like
@@ -13533,6 +13553,7 @@ function cdnaDvpPos(key, pos){
   return any ? 'ALL' : null;
 }
 function cdnaPosLabel(pos){ return pos === 'ALL' ? 'batters' : pos + 's'; }
+function cdnaPosWord(pos){ return pos === 'ALL' ? 'batter' : pos; }
 
 var CDNA_LF = [0, 0];
 function cdnaLogFact(n){
@@ -13555,24 +13576,57 @@ function cdnaHyper(covHit, nCov, misHit, nMis){
 
 /* The threshold that best separates his covers from his misses. Searched over every value either
    group actually produced, which is why the p above has to travel with it. */
+/* THE THRESHOLD, searched in BOTH directions. The first version only ever asked "what did he need
+   AT LEAST", which quietly assumed every helpful condition is a high one. Plenty are not: his
+   covers can come when his quarterback is holding the ball less, when the air yards are shorter,
+   when the team is not leaning on the run. Under the old search those strands score at or below
+   zero separation, get dropped as "splits nothing", and never appear - measured across 120 NFL
+   bets, 492 strands where a low cut separates better by a clear margin and 73 that were invisible
+   altogether, one of them separating 0.67. It also mattered for every UNDER, which reads this
+   profile in reverse off a cut that was tuned for the other side.
+
+   dir 'hi' means his covers sat AT OR ABOVE the cut, 'lo' means AT OR BELOW it. Both are searched
+   and the cleaner one wins; a tie keeps 'hi', so nothing that reads correctly today changes. */
+/* A yes/no column is NAMED, not inferred from its values. Inferring it was wrong: red-zone
+   touchdowns per game happen to be only ever 0 or 1 for most players, so the panel announced
+   "no match" against a count, which is both meaningless and the opposite of informative. A flag
+   is a flag because of what it measures, not because of how few values it has taken. */
+var CDNA_FLAGS = { won:1, atHome:1, starter:1, started:1, zeroGame:1 };
+function cdnaIsBool(field, vals){
+  if (!CDNA_FLAGS[field]) return false;
+  var a = +vals[0], b = +vals[1];
+  return (a === 0 && b === 1) || (a === 1 && b === 0);
+}
 function cdnaSplit(cov, mis){
   if (!cov.length || !mis.length) return null;
   var all = cov.concat(mis).slice().sort(function(a, b){ return a - b; });
-  var best = null, i, t, ch, mh, j;
+  var best = null, i, t, j, ch, mh, sep;
   for (i = 0; i < all.length; i++){
     t = all[i];
     if (i && all[i - 1] === t) continue;
     ch = 0; mh = 0;
     for (j = 0; j < cov.length; j++) if (cov[j] >= t) ch++;
     for (j = 0; j < mis.length; j++) if (mis[j] >= t) mh++;
-    if (!ch && !mh) continue;
-    var sep = ch / cov.length - mh / mis.length;
-    if (!best || sep > best.sep)
-      best = { at:t, cov:ch, ofCov:cov.length, mis:mh, ofMis:mis.length, sep:sep };
+    if (ch || mh){
+      sep = ch / cov.length - mh / mis.length;
+      if (!best || sep > best.sep)
+        best = { at:t, dir:'hi', cov:ch, ofCov:cov.length, mis:mh, ofMis:mis.length, sep:sep };
+    }
+    ch = 0; mh = 0;
+    for (j = 0; j < cov.length; j++) if (cov[j] <= t) ch++;
+    for (j = 0; j < mis.length; j++) if (mis[j] <= t) mh++;
+    if (ch || mh){
+      sep = ch / cov.length - mh / mis.length;
+      if (!best || sep > best.sep)
+        best = { at:t, dir:'lo', cov:ch, ofCov:cov.length, mis:mh, ofMis:mis.length, sep:sep };
+    }
   }
   if (best) best.p = cdnaHyper(best.cov, best.ofCov, best.mis, best.ofMis);
   return best;
 }
+/* Does a value sit on the covering side of a strand's cut? Everything that reads a threshold goes
+   through this, so the direction can never be applied in one place and forgotten in another. */
+function cdnaMeets(s, v){ return s.dir === 'lo' ? v <= s.at : v >= s.at; }
 
 var CDNA_TW = {};            // sport -> team-week index, built once; 45k rows is too many to rescan
 function cdnaTeamWeek(key){
@@ -13589,7 +13643,13 @@ function cdnaMates(key, row){
   var idx = cdnaTeamWeek(key);
   return idx[String(row.Year) + '|' + row.Week + '|' + (row.Date || row.date || '') + '|' + row.Team] || [];
 }
-function cdnaScore(key, row){
+/* The final score of the game a row belongs to. This was ALSO called cdnaScore, and so was the
+   match-percentage function six hundred lines below it; the later declaration won, every call here
+   landed in the scorer, and it returned null for a string argument. The scoreboard strands - the
+   game total, his team's points, the margin, whether they won - therefore never existed, in any
+   sport, since the feature shipped. Nothing errored: the fields were simply never set, so they
+   looked like columns the gamelogs did not carry. */
+function cdnaGameScore(key, row){
   var S = state.sports[key], res = S.data.results || [], team = String(row.Team || '').toUpperCase();
   for (var i = 0; i < res.length; i++){
     var r = res[i];
@@ -13630,7 +13690,7 @@ function cdnaContext(key, row, pos){
     }
     if (any && tot) out['team_' + f] = tot;
   });
-  var sc = cdnaScore(key, row);
+  var sc = cdnaGameScore(key, row);
   if (sc){
     out.gameTotal = sc.own + sc.opp; out.teamScore = sc.own; out.oppScore = sc.opp;
     out.margin = sc.own - sc.opp; out.won = sc.own > sc.opp ? 1 : 0;
@@ -13672,10 +13732,19 @@ function cdnaToday(key, field, player, team, pos){
                how:field === 'won' ? ('the market has him ' + (sp < 0 ? 'favoured' : 'the outsider'))
                                    : ('the spread, he is ' + (sp > 0 ? '+' : '') + sp), group:1 };
     }
-    if (field === 'teamScore' && g.total && g.total.points != null && g.line && g.line.home != null){
+    if (field === 'atHome')
+      return { num:cdnaSame(key, g.home, team) ? 1 : 0, group:1,
+               how:cdnaSame(key, g.home, team) ? 'he is at home today' : 'he is on the road today' };
+    /* The two implied totals are the same arithmetic read from either end: the total and the
+       spread give both sides, so the opponent's is as posted as his own. */
+    if ((field === 'teamScore' || field === 'oppScore')
+        && g.total && g.total.points != null && g.line && g.line.home != null){
       var t2 = +g.total.points, h2 = +g.line.home;
       var s2 = cdnaSame(key, g.home, team) ? h2 : -h2;
-      return { num:Math.round((t2 - s2) / 2 * 10) / 10, how:'his team total, implied', group:1 };
+      var mine = (t2 - s2) / 2, theirs = t2 - mine;
+      return field === 'teamScore'
+        ? { num:Math.round(mine * 10) / 10, how:'his team total, implied', group:1 }
+        : { num:Math.round(theirs * 10) / 10, how:'the opponent’s total, implied', group:1 };
     }
   }
   /* GROUP 2: no posted line, but the defence he meets publishes what it gives up. A strand with a
@@ -13688,13 +13757,30 @@ function cdnaToday(key, field, player, team, pos){
        a column   the plain count, scaled to his usual cut of the position group in group sports */
   var opp = cdnaOpp(key, team), raw = field.replace(/^team_/, ''), d, share, how;
   if (!opp) return null;
+  /* Whether he is at home needs no market and no defensive file - the fixture says so. */
+  if (raw === 'atHome'){
+    var fx = (state.view.focus && state.view.focus.sport === key) ? state.view.focus.g : null;
+    if (fx && (cdnaSame(key, fx.home, team) || cdnaSame(key, fx.away, team)))
+      return { num:cdnaSame(key, fx.home, team) ? 1 : 0, group:1,
+               how:cdnaSame(key, fx.home, team) ? 'he is at home today' : 'he is on the road today' };
+    return null;
+  }
 
   if (raw.indexOf('qb_') === 0){
     var qbf = raw.slice(3), rat = CDNA_DVP_RATIO[raw];
-    d = rat ? cdnaDvpRatio(key, 'QB', rat[0], rat[1], opp)
+    d = rat ? (cdnaDvpRatio(key, 'QB', rat[0], rat[1], opp)
+               || cdnaLiveRatio(key, 'QB', rat[0], rat[1], opp))
             : (cdnaDvpHas(key, 'QB', qbf) ? cdnaDvp(key, 'QB', qbf, opp) : null);
     if (d) return { num:cdnaRound(d.allowed), group:2, pct:!!CDNA_DVP_PCT[raw],
                     how:'is what ' + opp + ' allow quarterbacks (#' + d.rank + ' of ' + d.of + ')' };
+    /* The quarterback tracking columns - time to throw, completion percentage over expected,
+       how often he throws into tight windows - are nowhere in dvp.json, and a defence moves all
+       three. Measure them from the gamelogs like any other unlisted column. */
+    d = cdnaLiveDvp(key, 'QB', qbf, opp);
+    if (d) return { num:cdnaRound(d.allowed), group:2, pct:!!CDNA_PCT_UNIT[raw],
+                    how:'the average quarterback against ' + opp + ' gets '
+                        + cdnaRound1(d.allowed) + (CDNA_PCT_UNIT[raw] ? '%' : '')
+                        + ' (#' + d.rank + ' of ' + d.of + ')' };
     return null;
   }
   /* The position the FILE is keyed by, which is not always his: MLB posts one 'ALL' row per team.
@@ -13709,10 +13795,26 @@ function cdnaToday(key, field, player, team, pos){
     if (d) return { num:cdnaRound(d.allowed), group:2, pct:!!CDNA_DVP_PCT[raw],
                     how:'is what ' + opp + ' allow ' + cdnaPosLabel(dpos)
                         + ' (#' + d.rank + ' of ' + d.of + ')' };
+    d = cdnaLiveRatio(key, dpos, pr[0], pr[1], opp);
+    if (d) return { num:cdnaRound(d.allowed), group:2, pct:!!CDNA_PCT_UNIT[raw],
+                    how:'the average ' + cdnaPosWord(dpos) + ' against ' + opp + ' gets '
+                        + cdnaRound1(d.allowed) + (CDNA_PCT_UNIT[raw] ? '%' : '')
+                        + ' (#' + d.rank + ' of ' + d.of + ')' };
     return null;
   }
 
-  if (CDNA_DVP_SKIP[raw] || !cdnaDvpHas(key, dpos, raw)) return null;
+  if (CDNA_DVP_SKIP[raw]) return null;
+  if (!cdnaDvpHas(key, dpos, raw)){
+    /* Not in the pre-built file: measure it from the gamelogs instead of giving up - unless it is
+       his own team's usage, which the opponent does not set. */
+    if (CDNA_OWN_USAGE[raw]) return null;
+    d = cdnaLiveDvp(key, dpos, raw, opp);
+    if (!d) return null;
+    return { num:cdnaRound(d.allowed), group:2, pct:!!CDNA_PCT_UNIT[raw],
+             how:'the average ' + cdnaPosWord(dpos) + ' against ' + opp + ' gets '
+                 + cdnaRound1(d.allowed) + (CDNA_PCT_UNIT[raw] ? '%' : '')
+                 + ' (#' + d.rank + ' of ' + d.of + ')' };
+  }
   d = cdnaDvp(key, dpos, raw, opp);
   if (!d) return null;
   /* team_* is already the whole group's number, and a maximum is already one player's, so neither
@@ -13752,8 +13854,8 @@ function cdnaDvpRatio(key, pos, numF, denF, team){
   return null;
 }
 /* which ratios read as a percentage rather than a plain rate */
-var CDNA_DVP_PCT_NUM = { 'receptions/targets':1, 'fgm/fga':1, 'passComp/passAtt':1,
-                         'fgMade/fgAtt':1 };
+var CDNA_PCT_NUM = { 'receptions/targets':1, 'fgm/fga':1, 'passComp/passAtt':1, 'fgMade/fgAtt':1 };
+var CDNA_DVP_PCT_NUM = CDNA_PCT_NUM;
 
 var CDNA_QB = {};            // player -> the team-mate who throws to him, from his latest game
 
@@ -13806,6 +13908,91 @@ function cdnaOpp(key, team){
   var mg = cdnaGame(key, team);
   return mg ? cdnaOppSide(key, mg, team) : null;
 }
+/* WHAT THE FILE DOES NOT CARRY. dvp.json is built from the gamelogs by a Python job, so it holds
+   the columns someone thought to pre-compute. The tracking columns are not among them - separation,
+   cushion, air yards, depth of target, yards after catch over expected, a quarterback's time to
+   throw and completion percentage over expected, red-zone looks - and those were the strands left
+   saying "nothing posted to compare". They are all in the gamelogs, and the defence plainly affects
+   every one of them, so the same allowance is computed here from the same source. A full pass over
+   45,000 NFL rows costs ~130ms, once per sport and field, then cached.
+
+   MEASURED AS A PER-PLAYER AVERAGE, not a group total, and never share-scaled. Summing a rate
+   across a position group is meaningless - adding three receivers' snap shares gives 227% - and
+   the share-scaling that rescues a group total would then divide a rate that was never multiplied.
+   So this reads "the average WR against HOU gets 5.09", which is directly comparable to the
+   threshold without any scaling, and is deliberately worded differently from the dvp.json rows so
+   the two are never mistaken for the same measurement.
+
+   The RANK is the part that carries: every defence is measured the same way, so #4 of 32 is sound
+   even though a true number one receiver sits above the average one. */
+/* A ratio the pre-built file cannot supply, built from two gamelog columns the same way: totals
+   over totals per defence, then ranked on the RATIO. Totals rather than a mean of per-game ratios,
+   because a game with one target would otherwise count as much as a game with twelve. */
+function cdnaLiveRatio(key, pos, numF, denF, team){
+  var ck = key + '|' + pos + '|' + numF + '/' + denF, rows = CDNA_LIVE[ck], i;
+  if (rows === undefined){
+    var S = state.sports[key], logs = S.data.gamelogs || [];
+    var byName = (S.idx || {}).byName || {}, acc = {}, mul = CDNA_PCT_NUM[numF + '/' + denF] ? 100 : 1;
+    for (i = 0; i < logs.length; i++){
+      var r = logs[i], a = r[numF], b = r[denF];
+      if (typeof a !== 'number' || typeof b !== 'number' || !r.Opp) continue;
+      var p = byName[r.Player];
+      if (!p || (p.position || p.pos) !== pos) continue;
+      var k = String(r.Opp).toUpperCase(), o = acc[k] || (acc[k] = { num:0, den:0, n:0 });
+      o.num += a; o.den += b; o.n++;
+    }
+    rows = [];
+    for (var tm in acc)
+      if (acc[tm].n >= 4 && acc[tm].den > 0)
+        rows.push({ team:tm, allowed:mul * acc[tm].num / acc[tm].den });
+    rows.sort(function(a, b){ return a.allowed - b.allowed; });
+    CDNA_LIVE[ck] = rows;
+  }
+  if (rows.length < 6) return null;
+  for (i = 0; i < rows.length; i++)
+    if (rows[i].team === team) return { allowed:rows[i].allowed, rank:i + 1, of:rows.length };
+  return null;
+}
+/* HIS SHARE OF HIS OWN TEAM is not something the opponent sets. Snap share, target share and
+   air-yards share are decided by his own coaching staff and his own depth chart; "the average
+   receiver against Houston had a 44% snap share" is a fact about the rosters Houston happened to
+   play, not about Houston. The gamelogs will happily produce that number and it would rank thirty
+   two defences convincingly, which is exactly why it is excluded by name: a comparison that can be
+   computed is not the same as one that means anything, and inventing one here would be worse than
+   the gap it fills. These stay in group 3 and keep saying there is nothing to compare them to. */
+var CDNA_OWN_USAGE = { snapPct:1, tgtShare:1, airShare:1, airYdsShare:1, cba:1, tog:1, min:1,
+                       minutes:1, starter:1 };
+var CDNA_LIVE = {};
+function cdnaLiveDvp(key, pos, field, team){
+  var ck = key + '|' + pos + '|' + field, rows = CDNA_LIVE[ck], i;
+  if (rows === undefined){
+    var S = state.sports[key], logs = S.data.gamelogs || [];
+    var byName = (S.idx || {}).byName || {}, acc = {};
+    for (i = 0; i < logs.length; i++){
+      var r = logs[i], v = r[field];
+      if (typeof v !== 'number' || !r.Opp) continue;
+      var p = byName[r.Player];
+      if (!p || (p.position || p.pos) !== pos) continue;
+      var k = String(r.Opp).toUpperCase(), a = acc[k] || (acc[k] = { tot:0, n:0, g:{} });
+      a.tot += v; a.n++; a.g[r.MatchId + '|' + r.Team] = 1;
+    }
+    rows = [];
+    for (var tm in acc){
+      var o = acc[tm], games = 0, gg;
+      for (gg in o.g) games++;
+      /* Four games is the floor. Below that one blowout sets the number, and a rank built on it
+         would be noise dressed as a matchup read. */
+      if (games >= 4 && o.n >= 4) rows.push({ team:tm, allowed:o.tot / o.n, n:o.n, games:games });
+    }
+    rows.sort(function(a, b){ return a.allowed - b.allowed; });
+    CDNA_LIVE[ck] = rows;
+  }
+  if (rows.length < 6) return null;
+  for (i = 0; i < rows.length; i++)
+    if (rows[i].team === team) return { allowed:rows[i].allowed, rank:i + 1, of:rows.length };
+  return null;
+}
+
 /* dvp.json and the gamelogs agree on team naming, so the opponent is returned in THAT form rather
    than normalised - cdnaDvp looks it up by name. */
 function cdnaOppSide(key, g, team){
@@ -13887,7 +14074,12 @@ function coverDna(key, player, mkt, line){
     var cv = [], mv = [], seen = {};
     cov.forEach(function(r){ if (typeof r[f] === 'number'){ cv.push(r[f]); seen[r[f]] = 1; } });
     mis.forEach(function(r){ if (typeof r[f] === 'number'){ mv.push(r[f]); seen[r[f]] = 1; } });
-    if (cv.length < 3 || mv.length < 3 || Object.keys(seen).length < 3) return;
+    /* The distinct-value guard stops a "threshold" being read off a column that barely moves. A
+       genuine YES/NO column is the one case where two values is the whole truth rather than a thin
+       sample - did they win, was he at home - so those are let through and phrased as yes/no
+       instead of as a number. Everything else still needs three. */
+    var vals = Object.keys(seen), bool = vals.length === 2 && cdnaIsBool(f, vals);
+    if (cv.length < 3 || mv.length < 3 || (vals.length < 3 && !bool)) return;
     var s = cdnaSplit(cv, mv);
     if (!s) return;
     // a threshold everyone clears, or nobody does, has split nothing
@@ -13896,9 +14088,10 @@ function coverDna(key, player, mkt, line){
     s.label = CDNA_LABEL[f] || f;
     s.prov = dec[f] ? 'decomposition' : 'independent';
     s.pct = !!CDNA_PCT_UNIT[f];
+    s.bool = bool;
     s.today = cdnaToday(key, f, player, team, pos);
     s.group = s.today ? s.today.group : 3;
-    if (s.today) s.clears = s.today.num - s.at;
+    if (s.today) s.clears = s.dir === 'lo' ? s.at - s.today.num : s.today.num - s.at;
     out.push(s);
   });
   out.sort(function(a, b){ return b.sep - a.sep; });
@@ -13950,7 +14143,7 @@ function cdnaScore(d, side){
     var out = [];
     for (var i = 0; i < d.rows.length; i++){
       var v = d.rows[i][s.field];
-      if (typeof v === 'number' && v >= s.at) out.push(i);
+      if (typeof v === 'number' && cdnaMeets(s, v)) out.push(i);
     }
     return out;
   };
@@ -14004,13 +14197,13 @@ function cdnaMeter(sc, line, market){
     + '<div class="dx-score-d">' + dirn + '</div>'
     + (sc.against.length
         ? '<div class="dx-score-x"><b>Short today:</b> ' + sc.against.slice(0, 4).map(function(s){
-            return esc(s.label) + ' <i>(needs ' + cdnaNum(s.at) + ', posted '
+            return esc(s.label) + ' <i>(' + cdnaNeedsTxt(s) + ', posted '
                  + cdnaNum(s.today.num) + ')</i>';
           }).join(' · ') + '</div>'
         : '')
     + (sc.agree.length
         ? '<div class="dx-score-y"><b>Clear today:</b> ' + sc.agree.slice(0, 4).map(function(s){
-            return esc(s.label) + ' <i>(needs ' + cdnaNum(s.at) + ', posted '
+            return esc(s.label) + ' <i>(' + cdnaNeedsTxt(s) + ', posted '
                  + cdnaNum(s.today.num) + ')</i>';
           }).join(' · ') + '</div>'
         : '')
@@ -14029,13 +14222,47 @@ function cdnaChance(p){
   if (p < 0.0001) return '&lt;0.01%';
   return cdnaPct(p * 100, p < 0.01 ? 2 : 1) + '%';
 }
+/* "needs 5" is only true of a high strand. A low one means 5 OR FEWER, and printing it the other
+   way inverts the finding for the reader while the colour and the bar stay correct - the worst
+   kind of wrong, because nothing looks broken. */
+/* A yes/no strand phrased as a number - "needs 1" for whether the team won - is unreadable, so
+   each flag carries the two things it can say. */
+var CDNA_BOOL_WORDS = { won:['a win', 'a loss'], atHome:['a home game', 'a road game'] };
+function cdnaBoolWord(s){
+  var w = CDNA_BOOL_WORDS[s.field] || ['yes', 'no'];
+  /* 'hi' at 1 means the covering games were the ones with the flag SET; 'lo' at 0 means the same
+     thing read from the other end. Any other combination covers every game and is caught by the
+     splits-nothing guard before it reaches here. */
+  var on = s.dir === 'hi' ? s.at === 1 : s.at === 0;
+  return on ? w[0] : w[1];
+}
+/* What today's posted number amounts to for a yes/no strand, in the same words the threshold uses
+   so the two can be compared at a glance. */
+function cdnaBoolToday(s){
+  var w = CDNA_BOOL_WORDS[s.field] || ['yes', 'no'];
+  return s.today.num === 1 ? w[0] : w[1];
+}
+function cdnaNeeds(s, u){
+  if (s.bool) return 'needs <b>' + esc(cdnaBoolWord(s)) + '</b>';
+  return (s.dir === 'lo' ? 'needs <b>' + cdnaNum(s.at) + (u || '') + ' or less</b>'
+                         : 'needs <b>' + cdnaNum(s.at) + (u || '') + '</b>');
+}
+function cdnaNeedsTxt(s){
+  if (s.bool) return 'needs ' + cdnaBoolWord(s);
+  return (s.dir === 'lo' ? 'needs ' + cdnaNum(s.at) + ' or less' : 'needs ' + cdnaNum(s.at));
+}
 function cdnaStrandRow(key, s, open){
   var cls = 'dx-none', read = '', cmp = '';
   var u = s.pct ? '%' : '';
   if (s.today){
     cls = s.clears >= 0 ? 'dx-for' : 'dx-against';
-    read = (s.clears >= 0 ? '+' : '') + cdnaNum(s.clears) + u;
-    cmp = '<div class="dx-today"><b>' + cdnaNum(s.today.num) + u + '</b> '
+    /* A yes/no strand has no distance to report - "+0" beside "his team won" says nothing, and a
+       bare 1 beside "the market has him favoured" is the raw flag leaking into the page. Both read
+       as the words instead. */
+    read = s.bool ? (s.clears >= 0 ? 'match' : 'no match')
+                  : (s.clears >= 0 ? '+' : '') + cdnaNum(s.clears) + u;
+    cmp = '<div class="dx-today"><b>'
+        + (s.bool ? esc(cdnaBoolToday(s)) : cdnaNum(s.today.num) + u) + '</b> '
         + esc(s.today.how) + (s.today.price ? ' <i>$' + (+s.today.price).toFixed(2) + '</i>' : '')
         + '</div>';
   } else {
@@ -14052,7 +14279,7 @@ function cdnaStrandRow(key, s, open){
       + (read ? '<span class="dx-read">' + read + '</span>' : '')
     + '</div>'
     + '<div class="dx-ev">'
-      + '<span class="dx-needs">needs <b>' + cdnaNum(s.at) + u + '</b></span>'
+      + '<span class="dx-needs">' + cdnaNeeds(s, u) + '</span>'
       + '<span class="dx-hit">' + s.cov + ' of ' + s.ofCov + ' covers</span>'
       + '<span class="dx-miss">' + s.mis + ' of ' + s.ofMis + ' misses</span>'
       + '<span class="dx-p" title="how often a split this clean happens by chance">'
@@ -14062,17 +14289,24 @@ function cdnaStrandRow(key, s, open){
     + cmp
     + '</div>';
 }
-function cdnaGameTable(d, field){
+/* The game list behind a strand. The third column is marked where that game sat on the COVERING
+   side of the cut, which is the only way to see a low strand for what it is: without it a column
+   of small numbers beside a run of covers looks like the strand pointing the wrong way. */
+function cdnaGameTable(d, s){
+  var field = s.field;
   var rows = d.rows.slice().sort(function(a, b){ return (b._val || 0) - (a._val || 0); });
   return '<div class="dx-games"><table><thead><tr><th>game</th><th>' + esc(d.market || 'result')
-    + '</th><th>' + esc(CDNA_LABEL[field] || field) + '</th></tr></thead><tbody>'
+    + '</th><th>' + esc(CDNA_LABEL[field] || field)
+    + ' <i>' + (s.dir === 'lo' ? '\u2264 ' : '\u2265 ') + cdnaNum(s.at) + '</i>'
+    + '</th></tr></thead><tbody>'
     + rows.map(function(r){
-        var cov = r._val > d.line;
+        var cov = r._val > d.line, v = r[field], has = typeof v === 'number';
         return '<tr class="' + (cov ? 'dx-g-cov' : 'dx-g-mis') + '">'
           + '<td>' + esc(String(r._year || '').slice(-2)) + (r._week ? ' wk' + r._week : '')
           + ' <i>' + esc(r._opp || '') + '</i></td>'
           + '<td><b>' + cdnaNum(r._val) + '</b></td>'
-          + '<td>' + (typeof r[field] === 'number' ? cdnaNum(r[field]) : '—') + '</td></tr>';
+          + '<td' + (has && cdnaMeets(s, v) ? ' class="dx-g-met"' : '') + '>'
+          + (has ? cdnaNum(v) : '\u2014') + '</td></tr>';
       }).join('')
     + '</tbody></table></div>';
 }
@@ -14107,7 +14341,7 @@ function cdnaView(){
     return '<div class="dx-grp"><div class="dx-grp-h"><b>' + g[1] + '</b><span>' + g[2] + '</span></div>'
       + sub.map(function(s){
           return cdnaStrandRow(key, s, open === s.field)
-            + (open === s.field ? cdnaGameTable(d, s.field) : '');
+            + (open === s.field ? cdnaGameTable(d, s) : '');
         }).join('')
       + '</div>';
   }).join('');
