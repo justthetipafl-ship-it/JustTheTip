@@ -1,0 +1,74 @@
+name: Volumes
+
+# Buy the opportunity, not the percentage: lines the market has pushed above the volume behind
+# them. scripts/build_volumes.py does the reasoning; this just runs it for every sport that has a
+# market config and commits the result.
+#
+# This is a workflow of its own rather than four steps bolted onto nfl-data, nba-data, nbl-data and
+# the AFL bundle. The build needs nothing from those jobs that is not already committed - it reads
+# gamelogs and odds.json off the repo - so coupling it to them would only mean a failure in one
+# sport's fetch silently taking its Volumes build down with it, and four files to edit instead of
+# one. It runs on its own schedule, after the odds worker, and skips a sport whose odds are empty.
+
+on:
+  workflow_dispatch:
+  schedule:
+    # Hourly through the Australian evening and US morning, which between them cover tip-off for
+    # every sport in the list. The build is cheap - it reads committed JSON and writes one file -
+    # so the only cost of running it often is a commit, and a line that moved an hour ago is the
+    # whole point of the signal.
+    - cron: '35 * * * *'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: volumes
+  cancel-in-progress: false
+
+jobs:
+  volumes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      # The rule is only worth running if it still passes its own cases. The refusals are the whole
+      # signal - a player whose volume collapsed is not a sell at any price - and they are what a
+      # careless edit to the thresholds would quietly remove.
+      - name: Volumes selftest
+        run: python3 scripts/build_volumes.py --selftest
+
+      # Each sport is independent and allowed to find nothing: an empty build is a real answer
+      # ("no line sits 10% above its projection today"), and out of season it is the only honest
+      # one. A sport whose odds feed is empty writes an empty file rather than failing the job.
+      - name: Build
+        run: |
+          for sport in nfl nba nbl afl; do
+            echo "=== $sport"
+            python3 scripts/build_volumes.py "$sport" || echo "   $sport build failed; continuing"
+          done
+
+      # Printed, not just committed, so a run that produced nothing says why in the log instead of
+      # looking identical to a run that never happened.
+      - name: What it found
+        run: |
+          for sport in nfl nba nbl afl; do
+            python3 scripts/build_volumes.py "$sport" --print || true
+          done
+
+      - name: Commit
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          # Added one at a time because git add fails the whole command on a path that is not
+          # there, and a sport whose build failed above should cost its own file, not the commit.
+          for f in nfl/data/volumes.json nba/data/volumes.json nbl/data/volumes.json AFL/data/volumes.json; do
+            [ -f "$f" ] && git add "$f"
+          done
+          if git diff --staged --quiet; then
+            echo "No changes."
+          else
+            git commit -m "Volumes $(date -u +%Y-%m-%dT%H:%MZ)"
+            git push
+          fi
