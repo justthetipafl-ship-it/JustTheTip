@@ -6,7 +6,20 @@ name: Tests
 
 on:
   push:
-    paths: [ 'index.html', 'tests/**', '*/scoring.js', '*/config.js' ]
+    # the odds-wiring check reads the worker table and the fetcher, so a change to either has to
+    # re-run it - that is the pair that silently disagreed and left the NBA with no odds feed
+    paths: [ 'index.html', 'tests/**', '*/scoring.js', '*/config.js',
+             'scripts/fetch_odds.py', 'scripts/build_ladder.py', 'scripts/grade_signals.py',
+             'scripts/snapshot_signals.js', 'scripts/check_data.py',
+             'tools/*.js',
+             # admin.html builds the legs a published bet settles itself from, and jtt-live.js is
+             # what those pending bets track against. The suite drives both, so a change to either
+             # has to re-run it.
+             'admin.html', 'workers/jtt-live.js', 'mlb/fetch_mlb.py', 'mlb/build_mlb_data.py',
+             'scripts/grade_bets.py', 'scripts/build_dna.py', 'scripts/build_swing.py',
+             'scripts/build_volumes.py',
+             '.github/workflows/odds-worker.yml', '.github/workflows/ladder.yml',
+             '.github/workflows/calibrate.yml' ]
   workflow_dispatch:
 
 jobs:
@@ -21,6 +34,45 @@ jobs:
         run: npm install jsdom@25 --no-save --silent
       - name: Stage the data
         run: node tests/fetch_data.js
+      # the publish guard has its own synthetic cases; keep it honest alongside the suite
+      - name: Data guard selftest
+        run: python3 scripts/check_data.py --selftest
+      # The MLB results path: the schedule parser that decides whether results.json is a season or
+      # a rumour, and the build that writes it. Neither can be checked by the browser suite, and
+      # the parser cannot reach the live API from CI either - both run offline against fixtures.
+      - name: MLB schedule parser selftest
+        run: python3 mlb/fetch_mlb.py --selftest
+      - name: MLB build selftest
+        run: python3 mlb/build_mlb_data.py --selftest
+      # The bet grader's rules also live in index.html so the page can grade a tip live. These
+      # are its own synthetic cases; tests/grader_test.js is what proves the two still agree.
+      - name: Bet grader selftest
+        run: python3 scripts/grade_bets.py --selftest
+      # Bet DNA's strand table is built from the odds-history snapshots, so it cannot be checked
+      # by the browser suite either.
+      - name: Bet DNA builder selftest
+        run: python3 scripts/build_dna.py --selftest
+      # The signal grader decides which rows of the published record are wins, losses and voids.
+      # Both of the bugs it shipped with were silent - a UTC kick-off matched against a local game
+      # date, and a void handed out for a feed that had not caught up - and between them they wrote
+      # off most of the ledger while the page showed a confident number. These are the cases.
+      - name: Signal grader selftest
+        run: python3 scripts/grade_signals.py --selftest
+      # Buy Low / Sell High reads twenty-odd gzipped odds snapshots to find where a line was
+      # before a player's hard run, so the browser suite cannot drive it. Its own synthetic cases
+      # carry the rules - above all the refusals, which are the whole signal.
+      - name: Buy Low / Sell High selftest
+        run: python3 scripts/build_swing.py --selftest
+      # Volumes fades a line the market has pushed above the volume behind it. Its refusals are the
+      # signal - a player whose shots collapsed is not a sell at any price, and one converting at
+      # his normal rate has nothing to come down from - and a careless threshold edit removes them
+      # silently, leaving a tile that still renders and no longer means what it says.
+      - name: Volumes selftest
+        run: python3 scripts/build_volumes.py --selftest
+      # tests/propcalc_test.js covers the typed line on the prop calculator. It runs in the suite
+      # below like the rest - noted here only because the field it guards feeds the threshold, the
+      # hit count, the price lookup and the chart scale, and a bad value in it does not error.
+
       - name: Boot check
         run: node --max-old-space-size=6000 tests/harness.js
       - name: Suite
