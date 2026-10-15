@@ -14,12 +14,21 @@ const path = require('path');
 const REPO = path.join(__dirname, '..');
 const OUT = path.join(__dirname, 'serve');
 const RAW = 'https://raw.githubusercontent.com/justthetipafl-ship-it/JustTheTip/main';
-const DIRS = { afl:'AFL', nfl:'nfl', epl:'EPL', mlb:'mlb', nbl:'nbl', nhl:'nhl' };
+const DIRS = { afl:'AFL', nfl:'nfl', epl:'EPL', mlb:'mlb', nbl:'nbl', nhl:'nhl',
+               // NBA was missing here while nba_test.js existed, so that test could never
+               // get data and failed with "unknown sport" rather than with a real result.
+               nba:'nba' };
 // enough for the page to boot and for most tests; gamelog season files are added from meta
 const FILES = ['config.js', 'scoring.js'];
 const DATA = ['meta.json', 'fixture.json', 'teams.json', 'players.json', 'odds.json',
               'gamelogs.json', 'dvp.json', 'results.json', 'injury.json', 'lineups.json',
-              'calib.json', 'firstread.json', 'redzone.json', 'firsttd.json', 'goalies.json'];
+              'calib.json', 'firstread.json', 'redzone.json', 'firsttd.json', 'goalies.json',
+              // Tier-3 files the page loads but this stager never fetched, so every test that
+              // needed one failed with "absent" and read as a page bug. nba_test's zone and
+              // quarter checks are the clearest case: they could not have passed. A sport that
+              // has no such file still 404s harmlessly here, exactly as goalies.json already did.
+              'zones.json', 'quarters.json', 'special_teams.json', 'teams_form.json',
+              'odds_open.json', 'profiles.json', 'swing.json', 'volumes.json'];
 
 const remote = process.argv.includes('--remote');
 const want = process.argv.slice(2).filter(a => !a.startsWith('--'));
