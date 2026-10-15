@@ -12,7 +12,11 @@
  */
 const fs = require('fs');
 const path = require('path');
-const { JSDOM, ResourceLoader } = require('jsdom');   // ResourceLoader, NOT requestInterceptor
+// jsdom 25 serves local files through ResourceLoader; jsdom 29 removed it and offers
+// requestInterceptor instead. CI pins 25, but a bump should not silently take the whole suite
+// down, so the harness supports whichever this jsdom has.
+const jsdomLib = require('jsdom');
+const { JSDOM, ResourceLoader } = jsdomLib;
 
 const ROOT = path.join(__dirname, 'serve');
 // WHICH PAGE IS UNDER TEST. The staging build lives at tests/index.html and the live one at the
@@ -20,28 +24,33 @@ const ROOT = path.join(__dirname, 'serve');
 // Set JTT_PAGE to override, e.g. JTT_PAGE=../index.html to check what is live.
 const PAGE_REL = process.env.JTT_PAGE || 'index.html';
 // repo folder names differ from sport keys - AFL and EPL are upper case on disk
-const DIRS = { afl:'AFL', nfl:'nfl', epl:'EPL', mlb:'mlb', nbl:'nbl', nhl:'nhl' };
+const DIRS = { afl:'AFL', nfl:'nfl', epl:'EPL', mlb:'mlb', nbl:'nbl', nhl:'nhl', nba:'nba' };
 const PAGE = path.resolve(__dirname, PAGE_REL);
 
 const localPath = u => path.join(ROOT, String(u).replace(/^https?:\/\/[^/]+/, '').split('?')[0]);
 const readLocal = f => (fs.existsSync(f) ? fs.readFileSync(f, 'utf8') : null);
 
 const MISSES = [];
-class LocalLoader extends ResourceLoader {
-  fetch(url) {
-    const body = readLocal(localPath(url));
-    if (body == null) {
-      MISSES.push(String(url).replace(/^https?:\/\/[^/]+/, ''));
-      // Return EMPTY, not null. jsdom fires neither load nor error for a null, so the page's
-      // config queue - which waits on one before moving to the next sport - hung forever and
-      // every sport sat at "loading". An empty script runs, sets nothing, and the page's own
-      // "config.js did not set SPORT_CONFIG" path takes over, which is what happens in a browser
-      // when a file 404s.
-      return Promise.resolve(Buffer.from(''));
-    }
-    return Promise.resolve(Buffer.from(body));
+// Return EMPTY, not null, for a file we do not have. jsdom fires neither load nor error for a
+// null, so the page's config queue - which waits on one before moving to the next sport - hung
+// forever and every sport sat at "loading". An empty script runs, sets nothing, and the page's own
+// "config.js did not set SPORT_CONFIG" path takes over, which is what happens in a browser when a
+// file 404s.
+function serve(url) {
+  const body = readLocal(localPath(url));
+  if (body == null) {
+    MISSES.push(String(url).replace(/^https?:\/\/[^/]+/, ''));
+    return Buffer.from('');
   }
+  return Buffer.from(body);
 }
+const resourceOpt = ResourceLoader
+  ? { resources: new (class extends ResourceLoader {
+        fetch(url) { return Promise.resolve(serve(url)); }
+      })() }
+  : { requestInterceptor: req => ({ response: { statusCode: 200, body: serve(req.url) } }) };
+if (!ResourceLoader && typeof jsdomLib.requestInterceptor === 'undefined')
+  throw new Error('this jsdom has neither ResourceLoader nor requestInterceptor - pin jsdom@25');
 
 const wait = ms => new Promise(r => setTimeout(r, ms));
 
@@ -66,7 +75,7 @@ async function boot(sport, opts) {
 
   const dom = new JSDOM(fs.readFileSync(PAGE, 'utf8'), {
     url: 'http://localhost/index.html', runScripts: 'dangerously',
-    resources: new LocalLoader(), pretendToBeVisual: true,
+    ...resourceOpt, pretendToBeVisual: true,
     beforeParse(w) {
       w.fetch = u => {
         const t = readLocal(localPath(u));
@@ -108,7 +117,7 @@ module.exports = { boot, ok, done, wait, ROOT, PAGE };
 if (require.main === module) {
   (async () => {
     console.log('page under test: ' + PAGE + '\n');
-    for (const sp of (process.argv[3] ? [process.argv[3]] : ['nfl', 'nhl', 'mlb', 'nbl', 'epl', 'afl'])) {
+    for (const sp of (process.argv[3] ? [process.argv[3]] : ['nfl', 'nhl', 'mlb', 'nbl', 'nba', 'epl', 'afl'])) {
       try {
         const t = await boot(sp);
         // fixtures arrive in tier 1; players, gamelogs and odds come with the first focus
