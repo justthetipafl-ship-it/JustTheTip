@@ -30,9 +30,12 @@ conversion ran hot. It does, in every market that ships, by 9-16% of mean absolu
 Against every real posted line in odds-history, run through --backtest below, which calls the same
 assess() this build calls:
 
-                          blind under      recent form       VOLUMES
-    NBL     n=151      54.8%  +2.5%      56.7%  +4.8%     68.2%  +26.6%
-    NFL     n=71       51.9%  -0.9%      50.8%  -4.4%     60.6%  +14.4%
+                   blind under    recent form     no matchup gate    AS SHIPPED
+    NBL          54.8%  +2.5%   56.7%  +4.8%    68.2%  +26.6%    73.6%  +35.9%  (n=106)
+    NFL          51.9%  -0.9%   50.8%  -4.4%    60.6%  +14.4%    71.7%  +35.3%  (n=46)
+
+The rows the matchup gate REFUSES are the proof it belongs: 55.6% and +4.6% in the NBL, 40.0% and
+-24.2% in the NFL. A refusal should look like that.
 
 The two controls matter more than the headline. A prop under carries a structural edge of its own
 because public money buys overs - and it is worth +2.5% and -0.9% here, so this is not that edge
@@ -119,6 +122,33 @@ MARKETS = {
 
 # Where the data lives, which is not always the sport's own name on disk.
 DIRS = {'nba': 'nba', 'nbl': 'nbl', 'nfl': 'nfl', 'afl': 'AFL'}
+
+# THE MATCHUP GATE
+# A hot run is only half the case. The other half is who he meets next, and it turns out to matter
+# more than anything else measured here. Splitting every settled sell by the upcoming defence's
+# rank against his own position, in thirds:
+#
+#                       NBL                     NFL
+#   tough third     75.5%  +38.1%           73.1%  +39.7%
+#   middling        71.9%  +34.0%           66.7%  +23.2%
+#   soft third      55.6%   +4.6%           40.0%  -24.2%
+#
+# Monotonic in both sports, and the soft third is the whole problem: a loser in the NFL and barely
+# break-even in the NBL. It makes sense read forward - a line inflated by a hot run is not
+# mispriced if the next defence is one he should score on anyway. So the softest third is refused.
+#
+#   NBL  68.2% +26.6% (n=151)  ->  73.6% +35.9% (n=106)
+#   NFL  59.4% +12.2% (n=69)   ->  70.5% +32.9% (n=44)
+#
+# Checked for the obvious confounds before shipping: the market mix is similar across buckets, the
+# median edge is the same in all three (-19.8%, -18.7%, -19.2% in the NBL) so it is not a proxy for
+# edge size, and within a single market the split still holds. Two independent sports agree on the
+# direction.
+#
+# This is Buy Low / Sell High's idea, which could not be tested in its own build: that signal
+# stacked five conditions and fired 0 times in 338 chances, so there was never a sample. Attached
+# to a signal that does fire, the same insight is measurable - and it earns its place.
+MATCHUP_SOFT = 2.0 / 3.0   # refuse when the next defence ranks in the softest third for his spot
 
 RECENT = 3         # games in the hot run. Measured against 2, 4 and 5; see WINDOW below.
 MIN_BASE = 3       # games before it, or there is no long-run rate to compare against
@@ -262,6 +292,53 @@ def main_line(odds_rows, markets):
     return out
 
 
+def dvp_ranks(root, sport, markets):
+    """(position, market, team) -> (rank, of, allowed). Rank 1 is the stingiest defence.
+
+    dvp.json has the same shape in every sport - one row per team and position, with a column per
+    market - so this needs no per-sport special case. The positions come out of the file itself
+    rather than a hardcoded list, which is what lets it work for NBA/NBL guards and forwards as
+    well as NFL receivers.
+
+    The ranking is TODAY's, not the ranking as it stood when a line was posted; nothing in the
+    repo stores a historical one. Every measurement quoted above carries the same limitation,
+    because it reads this same file - so the numbers describe what ships.
+    """
+    folder = DIRS.get(sport, sport)
+    dvp = load(os.path.join(root, folder, 'data', 'dvp.json'), []) or []
+    out = {}
+    for pos in {r.get('pos') for r in dvp if isinstance(r, dict) and r.get('pos')}:
+        for market, *_rest in markets:
+            rows = [r for r in dvp if r.get('pos') == pos and (num(r.get(market)) or 0) > 0]
+            if len(rows) < 6:
+                continue                      # too few to rank into thirds meaningfully
+            rows.sort(key=lambda r: num(r[market]))
+            for i, r in enumerate(rows, 1):
+                out[(pos, market, str(r['team']).upper())] = (i, len(rows), num(r[market]))
+    return out
+
+
+def next_opponents(root, sport, played_days):
+    """team -> the team it plays next, from the fixture file.
+
+    Guarded against the fixture and the gamelogs overlapping: if a fixture's date is one the
+    gamelogs already cover, that game has been played and pointing a bet at it would be grading a
+    result already known. build_swing.py hit exactly this and the guard is borrowed from it.
+    """
+    folder = DIRS.get(sport, sport)
+    fixture = load(os.path.join(root, folder, 'data', 'fixture.json'), []) or []
+    if isinstance(fixture, dict):
+        fixture = fixture.get('fixture') or fixture.get('games') or []
+    out = {}
+    for game in sorted(fixture, key=lambda g: str(g.get('date') or '')):
+        home, away, day = game.get('home'), game.get('away'), str(game.get('date') or '')
+        if not home or not away or (day and day in played_days):
+            continue
+        out.setdefault(str(home).upper(), str(away).upper())
+        out.setdefault(str(away).upper(), str(home).upper())
+    return out
+
+
 def league_rates(rows, markets):
     """Conversion rate across the whole league, used as the prior a thin baseline leans on."""
     rates = {}
@@ -339,6 +416,14 @@ def build(root, sport, today=None):
     lines = main_line(odds_rows, markets)
     rates = league_rates(all_rows, markets)
 
+    ranks = dvp_ranks(root, sport, markets)
+    played = {str(r.get('Date') or r.get('date') or '') for r in all_rows}
+    played.discard('')
+    opponents = next_opponents(root, sport, played)
+    people = load(os.path.join(root, folder, 'data', 'players.json'), []) or []
+    position = {p['name']: (p.get('position') or p.get('pos'))
+                for p in people if isinstance(p, dict) and p.get('name')}
+
     rows, skipped = [], defaultdict(int)
     for (player, market), priced in sorted(lines.items()):
         cfg = next((m for m in markets if m[0] == market), None)
@@ -365,9 +450,23 @@ def build(root, sport, today=None):
             skipped['no hot conversion run behind the line'] += 1
             continue
 
+        # the matchup half: who he meets next, ranked against his own position
+        team = str(history[-1].get('Team') or '').upper()
+        opp = opponents.get(team)
+        rank = ranks.get((position.get(player), market, opp)) if opp else None
+        if rank:
+            softness = (rank[0] - 1) / max(rank[1] - 1, 1)
+            if softness > MATCHUP_SOFT:
+                skipped['next defence is in the softest third for his position'] += 1
+                continue
+        # A row with no rank is kept rather than refused - an unranked opponent is missing
+        # information, not a soft one, and refusing on absent data would quietly drop whole
+        # positions (a market dvp.json has too few teams for, say). The row says so instead.
+
         rows.append({
             'player': player,
             'team': history[-1].get('Team'),
+            'pos': position.get(player),      # the rank below is relative to this, so it is shown
             'market': market,
             'volStat': vol,
             'volLabel': vol_label,
@@ -388,6 +487,9 @@ def build(root, sport, today=None):
             'recOut': round(verdict['recOut'], 1),
             'baseGames': verdict['baseGames'],
             'games': RECENT,
+            'nextOpp': ({'team': opp, 'rank': rank[0], 'of': rank[1],
+                         'allowed': round(rank[2], 1)} if rank
+                        else ({'team': opp} if opp else None)),
         })
 
     rows.sort(key=lambda r: r['edge'])
@@ -416,6 +518,10 @@ def backtest(root, sport):
     folder = DIRS.get(sport, sport)
     by_player, all_rows = gamelogs(root, sport)
     rates = league_rates(all_rows, markets)
+    ranks = dvp_ranks(root, sport, markets)
+    people = load(os.path.join(root, folder, 'data', 'players.json'), []) or []
+    position = {p['name']: (p.get('position') or p.get('pos'))
+                for p in people if isinstance(p, dict) and p.get('name')}
 
     index = {}
     for name, rows in by_player.items():
@@ -448,7 +554,7 @@ def backtest(root, sport):
                 target = seq_key(sport, later[0])
             cand[(player, market, target)] = priced
 
-    bets, blind, form = [], [], []
+    bets, blind, form, soft = [], [], [], []
     for (player, market, target), priced in cand.items():
         cfg = next((m for m in markets if m[0] == market), None)
         if not cfg or priced['line'] < MIN_LINE:
@@ -476,6 +582,14 @@ def backtest(root, sport):
         edge = (verdict['proj'] - priced['line']) / priced['line']
         if edge > -EDGE or verdict['recRate'] <= verdict['rate']:
             continue
+        # The matchup gate, on the opponent he actually faced in the game being settled - which is
+        # what the fixture file names for a live row. Applied here too, or the number this prints
+        # would not be the number the build ships.
+        opp = str(rows[i].get('Opp') or '').upper()
+        rank = ranks.get((position.get(player), market, opp)) if opp else None
+        if rank and (rank[0] - 1) / max(rank[1] - 1, 1) > MATCHUP_SOFT:
+            soft.append((won, priced['under']))
+            continue
         bets.append((won, priced['under'], market))
 
     if not bets:
@@ -494,7 +608,9 @@ def backtest(root, sport):
     print('%s' % sport)
     line('blind under, every row', blind)
     line('recent form below line', form)
-    line('VOLUMES', bets)
+    line('no matchup gate', bets + [(w, p) for w, p in soft])
+    line('REFUSED: soft-third matchup', soft)
+    line('VOLUMES (as shipped)', bets)
     print('   by market:')
     by_market = defaultdict(list)
     for w, p, m in bets:
@@ -624,9 +740,12 @@ def main():
         for r in out['rows']:
             rate = ('%.0f%% vs %.0f%%' % (r['recRate'] * 100, r['rate'] * 100) if r['ratePct']
                     else '%.2f vs %.2f %s' % (r['recRate'], r['rate'], r['rateLabel']))
-            print('   %-24s U%-6.1f %-11s $%.2f  proj %6.2f (%+5.1f%%)  %s %.1f/%.1f  %s'
-                  % (r['player'][:24], r['line'], r['market'], r['under'], r['proj'],
-                     r['edge'] * 100, r['volLabel'], r['volRec'], r['volBase'], rate))
+            nx = r.get('nextOpp') or {}
+            opp = ('%s #%s/%s' % (nx.get('team'), nx.get('rank'), nx.get('of'))
+                   if nx.get('rank') else (nx.get('team') or '?'))
+            print('   %-22s U%-6.1f %-11s $%.2f  proj %6.2f (%+5.1f%%)  %s %.1f/%.1f  %-18s vs %s'
+                  % (r['player'][:22], r['line'], r['market'], r['under'], r['proj'],
+                     r['edge'] * 100, r['volLabel'], r['volRec'], r['volBase'], rate, opp))
         if out.get('skipped'):
             print('   not shown:')
             for why, n in sorted(out['skipped'].items(), key=lambda kv: -kv[1]):
