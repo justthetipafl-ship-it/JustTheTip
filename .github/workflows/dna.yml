@@ -1,0 +1,70 @@
+name: Bet DNA
+
+# scripts/build_dna.py measures what separates a main-line prop that lands from one that does not,
+# pooled across every graded main line in the league rather than per player - because a single
+# player has twenty to forty games, and asking thirty questions of thirty games finds a pattern
+# whether or not one exists. The builder's own docstring has the measurement.
+#
+# The builder has been in the repo and nothing ran it, so dna.json never existed for any sport and
+# the page's whole DNA panel had no file to read. That is what this workflow is.
+#
+# Daily rather than hourly: it reads every odds-history snapshot and every gamelog for the sport,
+# which is far heavier than the other builds, and a strand measured over thousands of graded lines
+# does not move between lunch and dinner.
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '50 19 * * *'     # 19:50 UTC (~05:50 AEST), after the day's games have landed
+
+permissions:
+  contents: write
+
+concurrency:
+  group: dna
+  cancel-in-progress: false
+
+jobs:
+  dna:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Bet DNA selftest
+        run: python3 scripts/build_dna.py --selftest
+
+      # Each sport independently, and an empty result is a real answer rather than a failure:
+      #   nba  - no odds-history until the season starts, so no posted lines to grade
+      #   epl  - its player board is entirely one-way, and a main line needs both sides to de-vig
+      #   afl  - gamelogs carry no Date, and its results count rounds differently again
+      # Those three are expected to write a file saying so. The others should carry strands.
+      - name: Build
+        run: |
+          for sport in nfl nhl mlb nbl nba epl; do
+            echo "=== $sport"
+            python3 scripts/build_dna.py "$sport" || echo "   $sport failed; continuing"
+          done
+
+      # Printed so a run that measured nothing says WHY in the log, instead of looking the same as
+      # a run that never happened. This is the failure the whole workflow exists to end.
+      - name: What it measured
+        run: |
+          for sport in nfl nhl mlb nbl nba epl; do
+            python3 scripts/build_dna.py "$sport" --print 2>&1 | head -8 || true
+          done
+
+      - name: Commit
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          for f in nfl/data/dna.json nhl/data/dna.json mlb/data/dna.json \
+                   nbl/data/dna.json nba/data/dna.json EPL/data/dna.json; do
+            [ -f "$f" ] && git add "$f"
+          done
+          if git diff --staged --quiet; then
+            echo "No changes."
+          else
+            git commit -m "Bet DNA $(date -u +%Y-%m-%dT%H:%MZ)"
+            git push
+          fi
