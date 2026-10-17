@@ -122,6 +122,20 @@
   .pf-cell span{display:block;font-size:9px;letter-spacing:.05em;text-transform:uppercase;color:var(--text-3);margin-top:2px;}
   .pf-cell i{display:block;font-style:normal;font-size:9px;color:var(--text-3);margin-top:3px;}
   .q1-row{display:flex;align-items:center;gap:8px;padding:5px 8px;border-top:1px solid var(--border);font-size:11px;}
+  .sz-wrap{border:1px solid var(--border);border-radius:8px;overflow:hidden;}
+  .sz-row{display:flex;align-items:center;gap:8px;padding:6px 8px;border-top:1px solid var(--border);font-size:11px;}
+  .sz-row:first-child{border-top:0;}
+  .sz-nm{flex:1.1;min-width:0;}
+  .sz-nm b{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .sz-nm span{font-size:9px;color:var(--text-3);}
+  .sz-zn{flex:1.6;min-width:0;font-size:10px;color:var(--text-2);}
+  .sz-zn span{display:block;font-size:9px;color:var(--text-3);}
+  .sz-sw{min-width:50px;text-align:right;}
+  .sz-sw b{font-family:var(--font-mono);font-size:13px;}
+  .sz-sw span{display:block;font-size:8px;color:var(--text-3);}
+  .sz-up .sz-sw b{color:var(--accent);}
+  .sz-dn .sz-sw b{color:#f97316;}
+  @media(max-width:430px){ .sz-zn{flex:1.2;} }
   .q1-wrap{border:1px solid var(--border);border-radius:8px;overflow:hidden;}
   .q1-row:first-child{border-top:0;}
   .q1-nm{flex:1.4;min-width:0;}
@@ -2039,6 +2053,7 @@ var TIER3 = { gamelogs:'data/gamelogs.json', dvp:'data/dvp.json', teams_form:'da
               // build and the tile renders nothing rather than an empty shell.
               volumes:'data/volumes.json',
               quarters:'data/quarters.json', zones:'data/zones.json',
+              zonePersist:'data/zone_persistence.json',
               profiles:'data/profiles.json',
               specialTeams:'data/special_teams.json',
               ladder:'data/ladder.json',
@@ -2177,7 +2192,7 @@ function buildIndexes(key){
   ix.hasUp = null;        // recomputed whenever the index is rebuilt, so a new fixture re-sorts
   TR_CACHE = { key:null, name:{}, vals:{} };     // trends cache is stale once the data changes
   ix.lgAvg = {}; ix.winAvg = {}; ix.matchOpp = null; ix.fs = null;
-  ix.pricedSet = null; ix.oddsName = null; ix.oddsIni = null; ix.vac = null; ix.bookList = null; ix.resIdx = null; ix.mlbLg = null; ix.lgRate = null; ix.scState = null; ix.nhlPim = null; ix.injIdx = null; ix.ww = null; ix.usg = null; ix.mrg = null; ix.luRows = null; ix.foldName = null;
+  ix.pricedSet = null; ix.oddsName = null; ix.oddsIni = null; ix.vac = null; ix.bookList = null; ix.resIdx = null; ix.mlbLg = null; ix.lgRate = null; ix.scState = null; ix.nhlPim = null; ix.injIdx = null; ix.ww = null; ix.usg = null; ix.mrg = null; ix.luRows = null; ix.luPos = null; ix.luSheet = null; ix.foldName = null;
   var logs = asArray(d.gamelogs) || [];
   ix.logsByName = {};
   // One row per player per game. NHL's build emits each game three times - Matias Maccelli had 213
@@ -2603,11 +2618,35 @@ function lineupIsTeamSheet(key){
   }
   return (S.idx.luSheet = sheet);
 }
+/* A sheet is the final word only about the positions it actually lists. NFL's lineups.json carries
+   a week number, so it reads as a team sheet, but it is a depth chart of the offence: 502 WR, 254
+   TE, 251 RB, 138 QB, 3 K and not one DL, LB or DB across all 32 clubs. Treating it as complete
+   meant every defender on the board was "not playing", which emptied Tackle Machines and Sack
+   Artists on all 13 fixtures - measured: of 1880 tackle candidates, 1373 were cut here and the
+   rest by position, leaving nothing. So: authoritative where it has coverage, silent elsewhere. */
+function lineupPosSet(key, team){
+  var S = state.sports[key];
+  var cache = S.idx.luPos || (S.idx.luPos = {});
+  if (cache[team]) return cache[team];
+  var set = {};
+  lineupRows(key).forEach(function(r){
+    if (!r || r.team !== team) return;
+    var p = r.position || r.pos;
+    if (p) set[String(p)] = 1;
+  });
+  return (cache[team] = set);
+}
 function isPlayingP(key, name, team){
   var lu = lineupRows(key);
   var any = lu.length && lu.some(function(r){ return r && r.team === team; });
-  if (any && lineupIsTeamSheet(key))
-    return lu.some(function(r){ return r && r.team === team && r.player === name; });
+  if (any && lineupIsTeamSheet(key)){
+    var me = ((state.sports[key].idx || {}).byName || {})[name];
+    var pos = me && (me.position || me.pos);
+    var set = lineupPosSet(key, team);
+    // no position on the player, or a position the sheet covers: the sheet decides
+    if (!pos || set[String(pos)])
+      return lu.some(function(r){ return r && r.team === team && r.player === name; });
+  }
   var inj = injStatus(key, name, team);
   return !(inj && inj.st === 'out');
 }
@@ -5147,6 +5186,12 @@ function nflOppRate(key, team, madeField, oppField, volField){
   var rate = made / vol;
   return { rate:rate, lg:lg, mult:(lg ? rate / lg : 1), vol:vol / Math.max(1, +row.matches || 1) };
 }
+/* A tile that shows nothing is indistinguishable from a tile that is broken, and the "why" line
+   names only the last gate. SIG_TRACE, when a probe switches it on, counts how many candidates
+   each gate discards, so the gate that is actually emptying the tile can be read off instead of
+   guessed at. Off in the page: trc() is one property lookup when SIG_TRACE is null. */
+var SIG_TRACE = null;
+function trc(gate){ if (SIG_TRACE) SIG_TRACE[gate] = (SIG_TRACE[gate] || 0) + 1; }
 function nflTeamAngle(key, g, kind){
   var S = state.sports[key], out = [];
   var stat = kind === 'sacks' ? 'sacks' : 'passInt';      // market keys; statOf maps sacks -> defSacks
@@ -5157,22 +5202,23 @@ function nflTeamAngle(key, g, kind){
   [g.away, g.home].forEach(function(team){
     var opp = (team === g.home) ? g.away : g.home;
     var o = oppRate(opp);
-    if (!o || o.mult < 1.08) return;                      // only a genuine leak, measured per chance
+    if (!o || o.mult < 1.08){ trc(o ? 'oppMult<1.08' : 'noOppRate'); return; }  // a genuine leak, per chance
     playersOnTeam(key, team).forEach(function(p){
-      if (!p || !isPlayingP(key, p.name, team)) return;
-      if (kind === 'picks' && p.position !== 'QB') return;
-      if (kind === 'sacks' && ['QB','RB','WR','TE','K'].indexOf(p.position) >= 0) return;
+      trc('candidates');
+      if (!p || !isPlayingP(key, p.name, team)){ trc('notPlaying'); return; }
+      if (kind === 'picks' && p.position !== 'QB'){ trc('notQB'); return; }
+      if (kind === 'sacks' && ['QB','RB','WR','TE','K'].indexOf(p.position) >= 0){ trc('notRusher'); return; }
       var lg = leagueAvg(key, stat)[p.name];
-      if (!lg || lg.games < 3 || !(lg.avg > 0)) return;
-      if (kind === 'sacks' && lg.avg < 0.25) return;
+      if (!lg || lg.games < 3 || !(lg.avg > 0)){ trc(lg ? 'thinLog' : 'noSeasonAvg'); return; }
+      if (kind === 'sacks' && lg.avg < 0.25){ trc('avg<0.25'); return; }
       var od = bestPriceFor(key, p.name, stat);
-      if (!od) return;                                    // a bet without a price is not a bet
+      if (!od){ trc('noPrice'); return; }                 // a bet without a price is not a bet
       var logs = sortLogsDesc(((S.idx.logsByName || {})[p.name] || []).slice()).slice(0, 10);
       // snap share: a three-down rusher and a rotational one are not the same bet
       var snaps = logs.map(function(r){ return r.snapPct != null ? +r.snapPct : null; })
         .filter(function(v){ return v != null; });
       var snap = snaps.length ? snaps.reduce(function(a,b){ return a+b; }, 0) / snaps.length : null;
-      if (kind === 'sacks' && snap != null && snap < 35) return;
+      if (kind === 'sacks' && snap != null && snap < 35){ trc('snap<35'); return; }
       // own volume: attempts for a QB, so the projection scales with how much he throws
       var vol = null;
       if (kind === 'picks'){
@@ -5183,11 +5229,18 @@ function nflTeamAngle(key, g, kind){
       var posMult = posDvp ? Math.max(0.8, Math.min(1.3, 1 + posDvp.pct/200)) : 1;
       var proj = lg.avg * o.mult * posMult;
       var rec = sigRecord(key, p.name, stat, od.line, 10);
-      // Both of these are "does a rare thing happen" bets, and a projection under one is a bet
-      // the model itself does not expect to land. Measured on a live board: 17 of 32 quarterbacks
-      // and 141 of 158 pass rushers were being listed under one. Require the model to expect the
-      // thing being wagered on.
-      if ((stat === 'passInt' || stat === 'sacks' || stat === 'defSacks') && !(proj >= 1)) return;
+      // Both of these are "does a rare thing happen" bets, and a projection the posted line
+      // already beats is a bet the model itself does not expect to land - 141 of 158 pass rushers
+      // were being listed under their own line. The test is against THAT line, though, not
+      // against 1.0: a sacks line is posted at 0.5, so requiring a full sack per game demanded a
+      // rate almost no rusher sustains and emptied the tile on all 13 fixtures while five rushers
+      // sat above their line. Compare the projection with the number actually being bet.
+      if ((stat === 'passInt' || stat === 'sacks' || stat === 'defSacks')
+          && od.line != null && !(proj >= od.line)){
+        trc('projUnderLine');
+        return;
+      }
+      trc('kept');
       out.push({ name:p.name, p:p, opp:opp, stat:stat, avg:lg.avg, games:lg.games, rec:rec,
                  oppRate:o.rate, oppMult:o.mult, posDvp:posDvp, snap:snap, vol:vol, proj:proj,
                  price:od.price, line:od.line, book:od.book,
@@ -6468,40 +6521,43 @@ function tackleMachines(key, g){
     var opp = (team === g.home) ? g.away : g.home;
     var vol = oppVolume(key, opp);
     playersOnTeam(key, team).forEach(function(p){
-      if (!p || !isPlayingP(key, p.name, team)) return;
-      if (cfg.pos && cfg.pos.indexOf(p.position) < 0) return;
-      if (!hasAnyOddsFor(key, p.name)) return;
+      trc('candidates');
+      if (!p || !isPlayingP(key, p.name, team)){ trc('notPlaying'); return; }
+      if (cfg.pos && cfg.pos.indexOf(p.position) < 0){ trc('wrongPos:' + (p.position || '?')); return; }
+      if (!hasAnyOddsFor(key, p.name)){ trc('noOddsAtAll'); return; }
       var logs = sortLogsDesc(((S.idx.logsByName || {})[p.name] || []).slice());
       var vals = [];
       logs.forEach(function(r){ var v = statOf(key, r, 'tackles'); if (v != null) vals.push(v); });
-      if (vals.length < cfg.minG) return;
+      if (vals.length < cfg.minG){ trc('games<' + cfg.minG + ' (had ' + vals.length + ')'); return; }
       var avg = vals.reduce(function(a,b){ return a+b; }, 0) / vals.length;
-      if (avg < cfg.minAvg) return;
+      if (avg < cfg.minAvg){ trc('avg<' + cfg.minAvg); return; }
       // snap share, where the sport records it: a rotational defender is a different bet
       var snaps = logs.slice(0, 10).map(function(r){ return r.snapPct != null ? +r.snapPct : null; })
         .filter(function(v){ return v != null; });
       var snap = snaps.length ? snaps.reduce(function(a,b){ return a+b; }, 0) / snaps.length : null;
-      if (cfg.minSnap && snap != null && snap < cfg.minSnap) return;
+      if (cfg.minSnap && snap != null && snap < cfg.minSnap){ trc('snap<' + cfg.minSnap); return; }
       // The line has to be the one his record supports, not the best-priced rung on the ladder -
       // that is always the hardest number and nobody clears it. Walk the rungs hardest-first and
       // take the first he still clears at the required rate; NFL's two-way line is in this list too.
-      var cands = streakCandidates(key, p.name, 'tackles')
-        .filter(function(c){ return c.price >= STREAK_ODDS_FLOOR; });
-      if (!cands.length) return;
-      var od = null, line = null, hits = 0, rate = 0;
+      var raw = streakCandidates(key, p.name, 'tackles');
+      var cands = raw.filter(function(c){ return c.price >= STREAK_ODDS_FLOOR; });
+      if (!cands.length){ trc(raw.length ? 'allBelowOddsFloor' : 'noTacklesLadder'); return; }
+      var od = null, line = null, hits = 0, rate = 0, best = 0;
       for (var ci=0; ci<cands.length; ci++){
         var c = cands[ci];
         var h = vals.filter(function(v){ return v > c.line; }).length;
         var rt = h / vals.length;
+        if (rt > best) best = rt;
         if (rt >= cfg.hit){ od = c; line = c.line; hits = h; rate = rt; break; }
       }
-      if (!od) return;
+      if (!od){ trc('noRungAt' + Math.round(cfg.hit*100) + '% (best ' + Math.round(best*100) + '%)'); return; }
       var funnel = dvpRankFor(key, opp, p.position || p.pos, 'tackles');
-      if (funnel && funnel.pct <= cfg.starve) return;       // they starve this position of chances
+      if (funnel && funnel.pct <= cfg.starve){ trc('starved'); return; }  // opp starves this position
       var score = rate*100 + (funnel ? funnel.pct*0.7 : 0)
         + (vol && vol.playsRank <= 8 ? 6 : 0)
         + (vol && vol.rushRank <= 8 && p.position !== 'DB' ? 6 : 0)
         + (snap != null && snap >= 90 ? 4 : 0);
+      trc('kept');
       out.push({ name:p.name, p:p, team:team, opp:opp, line:line, price:od.price, book:od.book,
                  hits:hits, n:vals.length, rate:rate, avg:avg, funnel:funnel, vol:vol, snap:snap,
                  last:vals.slice(0, 8), score:score });
@@ -8776,6 +8832,7 @@ function focusPage(){
     + (!state.view.nerd ? nbaRestSection(key, g) : '')
     + (S.t3 === 'ready' && !state.view.nerd ? nbaPaceSection(key, g) : '')
     + (S.t3 === 'ready' && !state.view.nerd ? nbaQ1Section(key, g) : '')
+    + (S.t3 === 'ready' && !state.view.nerd ? nbaShotMatchup(key, g) : '')
     + (S.t3 === 'ready' && !state.view.nerd ? nbaOutSection(key, g) : '')
 
     // Nerd Mode replaces the signals rather than adding to them: it is a different read of the
@@ -16459,6 +16516,121 @@ function nbaQuarters(key, name){
   if (!rows || !rows.length) return null;
   return rows.slice().sort(function(a, b){ return a.period - b.period; });
 }
+/* ===== SHOT MATCHUP ==========================================================================
+   Where he shoots from, against what this defence gives up there. Position DvP cannot see any of
+   it - it treats every centre alike whether he lives at the rim or settles for long twos.
+
+   THIS IS A READ, AND IT WILL NOT BECOME A SIGNAL. That was measured rather than assumed, and the
+   measurement is worth stating because the raw numbers look so much better than the real ones.
+
+   The defensive spread is genuinely wide: rim field-goal percentage allowed runs from 60% to 72%.
+   Weighted by an actual shot diet it is already much smaller, because nobody takes every shot in
+   one zone. Then comes the part that decides it. A gap is only worth betting if it belongs to the
+   DEFENCE rather than to one season of opponent shooting, so build_nba_zones.py --persist
+   regresses each team's gap to the league in season N+1 on the same gap in season N, across five
+   seasons and 120 pairs per zone:
+
+       rim 0.60    paint 0.55    midRange 0.26    cornerThree -0.02    armsThree 0.09
+
+   The interior half-persists, which is what a rim protector should look like. The perimeter does
+   not persist at all, which is what opponent three-point percentage has always looked like. Every
+   zone's contribution is therefore multiplied by its own factor before it is shown.
+
+   What survives is small. Across every player-defence pair in the league the shrunk swing is 0.3%
+   of a player's own number at the median, 1.3% at the 95th percentile, and the single largest is
+   0.47 points - Giannis against Cleveland. Nothing anywhere reaches half a point, which is far
+   inside the vig. So the section shows what the matchup is worth and never attaches a price to it.
+   The honest value here is the zone information itself, not the points translation. */
+var SZ_PTS = { rim:2, paint:2, midRange:2, cornerThree:3, armsThree:3 };
+/* Measured across 2022-2026; nba/data/zone_persistence.json overrides these when it is loaded, so
+   the page cannot drift away from the last run of the test. */
+var SZ_KEEP_DEFAULT = { rim:0.60, paint:0.55, midRange:0.26, cornerThree:0, armsThree:0.09 };
+var SZ_MIN_SHOTS = 150;
+var SZ_SHOW = 8;
+function nbaZoneKeep(key){
+  var zp = (state.sports[key].data || {}).zonePersist;
+  return (zp && zp.keep) ? zp.keep : SZ_KEEP_DEFAULT;
+}
+function nbaShotSwing(key, name, opp){
+  var S = state.sports[key], zf = S.data.zones;
+  if (!zf || !zf.league) return null;
+  var me = nbaZones(key, name);
+  if (!me || !me.shots || me.shots < SZ_MIN_SHOTS) return null;
+  var dfn = (zf.defence || {})[normTeam(opp)] || (zf.defence || {})[opp]
+         || (zf.defence || {})[String(opp).toUpperCase()];
+  if (!dfn) return null;
+  var fgaRow = (leagueAvg(key, 'fga') || {})[name];
+  if (!fgaRow || !fgaRow.avg) return null;
+  var keep = nbaZoneKeep(key), fga = fgaRow.avg, swing = 0, raw = 0, parts = [], i;
+  for (i = 0; i < (zf.zones || []).length; i++){
+    var z = zf.zones[i], mz = me[z], dz = dfn[z], lz = (zf.league || {})[z];
+    if (!mz || !dz || !lz || mz.share == null || dz.pct == null || lz.pct == null) continue;
+    var gap = dz.pct - lz.pct;                       // how this defence differs from the league
+    var full = fga * mz.share * gap * (SZ_PTS[z] || 2);
+    var k = keep[z] == null ? 1 : keep[z];
+    raw += full;
+    swing += full * k;
+    parts.push({ z:z, share:mz.share, gap:gap, add:full * k, full:full, keep:k,
+                 rank:dz.rank, of:dz.of, pct:dz.pct });
+  }
+  if (!parts.length) return null;
+  /* The zone that carries the read, by how much it moves the number AFTER shrinking - not by his
+     biggest share. A man who takes half his shots from three against a defence that was terrible
+     out there last season has no read at all, because that is the zone nothing carries over in. */
+  parts.sort(function(a, b){ return Math.abs(b.add) - Math.abs(a.add); });
+  return { swing:swing, raw:raw, parts:parts, fga:fga, shots:me.shots, lead:parts[0] };
+}
+function nbaShotMatchup(key, g){
+  if (key !== 'nba') return '';
+  if (!g || !g.home || !g.away) return '';
+  var zf = state.sports[key].data.zones;
+  if (!zf || !zf.defence || !zf.league) return '';
+  var rows = [];
+  [[g.away, g.home], [g.home, g.away]].forEach(function(pair){
+    playersOnTeam(key, pair[0]).forEach(function(p){
+      if (!isPlayingP(key, p.name, p.team)) return;
+      var sw = nbaShotSwing(key, p.name, pair[1]);
+      if (!sw) return;
+      rows.push({ p:p, team:pair[0], opp:pair[1], sw:sw, priced:hasAnyOddsFor(key, p.name) });
+    });
+  });
+  if (rows.length < 3) return '';
+  // biggest mover first, either way - a matchup that hurts him is the same finding as one that helps
+  rows.sort(function(a, b){ return Math.abs(b.sw.swing) - Math.abs(a.sw.swing); });
+  var keep = nbaZoneKeep(key);
+  var body = rows.slice(0, SZ_SHOW).map(function(x){
+    var sw = x.sw, lead = sw.lead;
+    var dir = sw.swing >= 0 ? 'sz-up' : 'sz-dn';
+    var gapPts = Math.round(lead.gap * 1000) / 10;
+    return '<div class="sz-row ' + dir + '">'
+      + '<div class="sz-nm"><b>' + esc(x.p.name) + '</b>'
+        + '<span>' + esc(abbrOf(key, x.team)) + ' v ' + esc(abbrOf(key, x.opp))
+        + (x.priced ? ' · priced' : '') + '</span></div>'
+      + '<div class="sz-zn">' + esc(ZONE_LAB[lead.z] || lead.z)
+        + '<span>' + Math.round(lead.share * 100) + '% of his shots · '
+        + esc(abbrOf(key, x.opp)) + ' ' + ordinalish(lead.rank) + ' of ' + lead.of
+        + ' (' + (gapPts >= 0 ? '+' : '') + gapPts.toFixed(1) + ' v league)</span></div>'
+      + '<div class="sz-sw"><b>' + (sw.swing >= 0 ? '+' : '') + sw.swing.toFixed(2) + '</b>'
+        + '<span>pts</span></div></div>';
+  }).join('');
+  var kp = (zf.zones || []).filter(function(z){ return keep[z] != null; })
+    .map(function(z){ return esc(ZONE_LAB[z] || z).toLowerCase() + ' ' + (+keep[z]).toFixed(2); })
+    .join(', ');
+  return '<div class="dayband"><span>Shot matchup</span></div>'
+    + '<div class="sz-wrap">' + body + '</div>'
+    + '<div class="deg-note">What his shot diet is worth against THIS defence, zone by zone. '
+    + 'Position defence cannot see it: it treats every centre alike whether he lives at the rim or '
+    + 'settles for long twos. '
+    + '<b>The points figure is already shrunk</b> by how much of a defensive gap actually carries '
+    + 'from one season to the next, measured over five seasons and 120 team pairs per zone — '
+    + esc(kp) + '. The interior half-persists, which is what a rim protector should look like; the '
+    + 'perimeter does not persist at all, which is what opponent three-point shooting has always '
+    + 'looked like. '
+    + 'After that shrinking the largest matchup in the league is worth <b>under half a point</b>, '
+    + 'and the typical one 0.3% of a player’s own number — well inside the margin. So '
+    + 'this carries no side and no price, and it is not going to become a tile. The value here is '
+    + 'knowing where he shoots and who he is shooting at, not the points translation.</div>';
+}
 function nbaZones(key, name){
   if (key !== 'nba') return null;
   var S = state.sports[key], z = S.data.zones;
@@ -20014,6 +20186,74 @@ window.LAB = {
         });
       });
     } finally { SPEC_TAP = was; }
+    return out;
+  },
+  /* exposed for tests: the shot-zone matchup for one player against one defence, with the
+     per-zone working and both the raw and shrunk figures, so a test can check the shrinkage was
+     actually applied rather than merely described in the note. */
+  shotSwingProbe: function(key, name, opp){ return nbaShotSwing(key, name, opp); },
+  zoneKeepProbe: function(key){ return nbaZoneKeep(key); },
+  /* exposed for tests: run a tile builder over every fixture on the board with the gate tracer on
+     and hand back both the row count and the fallout per gate. A tile that renders nothing looks
+     identical whether its gates are right or broken, and the "why" line only ever names the last
+     gate - this names the one that actually emptied it. */
+  /* exposed for tests: the player pool a tile builder actually iterates, per team side on the
+     board, broken down by position. A builder that needs defenders cannot be debugged from its
+     own gates if the pool it is handed has no defenders in it. */
+  /* exposed for tests: load the second tier for one sport on demand. In the page this is a side
+     effect of rendering the odds tab or opening a fixture, so a test that never does either got a
+     sport with no odds.json and no players.json and every squad-walking tile measured empty. */
+  ensureTier2Probe: function(key){ ensureSport(key); ensureTier2(); },
+  /* exposed for tests: which positions the lineup file actually lists for a team, and that the
+     gate tracer is not left switched on in the page. */
+  lineupPosProbe: function(key, team){ return lineupPosSet(key, team); },
+  sigTraceIsOff: function(){ return SIG_TRACE === null; },
+  poolProbe: function(key){
+    var fx = state.sports[key].data.fixture || [], seen = {}, out = { sides:0, total:0, pos:{}, perSide:[] };
+    fx.forEach(function(f){
+      [f.away, f.home].forEach(function(t){
+        if (seen[t]) return; seen[t] = 1; out.sides++;
+        var ps = playersOnTeam(key, t) || [], pos = {};
+        ps.forEach(function(p){
+          var k = (p && (p.position || p.pos)) || '?';
+          pos[k] = (pos[k] || 0) + 1; out.pos[k] = (out.pos[k] || 0) + 1;
+        });
+        out.total += ps.length;
+        out.perSide.push({ team:t, n:ps.length, pos:pos });
+      });
+    });
+    return out;
+  },
+  /* exposed for tests: the rows a tile builder returns across the whole board, so a test can check
+     what is being shown and not merely how many there are. */
+  tileRowsProbe: function(key, which){
+    var fx = state.sports[key].data.fixture || [], out = [];
+    fx.forEach(function(f){
+      var r = which === 'tackles' ? tackleMachines(key, f)
+            : which === 'picks'   ? nflTeamAngle(key, f, 'picks')
+            :                       nflTeamAngle(key, f, 'sacks');
+      (r.rows || []).forEach(function(x){
+        out.push({ fixture:f.away + '@' + f.home, name:x.name, opp:x.opp,
+                   pos:(x.p && (x.p.position || x.p.pos)) || null,
+                   line:x.line, price:x.price, book:x.book, avg:x.avg, proj:x.proj,
+                   rate:x.rate, hits:x.hits, n:x.n, games:x.games, snap:x.snap,
+                   oppMult:x.oppMult, funnel:x.funnel && x.funnel.pct });
+      });
+    });
+    return out;
+  },
+  gateProbe: function(key, which){
+    var g = (state.sports[key].data.fixture || []), out = { fixtures:0, rows:0, gates:{} };
+    SIG_TRACE = out.gates;
+    try {
+      g.forEach(function(fx){
+        out.fixtures++;
+        var r = which === 'tackles' ? tackleMachines(key, fx)
+              : which === 'picks'   ? nflTeamAngle(key, fx, 'picks')
+              :                       nflTeamAngle(key, fx, 'sacks');
+        out.rows += (r.rows || []).length;
+      });
+    } finally { SIG_TRACE = null; }
     return out;
   },
   /* exposed for tests: the first-quarter read - who is shown, what band they are judged against,
