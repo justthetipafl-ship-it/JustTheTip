@@ -2554,11 +2554,39 @@ function lineupRows(key){
   } else out = raw;
   return (S.idx.luRows = out);
 }
+/* IS THIS FILE A TEAM SHEET OR A DEPTH CHART? They are not the same claim and must not be read the
+   same way. NFL's lineups carry a week and AFL's a round: those are named teams for a named game,
+   so a player missing from one is genuinely not playing. The NBA file carries no week, no round and
+   no date at all - it is a season-long rotation summary with minutes and starter rates - and
+   treating absence from it as "not playing" silently deleted the biggest names in the sport from
+   every signal.
+
+   It deleted exactly the players you would most want, too, because the ones it misses are the ones
+   who CHANGED CLUBS: the chart is built from games played, so after a trade it still lists them
+   under the old team and the new team has no row for them. LeBron James, with 14 posted main lines
+   and 114 alt rungs, was invisible to every NBA signal on opening night. So were Jaylen Brown and
+   Paul George.
+
+   So: a team sheet is the final word. A depth chart is not evidence of absence, and we fall back to
+   the injury list, which is a claim about a player rather than about a roster. */
+function lineupIsTeamSheet(key){
+  var S = state.sports[key];
+  if (S.idx.luSheet != null) return S.idx.luSheet;
+  var rows = lineupRows(key), i, r;
+  var sheet = false;
+  for (i = 0; i < rows.length; i++){
+    r = rows[i];
+    if (!r) continue;
+    if (r.week != null || r.round != null || r.date != null || r.gameId != null
+        || r.MatchId != null || r.utc != null){ sheet = true; break; }
+  }
+  return (S.idx.luSheet = sheet);
+}
 function isPlayingP(key, name, team){
   var lu = lineupRows(key);
   var any = lu.length && lu.some(function(r){ return r && r.team === team; });
-  // a published lineup is the final word, either way
-  if (any) return lu.some(function(r){ return r && r.team === team && r.player === name; });
+  if (any && lineupIsTeamSheet(key))
+    return lu.some(function(r){ return r && r.team === team && r.player === name; });
   var inj = injStatus(key, name, team);
   return !(inj && inj.st === 'out');
 }
@@ -7887,6 +7915,7 @@ function nblPriced(key, p, mkt, opp, line){
 /* SLASHERS / SPLASHERS / DISHERS / BOARDERS - the league's best at a stat into a defence that
    gives it up to their position. Production took ANY player against a 4%+ soft defence; here it's
    the league's top 15 at the stat, so the tile is about specialists, not everyone on the slate. */
+var SPEC_TAP = null;
 var SPEC_MIN_PRICE = 1.35;   // below this the margin eats any edge a volume read can have
 function specHitRate(key, name, mkt, line){
   var logs = ((state.sports[key].idx.logsByName || {})[name] || []);
@@ -7921,13 +7950,21 @@ function nblSpecialist(key, g, stat){
     if (!dr || dr.pct == null || dr.pct < 4) return;   // a thin pool is no read at all
     var b = nblPriced(key, p, stat, opp);
     if (!b) return;
-    // Volume into a soft defence is the read, but the PRICE decides whether it is a bet. These
-    // tiles had no floor at all, and 14% of NHL shot lines sit under $1.35 - a line he clears
-    // nine times in ten at $1.05 still loses money. Same rule Shot Machines uses.
-    var px = +(b.price != null ? b.price : b.over);
+    /* Volume into a soft defence is the read, but the PRICE decides whether it is a bet. These
+       tiles had no floor at all, and 14% of NHL shot lines sit under $1.35 - a line he clears nine
+       times in ten at $1.05 still loses money. Same rule Shot Machines uses.
+
+       THE PRICE IS AT b.od.price. nblPriced returns { od, pr, ev, side } and every other caller
+       reads it that way; this one asked for b.price and b.over, which do not exist on it. +undefined
+       is NaN, NaN >= 1.35 is false, so EVERY candidate was dropped here and both the price floor and
+       the hit-rate check below it were dead code. Slashers, Splashers, Dishers and Boarders have
+       never fired once, in either basketball league - zero rows across twelve NBL fixtures and
+       twelve NBA fixtures - and they failed the way a quiet night looks, so nothing ever flagged it. */
+    var px = +(b.od && b.od.price);
+    if (SPEC_TAP){ SPEC_TAP.prices.push(px); SPEC_TAP.lines.push(b.od && b.od.line); }
     if (!(px >= SPEC_MIN_PRICE)) return;
     // and it has to pay at his own rate over the games we have
-    var hit = specHitRate(key, p.name, stat, b.line);
+    var hit = specHitRate(key, p.name, stat, b.od.line);
     if (hit != null && hit * px - 1 <= 0) return;
     b.hit = hit;
     out.push({ name:p.name, p:p, opp:opp, rank:i+1, avg:lg[p.name].avg, dr:dr, b:b,
@@ -19785,6 +19822,44 @@ window.LAB = {
     var d = coverDna(key, name, mkt, line);
     d.score = cdnaScore(d, side || 'over');
     return d;
+  },
+  /* exposed for tests: every signal tile a fixture produces, INCLUDING the ones that stayed
+     silent and the reason each gave. The page itself stopped rendering the quiet list - it was
+     longer than the signals - so without this there is no way to ask "why did nothing fire", and
+     a sport whose signals are all silently gated looks identical to a quiet night. */
+  sigProbe: function(key, i){
+    var S = state.sports[key], fx = asArray(S.data.fixture) || [];
+    var g = typeof i === 'number' ? fx[i] : i;
+    if (!g) return null;
+    var wasC = SIG_CAPTURE, wasP = SIG_PHASE;
+    SIG_CAPTURE = []; SIG_PHASE = 'u';
+    try { signalsSection(key, g); }
+    finally { var got = SIG_CAPTURE; SIG_CAPTURE = wasC; SIG_PHASE = wasP; }
+    return { game:g, tiles:got.map(function(t){
+      return { phase:t.phase, title:t.title, desc:t.desc, n:(t.rows || []).length, why:t.why };
+    }) };
+  },
+  /* exposed for tests: is this player treated as playing? The answer turns on whether the sport's
+     lineup file is a team sheet or a depth chart, and getting that backwards removed the biggest
+     names in the NBA from every signal without erroring. */
+  isPlayingProbe: function(key, name, team){ return isPlayingP(key, name, team); },
+  /* exposed for tests: the prices and thresholds the specialist tiles actually judge candidates
+     on. These were NaN and undefined for the life of the feature, which no rendered output could
+     have revealed - the tiles simply stayed empty. */
+  specProbe: function(key, idxs){
+    var S = state.sports[key], fx = asArray(S.data.fixture) || [];
+    var out = { prices:[], lines:[] }, was = SPEC_TAP;
+    SPEC_TAP = out;
+    try {
+      (idxs || []).forEach(function(i){
+        var g = fx[i];
+        if (!g) return;
+        ['points','threes','assists','rebounds'].forEach(function(st){
+          try { nblSpecialist(key, g, st); } catch(e){}
+        });
+      });
+    } finally { SPEC_TAP = was; }
+    return out;
   },
   // exposed for tests: the Volumes tile for a given build and a given game
   volProbe: function(key, volumes, game){
