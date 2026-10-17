@@ -184,14 +184,25 @@ def persist(out_dir):
     print('SHRINKAGE FACTORS (multiply the page\'s computed swing by these):')
     print('  ' + '  '.join('%s %.2f' % (z, keep[z]) for z in zones if z in keep))
     print('')
+    # THIS ANSWERS ONE QUESTION ONLY: does a gap persist. It does NOT say whether what survives
+    # is big enough to bet, and the first version of this text blurred the two - it printed
+    # "strong enough to be worth pricing" off a rim slope of 0.60, when applying that same 0.60
+    # to a real shot diet left the largest edge in the league at 0.47 points, far inside the vig.
+    # Persistence is necessary and nowhere near sufficient. Say what was measured, and name the
+    # second question rather than appearing to have answered it.
     if best < 0.15:
-        print('VERDICT: no zone carries over enough to price. The shot matchup stays a read.')
+        print('MEASURED: no zone carries over. Last season\'s zone record says nothing about next,')
+        print('          so there is no basis for a priced tile and nothing further to check.')
     elif best < 0.4:
-        print('VERDICT: weak. A signal would be priced off roughly a quarter of the swing shown,')
-        print('         which on the measured spread is a fraction of a point. Not worth a tile.')
+        print('MEASURED: weak persistence - the best zone keeps %.0f%% of its gap.' % (best * 100))
+        print('          Most of what a single season shows is noise.')
     else:
-        print('VERDICT: strong enough to be worth pricing, using the per-zone factors above -')
-        print('         and the swing the page shows must be multiplied by them, not taken raw.')
+        print('MEASURED: the interior zones keep about half their gap, which is real.')
+        print('          THIS IS NOT YET AN EDGE. It says the defensive number means something,')
+        print('          not that what survives is big enough to bet. The second question is what')
+        print('          the shrunk swing comes to on an actual shot diet - when that was measured')
+        print('          the largest in the league was 0.47 points, which is inside the margin.')
+    print('          Multiply every computed swing by the factors above before judging it.')
     with open(os.path.join(out_dir, 'zone_persistence.json'), 'w') as fh:
         json.dump({'measured': res, 'keep': keep, 'seasons': sorted(by),
                    'updated': datetime.datetime.now(datetime.timezone.utc)
