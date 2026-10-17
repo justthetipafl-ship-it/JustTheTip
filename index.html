@@ -2025,6 +2025,7 @@ function loadTier2(key){
     (Array.isArray(pl) ? pl : (pl && pl.players) || []).forEach(function(p){
       if (p && p.name) S.idx.playerTeam[p.name] = p.team;
     });
+    canonOddsNames(key);
     S.t2 = 'ready'; render();
   });
 }
@@ -2192,7 +2193,7 @@ function buildIndexes(key){
   ix.hasUp = null;        // recomputed whenever the index is rebuilt, so a new fixture re-sorts
   TR_CACHE = { key:null, name:{}, vals:{} };     // trends cache is stale once the data changes
   ix.lgAvg = {}; ix.winAvg = {}; ix.matchOpp = null; ix.fs = null;
-  ix.pricedSet = null; ix.oddsName = null; ix.oddsIni = null; ix.vac = null; ix.bookList = null; ix.resIdx = null; ix.mlbLg = null; ix.lgRate = null; ix.scState = null; ix.nhlPim = null; ix.injIdx = null; ix.ww = null; ix.usg = null; ix.mrg = null; ix.luRows = null; ix.luPos = null; ix.luSheet = null; ix.foldName = null;
+  ix.pricedSet = null; ix.oddsName = null; ix.oddsIni = null; ix.oddsHyp = null; ix.vac = null; ix.bookList = null; ix.resIdx = null; ix.mlbLg = null; ix.lgRate = null; ix.scState = null; ix.nhlPim = null; ix.injIdx = null; ix.ww = null; ix.usg = null; ix.mrg = null; ix.luRows = null; ix.luPos = null; ix.luSheet = null; ix.foldName = null;
   var logs = asArray(d.gamelogs) || [];
   ix.logsByName = {};
   // One row per player per game. NHL's build emits each game three times - Matias Maccelli had 213
@@ -9621,26 +9622,137 @@ function nameInitialKey(n){
   if (/^(jr|sr|ii|iii|iv)$/.test(last) && parts.length > 2) last = parts[parts.length - 2].toLowerCase().replace(/[^a-z]/g, '');
   return parts[0][0].toLowerCase() + '|' + last;
 }
+// Books also shorten the first half of a HYPHENATED surname to its initial: "Shai G-Alexander"
+// for Shai Gilgeous-Alexander, "Nickeil A-Walker" for Alexander-Walker. Neither of the two keys
+// above catches it - the accent fold sees a different surname, and the first-initial key sees
+// "s|galexander" against "s|gilgeousalexander". Since a price is what gates availability, the
+// reigning MVP was being treated as unpriced and dropped from every NBA signal.
+// Key on first initial + surname's first initial + the surname's last segment, and build the key
+// ONLY for a surname that actually carries a hyphen, so a plain "Trey Alexander" can never be
+// pulled into Gilgeous-Alexander's bucket.
+/* The initial-key fallback is for ABBREVIATIONS - "M Deng" for Majok Deng, "Mitchell Norton" for
+   Mitch Norton, "Dakota Daniel Mathias" for Dakota Mathias. It keys on first initial + surname,
+   which is also true of two entirely different people: Drew Peterson (on the Chicago roster) and
+   Darryn Peterson (a rookie the books price, not on any roster here) are both "d|peterson", and
+   the uniqueness guard passed them because each is unique on its own side. Drew Peterson's
+   signals were reading Darryn Peterson's prices. So before trusting an initial match, require the
+   first names to be compatible: identical, one a bare initial of the other, or one a prefix of
+   the other. "Drew" and "Darryn" are none of those. */
+function nameParts(n){
+  return String(n || '').normalize('NFD').replace(/[̀-ͯ]/g, '')
+    .replace(/[^A-Za-z' -]/g, ' ').trim().split(/\s+/).filter(Boolean);
+}
+function nameFirstCompat(a, b){
+  var pa = nameParts(a), pb = nameParts(b);
+  if (!pa.length || !pb.length) return false;
+  var x = pa[0].toLowerCase().replace(/[^a-z]/g, '');
+  var y = pb[0].toLowerCase().replace(/[^a-z]/g, '');
+  if (!x || !y) return false;
+  if (x === y) return true;
+  if (x.length === 1 || y.length === 1) return x.charAt(0) === y.charAt(0);
+  return x.indexOf(y) === 0 || y.indexOf(x) === 0;      // Mitch / Mitchell
+}
+function nameHyphenKey(n){
+  var parts = String(n || '').normalize('NFD').replace(/[̀-ͯ]/g, '')
+    .replace(/[^A-Za-z' -]/g, ' ').trim().split(/\s+/).filter(Boolean);
+  if (parts.length < 2) return null;
+  var last = parts[parts.length - 1];
+  if (/^(jr|sr|ii|iii|iv)$/i.test(last.replace(/[^A-Za-z]/g, '')) && parts.length > 2)
+    last = parts[parts.length - 2];
+  if (last.indexOf('-') < 0) return null;
+  var seg = last.split('-').filter(Boolean);
+  if (seg.length < 2) return null;
+  var a = seg[0].toLowerCase().replace(/[^a-z]/g, '');
+  var b = seg[seg.length - 1].toLowerCase().replace(/[^a-z]/g, '');
+  if (!a || !b) return null;
+  return parts[0][0].toLowerCase() + '|' + a.charAt(0) + '|' + b;
+}
+/* ONE PLAYER, ONE SPELLING. Books do not agree on how to write a name, and every odds lookup in
+   the page filters rows on an exact player string, so a player the feed carries under two
+   spellings has his ladder split and only one half is ever seen. Measured on the live NBA board:
+   Shai Gilgeous-Alexander has 217 rows under his full name from five books and 35 more under
+   "Shai G-Alexander" from TAB, across the same ten markets - so TAB never competed for a single
+   one of his prices, including where it was the best of them.
+
+   Fixing it at lookup time is not enough: the exact match wins first and the orphaned rows stay
+   orphaned. So rewrite the rows once, when the odds land, to whatever the roster calls the
+   player. Only a name the roster actually knows is rewritten, and only through the same three
+   keys (accent fold, abbreviation, hyphen abbreviation) with the first-name check applied - a
+   book name that resolves to nothing keeps its own spelling and behaves exactly as before. */
+function canonOddsNames(key){
+  var S = state.sports[key], d = S.data.odds;
+  if (!d) return 0;
+  var roster = {}, ini = {}, iniN = {}, hyp = {}, hypN = {};
+  var pl = S.data.players;
+  (Array.isArray(pl) ? pl : (pl && pl.players) || []).forEach(function(p){
+    if (!p || !p.name) return;
+    roster[foldName(p.name)] = p.name;
+    var k = nameInitialKey(p.name); if (k){ iniN[k] = (iniN[k] || 0) + 1; ini[k] = p.name; }
+    var h = nameHyphenKey(p.name);  if (h){ hypN[h] = (hypN[h] || 0) + 1; hyp[h] = p.name; }
+  });
+  Object.keys(ini).forEach(function(k){ if (iniN[k] > 1) delete ini[k]; });
+  Object.keys(hyp).forEach(function(h){ if (hypN[h] > 1) delete hyp[h]; });
+  var canon = function(n){
+    var hit = roster[foldName(n)];
+    if (hit) return hit;
+    var k = nameInitialKey(n), c = k && ini[k];
+    if (c && nameFirstCompat(n, c)) return c;
+    var h = nameHyphenKey(n), c2 = h && hyp[h];
+    if (c2 && nameFirstCompat(n, c2)) return c2;
+    return null;
+  };
+  var seen = {}, moved = 0;
+  ['lines', 'alt', 'books', 'matchOdds'].forEach(function(which){
+    var rows = d[which];
+    if (!Array.isArray(rows)) return;
+    rows.forEach(function(r){
+      if (!r || !r.player) return;
+      var to = seen[r.player];
+      if (to === undefined) to = seen[r.player] = canon(r.player);
+      if (to && to !== r.player){ r.player = to; moved++; }
+    });
+  });
+  // These four are built lazily from the rows, on first lookup, so clear them and they rebuild
+  // against the rewritten names. buildIndexes' oddsIdx/bookIdx are deliberately NOT touched:
+  // that runs on tier 1, before odds.json has arrived, so they are empty either way and
+  // pretending to refresh them here would only hide that.
+  if (moved){
+    S.idx.oddsName = null; S.idx.oddsIni = null; S.idx.oddsHyp = null; S.idx.pricedSet = null;
+  }
+  S.idx.canonMoved = moved;
+  S.idx.canonMap = {};
+  Object.keys(seen).forEach(function(from){ if (seen[from] && seen[from] !== from) S.idx.canonMap[from] = seen[from]; });
+  return moved;
+}
 function oddsPlayer(key, name){
   var S = state.sports[key];
   if (!S.idx.oddsName){
-    var m = {}, ini = {}, iniCount = {};
+    var m = {}, ini = {}, iniCount = {}, hyp = {}, hypCount = {};
     oddsRowsAll(key).forEach(function(r){
       if (!r || !r.player) return;
       m[foldName(r.player)] = r.player;
       var k = nameInitialKey(r.player);
       if (k && ini[k] !== r.player){ iniCount[k] = (iniCount[k] || 0) + 1; ini[k] = r.player; }
+      var h = nameHyphenKey(r.player);
+      if (h && hyp[h] !== r.player){ hypCount[h] = (hypCount[h] || 0) + 1; hyp[h] = r.player; }
     });
     // the roster side must be unambiguous too
-    var rosterCount = {};
-    cmbPool(key).forEach(function(p){ var k = nameInitialKey(p.name); if (k) rosterCount[k] = (rosterCount[k] || 0) + 1; });
+    var rosterCount = {}, rosterHyp = {};
+    cmbPool(key).forEach(function(p){
+      var k = nameInitialKey(p.name); if (k) rosterCount[k] = (rosterCount[k] || 0) + 1;
+      var h = nameHyphenKey(p.name);  if (h) rosterHyp[h] = (rosterHyp[h] || 0) + 1;
+    });
     Object.keys(ini).forEach(function(k){ if (iniCount[k] > 1 || rosterCount[k] > 1) delete ini[k]; });
-    S.idx.oddsName = m; S.idx.oddsIni = ini;
+    Object.keys(hyp).forEach(function(h){ if (hypCount[h] > 1 || rosterHyp[h] > 1) delete hyp[h]; });
+    S.idx.oddsName = m; S.idx.oddsIni = ini; S.idx.oddsHyp = hyp;
   }
   var hit = S.idx.oddsName[foldName(name)];
   if (hit) return hit;
-  var k2 = nameInitialKey(name);
-  return (k2 && S.idx.oddsIni[k2]) || name;
+  var k2 = nameInitialKey(name), c2 = k2 && S.idx.oddsIni[k2];
+  if (c2 && nameFirstCompat(name, c2)) return c2;
+  var k3 = nameHyphenKey(name), c3 = k3 && S.idx.oddsHyp[k3];
+  if (c3 && nameFirstCompat(name, c3)) return c3;
+  return name;
 }
 function hasAnyOddsFor(key, name){
   var S = state.sports[key];
@@ -20207,6 +20319,12 @@ window.LAB = {
   /* exposed for tests: which positions the lineup file actually lists for a team, and that the
      gate tracer is not left switched on in the page. */
   lineupPosProbe: function(key, team){ return lineupPosSet(key, team); },
+  /* exposed for tests: how a roster name resolves to the book's spelling, and whether that
+     resolved name is actually priced. */
+  nameResolveProbe: function(key, name){
+    return { resolved: oddsPlayer(key, name), priced: hasAnyOddsFor(key, name),
+             fold: foldName(name), ini: nameInitialKey(name), hyp: nameHyphenKey(name) };
+  },
   sigTraceIsOff: function(){ return SIG_TRACE === null; },
   poolProbe: function(key){
     var fx = state.sports[key].data.fixture || [], seen = {}, out = { sides:0, total:0, pos:{}, perSide:[] };
