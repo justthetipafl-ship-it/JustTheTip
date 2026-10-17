@@ -151,14 +151,19 @@ def persist(out_dir):
     path = os.path.join(out_dir, 'zones_by_season.json')
     if not os.path.exists(path):
         print('no %s - run the build with --per-season first' % path)
-        sys.exit(1)
+        return
     with open(path) as fh:
         d = json.load(fh)
     by, zones = d.get('bySeason') or {}, d.get('zones') or []
     if len(by) < 2:
-        print('only %d season(s) in %s - persistence needs at least two consecutive ones'
+        # Not an error. There is simply nothing to measure yet, and failing the workflow over it
+        # marks a perfectly good data build as broken.
+        print('only %d season(s) in %s - persistence needs at least two consecutive ones, so'
               % (len(by), path))
-        sys.exit(1)
+        print('there is nothing to measure yet. Rebuild with more seasons when you want the test:')
+        print('  python3 nba/build_nba_zones.py --out %s --seasons 2022,2023,2024,2025,2026 '
+              '--per-season' % out_dir)
+        return
     res = measure_persistence(by, zones)
     print('zone defence, season to season (%s)' % ', '.join(sorted(by)))
     print('  %-12s %5s %7s %7s  %s' % ('zone', 'n', 'slope', 'r', 'what it means'))
@@ -444,7 +449,18 @@ def main():
         json.dump(out, fh, separators=(',', ':'))
     print('  wrote zones.json - %d players, %d defences' % (len(rows), len(defence)))
 
-    if a.per_season:
+    if a.per_season and len(done) < 2:
+        # A one-season file is useless for the fit AND it would overwrite a good one. That is the
+        # worst possible outcome: the run that asked for five seasons but silently got one would
+        # destroy the history it was meant to extend. This happened - the default window asks for
+        # the season about to start, which has no play-by-play until opening night, so a dispatch
+        # with the history box left empty read 2026 alone.
+        print('  --per-season asked for, but only %d season(s) had play-by-play (%s).'
+              % (len(done), ', '.join(done) or 'none'))
+        print('  NOT writing zones_by_season.json - a one-season file cannot be fitted and would')
+        print('  replace a good one. Pass --seasons with the years you want, e.g.')
+        print('    --seasons 2022,2023,2024,2025,2026 --per-season')
+    elif a.per_season:
         by = {}
         for season, teams in dfn_season.items():
             lgz = {z: (v['made'] / v['att']) for z, v in lg_season.get(season, {}).items() if v['att']}
