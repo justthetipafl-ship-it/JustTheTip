@@ -12,6 +12,11 @@ on:
         description: "Seasons, comma separated (blank = last two)"
         type: string
         required: false
+      per_season:
+        description: "Also keep each season's zone defence apart, for the persistence test"
+        type: boolean
+        required: false
+        default: false
 
 permissions:
   contents: write
@@ -40,12 +45,23 @@ jobs:
         run: |
           ARGS="--out nba/data"
           if [ -n "${{ inputs.seasons }}" ]; then ARGS="$ARGS --seasons ${{ inputs.seasons }}"; fi
+          if [ "${{ inputs.per_season }}" = "true" ]; then ARGS="$ARGS --per-season"; fi
           python3 nba/build_nba_zones.py $ARGS
+
+      # Does a defence's zone record persist? The page shows the shot matchup as a read and
+      # carries no price on it precisely because that has never been measured. This runs only
+      # when the per-season file has just been written, needs no network, and prints the one
+      # number the decision rests on: the fraction of a measured gap that carries into next
+      # season, per zone.
+      - name: Zone persistence
+        if: ${{ inputs.per_season }}
+        run: python3 nba/build_nba_zones.py --out nba/data --persist
       - name: Commit
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          for f in nba/data/quarters.json nba/data/zones.json; do
+          for f in nba/data/quarters.json nba/data/zones.json \
+                   nba/data/zones_by_season.json nba/data/zone_persistence.json; do
             [ -f "$f" ] && git add "$f" && echo "staged $f"
           done
           if git diff --cached --quiet; then
