@@ -330,31 +330,55 @@ def report_of(rows, stake):
     return sorted(tiles.items(), key=lambda kv: -kv[1]['u'])
 
 
-# The three tiles that rendered the line in front of the price, so every price the snapshot read
-# off them was the line. The price at the moment of capture is gone - it is not in the ledger and
-# re-reading it from a later odds file would be a different number wearing the same label - so the
-# repair is to admit it is missing, not to replace it.
-LINE_FIRST_TILES = {'elite matchups', 'bunnies', 'bogey'}
+# The tiles that rendered the line in FRONT of the price, so a snapshot taken before the scraper
+# required a dollar sign read the line and logged it as the price. Only these four: eliteRow and
+# volumeRow print "270+ $3.05" via .elm-odds, h2hSigRow prints "270+ $3.05" / "U2.5 $1.90" via
+# .h2h-sig-odds. Every other box - .stk-odds (streakRow, tackleRow), .nflChunkRow, .gl-odds - puts
+# the dollar sign first, so its price was read correctly even before the fix and is never touched.
+# The price at the moment of capture is gone - it is not in the ledger and re-reading it from a
+# later odds file would be a different number wearing the same label - so the repair is to admit
+# it is missing, not to replace it.
+LINE_FIRST_TILES = {'elite matchups', 'volumes', 'bunnies', 'bogey'}
+
+# scripts/snapshot_signals.js e485446, authored 2026-10-15T01:06:05Z, made the dollar sign
+# mandatory in the price pattern. A row captured at or after that cannot have read the line: the
+# ask is printed with no dollar sign in front of it, so the pattern either matches the real price
+# or matches nothing and logs null. Anything on or after this instant is a genuine price even when
+# it happens to equal the line - $2.00 on a 1.5 shots line is an ordinary price.
+PRICE_FIX_AT = '2026-10-15T01:06Z'
 
 
-def repair_prices(rows):
-    """Null the prices that are provably the line. Returns how many were cleared."""
+def repair_prices(rows, fix_at=PRICE_FIX_AT):
+    """Null the prices that are provably the line. Returns how many were cleared.
+
+    Three conditions, all required, because on a small line the bug and a real price are the same
+    number: the tile has to be one that printed the line first, the row has to predate the scraper
+    fix, and the price has to match the signature for the side actually taken - an over box printed
+    ceil(line), an under box printed the bare line. A Bunnies over at 1.5 logged as 1.5 is not
+    bug-shaped (the box would have said 2), and a Bogey under at 1.5 logged as 2.0 is not either.
+    """
     n = 0
     for b in rows:
         if str(b.get('tile') or '').strip().lower() not in LINE_FIRST_TILES:
             continue
-        price, line = price_of(b), b.get('line')
+        if str(b.get('at') or '') >= fix_at:
+            continue
+        price, line = b.get('price'), b.get('line')
         if price is None or line is None:
             continue
         try:
-            line = float(line)
+            # the raw stored value, not price_of(): that floor already discards anything at or
+            # under 1.00, so a line of 0.5 logged as a 0.5 "price" is invisible to grading today
+            # and would come back to life the moment the floor moved. Clear the value itself.
+            price, line = float(price), float(line)
         except (TypeError, ValueError):
             continue
-        # the box printed ceil(line) for an over - line+1 where the line is already whole - and the
-        # bare line for an under. Both conditions together with the tile, so a genuine $3.00 on a
-        # 2.5 line in any OTHER tile is never touched.
-        ask = line + 1 if line == int(line) else math.ceil(line)
-        if abs(price - ask) < 1e-9 or abs(price - line) < 1e-9:
+        if str(b.get('side') or '').strip().lower() == 'under':
+            shaped = abs(price - line) < 1e-9
+        else:
+            ask = line + 1 if line == int(line) else math.ceil(line)
+            shaped = abs(price - ask) < 1e-9
+        if shaped:
             b['price'] = None
             n += 1
     return n
@@ -370,8 +394,9 @@ def main():
                     help="'void' clears rows previously written off and settles them again; wins "
                          "and losses are never revisited")
     ap.add_argument('--repair-prices', action='store_true',
-                    help='clear the prices on Elite Matchups / Bunnies / Bogey rows that are '
-                         'actually the line (see LINE_FIRST_TILES)')
+                    help='clear the prices that are actually the line: line-first tiles only, '
+                         'captured before the scraper fix, and matching the signature for the '
+                         'side taken (see LINE_FIRST_TILES and PRICE_FIX_AT)')
     ap.add_argument('--dry-run', action='store_true', help='grade and report, write nothing')
     ap.add_argument('--selftest', action='store_true')
     a = ap.parse_args()
@@ -462,6 +487,7 @@ def selftest():
     def bet(**kw):
         b = {'sport': 'nhl', 'player': 'Jack Eichel', 'market': 'shots', 'line': 2.5,
              'side': 'over', 'fixture': 'VGK@SEA', 'start': '2026-10-07T01:40Z',
+             'at': '2026-10-12T21:45Z',   # before PRICE_FIX_AT, so repair cases are live
              'tile': 'Streakers', 'price': 1.9, 'result': None, 'actual': None}
         b.update(kw)
         return b
@@ -612,7 +638,7 @@ def selftest():
     rows = [bet(result='win', tile='Shot Machines', market='shots', line=2.5, price=3.0)]
     ok('a genuine $3.00 on a 2.5 line in another tile is untouched',
        repair_prices(rows) == 0 and rows[0]['price'] == 3.0,
-       '(only the three tiles that printed the line first)')
+       '(only the tiles that printed the line first)')
     rows = [bet(result='win', tile='Bunnies', market='shots', line=2.5, price=3.4)]
     ok('and a real price in an affected tile survives too',
        repair_prices(rows) == 0 and rows[0]['price'] == 3.4,
@@ -620,6 +646,23 @@ def selftest():
     rows = [bet(result='win', tile='Bogey', market='recYds', line=59.5, price=59.5, side='under')]
     ok('an under row that logged the bare line is cleared as well',
        repair_prices(rows) == 1 and rows[0]['price'] is None, '("U59.5 $2.10")')
+
+    # The three discriminators. On a small line the bug and a real price are the same number, so
+    # each of these rows looks bug-shaped by value alone and must survive on its own evidence.
+    rows = [bet(result='win', tile='Shot Machines', line=1.5, price=2.0)]
+    ok('a $2.00 on a 1.5 line survives in a tile that prints the dollar sign first',
+       repair_prices(rows) == 0 and rows[0]['price'] == 2.0, '(.stk-odds was never affected)')
+    rows = [bet(result='win', tile='Bunnies', line=1.5, price=2.0, at='2026-10-15T21:03Z')]
+    ok('and survives in an affected tile once captured after the scraper fix',
+       repair_prices(rows) == 0 and rows[0]['price'] == 2.0, '(post-' + PRICE_FIX_AT + ')')
+    rows = [bet(result='win', tile='Bunnies', line=1.5, price=1.5, side='over')]
+    ok('an over row logged at the bare line is not bug-shaped',
+       repair_prices(rows) == 0 and rows[0]['price'] == 1.5, '(that box would have said 2)')
+    rows = [bet(result='win', tile='Bogey', line=1.5, price=2.0, side='under')]
+    ok('nor is an under row logged at ceil(line)',
+       repair_prices(rows) == 0 and rows[0]['price'] == 2.0, '(that box would have said 1.5)')
+    ok('Volumes is covered: it shares the .elm-odds box with Elite Matchups',
+       'volumes' in LINE_FIRST_TILES)
 
     print(('\nFAILED: ' + ', '.join(fails)) if fails else '\nall good')
     return 1 if fails else 0
