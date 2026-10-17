@@ -2,6 +2,24 @@
 """NBA shot zones, from ESPN play-by-play coordinates.
 
     python nba/build_nba_zones.py --out nba/data [--seasons 2026,2027]
+    python nba/build_nba_zones.py --out nba/data --seasons 2023,2024,2025,2026 --per-season
+    python nba/build_nba_zones.py --out nba/data --persist      # offline, reads what the above wrote
+    python nba/build_nba_zones.py --selftest                    # offline, no network, no pandas
+
+DOES A DEFENCE'S ZONE RECORD PERSIST?
+The page shows a shot-zone matchup as a READ, deliberately carrying no price, because the number
+that would make it a signal has never been measured: whether what a defence conceded at the rim
+last season tells you anything about what it will concede next season. A single season of zone
+percentages describes the past perfectly well and may predict nothing at all - defences change
+personnel and scheme, and a season of opponent shooting carries a great deal of luck.
+
+--per-season keeps each season's defensive block separately instead of pooling them, which is all
+the main build needs to change. --persist then reads that file with no network and no pandas and
+answers the question directly: for every pair of consecutive seasons it regresses a team's gap to
+the league in season N+1 on the same gap in season N. THE SLOPE IS THE ANSWER. A slope of 1 means
+the gap carries over whole and the matchup read is worth its face value; 0.3 means only a third of
+it survives and every swing the page computes should be multiplied by 0.3; 0 means last season's
+zone record is worth nothing about next season and the read should never become a signal.
 
 WHY
 Two players averaging the same points are different bets if one lives at the rim and the other
@@ -26,6 +44,7 @@ import datetime
 import io
 import json
 import os
+import random
 import sys
 import urllib.request
 
@@ -64,12 +83,187 @@ def zone_of(x, y, dist, is_three):
     return 'midRange'
 
 
+def _ols(xs, ys):
+    """Slope and Pearson r of y on x. Written out rather than imported because --persist has to
+    run with no pandas and no network - the whole point is that it reads a committed file."""
+    n = len(xs)
+    if n < 3:
+        return None
+    mx = sum(xs) / n
+    my = sum(ys) / n
+    sxx = sum((x - mx) ** 2 for x in xs)
+    syy = sum((y - my) ** 2 for y in ys)
+    sxy = sum((x - mx) * (y - my) for x, y in zip(xs, ys))
+    if sxx <= 0 or syy <= 0:
+        return None
+    return {'n': n, 'slope': sxy / sxx, 'r': sxy / (sxx ** 0.5 * syy ** 0.5)}
+
+
+def measure_persistence(by_season, zones):
+    """For each zone, regress a team's gap to the league in season N+1 on the same gap in season N.
+
+    THE GAP, not the raw percentage. League shooting moves between seasons, so a team can concede
+    a higher rim percentage two years running purely because the whole league shot better, and a
+    regression on raw percentages would read that shared drift as persistence.
+
+    The slope is what the page needs. It is the fraction of a measured gap that carries over, and
+    therefore the factor every computed swing should be multiplied by before anybody calls it an
+    edge."""
+    seasons = sorted(by_season)
+    out = {}
+    for z in zones:
+        xs, ys = [], []
+        for i in range(len(seasons) - 1):
+            a_s, b_s = by_season[seasons[i]], by_season[seasons[i + 1]]
+            la, lb = (a_s.get('league') or {}).get(z), (b_s.get('league') or {}).get(z)
+            if la is None or lb is None:
+                continue
+            for team, za in (a_s.get('teams') or {}).items():
+                zb = (b_s.get('teams') or {}).get(team)
+                if not zb or z not in za or z not in zb:
+                    continue
+                xs.append(za[z]['pct'] - la)
+                ys.append(zb[z]['pct'] - lb)
+        fit = _ols(xs, ys)
+        if fit:
+            fit['meanAbsGap'] = sum(abs(x) for x in xs) / len(xs)
+            out[z] = fit
+    return out
+
+
+def persist(out_dir):
+    path = os.path.join(out_dir, 'zones_by_season.json')
+    if not os.path.exists(path):
+        print('no %s - run the build with --per-season first' % path)
+        sys.exit(1)
+    with open(path) as fh:
+        d = json.load(fh)
+    by, zones = d.get('bySeason') or {}, d.get('zones') or []
+    if len(by) < 2:
+        print('only %d season(s) in %s - persistence needs at least two consecutive ones'
+              % (len(by), path))
+        sys.exit(1)
+    res = measure_persistence(by, zones)
+    print('zone defence, season to season (%s)' % ', '.join(sorted(by)))
+    print('  %-12s %5s %7s %7s  %s' % ('zone', 'n', 'slope', 'r', 'what it means'))
+    for z in zones:
+        f = res.get(z)
+        if not f:
+            print('  %-12s     - not enough paired seasons' % z)
+            continue
+        sl = f['slope']
+        verdict = ('carries over almost whole' if sl >= 0.7 else
+                   'about half carries over' if sl >= 0.4 else
+                   'mostly washes out' if sl >= 0.15 else
+                   'last season says nothing about next')
+        print('  %-12s %5d %7.2f %7.2f  %s' % (z, f['n'], sl, f['r'], verdict))
+    keep = {z: round(max(0.0, min(1.0, f['slope'])), 3) for z, f in res.items()}
+    best = max(keep.values()) if keep else 0.0
+    print('')
+    print('SHRINKAGE FACTORS (multiply the page\'s computed swing by these):')
+    print('  ' + '  '.join('%s %.2f' % (z, keep[z]) for z in zones if z in keep))
+    print('')
+    if best < 0.15:
+        print('VERDICT: no zone carries over enough to price. The shot matchup stays a read.')
+    elif best < 0.4:
+        print('VERDICT: weak. A signal would be priced off roughly a quarter of the swing shown,')
+        print('         which on the measured spread is a fraction of a point. Not worth a tile.')
+    else:
+        print('VERDICT: strong enough to be worth pricing, using the per-zone factors above -')
+        print('         and the swing the page shows must be multiplied by them, not taken raw.')
+    with open(os.path.join(out_dir, 'zone_persistence.json'), 'w') as fh:
+        json.dump({'measured': res, 'keep': keep, 'seasons': sorted(by),
+                   'updated': datetime.datetime.now(datetime.timezone.utc)
+                               .strftime('%Y-%m-%dT%H:%MZ')}, fh, indent=1)
+    print('wrote %s' % os.path.join(out_dir, 'zone_persistence.json'))
+
+
+def selftest():
+    """The persistence maths, on data whose answer is known in advance. This exists because the
+    whole decision - price it or leave it as a read - rests on one number, and a regression that
+    is subtly wrong produces a number that looks perfectly reasonable."""
+    ok = [True]
+
+    def check(name, cond, detail=''):
+        print(('  ok   ' if cond else '  FAIL ') + name + (('  ' + detail) if detail else ''))
+        if not cond:
+            ok[0] = False
+
+    zones = ['rim']
+    teams = ['T%02d' % i for i in range(30)]
+
+    def build(gaps_a, gaps_b, la=0.66, lb=0.70):
+        return {'2024': {'league': {'rim': la},
+                         'teams': {t: {'rim': {'att': 500, 'pct': la + g}}
+                                   for t, g in zip(teams, gaps_a)}},
+                '2025': {'league': {'rim': lb},
+                         'teams': {t: {'rim': {'att': 500, 'pct': lb + g}}
+                                   for t, g in zip(teams, gaps_b)}}}
+
+    base = [(-0.06 + 0.004 * i) for i in range(30)]
+
+    # a gap that repeats exactly must measure as carrying over whole
+    r = measure_persistence(build(base, base), zones)['rim']
+    check('a gap that repeats exactly scores a slope of 1', abs(r['slope'] - 1.0) < 1e-9,
+          '(slope %.3f, r %.3f, n %d)' % (r['slope'], r['r'], r['n']))
+
+    # half the gap repeating must measure as half
+    r = measure_persistence(build(base, [g * 0.5 for g in base]), zones)['rim']
+    check('half of it carrying over scores a slope of 0.5', abs(r['slope'] - 0.5) < 1e-9,
+          '(slope %.3f)' % r['slope'])
+
+    # A second season unrelated to the first must measure near zero. The obvious way to build one
+    # - rotating the list - is not unrelated at all: rotating a monotonic sequence produces a
+    # slope of -0.50, which this test duly reported as a failure of the maths when it was a
+    # failure of the fixture. A seeded shuffle is genuinely unstructured and still deterministic.
+    shuffled = base[:]
+    random.Random(1).shuffle(shuffled)
+    r = measure_persistence(build(base, shuffled), zones)['rim']
+    check('an unrelated second season scores near zero', abs(r['slope']) < 0.35,
+          '(slope %.3f)' % r['slope'])
+
+    # THE ONE THAT MATTERS: league-wide drift must not be read as persistence. Every team's raw
+    # percentage rises by four points between the seasons while the gaps are unrelated; regressing
+    # raw percentages would see a strong relationship that is not there.
+    r = measure_persistence(build(base, shuffled, la=0.66, lb=0.70), zones)['rim']
+    check('a league-wide shift is not mistaken for persistence', abs(r['slope']) < 0.35,
+          '(slope %.3f - both seasons are centred on their own league rate)' % r['slope'])
+    # and the same drift with a gap that DOES repeat must still read as repeating, so the
+    # centring cannot be hiding a real relationship as well as a spurious one
+    r = measure_persistence(build(base, base, la=0.66, lb=0.70), zones)['rim']
+    check('while a real relationship survives the same shift', abs(r['slope'] - 1.0) < 1e-9,
+          '(slope %.3f)' % r['slope'])
+
+    # and a team missing from one season is simply not paired, rather than counted as a zero
+    d = build(base, base)
+    del d['2025']['teams']['T00']
+    r = measure_persistence(d, zones)['rim']
+    check('a team absent from one season is left out of the pairing', r['n'] == 29,
+          '(n %d of 30)' % r['n'])
+
+    # too few pairs must return nothing rather than a confident number off three teams
+    d = build(base[:2], base[:2])
+    check('two teams is not enough to fit anything', 'rim' not in measure_persistence(d, zones))
+
+    print('\n' + ('ALL GREEN' if ok[0] else 'FAILED'))
+    sys.exit(0 if ok[0] else 1)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--out', default='nba/data')
     ap.add_argument('--seasons', default=None)
     ap.add_argument('--min-shots', type=int, default=25)
+    ap.add_argument('--per-season', action='store_true',
+                    help='also write zones_by_season.json: each season kept apart, for --persist')
+    ap.add_argument('--persist', action='store_true',
+                    help='offline: read zones_by_season.json and measure whether zone defence carries over')
+    ap.add_argument('--selftest', action='store_true', help='offline checks on the persistence maths')
     a = ap.parse_args()
+    if a.selftest:
+        selftest(); return
+    if a.persist:
+        persist(a.out); return
     try:
         import pandas as pd
         import numpy as np
@@ -86,6 +280,9 @@ def main():
     # what each DEFENCE concedes by zone. Player zones say where he shoots; this says who lets him.
     # The shooting team is on the play and both clubs are on the row, so the defence is the other one.
     dfn = {}
+    # and the same thing kept per season, which is what --persist needs. The pooled block above is
+    # untouched, so zones.json comes out identical whether or not this is asked for.
+    dfn_season, lg_season = {}, {}
 
     for season in seasons:
         try:
@@ -131,6 +328,15 @@ def main():
                 e2['att'] += 1
                 if hit:
                     e2['made'] += 1
+                e2s = dfn_season.setdefault(season, {}).setdefault(dteam, {}) \
+                                .setdefault(z0, {'att': 0, 'made': 0})
+                e2s['att'] += 1
+                if hit:
+                    e2s['made'] += 1
+            ls = lg_season.setdefault(season, {}).setdefault(z0, {'att': 0, 'made': 0})
+            ls['att'] += 1
+            if hit:
+                ls['made'] += 1
             k = pid(who)
             if not k:
                 continue
@@ -192,6 +398,28 @@ def main():
     with open(os.path.join(a.out, 'zones.json'), 'w') as fh:
         json.dump(out, fh, separators=(',', ':'))
     print('  wrote zones.json - %d players, %d defences' % (len(rows), len(defence)))
+
+    if a.per_season:
+        by = {}
+        for season, teams in dfn_season.items():
+            lgz = {z: (v['made'] / v['att']) for z, v in lg_season.get(season, {}).items() if v['att']}
+            blk = {}
+            for t, zs in teams.items():
+                # the same 50-attempt floor the pooled block uses: below it a percentage is noise
+                row = {z: {'att': v['att'], 'pct': round(v['made'] / v['att'], 4)}
+                       for z, v in zs.items() if v['att'] >= 50}
+                if row:
+                    blk[t] = row
+            by[season] = {'teams': blk,
+                          'league': {z: round(v, 4) for z, v in lgz.items()}}
+        path = os.path.join(a.out, 'zones_by_season.json')
+        with open(path, 'w') as fh:
+            json.dump({'zones': ZONES, 'seasons': done, 'bySeason': by,
+                       'updated': datetime.datetime.now(datetime.timezone.utc)
+                                   .strftime('%Y-%m-%dT%H:%MZ')}, fh, separators=(',', ':'))
+        print('  wrote zones_by_season.json - %s' % ', '.join(
+            '%s:%d teams' % (k, len(v['teams'])) for k, v in sorted(by.items())))
+        print('  now run:  python3 nba/build_nba_zones.py --out %s --persist' % a.out)
     print('  league: ' + '  '.join('%s %d%% (%d%% of shots)'
           % (z, round((league[z]['pct'] or 0) * 100), round(league[z]['att'] / total_att * 100))
           for z in ZONES if z in league))
