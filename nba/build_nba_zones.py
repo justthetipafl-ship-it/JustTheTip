@@ -83,6 +83,19 @@ def zone_of(x, y, dist, is_three):
     return 'midRange'
 
 
+# ALL-STAR TEAMS ARE NOT DEFENCES. The play-by-play carries the exhibition games with the rest,
+# and their "clubs" - EAST, WEST, GIA, LEB - arrive looking like any other team. Nobody guards
+# anybody in them, so they posted rim percentages of 82, 90 and 81, which placed them at the bottom
+# of every ranking and pushed every real club up by as many as three places: the file said "2nd of
+# 33" where the truth was 2nd of 30. The 50-attempt floor below was no help at all, because an
+# All-Star game still produces 57 rim attempts.
+#
+# The separation is not marginal and needs no list of names to maintain: across five seasons the
+# largest exhibition entry faced 67 shots in total and the smallest real club faced 6,838. A floor
+# of a thousand sits in the middle of a hundredfold gap.
+MIN_DEF_ATT = 1000
+
+
 def _ols(xs, ys):
     """Slope and Pearson r of y on x. Written out rather than imported because --persist has to
     run with no pandas and no network - the whole point is that it reads a committed file."""
@@ -121,6 +134,9 @@ def measure_persistence(by_season, zones):
             for team, za in (a_s.get('teams') or {}).items():
                 zb = (b_s.get('teams') or {}).get(team)
                 if not zb or z not in za or z not in zb:
+                    continue
+                # a file written before MIN_DEF_ATT existed still carries the exhibition sides
+                if (za[z].get('att', 0) < 50 or zb[z].get('att', 0) < 50):
                     continue
                 xs.append(za[z]['pct'] - la)
                 ys.append(zb[z]['pct'] - lb)
@@ -254,6 +270,12 @@ def main():
     ap.add_argument('--out', default='nba/data')
     ap.add_argument('--seasons', default=None)
     ap.add_argument('--min-shots', type=int, default=25)
+    ap.add_argument('--pool-seasons', default=None,
+                    help='which of --seasons feed the DISPLAYED blocks (default: the two most '
+                         'recent read). '
+                         'The persistence fit wants years of history; the page wants recent form, '
+                         'and pooling five seasons of shot diet into zones.json makes every '
+                         'profile stale.')
     ap.add_argument('--per-season', action='store_true',
                     help='also write zones_by_season.json: each season kept apart, for --persist')
     ap.add_argument('--persist', action='store_true',
@@ -273,7 +295,23 @@ def main():
     today = datetime.date.today()
     nxt = today.year + 1 if today.month >= 9 else today.year
     seasons = [s.strip() for s in (a.seasons or '%d,%d' % (nxt - 1, nxt)).split(',') if s.strip()]
-    print('zones: seasons %s' % ', '.join(seasons))
+    # READ these, but POOL only these into what the page shows. A history run reads five seasons so
+    # the persistence fit has pairs to work with, and must still publish a defence profile and a
+    # shot diet from recent basketball - a 2022 shot chart is not this player.
+    pool = set(s.strip() for s in (a.pool_seasons or '').split(',') if s.strip())
+    if not pool:
+        # DEFAULT: the two most recent seasons read, not all of them. Asking for five seasons means
+        # a persistence fit, and the pooled blocks that ship to the page must still describe recent
+        # basketball - a 2022 shot chart is not this player and a 2022 defence is not this team.
+        # Relying on the caller to remember this is exactly how quarters.json came to average Luka
+        # Doncic over 361 games.
+        pool = set(sorted(seasons)[-2:]) if len(seasons) > 2 else set(seasons)
+    unknown = pool - set(seasons)
+    if unknown:
+        print('--pool-seasons names seasons that are not being read: %s' % ', '.join(sorted(unknown)))
+        sys.exit(1)
+    print('zones: reading %s | pooling %s into zones.json'
+          % (', '.join(seasons), ', '.join(sorted(pool))))
 
     ZONES = ['rim', 'paint', 'midRange', 'cornerThree', 'armsThree']
     names, acc, lg, done = {}, {}, {}, []
@@ -323,11 +361,13 @@ def main():
             z0 = zone_of(float(x), float(y), float(dist), bool(three))
             # the defending club is whichever side did not take the shot
             dteam = (str(aab) if bool(is_home) else str(hab))
+            in_pool = season in pool
             if dteam and dteam != 'nan':
-                e2 = dfn.setdefault(dteam, {}).setdefault(z0, {'att': 0, 'made': 0})
-                e2['att'] += 1
-                if hit:
-                    e2['made'] += 1
+                if in_pool:
+                    e2 = dfn.setdefault(dteam, {}).setdefault(z0, {'att': 0, 'made': 0})
+                    e2['att'] += 1
+                    if hit:
+                        e2['made'] += 1
                 e2s = dfn_season.setdefault(season, {}).setdefault(dteam, {}) \
                                 .setdefault(z0, {'att': 0, 'made': 0})
                 e2s['att'] += 1
@@ -338,7 +378,7 @@ def main():
             if hit:
                 ls['made'] += 1
             k = pid(who)
-            if not k:
+            if not k or not in_pool:
                 continue
             z = z0
             e = acc.setdefault(k, {})
@@ -383,15 +423,20 @@ def main():
     os.makedirs(a.out, exist_ok=True)
     # defences, with a rank per zone: 1 concedes least, 30 concedes most
     defence = {}
+    real_def = {t for t, v in dfn.items() if sum(e['att'] for e in v.values()) >= MIN_DEF_ATT}
+    dropped = sorted(set(dfn) - real_def)
+    if dropped:
+        print('  not defences, left out: %s' % ', '.join(dropped))
     for z in ZONES:
-        vals = {t: (v[z]['made'] / v[z]['att']) for t, v in dfn.items() if v.get(z, {}).get('att', 0) >= 50}
+        vals = {t: (v[z]['made'] / v[z]['att']) for t, v in dfn.items()
+                if t in real_def and v.get(z, {}).get('att', 0) >= 50}
         order = sorted(vals.items(), key=lambda kv: kv[1])
         for i, (t, pct) in enumerate(order):
             e3 = defence.setdefault(t, {'team': t})
             e3[z] = {'pct': round(pct, 3), 'rank': i + 1, 'of': len(order),
                      'att': dfn[t][z]['att']}
 
-    out = {'seasons': done, 'zones': ZONES, 'minShots': a.min_shots, 'defence': defence,
+    out = {'seasons': [x for x in done if x in pool], 'readSeasons': done, 'zones': ZONES, 'minShots': a.min_shots, 'defence': defence,
            'updated': datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%MZ'),
            'source': 'ESPN play-by-play via sportsdataverse-data',
            'league': league, 'leagueShots': total_att, 'players': rows}
@@ -405,6 +450,9 @@ def main():
             lgz = {z: (v['made'] / v['att']) for z, v in lg_season.get(season, {}).items() if v['att']}
             blk = {}
             for t, zs in teams.items():
+                # exhibition sides are not defences - see MIN_DEF_ATT above
+                if sum(v['att'] for v in zs.values()) < MIN_DEF_ATT:
+                    continue
                 # the same 50-attempt floor the pooled block uses: below it a percentage is noise
                 row = {z: {'att': v['att'], 'pct': round(v['made'] / v['att'], 4)}
                        for z, v in zs.items() if v['att'] >= 50}
