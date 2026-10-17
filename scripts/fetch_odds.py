@@ -172,11 +172,19 @@ GAME_MARKETS = {
     'NBL': ['head_to_head', 'alternate_lines', 'alternate_total_points', 'alternate_team_total_points',
             'head_to_head_1st_half', 'alternate_lines_1st_half', 'alternate_total_points_1st_half',
             'alternate_team_total_points_1st_half'],
+    # NBA was missing from this table altogether, so basketball never had a moneyline, a spread or
+    # a total requested - matchOdds came back empty for every game. That is not only the match-odds
+    # strip: Bet DNA reads the game total, both implied team totals, the margin and the moneyline
+    # off matchOdds, so all five of its most checkable strands were dark for the entire sport.
+    # Same market shape as the NBL - it is the same game.
+    'NBA': ['head_to_head', 'alternate_lines', 'alternate_total_points', 'alternate_team_total_points',
+            'head_to_head_1st_half', 'alternate_lines_1st_half', 'alternate_total_points_1st_half',
+            'alternate_team_total_points_1st_half'],
     # MLB had no game markets at all, so the shell showed no match odds for it: no moneyline, no
     # run line, no total. Same shape as the other two-way sports; "lines" is the run line.
     'MLB': ['head_to_head', 'alternate_lines', 'alternate_total_runs', 'alternate_team_total_runs'],
 }
-H2H_2WAY = {'NFL', 'NBL', 'NHL', 'MLB'}   # 2-way moneyline (no draw) vs soccer's 3-way
+H2H_2WAY = {'NFL', 'NBL', 'NHL', 'MLB', 'NBA'}   # 2-way moneyline (no draw) vs soccer's 3-way
 
 # matchOdds must use the same team codes as fixture.json / teams.json, or the shell can't
 # join them (it keys on [home,away]). ROA returns full names for NFL, so map them here.
@@ -215,6 +223,22 @@ NHL_ABBR = {
     'washington capitals':'WSH','winnipeg jets':'WPG',
 }
 
+# NBA codes are ESPN-style and NOT the conventional ones - NY not NYK, SA not SAS, GS not GSW,
+# UTAH not UTA, NO not NOP, WSH not WAS - so this is generated from fixture.json's own
+# home/homeFull pairs rather than typed out, which is how the wrong ones get in.
+NBA_ABBR = {
+    'atlanta hawks':'ATL','boston celtics':'BOS','brooklyn nets':'BKN','charlotte hornets':'CHA',
+    'chicago bulls':'CHI','cleveland cavaliers':'CLE','dallas mavericks':'DAL',
+    'denver nuggets':'DEN','detroit pistons':'DET','golden state warriors':'GS',
+    'houston rockets':'HOU','indiana pacers':'IND','la clippers':'LAC','la lakers':'LAL',
+    'los angeles clippers':'LAC','los angeles lakers':'LAL','memphis grizzlies':'MEM',
+    'miami heat':'MIA','milwaukee bucks':'MIL','minnesota timberwolves':'MIN',
+    'new orleans pelicans':'NO','new york knicks':'NY','oklahoma city thunder':'OKC',
+    'orlando magic':'ORL','philadelphia 76ers':'PHI','phoenix suns':'PHX',
+    'portland trail blazers':'POR','sacramento kings':'SAC','san antonio spurs':'SA',
+    'toronto raptors':'TOR','utah jazz':'UTAH','washington wizards':'WSH',
+}
+
 def team_code(name, sport):
     if sport == 'NFL':
         return NFL_ABBR.get((name or '').strip().lower(), name)
@@ -222,6 +246,8 @@ def team_code(name, sport):
         return NBL_ABBR.get((name or '').strip().lower(), name)
     if sport == 'NHL':
         return NHL_ABBR.get((name or '').strip().lower(), name)
+    if sport == 'NBA':
+        return NBA_ABBR.get((name or '').strip().lower(), name)
     return name
 
 # NOTE on the markets below `alternate_total_points` in NFL's list: team totals and the
