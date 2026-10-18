@@ -1,0 +1,62 @@
+name: NFL drill squads
+
+# This week's fixtures and squads for the two-minute drill, reduced from gamelogs.json (42 MB) to
+# about 90 KB so a free public page can load it. Runs daily after the NFL data build, because the
+# depth charts move during the week and a drill showing last week's starters is wrong.
+#
+# Downloads nothing: it reads nfl/data/{fixture,lineups,gamelogs}.json out of the checkout, so it
+# is only ever as fresh as the build before it.
+
+on:
+  schedule:
+    - cron: "45 13 * * *"      # after the NFL data build, alongside the first-read build
+  workflow_dispatch:
+    inputs:
+      season:
+        description: "Season (blank = whatever fixture.json says)"
+        type: string
+        required: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: nfl-drill-squads
+  cancel-in-progress: false
+
+jobs:
+  squads:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Check the maths
+        run: python3 nfl/build_drill_squads.py --selftest
+
+      - name: Build drill squads
+        run: |
+          ARGS="--data nfl/data --out nfl/data"
+          if [ -n "${{ inputs.season }}" ]; then ARGS="$ARGS --season ${{ inputs.season }}"; fi
+          python3 nfl/build_drill_squads.py $ARGS
+
+      - name: Commit
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          # one at a time: git add fails the whole command on a missing path
+          for f in nfl/data/drill_squads.json; do
+            [ -f "$f" ] && git add "$f" && echo "staged $f"
+          done
+          if git diff --cached --quiet; then
+            echo "nothing new"
+          else
+            git commit -m "NFL drill squads"
+            for i in 1 2 3; do
+              git pull --rebase --autostash origin main && git push && break
+              sleep 5
+            done
+          fi
