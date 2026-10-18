@@ -788,6 +788,16 @@
   .cmb-hdr i{color:var(--accent);font-size:18px;}
   .cmb-close{margin-left:auto;background:none;border:0;color:var(--text-3);font-size:22px;line-height:1;cursor:pointer;}
   .cmb-tabs{display:flex;gap:4px;margin:0 14px 11px;background:var(--surface-2);padding:4px;border-radius:8px;}
+  /* The Build card's source switcher. Modelled on .cmb-tab below - same segmented shape, same
+     surfaces - so it reads as part of the page rather than a fifth way of drawing a button. */
+  .bld-tabs{display:flex;gap:2px;background:var(--surface);border:1px solid var(--border);
+    border-radius:9px;padding:3px;margin:0 0 10px;}
+  .bld-tab{flex:1;background:transparent;border:0;border-radius:7px;cursor:pointer;padding:6px 4px;
+    color:var(--text-3);font-family:var(--font-display);font-weight:800;font-size:10px;
+    letter-spacing:.06em;text-transform:uppercase;}
+  .bld-tab.on{background:var(--surface-2);color:var(--text);}
+  .bld-body{padding:0 12px 12px;}
+  .bld-body>.dayband:first-child{margin-top:0;}
   .cmb-tab{flex:1;background:transparent;border:0;color:var(--text-3);font-family:var(--font-display);font-weight:800;
     font-size:12px;padding:8px 10px;border-radius:6px;cursor:pointer;display:flex;align-items:center;
     justify-content:center;gap:5px;}
@@ -6768,7 +6778,7 @@ function dejaVuSection(key, g){
           return '<option value="'+esc(m[0])+'"'+(only && only.indexOf(m[0]) >= 0 ? ' selected' : '')
             + '>'+esc(m[1])+'</option>'; }).join('') + '</select></div>';
   if (!res.legs.length)
-    return '<div class="dayband"><span>D\u00e9j\u00e0 Vu SGM</span></div>'+ctrl
+    return paneBand('D\u00e9j\u00e0 Vu SGM')+ctrl
       + '<div class="sig-empty">No player with a posted price cleared a line in all '+meets
       + ' straight meetings between these clubs. Lower the hit streak to widen the pool.</div>';
   // one leg per player, best first
@@ -6801,7 +6811,7 @@ function dejaVuSection(key, g){
   var joint = (picked.length > 1 && legs.length === picked.length) ? cmbJoint(legs) : null;
   if (joint == null || !isFinite(joint) || joint <= 0) joint = null;
   var fair = joint ? 1/joint : null;
-  return '<div class="dayband"><span>D\u00e9j\u00e0 Vu SGM</span></div>'+ctrl
+  return paneBand('D\u00e9j\u00e0 Vu SGM')+ctrl
     // Everything inside dv-card is what the share captures. The id used to sit on the summary
     // alone, so the picture showed a price with no legs behind it - the one thing worth sharing.
     + '<div id="dv-card">'
@@ -6999,7 +7009,7 @@ function jupiterSection(key, g){
   var hide = state.view.jHide || {};
   var lineTxt = state.view.jLine === 'auto' ? 'Auto' : (state.view.jLine+'+');
   var focus = state.view.jFocus && data.rows.filter(function(d){ return d.name === state.view.jFocus; })[0];
-  return '<div class="dayband"><span>Jupiter</span></div>'
+  return paneBand('Jupiter')
     + '<div class="j-wrap">'
     + '<div class="sl-bar">'
       + [g.home, g.away].map(function(t){
@@ -8869,6 +8879,97 @@ var FOLD_SHUT = { form:1, dvp:1, dist:1, starter:1, halves:1, subs:1, firstLast:
 var FOLD_NAME = { form:'Recent form', dvp:'Defence by position', dist:'Distribution',
                   starter:'Starters', halves:'By half', subs:'Substitutes',
                   firstLast:'First and last', jupiter:'Jupiter', dejaVu:'D\u00e9j\u00e0 Vu' };
+/* THE BUILD CARD ----------------------------------------------------------------------------
+   Jupiter, Déjà Vu, the Simulator and the Multi Builder were four stacked sections, and three of
+   them were already the same tool: dejaVuSection, jupiterSection and the builder all construct
+   cmbLeg() legs and price them through cmbJoint(). They differ only in how you CHOOSE the legs -
+   off a radar, out of history, out of ten thousand simulated games, or by typing a name.
+
+   So they become one card with four sources. The picker swaps; the leg list, the correlated price
+   and the analysis below it do not. That also makes something possible that was not before: take
+   a combination out of history, keep it, and add a leg by hand - until now each tool owned its own
+   leg set and printed its own combined price, so the sets could never meet.
+
+   BUILD_PANE lets each section skip its own dayband when it is drawn inside the card. Their
+   innards are untouched; only the heading they used to print for themselves goes. */
+var BUILD_PANE = false;
+function paneBand(txt){
+  return BUILD_PANE ? '' : '<div class="dayband"><span>' + txt + '</span></div>';
+}
+/* Nerd Mode showed Jupiter and Déjà Vu but not the simulator or the builder, so the card keeps
+   each source's old visibility rather than imposing one: in Nerd Mode the two reads stay and the
+   two multi-makers go, exactly as before. */
+var BUILD_SOURCES_ALL = [['search','Search'], ['history','History'], ['sim','Simulate'], ['radar','Radar']];
+var BUILD_NERD_OK = { history:1, radar:1 };
+/* The builder used to be gated on the fixture appearing in mbFixtures() - not a user pin, but a
+   staleness guard: upcoming games only, nothing finished or outside the window. Folding it into
+   the card dropped that, so Search would have offered legs on a game already played. The guard
+   comes back here, per source, rather than over the whole card. */
+function buildSources(key, g){
+  var live = !g || !key || mbFixtures().some(function(x){
+    return x.key === key && x.g && x.g.home === g.home && x.g.away === g.away;
+  });
+  return BUILD_SOURCES_ALL.filter(function(x){
+    if (state.view.nerd && !BUILD_NERD_OK[x[0]]) return false;
+    if (x[0] === 'search' && !live) return false;
+    return true;
+  });
+}
+var BUILD_NOW = null;             // the fixture the card last drew, for its own handlers
+function buildSrc(key, g){
+  var s = state.view.buildSrc, list = buildSources(key, g);
+  if (list.some(function(x){ return x[0] === s; })) return s;
+  return list.length ? list[0][0] : 'search';
+}
+function buildPane(key, g, src){
+  BUILD_PANE = true;
+  try {
+    if (src === 'radar')   return jupiterSection(key, g) || '';
+    if (src === 'history') return dejaVuSection(key, g) || '';
+    if (src === 'sim')     return simSection(key, g) || '';
+    return mbPanel({ key:key, g:g }) || '';
+  } catch(e){ return ''; }
+  finally { BUILD_PANE = false; }
+}
+var BUILD_EMPTY = {
+  radar:   'No priced players on this fixture to plot yet.',
+  history: 'These two clubs have no meetings on file with a run long enough to read.',
+  sim:     'Not enough game history for these two sides yet.',
+  search:  'No priced legs on this fixture yet.'
+};
+function buildSection(key, g){
+  var src = buildSrc(key, g);
+  var pane = buildPane(key, g, src);
+  // a card with nothing in ANY source is not worth a heading
+  if (!pane && !buildSources(key, g).some(function(x){ return !!buildPane(key, g, x[0]); })) return '';
+  BUILD_NOW = { key:key, g:g };
+  var srcs = buildSources(key, g);
+  if (!srcs.length) return '';
+  var tabs = srcs.length < 2 ? '' : '<div class="bld-tabs">' + srcs.map(function(x){
+      return '<button class="bld-tab' + (x[0] === src ? ' on' : '') + '" onclick="LAB.buildSrc(\''
+        + x[0] + '\')">' + esc(x[1]) + '</button>';
+    }).join('') + '</div>';
+  return '<div id="build-panel"><details class="sig-tile" open>'
+    + '<summary class="sig-head"><span class="sig-ico"><i class="ti ti-layers-subtract"></i></span>'
+    + '<span><span class="sig-ttl">Build</span>'
+    + '<span class="sig-desc">Four ways to the same multi</span></span></summary>'
+    + '<div class="bld-body">' + tabs
+    + (pane || '<div class="sig-empty">' + esc(BUILD_EMPTY[src] || 'Nothing here for this fixture.')
+        + '</div>')
+    + '</div></details></div>';
+}
+/* Redraw the card and nothing else. Jupiter and Déjà Vu called render() on every control, which
+   rebuilds the whole focused fixture - the simulator measured that at 2.6s on a throttled phone
+   against 80ms for its own panel, which is why it kept #sim-panel to itself. One card means all
+   four sources inherit the fast path. Falls back to the whole page if the card is not on screen,
+   so nothing can get stuck. */
+function buildRender(){
+  var el = document.getElementById('build-panel');
+  if (!el || !BUILD_NOW){ render(); return; }
+  var html = buildSection(BUILD_NOW.key, BUILD_NOW.g);
+  if (!html){ render(); return; }
+  el.outerHTML = html;
+}
 function fold(id, html){
   if (!html) return '';
   var open = state.view.fold && state.view.fold[id] != null
@@ -8946,16 +9047,12 @@ function focusPage(){
     // the build-your-own tools sit at the foot, above the player list: you read the match, then
     // the signals, then the visual reads, and only then do you go and make something
     + (S.t3==='ready' ? valueBets(key, g) : '')
-    + (S.t3==='ready' ? fold('jupiter', jupiterSection(key, g)) : '')
-    + (S.t3==='ready' ? fold('dejaVu', dejaVuSection(key, g)) : '')
-    // the simulator belongs with the other two ways of ending up with a multi, not up among the
-    // reads: Déjà Vu hands you one from history, this one from ten thousand simulated games, and
-    // the Multi Builder lets you put one together yourself
-    + (S.t3 === 'ready' && !state.view.nerd ? simSection(key, g) : '')
-    + (S.t3==='ready' && !state.view.nerd && mbFixtures().some(function(x){ return x.key === key && x.i === f.i; })
-        ? '<div class="dayband"><span>Multi Builder</span></div>'
-          + '<div class="mb-inline">'+mbPanel({ key:key, g:g })+'</div>'
-        : '')
+    /* One card, four sources. These were four stacked sections - Jupiter and Déjà Vu folded, the
+       simulator always drawn, and the Multi Builder only when the fixture had been pinned to it -
+       which is four headings, four sets of controls and three separate combined-price readouts for
+       what is one object: a set of legs. They also had four different rules about when to appear;
+       now there is one, and it is "does any source have something". */
+    + (S.t3==='ready' ? buildSection(key, g) : '')
     + '<div class="dayband"><span>Players \u00b7 '+ps.length+'</span></div><div class="gp-list">'+list+'</div>';
 }
 
@@ -18017,7 +18114,7 @@ function simSection(key, g){
   // call the app's render(), which rebuilds the whole focused fixture - measured at 2.6s on a
   // throttled phone, against 80ms for this panel. The simulator was never the slow part; asking
   // the entire page to redraw was.
-  var head = '<div id="sim-panel"><div class="dayband"><span>Simulator</span></div>';
+  var head = '<div id="sim-panel">' + paneBand('Simulator');
   var tail = '</div>';
   if (!st.on){
     return head + '<div class="deg-note">Simulate this game ' + SIM_N.toLocaleString()
@@ -19853,6 +19950,8 @@ window.LAB = {
     var added = cardAdd(e); render(); return added;
   },
   resPeriod: function(p){ state.view.resPeriod = p; render(); },
+  /* Switches the Build card's source and redraws that card only - see buildRender. */
+  buildSrc: function(src){ state.view.buildSrc = src; buildRender(); },
   crewOpen: function(id){ state.view.crewTile = id || null; if (window.scrollTo) window.scrollTo(0, 0); render(); },
   nerd: function(){ state.view.nerd = !state.view.nerd; render(); },
   degSport: function(k){ state.view.degSport = k; state.view.degStat = null; render(); },
@@ -20567,6 +20666,17 @@ window.LAB = {
     return out;
   },
   ouTileProbe: function(key, g, kind){ return ouTile(key, g, kind); },
+  buildProbe: function(key, src){
+    var fx = asArray(state.sports[key].data.fixture) || [], was = state.view.buildSrc, out = {};
+    if (src != null) state.view.buildSrc = src;
+    try {
+      for (var i = 0; i < fx.length; i++){
+        var h = buildSection(key, fx[i]);
+        if (h){ out = { html:h, fixture:fx[i].away + '@' + fx[i].home, src:buildSrc() }; break; }
+      }
+    } finally { state.view.buildSrc = was; }
+    return out;
+  },
   sectionsProbe: function(key){
     var fx = asArray(state.sports[key].data.fixture) || [], out = {};
     for (var i = 0; i < fx.length; i++){
@@ -20723,7 +20833,17 @@ window.LAB = {
     a = Date.now(); render(); o.render = Date.now() - a;
     return o;
   },
-  simOn: function(k){ var st = simState(); st.on = true; st.runs = (st.runs || 0) + 1; simRender(); },
+  /* Turning the simulator on implies showing it. Its Run button only exists inside the Build
+     card's Simulate pane, so a person pressing it is already on that source - but a caller that is
+     not (a test, a deep link) would otherwise switch it on where nobody can see it, and simRender
+     would fall back to redrawing the whole page to reach a pane that is not selected. */
+  simOn: function(k){
+    var st = simState(); st.on = true; st.runs = (st.runs || 0) + 1;
+    if (buildSrc(BUILD_NOW && BUILD_NOW.key, BUILD_NOW && BUILD_NOW.g) !== 'sim'){
+      state.view.buildSrc = 'sim'; buildRender(); return;
+    }
+    simRender();
+  },
   simLegs: function(v){ simState().legs = +v || 3; simRender(); },
   simMkt: function(v){ simState().mkt = v; simRender(); },
   simMode: function(v){ simState().mode = v === 'value' ? 'value' : 'likely'; simRender(); },
