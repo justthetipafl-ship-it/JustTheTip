@@ -238,9 +238,14 @@ drill on its own produces a few dozen yards, which could never reach a receiving
 It is built from each man's real per-game form, which makes it plausible, and it is not a
 projection, a forecast or a result. It is the same every time you play a given game and side, so
 you cannot reroll it until it suits you.</p>
-<p><b>The clock</b> is also a model: a completed pass or a run burns 24 seconds at hurry-up tempo,
-an incompletion or a sack stops it at six, a timeout stops it dead. Real plays were chained in real
-drives and this draws them from different games, so their real elapsed times cannot be reused.</p>
+<p><b>The clock</b> is also a model. It does not tick while you think &mdash; it moves only when you
+call a play. A completed pass or a run burns 24 seconds at hurry-up tempo; an incompletion or a
+sack costs six, because the clock stops. Real plays were chained in real drives and this draws them
+from different games, so their real elapsed times cannot be reused.</p>
+<p><b>Your three timeouts</b> are spent after a play, not before, which is how it works on the
+field: when a run or a completion leaves the clock going, stopping it hands back the 18 seconds
+you would have burned before the next snap. The button only lights up when there is a clock to
+stop, so a timeout can never be thrown away on an incompletion that stopped it anyway.</p>
 <p class="muted">For the curious: a sensible play-caller wins about one drive in six, a player
 picking at random about one in nine. That gap is the whole game, and it is why the clock sits at 24
 seconds rather than lower &mdash; tested further down, blind deep bombs start out-scoring good
@@ -464,7 +469,7 @@ function renderBox(changed){
 /* ---- the drill ------------------------------------------------------------------------------ */
 function newDrive(){
   G = { y100: START_Y100, down: 1, togo: 10, clock: START_CLOCK, to: START_TO,
-        margin: START_MARGIN, over: false, won: false, plays: 0 };
+        margin: START_MARGIN, over: false, won: false, plays: 0, canStop: false };
   if (BOX) BOX.order.forEach(function(n){
     var b = BOX.by[n];
     // roll the drive's contribution back off, so New drive restarts from the same three quarters
@@ -498,7 +503,12 @@ function paint(){
   mf.style.display = (G.over || G.togo >= G.y100) ? 'none' : '';
   var dis = G.over || !TEAM || !poolReady;
   Array.prototype.forEach.call(document.querySelectorAll('.call'), function(b){ b.disabled = dis; });
-  document.getElementById('b-to').disabled = dis || G.to <= 0;
+  // the button's own state teaches the rule: it is live only when the clock is actually running
+  var tb = document.getElementById('b-to');
+  tb.disabled = dis || G.to <= 0 || !G.canStop;
+  tb.textContent = (G.canStop && G.to > 0)
+    ? ('Stop the clock  +' + (CLOCK_RUN - CLOCK_STOP) + 's')
+    : (G.to > 0 ? 'Clock already stopped' : 'No timeouts left');
 }
 
 /* Who gets the ball: drawn against this season's real target and carry shares, among the men on
@@ -553,6 +563,10 @@ function callPlay(call){
   var scored = !turn && G.y100 <= 0;
   if (scored) stops = true;
   G.clock = Math.max(0, G.clock - (stops ? CLOCK_STOP : CLOCK_RUN));
+  /* A timeout is spent AFTER a play, on seeing the clock run - which is how it works on the field
+     and means it can never be wasted on an incompletion that stopped the clock anyway. The button
+     only lights up when there is something to stop. */
+  G.canStop = !stops && !G.over;
 
   var touched = credit(p, man, gained, scored, isRun, isBroken, turn);
 
@@ -731,8 +745,14 @@ document.getElementById('calls').addEventListener('click', function(e){
   if (b && !b.disabled) callPlay(b.getAttribute('data-call'));
 });
 document.getElementById('b-to').onclick = function(){
-  if (!G || G.over || G.to <= 0) return;
-  G.to--; setRes('<span class="big">TIMEOUT</span> &middot; clock stopped', ''); paint();
+  if (!G || G.over || G.to <= 0 || !G.canStop) return;
+  G.to--; G.canStop = false;
+  // give back the pre-snap time that play burned: a stopped clock costs CLOCK_STOP, not CLOCK_RUN
+  var back = CLOCK_RUN - CLOCK_STOP;
+  G.clock = Math.min(START_CLOCK, G.clock + back);
+  setRes('<span class="big">TIMEOUT</span> &middot; clock stopped, ' + back +
+         ' seconds back &middot; ' + G.to + ' left', '');
+  paint();
 };
 document.getElementById('b-new').onclick = newDrive;
 </script>
