@@ -790,6 +790,8 @@
   .cmb-tabs{display:flex;gap:4px;margin:0 14px 11px;background:var(--surface-2);padding:4px;border-radius:8px;}
   /* The Build card's source switcher. Modelled on .cmb-tab below - same segmented shape, same
      surfaces - so it reads as part of the page rather than a fifth way of drawing a button. */
+  .j-slip-empty{opacity:.45;}
+  .j-slip-empty .pc-add{pointer-events:none;}
   .bld-tabs{display:flex;flex-wrap:wrap;gap:2px;background:var(--surface);
     border:1px solid var(--border);border-radius:9px;padding:3px;margin:0 0 10px;}
   .bld-tab{flex:1 1 auto;min-width:0;background:transparent;border:0;border-radius:7px;
@@ -7051,6 +7053,11 @@ function jupiterSection(key, g){
       + '<span><i style="background:none;border:2px solid #38bdf8"></i>'+esc(abbrOf(key, g.home))+'</span>'
       + '<span><i style="background:none;border:2px solid #fb7185"></i>'+esc(abbrOf(key, g.away))+'</span>'
       + '<span>distance = overall hit rate \u00b7 direction = where he hits most</span></div>'
+    /* The slip is always in the DOM, empty until something is picked. It used to appear only
+       once there was a selection, which pushed 187px of new content in under the thumb that had
+       just tapped a dot - and the last thing in it is "Send to Check My Multi", which navigates
+       away. One tap to select, a second tap landing on a button that was not there a moment ago,
+       and you are somewhere else with the card behind you. Reserving the space removes the trap. */
     + (picks.length ? '<div class="j-slip">'+picks.map(function(d){
         return '<div class="j-slip-row">'+playerImgP(key, d.p, 20)
           + '<span style="flex:1">'+esc(d.name)+' '+Math.ceil(d.line)+'+ '+esc(mktLabel(key, d.mkt))+'</span>'
@@ -7059,7 +7066,10 @@ function jupiterSection(key, g){
       }).join('')
       + '<div class="cmb-sum-row tot"><span>'+picks.length+' leg'+(picks.length === 1 ? '' : 's')
       + (joint != null ? ' \u00b7 correlated '+cmbOdds(joint) : '')+'</span><b>$'+comb.toFixed(2)+'</b></div>'
-      + '<button class="pc-add" onclick="LAB.jAdd()">Send to Check My Multi</button></div>' : '')
+      + '<button class="pc-add" onclick="LAB.jAdd()">Send to Check My Multi</button></div>'
+       : '<div class="j-slip j-slip-empty"><div class="cmb-sum-row tot"><span>No legs picked</span>'
+         + '<b>&mdash;</b></div>'
+         + '<button class="pc-add" disabled>Send to Check My Multi</button></div>')
     + '</div>';
 }
 
@@ -8927,7 +8937,8 @@ function readCard(icon, title, desc, count, body, note){
 /* Nerd Mode showed Jupiter and Déjà Vu but not the simulator or the builder, so the card keeps
    each source's old visibility rather than imposing one: in Nerd Mode the two reads stay and the
    two multi-makers go, exactly as before. */
-var BUILD_SOURCES_ALL = [['search','Search'], ['history','History'], ['sim','Simulate'], ['radar','Radar']];
+var BUILD_SOURCES_ALL = [['search','Search'], ['history','D\u00e9j\u00e0 Vu'],
+                         ['sim','Simulator'], ['radar','Jupiter']];
 var BUILD_NERD_OK = { history:1, radar:1 };
 /* The builder used to be gated on the fixture appearing in mbFixtures() - not a user pin, but a
    staleness guard: upcoming games only, nothing finished or outside the window. Folding it into
@@ -8979,8 +8990,13 @@ function buildSection(key, g){
     }).join('') + '</div>';
   return '<div id="build-panel"><details class="sig-tile"' + cardAttr('build') + '>'
     + '<summary class="sig-head"' + cardTog('build') + '><span class="sig-ico"><i class="ti ti-layers-subtract"></i></span>'
-    + '<span><span class="sig-ttl">Build</span>'
-    + '<span class="sig-desc">Four ways to the same multi</span></span></summary>'
+    /* "Build" said nothing about what was inside it. The card absorbed four tools that already
+       had names, so it uses them: the title says what the card makes, the line underneath names
+       the four, and the tabs carry their names too - which is how anyone who knew them finds
+       them again. */
+    + '<span><span class="sig-ttl">Multi Builder</span>'
+    + '<span class="sig-desc">Search \u00b7 D\u00e9j\u00e0 Vu \u00b7 Simulator \u00b7 Jupiter</span>'
+    + '</span></summary>'
     + '<div class="bld-body">' + tabs
     + (pane || '<div class="sig-empty">' + esc(BUILD_EMPTY[src] || 'Nothing here for this fixture.')
         + '</div>')
@@ -9036,7 +9052,7 @@ function ctxSection(key, g){
   return '<div id="ctx-panel"><details class="sig-tile"' + cardAttr('ctx') + '>'
     + '<summary class="sig-head"' + cardTog('ctx') + '><span class="sig-ico"><i class="ti ti-telescope"></i></span>'
     + '<span><span class="sig-ttl">Context</span>'
-    + '<span class="sig-desc">What to know before you read a price</span></span>'
+    + '<span class="sig-desc">Schedule \u00b7 pace \u00b7 first quarter \u00b7 shots \u00b7 absences</span></span>'
     + '<span class="sig-n">' + have.length + '</span></summary>'
     + '<div class="bld-body">' + tabs + ctxPane(key, g, src) + '</div></details></div>';
 }
