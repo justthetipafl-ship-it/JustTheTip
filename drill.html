@@ -1,0 +1,541 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Two-Minute Drill · Just The Tip</title>
+<link rel="icon" type="image/png" href="/AFL/assets/jtt-check.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;600;700;800;900&family=IBM+Plex+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  /* Tokens lifted from guide.html so this page is the same site, not a lookalike. */
+  :root{ --bg:#07090c; --surface:#0e1218; --surface-2:#141a22; --border:#1e2733;
+         --text:#e8edf4; --text-2:#aab6c6; --text-3:#6f7d8f; --accent:#22c55e;
+         --warn:#eab308; --bad:#ef4444;
+         --font-display:'Montserrat',system-ui,sans-serif; --font-mono:'IBM Plex Mono',monospace; }
+  *{box-sizing:border-box;}
+  body{margin:0;background:var(--bg);color:var(--text);font-family:var(--font-display);
+       font-size:15px;line-height:1.65;padding-bottom:60px;}
+  header{border-bottom:1px solid var(--border);background:var(--surface);
+         padding:calc(16px + env(safe-area-inset-top,0px)) 16px 16px;}
+  .hd{max-width:820px;margin:0 auto;display:flex;align-items:center;gap:11px;}
+  .hd img{width:34px;height:34px;border-radius:50%;}
+  .hd b{font-size:18px;} .hd span{font-size:9px;letter-spacing:.14em;color:var(--text-3);display:block;}
+  main{max-width:820px;margin:0 auto;padding:0 16px;}
+  h2{font-size:20px;margin:30px 0 10px;padding-top:10px;border-top:1px solid var(--border);}
+  h4{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--text-3);margin:16px 0 6px;}
+  p{color:var(--text-2);margin:8px 0;}
+  .lead{font-size:16px;color:var(--text);}
+  code{font-family:var(--font-mono);background:var(--surface-2);padding:1px 5px;border-radius:4px;font-size:13px;}
+  .card{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:14px 16px;margin:14px 0;}
+  footer{max-width:820px;margin:34px auto 0;padding:16px;border-top:1px solid var(--border);
+         font-size:11px;color:var(--text-3);line-height:1.6;}
+  footer a{color:var(--text-2);}
+  a.back{display:inline-block;margin-top:18px;color:var(--accent);font-weight:800;font-size:13px;text-decoration:none;}
+
+  /* --- scoreboard ------------------------------------------------------------------------- */
+  .board{display:flex;gap:2px;background:var(--surface);border:1px solid var(--border);
+         border-radius:11px;padding:3px;margin:14px 0 10px;}
+  .bx{flex:1 1 0;min-width:0;background:var(--surface-2);border-radius:8px;padding:8px 4px;text-align:center;}
+  .bx span{display:block;font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:var(--text-3);}
+  .bx b{display:block;font-family:var(--font-mono);font-size:18px;font-weight:700;line-height:1.3;
+        white-space:nowrap;overflow:hidden;text-overflow:clip;}
+  .bx.urgent b{color:var(--warn);}
+  /* "1st & 10" is the widest thing on the board and wrapped to two lines, shunting the row out of
+     line. It gets its own size rather than shrinking every box to fit the worst case. */
+  #bx-dd b{font-size:13px;letter-spacing:-.02em;}
+
+  /* --- the field -------------------------------------------------------------------------- */
+  .field{position:relative;height:92px;background:var(--surface);border:1px solid var(--border);
+         border-radius:11px;overflow:hidden;margin:0 0 12px;}
+  .ez{position:absolute;top:0;bottom:0;width:8%;background:var(--surface-2);}
+  .ez.l{left:0;border-right:1px solid var(--border);} .ez.r{right:0;border-left:1px solid var(--border);}
+  .ez b{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%) rotate(-90deg);
+        font-size:8px;letter-spacing:.14em;color:var(--text-3);white-space:nowrap;}
+  .yl{position:absolute;top:0;bottom:0;width:1px;background:var(--border);}
+  .yl i{position:absolute;bottom:3px;left:50%;transform:translateX(-50%);font-family:var(--font-mono);
+        font-size:8px;color:var(--text-3);font-style:normal;}
+  /* the yard lines are appended after the ball, so without this they paint over it */
+  .marker,.ball{z-index:2;}
+  .marker{position:absolute;top:0;bottom:0;width:2px;transition:left .55s cubic-bezier(.3,.8,.3,1);}
+  .marker.first{background:var(--warn);opacity:.75;}
+  .marker.los{background:var(--text-2);}
+  .ball{position:absolute;top:26px;width:13px;height:9px;border-radius:50%;background:var(--accent);
+        margin-left:-6px;box-shadow:0 0 11px color-mix(in srgb,var(--accent) 60%,transparent);
+        transition:left .55s cubic-bezier(.3,.8,.3,1);}
+  .ball.turn{background:var(--bad);box-shadow:0 0 11px color-mix(in srgb,var(--bad) 60%,transparent);}
+  .trail{position:absolute;top:29px;height:3px;border-radius:2px;background:
+         linear-gradient(90deg,transparent,color-mix(in srgb,var(--accent) 55%,transparent));
+         opacity:0;transition:opacity .3s;}
+  .trail.on{opacity:1;}
+
+  /* --- calls ------------------------------------------------------------------------------ */
+  .calls{display:grid;grid-template-columns:1fr 1fr;gap:7px;margin:0 0 10px;}
+  .call{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:11px 12px;
+        cursor:pointer;text-align:left;color:var(--text);font-family:var(--font-display);}
+  .call:hover:not(:disabled){border-color:var(--accent);}
+  .call:disabled{opacity:.4;cursor:default;}
+  .call b{display:block;font-size:13px;font-weight:800;}
+  .call span{display:block;font-size:10px;color:var(--text-3);letter-spacing:.03em;}
+  .row2{display:grid;grid-template-columns:1fr 1fr;gap:7px;margin:0 0 12px;}
+  .btn{background:var(--surface-2);border:1px solid var(--border);border-radius:10px;padding:10px;
+       cursor:pointer;color:var(--text-2);font-family:var(--font-display);font-weight:800;
+       font-size:11px;letter-spacing:.06em;text-transform:uppercase;}
+  .btn:hover:not(:disabled){border-color:var(--accent);color:var(--accent);}
+  .btn:disabled{opacity:.35;cursor:default;}
+  .btn.go{background:var(--accent);color:#06240f;border-color:var(--accent);}
+
+  /* --- play result ------------------------------------------------------------------------ */
+  .res{font-family:var(--font-mono);font-size:13px;background:var(--surface-2);
+       border:1px solid var(--border);border-radius:10px;padding:11px 13px;margin:0 0 12px;
+       color:var(--text-2);min-height:62px;}
+  .res .big{font-family:var(--font-display);font-size:15px;font-weight:800;color:var(--text);}
+  .res .big.good{color:var(--accent);} .res .big.bad{color:var(--bad);}
+  .res .src{display:block;font-size:10px;color:var(--text-3);margin-top:5px;letter-spacing:.02em;}
+  .log{font-family:var(--font-mono);font-size:11.5px;color:var(--text-3);margin:0;padding:0;list-style:none;}
+  .log li{padding:3px 0;border-top:1px solid var(--border);}
+  .log li b{color:var(--text-2);font-weight:500;}
+
+  /* --- unlock ----------------------------------------------------------------------------- */
+  .unlock{border-color:var(--accent);
+          background:color-mix(in srgb,var(--accent) 9%,transparent);}
+  .unlock h4{color:var(--accent);}
+  .tip{font-family:var(--font-mono);font-size:13px;padding:7px 0;border-top:1px solid
+       color-mix(in srgb,var(--accent) 25%,transparent);color:var(--text);}
+  .tip:first-of-type{border-top:0;}
+  .tip em{color:var(--text-3);font-style:normal;font-size:11px;display:block;}
+  .warnbox{border-color:color-mix(in srgb,var(--warn) 40%,transparent);
+           background:color-mix(in srgb,var(--warn) 10%,transparent);}
+
+  .picker{display:flex;flex-wrap:wrap;gap:5px;margin:10px 0 4px;}
+  .picker button{font-family:var(--font-mono);font-size:11px;font-weight:600;background:var(--surface-2);
+       color:var(--text-2);border:1px solid var(--border);border-radius:7px;padding:5px 9px;cursor:pointer;}
+  .picker button:hover{border-color:var(--accent);color:var(--accent);}
+  .picker button.on{background:var(--accent);color:#06240f;border-color:var(--accent);}
+  .muted{font-size:11px;color:var(--text-3);}
+  @media (max-width:430px){
+    body{font-size:14px;}
+    .bx b{font-size:16px;}
+    .field{height:80px;} .ball{top:22px;} .trail{top:25px;}
+  }
+</style>
+</head>
+<body>
+<header><div class="hd">
+  <img src="/AFL/assets/jtt-check.png" alt="" onerror="this.style.display='none'">
+  <div><b>Two-Minute Drill</b><span>JUST THE TIP · FREE TO PLAY</span></div>
+</div></header>
+<main>
+
+<p class="lead">Two minutes, one score behind. Call the plays and drive the field &mdash; every snap
+is a <em>real</em> play your team ran, drawn from four seasons of fourth quarters. Move the ball the
+way one of today's plays says it moves and you unlock it.</p>
+
+<div id="boot" class="card"><p class="muted">Loading four seasons of plays&hellip;</p></div>
+
+<div id="game" style="display:none">
+
+  <h4>Pick your team</h4>
+  <div class="picker" id="teams"></div>
+
+  <div class="board">
+    <div class="bx" id="bx-clock"><span>Clock</span><b>2:00</b></div>
+    <div class="bx" id="bx-dd"><span>Down</span><b>1st &amp; 10</b></div>
+    <div class="bx" id="bx-pos"><span>Ball on</span><b>&mdash;</b></div>
+    <div class="bx" id="bx-score"><span>Margin</span><b>-4</b></div>
+    <div class="bx" id="bx-to"><span>Timeouts</span><b>3</b></div>
+  </div>
+
+  <div class="field" id="field">
+    <div class="ez l"><b id="ez-own">OWN</b></div>
+    <div class="ez r"><b>END ZONE</b></div>
+    <div class="trail" id="trail"></div>
+    <div class="marker first" id="m-first"></div>
+    <div class="marker los" id="m-los"></div>
+    <div class="ball" id="ball"></div>
+  </div>
+
+  <div class="calls" id="calls">
+    <button class="call" data-call="run_inside"><b>Run inside</b><span>Guard or tackle &middot; safe, slow</span></button>
+    <button class="call" data-call="run_outside"><b>Run outside</b><span>Round the end &middot; boom or bust</span></button>
+    <button class="call" data-call="pass_short"><b>Short pass</b><span>Under 15 air yards</span></button>
+    <button class="call" data-call="pass_deep"><b>Deep pass</b><span>15+ air yards &middot; shot play</span></button>
+  </div>
+  <div class="row2">
+    <button class="btn" id="b-to">Use timeout</button>
+    <button class="btn go" id="b-new">New drive</button>
+  </div>
+
+  <div class="res" id="res">Pick a team, then call your first play.</div>
+
+  <div id="unlockbox"></div>
+
+  <h4>Drive</h4>
+  <ul class="log" id="log"></ul>
+</div>
+
+<h2>How it works</h2>
+<p>You start on your own 35, one score down, two minutes on the clock, three timeouts. A touchdown
+wins it. A turnover, a fourth-down stop or the clock hitting zero ends it.</p>
+<p>When you make a call, the drill finds a real play your team ran on a similar down and distance
+and gives you what actually happened &mdash; the yards, the receiver, the sack. Nothing is simulated
+and nothing is invented. Each result shows the game it came from, so you can go and look it up.</p>
+<p>A pass can be sacked because sacks are in the pool at your club's own rate: the Chargers broke
+down on 11.2% of their fourth-quarter dropbacks over these four seasons, the Bills on 5.0%. That
+difference is real, and you feel it.</p>
+<h4>What the drill approximates</h4>
+<p>One thing is not real, and it would be dishonest to leave it unsaid. The <b>clock</b> is a model,
+not replayed data: a completed pass or a run burns 24 seconds at hurry-up tempo, an incompletion or
+a sack stops it at six, and a timeout stops it dead. Real plays were chained in real drives, and
+this drill draws them from different games, so their real elapsed times cannot be reused.
+Everything else &mdash; every yard, name, sack and turnover &mdash; is a real play.</p>
+<p class="muted">For the curious: a sensible play-caller wins about one drive in six, a player
+picking at random about one in nine. That gap is the whole game, and it is why the clock sits at 24
+seconds rather than lower &mdash; tested far enough down and blind deep bombs start out-scoring
+good calls.</p>
+
+<a class="back" href="/lab/">&larr; Back to the tool</a>
+</main>
+<footer>
+  <b>Just The Tip is a research tool, not betting advice.</b> Nothing here is a tip, a recommendation
+  or a prediction. Every number comes from historical data and posted prices, both of which can be
+  wrong, stale or misread. Past results do not indicate future results.<br><br>
+  <b>18+ only. Gamble responsibly.</b> Only stake what you can afford to lose, and never chase a loss.
+  Free, confidential help 24/7 &mdash;
+  <a href="https://www.gamblinghelponline.org.au" target="_blank" rel="noopener">Gambling Help Online</a>
+  or <a href="tel:1800858858">1800 858 858</a>.<br><br>
+  Play-by-play from <a href="https://github.com/nflverse/nflverse-data" target="_blank" rel="noopener">nflverse</a>.
+  Charting data &copy; FTN Data via nflverse, licensed
+  <a href="https://creativecommons.org/licenses/by-sa/4.0/" target="_blank" rel="noopener">CC BY-SA 4.0</a>.
+</footer>
+
+<script>
+/* ============================================================================================
+   TWO-MINUTE DRILL
+   A real play pool, a drill around it, and a check against today's plays that never sees them.
+
+   WHERE THE TIPS LIVE
+   This page is public and so is the repo behind it, so the tips CANNOT be in this file or in any
+   JSON it fetches - anyone would read them straight out of the network tab and the unlock would be
+   theatre. The page therefore sends the drive's RESULT to a Cloudflare Worker and the worker
+   answers with only the plays that result matched. Set TIPS_URL to that worker. Until it is set
+   the drill plays fine and says the unlock is not live yet, which is honest; it never invents a
+   tip to demonstrate the feature.
+   ============================================================================================ */
+var TIPS_URL = '';                       // e.g. 'https://jtt-unlock.<subdomain>.workers.dev/check'
+var POOL_URL = '/nfl/data/plays.json';
+
+var START_Y100   = 65;                   // own 35 - the classic drill start
+var START_CLOCK  = 120;
+var START_MARGIN = -4;                   // one score down, so only a touchdown wins it
+var START_TO     = 3;
+/* Snap-to-snap with the clock running. 24s is a hurry-up tempo, not the 40s play clock, and that
+   is both what a real two-minute offence runs and what makes this a game. Swept over 400 drives a
+   setting with a random play-caller and a sensible one:
+
+       40s   random  3.3%   sensible  3.8%    drives die on the clock before they start
+       32s           8.5%            10.3%
+       24s          11.0%            16.8%    <- widest skill gap, balanced spread of endings
+       20s          16.8%            18.5%
+       16s          29.3%            26.3%    skill INVERTS: bombing it blind starts winning
+
+   At 16s a random caller beats a thinking one, which would make the drill pointless. */
+var CLOCK_RUN    = 24;
+var CLOCK_STOP   = 6;                    // the play itself, clock already stopped
+
+var POOL = null, DEPTH = null, TEAM = null, G = null;
+
+/* ---- loading ------------------------------------------------------------------------------- */
+fetch(POOL_URL).then(function(r){
+  if (!r.ok) throw new Error('HTTP ' + r.status);
+  return r.json();
+}).then(function(d){
+  POOL = {}; DEPTH = d.depth || {};
+  (d.plays || []).forEach(function(p){
+    if (!p.off) return;
+    var k = p.off + '|' + p.call;
+    (POOL[k] || (POOL[k] = [])).push(p);
+  });
+  var teams = Object.keys(DEPTH).sort();
+  if (!teams.length) throw new Error('the pool carries no teams');
+  document.getElementById('boot').style.display = 'none';
+  document.getElementById('game').style.display = '';
+  var box = document.getElementById('teams');
+  teams.forEach(function(t){
+    var b = document.createElement('button');
+    b.textContent = t; b.setAttribute('data-team', t);
+    b.onclick = function(){ pickTeam(t); };
+    box.appendChild(b);
+  });
+  pickTeam(teams[Math.floor(Math.random() * teams.length)]);
+}).catch(function(e){
+  document.getElementById('boot').innerHTML =
+    '<p class="muted">The play pool did not load (' + String(e.message).slice(0, 60) +
+    '). It lives at <code>' + POOL_URL + '</code>.</p>';
+});
+
+function pickTeam(t){
+  TEAM = t;
+  Array.prototype.forEach.call(document.querySelectorAll('#teams button'), function(b){
+    b.className = b.getAttribute('data-team') === t ? 'on' : '';
+  });
+  document.getElementById('ez-own').textContent = t;
+  newDrive();
+}
+
+/* Yard lines, drawn once. Without these the field is a blank strip and the ball has nothing to
+   move against, so you cannot see that you gained eleven yards. */
+(function markField(){
+  var f = document.getElementById('field');
+  if (!f) return;
+  for (var y = 10; y <= 90; y += 10){
+    var d = document.createElement('div');
+    d.className = 'yl';
+    d.style.left = (8 + 84 * y / 100) + '%';
+    // football numbering counts in from whichever goal line is nearer
+    d.innerHTML = '<i>' + (y <= 50 ? y : 100 - y) + '</i>';
+    f.appendChild(d);
+  }
+})();
+
+/* ---- the drill ----------------------------------------------------------------------------- */
+function newDrive(){
+  G = { y100: START_Y100, down: 1, togo: 10, clock: START_CLOCK, to: START_TO,
+        margin: START_MARGIN, over: false, won: false, plays: 0, log: [], stat: {} };
+  document.getElementById('log').innerHTML = '';
+  document.getElementById('unlockbox').innerHTML = '';
+  var tr = document.getElementById('trail');
+  tr.className = 'trail'; tr.style.width = '0';
+  document.getElementById('ball').className = 'ball';
+  setRes('Two minutes. Down four. Go.', '');
+  paint();
+}
+
+function paint(){
+  var own = 100 - G.y100;                              // yards from your own goal line
+  var spot = own <= 50 ? 'OWN ' + own : (own === 50 ? '50' : 'OPP ' + (100 - own));
+  txt('bx-clock', mmss(G.clock));
+  txt('bx-dd', G.over ? '&mdash;' : ord(G.down) + ' &amp; ' + (G.togo >= G.y100 ? 'goal' : G.togo));
+  txt('bx-pos', spot);
+  txt('bx-score', (G.margin > 0 ? '+' : '') + G.margin);
+  txt('bx-to', String(G.to));
+  document.getElementById('bx-clock').className = 'bx' + (G.clock <= 30 ? ' urgent' : '');
+
+  // the field runs from the left end zone (your goal) to the right one (theirs); 8% each side
+  var pct = function(y){ return 8 + 84 * Math.max(0, Math.min(100, y)) / 100; };
+  document.getElementById('ball').style.left = pct(own) + '%';
+  document.getElementById('m-los').style.left = pct(own) + '%';
+  var fd = Math.min(100, own + G.togo);
+  var mf = document.getElementById('m-first');
+  mf.style.left = pct(fd) + '%';
+  mf.style.display = (G.over || G.togo >= G.y100) ? 'none' : '';
+
+  var dis = G.over || !TEAM;
+  Array.prototype.forEach.call(document.querySelectorAll('.call'), function(b){ b.disabled = dis; });
+  document.getElementById('b-to').disabled = dis || G.to <= 0;
+}
+
+/* Draw a real play: this club, this bucket, and as close to this down and distance as the pool
+   allows. A pass call first rolls the club's own rate of dropbacks that never became a throw, so
+   the sack risk in the drill is the sack risk they really carried. */
+function drawPlay(call){
+  if (call === 'pass_short' || call === 'pass_deep'){
+    var d = DEPTH[TEAM] || {};
+    var thrown = (d.pass_short || 0) + (d.pass_deep || 0) + (d.pass_broken || 0);
+    if (thrown && Math.random() < (d.pass_broken || 0) / thrown) call = 'pass_broken';
+  }
+  var pool = POOL[TEAM + '|' + call] || [];
+  if (!pool.length) return null;
+  // score each play on how near its situation is to ours, then pick among the nearest handful so
+  // the same play does not come back every time the same spot comes up
+  var near = pool.map(function(p){
+    var s = Math.abs((p.dn || 1) - G.down) * 6
+          + Math.abs((p.yg || 10) - G.togo) * 1.4
+          + Math.abs((p.y100 || 50) - G.y100) * 0.22;
+    return { p: p, s: s };
+  }).sort(function(a, b){ return a.s - b.s; }).slice(0, Math.min(25, pool.length));
+  return near[Math.floor(Math.random() * near.length)].p;
+}
+
+function callPlay(call){
+  if (G.over || !TEAM) return;
+  var p = drawPlay(call);
+  if (!p){ setRes('No plays in the pool for that call.', ''); return; }
+
+  /* The real play's yards are the real play's yards. We do NOT stretch a drawn touchdown to reach
+     our end zone or shrink one to stop short of it: we move the ball by what the play actually
+     gained and let the end zone decide whether that was a score. So p.td belongs to the real game
+     and `scored` belongs to this drive, and the two are allowed to disagree. */
+  var yds = p.yds == null ? 0 : p.yds;
+  var turn = !!(p.int || p.fum);
+  var before = 100 - G.y100;
+  var gained = turn ? 0 : Math.min(yds, G.y100);       // cannot gain past the goal line
+  var stops = !!(p.sack || (!p.cmp && String(p.call).indexOf('pass') === 0)) || turn;
+
+  G.plays++;
+  if (!turn) G.y100 = Math.max(0, G.y100 - yds);
+  var scored = !turn && G.y100 <= 0;
+  if (scored) stops = true;
+
+  // the clock: a model, and the page says so out loud
+  G.clock -= stops ? CLOCK_STOP : CLOCK_RUN;
+  if (G.clock < 0) G.clock = 0;
+
+  creditStats(p, gained, scored);
+
+  // animate the carry before the new state lands
+  var tr = document.getElementById('trail');
+  var a = 8 + 84 * Math.max(0, Math.min(100, before)) / 100;
+  var b = 8 + 84 * Math.max(0, Math.min(100, 100 - G.y100)) / 100;
+  tr.style.left = Math.min(a, b) + '%'; tr.style.width = Math.abs(b - a) + '%';
+  tr.className = 'trail on';
+  document.getElementById('ball').className = 'ball' + (turn ? ' turn' : '');
+
+  var head, cls = '';
+  if (turn){
+    head = p.int ? 'INTERCEPTED' : 'FUMBLE LOST'; cls = 'bad';
+    G.over = true;
+  } else if (scored){
+    head = 'TOUCHDOWN'; cls = 'good';
+    G.over = true; G.won = true; G.margin += 7;
+  } else {
+    if (gained >= G.togo){ G.down = 1; G.togo = Math.min(10, G.y100); }
+    else {
+      G.down++; G.togo -= gained;
+      if (G.down > 4){ head = 'TURNED OVER ON DOWNS'; cls = 'bad'; G.over = true; }
+    }
+    if (!head) head = (gained > 0 ? '+' : '') + gained + (Math.abs(gained) === 1 ? ' yard' : ' yards');
+  }
+  // the clock only beats you if you have not already scored on the play
+  if (!G.won && G.clock <= 0 && !G.over){ head = 'TIME'; cls = 'bad'; G.over = true; }
+
+  setRes('<span class="big ' + cls + '">' + head + '</span> &middot; ' + describe(p),
+         'Real play: ' + p.sea + ' week ' + p.wk + ', ' + p.off + ' v ' + p['def'] +
+         ' &middot; ' + ord(p.dn) + ' &amp; ' + p.yg + ' &middot; ' + wpaNote(p));
+  logLine(call, p, head);
+  paint();
+  if (G.over) finish();
+}
+
+function describe(p){
+  var who = p.rec || p.run || p.qb || 'unknown';
+  if (p.call === 'pass_broken')
+    return p.sack ? ('sacked, ' + p.yds + ' &middot; ' + (p.qb || 'QB'))
+                  : ('thrown away &middot; ' + (p.qb || 'QB'));
+  if (p.call === 'run_inside' || p.call === 'run_outside') return who + ' carries';
+  if (!p.cmp) return 'incomplete to ' + who;
+  var bits = [who];
+  if (p.air != null) bits.push(p.air + ' air');
+  if (p.yac != null) bits.push(p.yac + ' after');
+  return bits.join(' &middot; ');
+}
+
+/* nflverse ships win probability added per play, so "was that a good call" is a column lookup
+   rather than a model written here. */
+function wpaNote(p){
+  if (p.wpa == null) return 'no win-probability data';
+  var pts = (p.wpa * 100).toFixed(1);
+  return (p.wpa >= 0 ? '+' : '') + pts + '% win probability on the night';
+}
+
+/* What the drive produced, per player - this is what gets sent to the unlock check. The touchdown
+   is credited for THIS drive (scored), not from the real play's own td flag, because the two can
+   legitimately differ once real yards are applied to our field position. */
+function creditStats(p, gained, scored){
+  var add = function(name, stat, v){
+    if (!name || !v) return;
+    var k = name + '|' + stat;
+    G.stat[k] = (G.stat[k] || 0) + v;
+  };
+  if (p.call === 'run_inside' || p.call === 'run_outside'){
+    add(p.run, 'rushYds', gained);
+    if (scored) add(p.run, 'td', 1);
+  } else if (p.call === 'pass_broken'){
+    add(p.qb, 'passYds', gained);                      // a sack is negative passing yards
+  } else if (p.cmp){
+    add(p.qb, 'passYds', gained); add(p.rec, 'recYds', gained); add(p.rec, 'receptions', 1);
+    if (scored){ add(p.rec, 'td', 1); add(p.qb, 'passTd', 1); }
+  }
+}
+
+function logLine(call, p, head){
+  var li = document.createElement('li');
+  var label = { run_inside:'Run inside', run_outside:'Run outside', pass_short:'Short pass',
+                pass_deep:'Deep pass', pass_broken:'Dropback' }[p.call] || call;
+  li.innerHTML = '<b>' + label + '</b> &rarr; ' + String(head).replace(/<[^>]+>/g, '') +
+                 '  <span style="opacity:.7">(' + p.sea + ' wk' + p.wk + ')</span>';
+  document.getElementById('log').appendChild(li);
+}
+
+function setRes(html, src){
+  document.getElementById('res').innerHTML = html + (src ? '<span class="src">' + src + '</span>' : '');
+}
+
+/* ---- the unlock ---------------------------------------------------------------------------- */
+function finish(){
+  var box = document.getElementById('unlockbox');
+  if (!G.won){
+    box.innerHTML = '<div class="card"><h4>Drive over</h4><p class="muted">No score, so nothing ' +
+      'unlocks. ' + G.plays + ' plays. Hit New drive and go again.</p></div>';
+    return;
+  }
+  var events = Object.keys(G.stat).map(function(k){
+    var parts = k.split('|');
+    return { player: parts[0], stat: parts[1], value: G.stat[k], team: TEAM };
+  });
+  if (!TIPS_URL){
+    box.innerHTML = '<div class="card warnbox"><h4>You scored &mdash; unlock is not live yet</h4>' +
+      '<p class="muted">The drive would be checked against today\'s plays here. That check has to ' +
+      'run on a server: this page and its repo are public, so any play sitting in the file could ' +
+      'simply be read out of it, and the lock would mean nothing. Nothing is being faked in the ' +
+      'meantime.</p><p class="muted">Your drive produced: ' + events.map(function(e){
+        return e.player + ' ' + e.value + ' ' + e.stat; }).join(', ') + '</p></div>';
+    return;
+  }
+  box.innerHTML = '<div class="card"><h4>Checking today\'s plays&hellip;</h4></div>';
+  fetch(TIPS_URL, { method:'POST', headers:{'Content-Type':'application/json'},
+                    body: JSON.stringify({ team: TEAM, events: events }) })
+    .then(function(r){ return r.ok ? r.json() : Promise.reject(new Error('HTTP ' + r.status)); })
+    .then(function(d){
+      var tips = (d && d.unlocked) || [];
+      if (!tips.length){
+        box.innerHTML = '<div class="card"><h4>Scored, but no match</h4><p class="muted">Your drive ' +
+          'did not cover any of today\'s plays. Try a different team, or a different way down the ' +
+          'field.</p></div>';
+        return;
+      }
+      box.innerHTML = '<div class="card unlock"><h4>' + tips.length + ' Just The Tip play' +
+        (tips.length > 1 ? 's' : '') + ' unlocked</h4>' + tips.map(function(t){
+          return '<div class="tip">' + esc(t.label || t.player || 'play') +
+            (t.price ? ' &middot; $' + esc(t.price) : '') +
+            (t.book ? ' ' + esc(t.book) : '') +
+            (t.note ? '<em>' + esc(t.note) + '</em>' : '') + '</div>';
+        }).join('') + '<p class="muted" style="margin-top:9px">A research read, not advice. ' +
+        'Check the price is still there.</p></div>';
+    })
+    .catch(function(e){
+      box.innerHTML = '<div class="card warnbox"><h4>Scored &mdash; could not reach the check</h4>' +
+        '<p class="muted">' + esc(String(e.message).slice(0, 70)) + '</p></div>';
+    });
+}
+
+/* ---- odds and ends ------------------------------------------------------------------------- */
+function mmss(s){ s = Math.max(0, s); return Math.floor(s / 60) + ':' + ('0' + (s % 60)).slice(-2); }
+function ord(n){ return ({1:'1st',2:'2nd',3:'3rd',4:'4th'})[n] || (n + 'th'); }
+function txt(id, h){ document.getElementById(id).getElementsByTagName('b')[0].innerHTML = h; }
+function esc(s){ return String(s == null ? '' : s)
+  .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+
+document.getElementById('calls').addEventListener('click', function(e){
+  var b = e.target.closest ? e.target.closest('.call') : null;
+  if (b && !b.disabled) callPlay(b.getAttribute('data-call'));
+});
+document.getElementById('b-to').onclick = function(){
+  if (G.over || G.to <= 0) return;
+  G.to--; setRes('<span class="big">TIMEOUT</span> &middot; clock stopped', ''); paint();
+};
+document.getElementById('b-new').onclick = newDrive;
+</script>
+</body>
+</html>
