@@ -2192,7 +2192,7 @@ function buildIndexes(key){
 
   ix.hasUp = null;        // recomputed whenever the index is rebuilt, so a new fixture re-sorts
   TR_CACHE = { key:null, name:{}, vals:{} };     // trends cache is stale once the data changes
-  ix.lgAvg = {}; ix.winAvg = {}; ix.matchOpp = null; ix.fs = null; ix.specRank = null;
+  ix.lgAvg = {}; ix.winAvg = {}; ix.matchOpp = null; ix.fs = null; ix.specRank = null; ix.tcode = null;
   ix.pricedSet = null; ix.oddsName = null; ix.oddsIni = null; ix.oddsHyp = null; ix.vac = null; ix.bookList = null; ix.resIdx = null; ix.mlbLg = null; ix.lgRate = null; ix.scState = null; ix.nhlPim = null; ix.injIdx = null; ix.ww = null; ix.usg = null; ix.mrg = null; ix.luRows = null; ix.luPos = null; ix.luSheet = null; ix.foldName = null;
   var logs = asArray(d.gamelogs) || [];
   ix.logsByName = {};
@@ -2759,6 +2759,37 @@ var TEAM_ALIAS = {
 function normTeam(n){
   var t = String(n||'').toLowerCase().replace(/&/g,'and').replace(/[^a-z0-9]+/g,'');
   return TEAM_ALIAS[t] || t;
+}
+/* Feeds do not agree on whether a club is "GS" or "Golden State Warriors", and TEAM_ALIAS carries
+   only AFL and EPL spellings. NBA's injury.json names clubs in full while its fixtures, roster and
+   odds all use codes, so every injury row failed to match a team and the league got no
+   vacated-usage read at all - measured: 20 players listed Out with 503 minutes between them, and
+   vacatedUsage returned nothing for all 30 clubs.
+
+   Rather than hand-maintain 30 more aliases, derive the map from the data that already carries both
+   spellings: players.json has team + teamFull, the fixture has home/homeFull. Any sport whose feed
+   names clubs in full is then handled, and a relocation or rename follows the data. */
+function teamCode(key, name){
+  var S = state.sports[key];
+  if (!S.idx.tcode){
+    var m = {};
+    var add = function(full, code){
+      if (!full || !code) return;
+      var f = normTeam(full), c = normTeam(code);
+      if (f && c && f !== c) m[f] = c;
+    };
+    var pl = S.data.players;
+    (Array.isArray(pl) ? pl : (pl && pl.players) || []).forEach(function(p){
+      if (p) add(p.teamFull, p.team);
+    });
+    (asArray(S.data.fixture) || []).forEach(function(g){
+      if (!g) return;
+      add(g.homeFull, g.home); add(g.awayFull, g.away);
+    });
+    S.idx.tcode = m;
+  }
+  var n = normTeam(name);
+  return S.idx.tcode[n] || n;
 }
 function moKey(a,b){ return [normTeam(a), normTeam(b)].sort().join('|'); }
 function matchOddsFor(key, g){
@@ -4492,21 +4523,32 @@ var VACATE_MIN = 8;              // percentage points of usage before it changes
 function vacatedUsage(key, team){
   var S = state.sports[key];
   S.idx.vac = S.idx.vac || {};
-  var ck = normTeam(team);
+  var ck = teamCode(key, team);
   if (S.idx.vac[ck]) return S.idx.vac[ck];
   var inj = asArray(S.data.injury) || [];
   var out = { tgt:0, snap:0, rush:0, min:0, pts:0, names:[] };
   inj.forEach(function(r){
-    if (!r || normTeam(r.Team || r.team) !== ck) return;
+    if (!r || teamCode(key, r.Team || r.team) !== ck) return;
     var status = String(r.Status || r.status || r.Returning || '');
     if (!/^out$|doubtful|season|missed|injured reserve|suspen/i.test(status)) return;   // Questionable usually plays
     var p = (S.idx.byName || {})[r.Player || r.player];
     if (!p) return;
-    if (key === 'nbl'){
-      // NBL: an absent regular's MINUTES go to a short rotation. Tested: teammates beat their form
-      // projection 52.9% of the time when a regular sat (+1.09 pts), 57.3% when a 26+ minute one did
-      // (+1.49 pts), against 44.2% otherwise. (Hockey was tested too and shows nothing: four lines
-      // spread the ice time thinly - so NHL gets no vacated-usage rule.)
+    if (key === 'nbl' || key === 'nba'){
+      // Basketball: an absent regular's MINUTES go to a short rotation. Tested on NBL: teammates
+      // beat their form projection 52.9% of the time when a regular sat (+1.09 pts), 57.3% when a
+      // 26+ minute one did (+1.49 pts), against 44.2% otherwise. (Hockey was tested too and shows
+      // nothing: four lines spread the ice time thinly - so NHL gets no vacated-usage rule.)
+      //
+      // NBA was falling past this branch into the NFL/AFL path below, which wants tgtShare or
+      // rushAtt - neither of which exists in basketball - so every absent NBA player was discarded
+      // and the league got no vacated-usage read at all, in Next Man Up or anywhere else.
+      // Measured on three seasons of NBA gamelogs, against each player's own season average:
+      //   full strength      -1.93 min  -1.13 pts   (12638 games)
+      //   5-15 ppg out       -0.83 min  -0.68 pts   (16385 games)
+      //   15-25 ppg out      -0.03 min  -0.09 pts   (13869 games)
+      //   25+ ppg out        +1.84 min  +1.30 pts   (21545 games)
+      // A +3.77 minute and +2.43 point swing, monotonic across all five buckets. For scale, the
+      // shot-zone matchup was 0.47 points and foul trouble 0.35, and both were dropped as noise.
       var mn = +p.minutes || 0, pt = +p.points || 0;
       if (mn < 12) return;
       out.min += mn; out.pts += pt;
@@ -4606,7 +4648,23 @@ function calibrate(key, prob){
   var lg = Math.log(Math.max(1e-6, prob) / Math.max(1e-6, 1 - prob));
   return 1 / (1 + Math.exp(-(c.a * lg + c.b)));
 }
-function evTrusted(key){ return (calibFor(key) || {}).spread >= EV_MIN_SPREAD; }
+/* Spread alone passed a model that cannot predict. NBA's fit: calibrated Brier 0.2487 against a
+   base rate of 0.2494 - it beats guessing by 0.0007, where the next worst sport manages +0.0056
+   and the best +0.0273. Its raw log-odds have to be squashed to a=0.124 to stop it lying (every
+   other sport sits between 0.511 and 0.843) and its raw bias is 0.150 (next highest 0.046). Three
+   independent signs, one sport, and a spread of 0.089 clears the 0.05 bar regardless - so every
+   sport passed and the guard separated nothing.
+
+   The numbers to do it properly were already being written into calib.json and nothing read them.
+   A gain floor of 0.003 sits in the wide gap between NBA's 0.0007 and AFL's 0.0056, so it isolates
+   the one fit that is indistinguishable from the base rate without second-guessing the others. */
+var EV_MIN_BRIER_GAIN = 0.003;
+function evTrusted(key){
+  var c = calibFor(key) || {};
+  if (!(c.spread >= EV_MIN_SPREAD)) return false;
+  if (c.brierCalibrated == null || c.brierBaseRate == null) return true;   // older fit: unchanged
+  return (c.brierBaseRate - c.brierCalibrated) >= EV_MIN_BRIER_GAIN;
+}
 function glProb(key, p, mkt, line, score){
   var sc = state.sports[key].scoring;
   // Prefer a real probability model wherever the module exposes one (AFL, EPL, MLB).
@@ -4914,9 +4972,16 @@ function ouTile(key, g, kind){
     rows = [];
     why = SPORTS[key].name+' scoring.js exposes no scoreCMP, so nothing can be scored.';
   } else {
+    // The positive-edge filter is only applied where the model can rank (evTrusted), so the line
+    // describing it has to be conditional too - NBA's fit beats the base rate by 0.0007 Brier, EV
+    // neither filters nor ranks there, and claiming otherwise describes a gate that is not running.
     why = over
-      ? 'No player scored '+GL_SCORE+'+ into a soft matchup at a price that pays. Rows need a positive '
-        + 'edge, so a strong read at a short price is filtered out rather than listed.'
+      ? 'No player scored '+GL_SCORE+'+ into a soft matchup'
+        + (evTrusted(key)
+            ? ' at a price that pays. Rows need a positive edge, so a strong read at a short price '
+              + 'is filtered out rather than listed.'
+            : '. The model cannot rank this sport, so rows are ordered by the read itself and the '
+              + 'edge is shown as information rather than used to filter.')
       : 'No player scored '+DR_SCORE+' or worse into a tough matchup at a positive-edge under. '
         + 'Teams missing a starter are skipped here: the usage they leave behind lands on whoever '
         + 'is left, which is the opposite of an under'
@@ -5191,7 +5256,7 @@ function nflOppRate(key, team, madeField, oppField, volField){
    names only the last gate. SIG_TRACE, when a probe switches it on, counts how many candidates
    each gate discards, so the gate that is actually emptying the tile can be read off instead of
    guessed at. Off in the page: trc() is one property lookup when SIG_TRACE is null. */
-var SIG_TRACE = null, SPEC_TRACE_HOLD = null;
+var SIG_TRACE = null, SPEC_TRACE_HOLD = null, NMU_TAP = null;
 function trc(gate){ if (SIG_TRACE) SIG_TRACE[gate] = (SIG_TRACE[gate] || 0) + 1; }
 function nflTeamAngle(key, g, kind){
   var S = state.sports[key], out = [];
@@ -8135,6 +8200,15 @@ function nblNextManUp(key, g){
     var v = vacatedUsage(key, team);
     if (!v || (v.min || 0) < 20) return;
     var heavy = v.names.some(function(x){ return x.min >= 26; });
+    /* WHY THIS IS NOT THE MEASURED EFFECT. Three seasons of NBA gamelogs put the production swing
+       at +2.43 points between a full-strength lineup and 25+ ppg being out, and +1.04 at 15-25 ppg
+       out. The boost here is deliberately smaller than both, because the two numbers answer
+       different questions: the measured swing is how much a player's output moves, while the boost
+       is applied to the LINE - and the book sets that line already knowing who is out. What belongs
+       here is only the part the market has failed to price, which cannot be measured from gamelogs
+       at all; it would need the historical lines, which the ledger does not keep.
+       So 1.1 and 1.5 stay as a conservative fraction of a real effect. Raising them to +2.43 would
+       be assuming the book adjusts for nothing, which is the one thing the data cannot support. */
     var boost = heavy ? 1.5 : 1.1;
     var outSet = {}; v.names.forEach(function(x){ outSet[x.name] = 1; });
     playersOnTeam(key, team).forEach(function(p){
@@ -8150,13 +8224,28 @@ function nblNextManUp(key, g){
       if (!od) return;
       var shifted = od.line - boost;
       var pr = recordCap(key, p, 'points', shifted, 'over', modelProbAt(key, p, 'points', shifted, opp));
+      if (NMU_TAP){
+        var prRaw = recordCap(key, p, 'points', od.line, 'over', modelProbAt(key, p, 'points', od.line, opp));
+        NMU_TAP.push({ name:p.name, line:od.line, price:+od.price, boost:boost,
+                       prShift:pr, prReal:prRaw,
+                       evShift:(pr != null ? pr*od.price-1 : null),
+                       evReal:(prRaw != null ? prRaw*od.price-1 : null) });
+      }
       if (pr == null || pr > Math.min(0.97, (1/od.price) * 4)) return;
       var ev = pr * od.price - 1;
-      if (ev < 0.05) return;
-      out.push({ name:p.name, p:p, opp:opp, v:v, boost:boost, heavy:heavy, b:{ od:od, pr:pr, ev:ev, side:'over' } });
+      // Same rule the over/under tiles use: where the model cannot separate winners from losers,
+      // EV is noise dressed as maths, so it neither filters nor ranks. NBA's fit beats the base
+      // rate by 0.0007 Brier, so this tile would otherwise have selected and ordered its rows on
+      // a number with no information in it. The vacated minutes rank instead - that is the thing
+      // actually measured to move production (+1.84 min and +1.30 pts at 25+ ppg out).
+      if (evTrusted(key) && ev < 0.05) return;
+      out.push({ name:p.name, p:p, opp:opp, v:v, boost:boost, heavy:heavy,
+                 evOk:evTrusted(key), b:{ od:od, pr:pr, ev:ev, side:'over' } });
     });
   });
-  out.sort(function(a,b){ return b.b.ev - a.b.ev; });
+  out.sort(evTrusted(key)
+    ? function(a,b){ return b.b.ev - a.b.ev; }
+    : function(a,b){ return (b.v.min - a.v.min) || (b.b.pr - a.b.pr); });
   return out;
 }
 
@@ -8339,7 +8428,9 @@ function nblSignals(key, g){
     + sigTile('ti-user-plus', 'Next Man Up', 'Teammates of an absent regular, with the measured gain priced in',
         nm.map(function(r){ return mlbRow(key, r, 'Points', [[r.v.names.slice(0,2).map(function(x){ return x.name; }).join(', ')+' out \u00b7 '
             + r.v.min.toFixed(0)+' min vacated', true],
-          ['+'+r.boost.toFixed(1)+' pts historically ('+(r.heavy ? '57%' : '53%')+' beat projection)', true]]); }),
+          ['+'+r.boost.toFixed(1)+' pts historically ('+(r.heavy ? '57%' : '53%')+' beat projection)', true],
+          [r.evOk ? '' : 'model unranked for this sport \u2014 ordered by minutes vacated, not edge',
+           false]]); }),
         'No team on this fixture is missing a regular (20+ minutes vacated) with a teammate the adjusted model and his record back.'));
 }
 
@@ -20360,6 +20451,25 @@ window.LAB = {
      gate tracer is not left switched on in the page. */
   lineupPosProbe: function(key, team){ return lineupPosSet(key, team); },
   leagueAvgProbe: function(key, stat){ return leagueAvg(key, stat); },
+  /* exposed for tests: the vacated-usage read for one team, and the Next Man Up rows across the
+     board. NBA fell past the basketball branch of vacatedUsage into the NFL one and quietly got
+     no vacated read at all, which is invisible in the page - the tile just stays empty. */
+  evTrustProbe: function(key){ return evTrusted(key); },
+  evForceProbe: function(v){ EV_MIN_BRIER_GAIN = v; },
+  ouCountProbe: function(key, kind){ var fx = asArray(state.sports[key].data.fixture) || [], n = 0, f = 0;
+    fx.forEach(function(g){ var r = ouSignals(key, g, kind) || []; n += r.length; if (r.length) f++; });
+    return { rows:n, fixtures:f }; },
+  vacProbe: function(key, team){ return vacatedUsage(key, team); },
+  nmuTapProbe: function(key){ var fx = asArray(state.sports[key].data.fixture) || [], tap = [];
+    NMU_TAP = tap; try { fx.forEach(function(g){ nblNextManUp(key, g); }); } finally { NMU_TAP = null; }
+    return tap; },
+  nmuProbe: function(key){ var fx = asArray(state.sports[key].data.fixture) || [], out = [];
+    fx.forEach(function(g){ nblNextManUp(key, g).forEach(function(r){
+      out.push({ fixture:g.away+'@'+g.home, name:r.name, opp:r.opp, boost:r.boost, heavy:r.heavy,
+                 evOk:r.evOk,
+                 outMin:r.v.min, outNames:(r.v.names||[]).map(function(x){return x.name+' ('+x.min+'m)';}),
+                 line:r.b.od.line, price:r.b.od.price, book:r.b.od.book, pr:r.b.pr, ev:r.b.ev }); }); });
+    return out; },
   specTopNProbe: function(n){ if (n != null) SPEC_TOP_N = n; return SPEC_TOP_N; },
   /* exposed for tests: the specialist rows across the whole board, with the in-game place and the
      league place side by side, so a test can check the row never claims a league rank it has not
