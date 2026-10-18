@@ -5191,7 +5191,7 @@ function nflOppRate(key, team, madeField, oppField, volField){
    names only the last gate. SIG_TRACE, when a probe switches it on, counts how many candidates
    each gate discards, so the gate that is actually emptying the tile can be read off instead of
    guessed at. Off in the page: trc() is one property lookup when SIG_TRACE is null. */
-var SIG_TRACE = null;
+var SIG_TRACE = null, SPEC_TRACE_HOLD = null;
 function trc(gate){ if (SIG_TRACE) SIG_TRACE[gate] = (SIG_TRACE[gate] || 0) + 1; }
 function nflTeamAngle(key, g, kind){
   var S = state.sports[key], out = [];
@@ -8010,6 +8010,7 @@ function specHitRate(key, name, mkt, line){
   return n >= 8 ? hits / n : null;
 }
 var SPEC_MIN_GAMES = 5;
+var SPEC_TOP_N = 15;          // how deep "the league's best at this stat" goes
 /* The tile ranks inside the fixture, which is the right read - but the row said "#1 in the
    league", and those are not the same number. Tyler Herro came out "#1 in the league for points"
    on 20.6/gm, which no league leader has ever been; he was top of the eight candidates in HIS
@@ -8036,22 +8037,31 @@ function specLeagueRank(key, stat, name){
 function nblSpecialist(key, g, stat){
   var S = state.sports[key], lg = leagueAvg(key, stat);
   var inGame = {}; inGame[normTeam(g.home)] = g.away; inGame[normTeam(g.away)] = g.home;
-  // Rank inside the FIXTURE, not the league. Taking the league's top 15 and then filtering to the
-  // two teams playing left about two candidates in a ten-team competition - which is why Slashers,
-  // Splashers, Dishers and Boarders almost never fired. The read is "the best in this game", so
-  // the field is this game.
+  /* LEAGUE FIRST, THEN THIS FIXTURE. The tile is the league's specialists meeting a defence that
+     concedes to them, the same shape as Elite Matchups and AFL Snags: rank the whole league at the
+     stat, take the top SPEC_TOP_N, and keep the ones playing in this game.
+
+     It was briefly ranked inside the fixture instead, because league-first leaves few candidates
+     and these tiles fire rarely. That traded the tile's meaning for its hit count: the eighth-best
+     scorer in one game is not a specialist, and the row still called him a league rank. Firing
+     rarely is the correct behaviour for a tile about the league's best - the gate is the point. */
   var top = (S.idx.players || []).filter(function(p){
-      return lg[p.name] && lg[p.name].games >= SPEC_MIN_GAMES && inGame[normTeam(p.team)];
+      return lg[p.name] && lg[p.name].games >= SPEC_MIN_GAMES;
     })
-    .sort(function(a,b){ return lg[b.name].avg - lg[a.name].avg; }).slice(0, 8);
+    .sort(function(a,b){ return lg[b.name].avg - lg[a.name].avg; }).slice(0, SPEC_TOP_N);
   var out = [];
   top.forEach(function(p, i){
     var opp = inGame[normTeam(p.team)];
-    if (!opp || !isPlayingP(key, p.name, p.team) || !hasAnyOddsFor(key, p.name)) return;
+    if (!opp) return;                                  // in the league's best, not in this game
+    if (SPEC_TAP) SPEC_TAP.inFixture = (SPEC_TAP.inFixture || 0) + 1;
+    trc('inFixture');
+    if (!isPlayingP(key, p.name, p.team)){ trc('notPlaying'); return; }
+    if (!hasAnyOddsFor(key, p.name)){ trc('noOddsAtAll'); return; }
     var dr = dvpRankFor(key, opp, p.position || p.pos, stat);
-    if (!dr || dr.pct == null || dr.pct < 4) return;   // a thin pool is no read at all
+    if (!dr || dr.pct == null){ trc('noDvp'); return; }
+    if (dr.pct < 4){ trc('dvp<4%'); return; }          // a thin pool is no read at all
     var b = nblPriced(key, p, stat, opp);
-    if (!b) return;
+    if (!b){ trc('noPricedBet'); return; }
     /* Volume into a soft defence is the read, but the PRICE decides whether it is a bet. These
        tiles had no floor at all, and 14% of NHL shot lines sit under $1.35 - a line he clears nine
        times in ten at $1.05 still loses money. Same rule Shot Machines uses.
@@ -8065,10 +8075,11 @@ function nblSpecialist(key, g, stat){
        ever flagged it. */
     var px = +(b.od && b.od.price);
     if (SPEC_TAP){ SPEC_TAP.prices.push(px); SPEC_TAP.lines.push(b.od && b.od.line); }
-    if (!(px >= SPEC_MIN_PRICE)) return;
+    if (!(px >= SPEC_MIN_PRICE)){ trc('price<' + SPEC_MIN_PRICE); return; }
     // and it has to pay at his own rate over the games we have
     var hit = specHitRate(key, p.name, stat, b.od.line);
-    if (hit != null && hit * px - 1 <= 0) return;
+    if (hit != null && hit * px - 1 <= 0){ trc('noEdgeAtThatPrice'); return; }
+    trc('kept');
     b.hit = hit;
     var lr = specLeagueRank(key, stat, p.name);
     out.push({ name:p.name, p:p, opp:opp, rank:i+1, lgRank:lr.rank, lgOf:lr.total,
@@ -8079,10 +8090,9 @@ function nblSpecialist(key, g, stat){
   return out;
 }
 function nblSpecRow(key, r, label){
-  // "#2 in this game" is what the rank is; the league place goes next to it when we have one
-  var place = '#' + r.rank + ' in this game'
-    + (r.lgRank ? ' \u00b7 #' + r.lgRank + ' of ' + r.lgOf + ' in the league' : '')
-    + ' \u00b7 ' + r.avg.toFixed(1) + '/gm';
+  // the field is the league, so rank IS a league rank - and lgRank, measured independently over
+  // the whole pool, has to agree with it (a test holds that down)
+  var place = '#' + r.rank + ' in the league \u00b7 ' + r.avg.toFixed(1) + '/gm';
   return mlbRow(key, r, label, [[place, true],
     [abbrOf(key, r.opp)+' concede +'+Math.round(r.dr.pct)+'% to '+esc(posShortP(r.p) || r.p.position || ''), true]]);
 }
@@ -8290,8 +8300,8 @@ function nbaSignals(key, g){
       di = nblSpecialist(key, g, 'assists'), bo = nblSpecialist(key, g, 'rebounds');
   var dd = nbaBigNights(key, g, 2), td = nbaBigNights(key, g, 3);
   var why = function(st){
-    return 'Nobody in this game is among the best at ' + st + ' into a defence conceding 4%+ above '
-      + 'average to his position, at a price his record backs.';
+    return 'None of the league’s top ' + SPEC_TOP_N + ' at ' + st + ' is in this game against a '
+      + 'defence conceding 4%+ above average to his position, at a price his record backs.';
   };
   return sigBand('NBA Signals',
       sigTile('ti-basketball', 'Triple Threat', 'Triple-doubles, and how often',
@@ -8316,7 +8326,7 @@ function nblSignals(key, g){
   var sl = nblSpecialist(key, g, 'points'), sp = nblSpecialist(key, g, 'threes'),
       di = nblSpecialist(key, g, 'assists'), bo = nblSpecialist(key, g, 'rebounds'), dd = nblDoubleTrouble(key, g),
       nm = nblNextManUp(key, g);
-  var why = function(st){ return 'None of the league\u2019s top 15 at '+st+' faces a defence conceding 4%+ above average to his position at a price the model and his record back.'; };
+  var why = function(st){ return 'None of the league\u2019s top '+SPEC_TOP_N+' at '+st+' faces a defence conceding 4%+ above average to his position at a price the model and his record back.'; };
   return sigBand('NBL Signals',
     sigTile('ti-sword', 'Slashers', 'Top scorers into a soft defence', sl.map(function(r){ return nblSpecRow(key, r, 'Points'); }), why('points'))
     + sigTile('ti-droplet', 'Splashers', 'Top shooters into a defence that concedes threes', sp.map(function(r){ return nblSpecRow(key, r, 'Threes'); }), why('threes'))
@@ -8394,7 +8404,7 @@ function nhlSignals(key, g){
   if (key !== 'nhl') return '';
   var sn = nblSpecialist(key, g, 'shots'), pr = nblSpecialist(key, g, 'points'),
       pm = nblSpecialist(key, g, 'assists'), fi = nblSpecialist(key, g, 'goals'), pp = nhlPowerPlay(key, g);
-  var why = function(st){ return 'None of the league\u2019s top 15 at '+st+' faces a defence conceding 4%+ above average to his position at a price the model and his record back.'; };
+  var why = function(st){ return 'None of the league\u2019s top '+SPEC_TOP_N+' at '+st+' faces a defence conceding 4%+ above average to his position at a price the model and his record back.'; };
   // NOT pm - that name already holds the Playmakers rows in this function
   var sm = shotMachines(key, g), ppm = ppMerchants(key, g), due = dueToScore(key, g);
   return sigBand('NHL Signals',
@@ -20350,14 +20360,22 @@ window.LAB = {
      gate tracer is not left switched on in the page. */
   lineupPosProbe: function(key, team){ return lineupPosSet(key, team); },
   leagueAvgProbe: function(key, stat){ return leagueAvg(key, stat); },
+  specTopNProbe: function(n){ if (n != null) SPEC_TOP_N = n; return SPEC_TOP_N; },
   /* exposed for tests: the specialist rows across the whole board, with the in-game place and the
      league place side by side, so a test can check the row never claims a league rank it has not
      earned. */
+  specGateProbe: function(key, stat){
+    var fx = asArray(state.sports[key].data.fixture) || [], gates = {}, rows = 0;
+    SPEC_TRACE_HOLD = SIG_TRACE; SIG_TRACE = gates;
+    try { fx.forEach(function(g){ rows += nblSpecialist(key, g, stat).length; }); }
+    finally { SIG_TRACE = SPEC_TRACE_HOLD; }
+    return { fixtures:fx.length, rows:rows, gates:gates };
+  },
   specRowsProbe: function(key, stat){
     var fx = asArray(state.sports[key].data.fixture) || [], out = [];
     fx.forEach(function(g){
       nblSpecialist(key, g, stat).forEach(function(r){
-        out.push({ fixture:g.away + '@' + g.home, name:r.name, rank:r.rank,
+        out.push({ fixture:g.away + '@' + g.home, name:r.name, rank:r.rank, opp:r.opp,
                    lgRank:r.lgRank, lgOf:r.lgOf, avg:r.avg, row:nblSpecRow(key, r, stat) });
       });
     });
