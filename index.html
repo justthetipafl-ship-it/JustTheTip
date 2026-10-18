@@ -121,42 +121,14 @@
   .pf-cell b{display:block;font-family:var(--font-mono);font-size:15px;}
   .pf-cell span{display:block;font-size:9px;letter-spacing:.05em;text-transform:uppercase;color:var(--text-3);margin-top:2px;}
   .pf-cell i{display:block;font-style:normal;font-size:9px;color:var(--text-3);margin-top:3px;}
-  .q1-row{display:flex;align-items:center;gap:8px;padding:5px 8px;border-top:1px solid var(--border);font-size:11px;}
-  .sz-wrap{border:1px solid var(--border);border-radius:8px;overflow:hidden;}
-  .sz-row{display:flex;align-items:center;gap:8px;padding:6px 8px;border-top:1px solid var(--border);font-size:11px;}
-  .sz-row:first-child{border-top:0;}
-  .sz-nm{flex:1.1;min-width:0;}
-  .sz-nm b{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-  .sz-nm span{font-size:9px;color:var(--text-3);}
-  .sz-zn{flex:1.6;min-width:0;font-size:10px;color:var(--text-2);}
-  .sz-zn span{display:block;font-size:9px;color:var(--text-3);}
-  .sz-sw{min-width:50px;text-align:right;}
-  .sz-sw b{font-family:var(--font-mono);font-size:13px;}
-  .sz-sw span{display:block;font-size:8px;color:var(--text-3);}
-  .sz-up .sz-sw b{color:var(--accent);}
-  .sz-dn .sz-sw b{color:#f97316;}
-  @media(max-width:430px){ .sz-zn{flex:1.2;} }
-  .q1-wrap{border:1px solid var(--border);border-radius:8px;overflow:hidden;}
-  .q1-row:first-child{border-top:0;}
-  .q1-nm{flex:1.4;min-width:0;}
-  .q1-nm b{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-  .q1-nm span{font-size:9px;color:var(--text-3);}
-  .q1-nm .q1-part{font-style:normal;color:#f97316;}
-  .q1-st{flex:1.6;display:flex;flex-wrap:wrap;gap:6px;font-family:var(--font-mono);font-size:10px;color:var(--text-2);}
-  .q1-sh{min-width:58px;text-align:right;}
-  .q1-sh b{font-family:var(--font-mono);}
-  .q1-sh span{display:block;font-size:9px;color:var(--text-3);}
-  .q1-pr{min-width:62px;text-align:right;font-size:9px;color:var(--text-3);font-family:var(--font-mono);}
-  /* --good and --bad do not exist in this page; the house pattern is var(--accent) at one end and
-     #f97316 at the other, the same pair .gl-ev and .dd-dt already use. Naming a variable that is
-     not there fails silently - the class applies, the colour does not, and the row looks merely
-     unremarkable rather than broken. */
-  .q1-fast .q1-sh b{color:var(--accent);}
-  .q1-slow .q1-sh b{color:#f97316;}
-  @media(max-width:430px){
-    .q1-st{flex:1.1;}
-    .q1-pr{display:none;}
-  }
+  /* The first-quarter and shot-matchup lists used to carry their own .q1-* and .sz-* row
+     rules here. They now render through the page's shared row components (.gl-row, .gl-nm,
+     .gl-tag, .gl-why/.gl-chip, .gl-right/.gl-ev) inside a .sig-tile card, so the private
+     copies are gone - 35 lines of a parallel design system that was a few pixels off the
+     real one in every dimension. The house status pair stays what it always was: var(--accent)
+     at one end and #f97316 at the other, which is what .gl-chip.good/.bad and .gl-ev.pos/.neg
+     already use. (--good and --bad have never existed in this page; naming them fails
+     silently - the class applies, the colour does not.) */
   .qt-row{display:flex;align-items:center;gap:8px;padding:3px 0;font-size:11px;}
   .qt-row .qt-q{min-width:92px;font-family:var(--font-mono);color:var(--text-2);}
   .qt-row .qt-sh{flex:1;font-size:10px;color:var(--text-3);}
@@ -16705,34 +16677,55 @@ function nbaQ1Section(key, g){
   });
   var show = rows.slice(0, 12);
   var pc = function(v){ return Math.round(v * 100) + '%'; };
+  /* Built from the page's own row components - .gl-row, .gl-nm, .gl-tag, .gl-why/.gl-chip and
+     .gl-right/.gl-ev - instead of a private set of classes. The bespoke .q1-* rules amounted to a
+     second, slightly different row: 5px padding against the site's 10px, an 11px name against
+     12px/700, a 58px figure column against 80px, and the number in mono 13px where every other
+     row anchors on --font-display at 17px. None of it was wrong in isolation; it just did not
+     look like the rest of the site.
+     The duplicated presence readout goes with it. The old row printed x.q.presence twice - once
+     as "of Q1s" beside the name, again as "of games" in its own column - because that column was
+     hidden at phone width and the figure decides whether the rest of the row means anything.
+     Chips wrap, so one chip says it once. */
   var body = show.map(function(x){
     var one = x.q.q1, sh = x.q.share;
-    var band = sh == null ? '' : (sh >= Q1_BAND_HI ? 'q1-fast' : (sh <= Q1_BAND_LO ? 'q1-slow' : ''));
-    var word = sh == null ? '' : (sh >= Q1_BAND_HI ? 'front-loads'
-                                : (sh <= Q1_BAND_LO ? 'slow starter' : 'even'));
-    var stats = Q1_STATS.map(function(f){
+    var fast = sh != null && sh >= Q1_BAND_HI, slow = sh != null && sh <= Q1_BAND_LO;
+    var word = sh == null ? '' : (fast ? 'front-loads' : (slow ? 'slow starter' : 'even'));
+    var chips = Q1_STATS.map(function(f){
       var v = +one[f[0]] || 0;
-      return v >= 0.05 ? '<span>' + v.toFixed(1) + ' ' + f[1] + '</span>' : '';
+      return v >= 0.05 ? '<span class="gl-chip">' + v.toFixed(1) + ' ' + esc(f[1]) + '</span>' : '';
     }).join('');
-    return '<div class="q1-row ' + band + '">'
-      + '<div class="q1-nm"><b>' + esc(x.p.name) + '</b>'
-        + '<span>' + esc(abbrOf(key, x.team)) + (x.priced ? ' · priced' : '')
-        /* The presence column is hidden on a phone for width, and it is the fact that decides
-           whether the rest of the row means anything - so when it is not near-total it comes
-           along here, where there is always room for it. */
-        + (x.q.presence != null && x.q.presence < 0.95
-            ? ' · <i class="q1-part">' + pc(x.q.presence) + ' of Q1s</i>' : '')
-        + '</span></div>'
-      + '<div class="q1-st">' + stats + '</div>'
-      + '<div class="q1-sh"><b>' + (sh == null ? '—' : pc(sh)) + '</b>'
-        + '<span>' + esc(word) + '</span></div>'
-      + '<div class="q1-pr">' + (x.q.presence == null ? '' : pc(x.q.presence) + ' of games')
-      + '</div></div>';
+    /* The portrait and the click-through belong to the row, not to decoration: .gl-row sets
+       cursor:pointer, so a row that opens nothing is a dead affordance. No rowBtns, though -
+       those add a leg to the slip, and there is no bet on this row to add. */
+    return '<div class="gl-row" onclick="LAB.player(\'' + key + '\',\''
+      + esc(x.p.name).replace(/'/g, "\\'") + '\')">'
+      + playerImgP(key, x.p.name, 28)
+      + '<div class="gl-left">'
+        + '<div class="gl-nm"><b>' + esc(x.p.name) + '</b>'
+          + '<span class="gl-tag">' + esc(abbrOf(key, x.team)) + (x.priced ? ' · PRICED' : '')
+          + '</span></div>'
+        + '<div class="gl-why">' + chips
+          + (word ? '<span class="gl-chip' + (fast ? ' good' : (slow ? ' bad' : '')) + '">'
+              + esc(word) + '</span>' : '')
+          + (x.q.presence != null
+              ? '<span class="gl-chip">on for ' + pc(x.q.presence) + ' of Q1s</span>' : '')
+        + '</div>'
+      + '</div>'
+      + '<div class="gl-right">'
+        + '<div class="gl-ev' + (fast ? ' pos' : (slow ? ' neg' : '')) + '">'
+          + (sh == null ? '—' : pc(sh)) + '</div>'
+        + '<div class="gl-evl">Q1 SHARE</div></div>'
+      + '</div>';
   }).join('');
   var seasons = ((state.sports[key].data.quarters || {}).seasons || []).join(', ');
-  return '<div class="dayband"><span>First quarter</span></div>'
-    + '<div class="q1-wrap">' + body + '</div>'
-    + '<div class="deg-note">First-quarter production per game, from the play-by-play'
+  return '<details class="sig-tile" open><summary class="sig-head">'
+    + '<span class="sig-ico"><i class="ti ti-stairs-up"></i></span>'
+    + '<span><span class="sig-ttl">First Quarter</span>'
+    + '<span class="sig-desc">When his scoring arrives — context, not a bet</span></span>'
+    + '<span class="sig-n">' + show.length + '</span></summary>'
+    + body
+    + '<div class="sig-empty">First-quarter production per game, from the play-by-play'
     + (seasons ? ' (' + esc(seasons) + ' season)' : '') + '. The share column is how much of his '
     + 'own scoring arrives in the first: a quarter is 25% of a game, and among the ' + ix._n
     + ' players who are regularly out there for it, the '
@@ -16744,7 +16737,7 @@ function nbaQ1Section(key, g){
     + 'a bet — it is context for the full-game line, which averages four quarters that are '
     + 'not alike. Neither end is better than the other: front-loading suits an over that needs '
     + 'an early start, and a slow starter is the one you want if the first twelve minutes ever '
-    + 'get a market of their own.</div>';
+    + 'get a market of their own.</div></details>';
 }
 function nbaQuarters(key, name){
   if (key !== 'nba') return null;
@@ -16841,27 +16834,43 @@ function nbaShotMatchup(key, g){
   // biggest mover first, either way - a matchup that hurts him is the same finding as one that helps
   rows.sort(function(a, b){ return Math.abs(b.sw.swing) - Math.abs(a.sw.swing); });
   var keep = nbaZoneKeep(key);
+  // same shared row components as every other list on the page; see the note in nbaQ1Section
   var body = rows.slice(0, SZ_SHOW).map(function(x){
     var sw = x.sw, lead = sw.lead;
-    var dir = sw.swing >= 0 ? 'sz-up' : 'sz-dn';
+    var up = sw.swing >= 0;
     var gapPts = Math.round(lead.gap * 1000) / 10;
-    return '<div class="sz-row ' + dir + '">'
-      + '<div class="sz-nm"><b>' + esc(x.p.name) + '</b>'
-        + '<span>' + esc(abbrOf(key, x.team)) + ' v ' + esc(abbrOf(key, x.opp))
-        + (x.priced ? ' · priced' : '') + '</span></div>'
-      + '<div class="sz-zn">' + esc(ZONE_LAB[lead.z] || lead.z)
-        + '<span>' + Math.round(lead.share * 100) + '% of his shots · '
-        + esc(abbrOf(key, x.opp)) + ' ' + ordinalish(lead.rank) + ' of ' + lead.of
-        + ' (' + (gapPts >= 0 ? '+' : '') + gapPts.toFixed(1) + ' v league)</span></div>'
-      + '<div class="sz-sw"><b>' + (sw.swing >= 0 ? '+' : '') + sw.swing.toFixed(2) + '</b>'
-        + '<span>pts</span></div></div>';
+    return '<div class="gl-row" onclick="LAB.player(\'' + key + '\',\''
+      + esc(x.p.name).replace(/'/g, "\\'") + '\')">'
+      + playerImgP(key, x.p.name, 28)
+      + '<div class="gl-left">'
+        + '<div class="gl-nm"><b>' + esc(x.p.name) + '</b>'
+          + '<span class="gl-tag">' + esc(abbrOf(key, x.team)) + ' V ' + esc(abbrOf(key, x.opp))
+          + (x.priced ? ' · PRICED' : '') + '</span></div>'
+        + '<div class="gl-why">'
+          + '<span class="gl-chip">' + esc(ZONE_LAB[lead.z] || lead.z) + '</span>'
+          + '<span class="gl-chip">' + Math.round(lead.share * 100) + '% of his shots</span>'
+          + '<span class="gl-chip' + (up ? ' good' : ' bad') + '">' + esc(abbrOf(key, x.opp))
+            + ' ' + ordinalish(lead.rank) + ' of ' + lead.of + '</span>'
+          + '<span class="gl-chip">' + (gapPts >= 0 ? '+' : '') + gapPts.toFixed(1)
+            + ' v league</span>'
+        + '</div>'
+      + '</div>'
+      + '<div class="gl-right">'
+        + '<div class="gl-ev ' + (up ? 'pos' : 'neg') + '">'
+          + (up ? '+' : '') + sw.swing.toFixed(2) + '</div>'
+        + '<div class="gl-evl">PTS SWING</div></div>'
+      + '</div>';
   }).join('');
   var kp = (zf.zones || []).filter(function(z){ return keep[z] != null; })
     .map(function(z){ return esc(ZONE_LAB[z] || z).toLowerCase() + ' ' + (+keep[z]).toFixed(2); })
     .join(', ');
-  return '<div class="dayband"><span>Shot matchup</span></div>'
-    + '<div class="sz-wrap">' + body + '</div>'
-    + '<div class="deg-note">What his shot diet is worth against THIS defence, zone by zone. '
+  return '<details class="sig-tile" open><summary class="sig-head">'
+    + '<span class="sig-ico"><i class="ti ti-target"></i></span>'
+    + '<span><span class="sig-ttl">Shot Matchup</span>'
+    + '<span class="sig-desc">Where he shoots against who he is shooting at</span></span>'
+    + '<span class="sig-n">' + Math.min(rows.length, SZ_SHOW) + '</span></summary>'
+    + body
+    + '<div class="sig-empty">What his shot diet is worth against THIS defence, zone by zone. '
     + 'Position defence cannot see it: it treats every centre alike whether he lives at the rim or '
     + 'settles for long twos. '
     + '<b>The points figure is already shrunk</b> by how much of a defensive gap actually carries '
@@ -16872,7 +16881,7 @@ function nbaShotMatchup(key, g){
     + 'After that shrinking the largest matchup in the league is worth <b>under half a point</b>, '
     + 'and the typical one 0.3% of a player’s own number — well inside the margin. So '
     + 'this carries no side and no price, and it is not going to become a tile. The value here is '
-    + 'knowing where he shoots and who he is shooting at, not the points translation.</div>';
+    + 'knowing where he shoots and who he is shooting at, not the points translation.</div></details>';
 }
 function nbaZones(key, name){
   if (key !== 'nba') return null;
@@ -20551,6 +20560,13 @@ window.LAB = {
      and how many were left out for not being on the floor. The band and the display filter have to
      describe the same population, and nothing in the rendered page would reveal it if they did
      not: every row would simply come out the middle colour. */
+  sectionHtmlProbe: function(key, which){
+    var fx = asArray(state.sports[key].data.fixture) || [], out = '';
+    for (var i = 0; i < fx.length && !out; i++)
+      out = which === 'q1' ? nbaQ1Section(key, fx[i]) : nbaShotMatchup(key, fx[i]);
+    return out;
+  },
+  ouTileProbe: function(key, g, kind){ return ouTile(key, g, kind); },
   q1Probe: function(key){
     var ix = nbaQ1Index(key);
     if (!ix) return null;
