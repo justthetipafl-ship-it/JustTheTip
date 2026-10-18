@@ -790,9 +790,10 @@
   .cmb-tabs{display:flex;gap:4px;margin:0 14px 11px;background:var(--surface-2);padding:4px;border-radius:8px;}
   /* The Build card's source switcher. Modelled on .cmb-tab below - same segmented shape, same
      surfaces - so it reads as part of the page rather than a fifth way of drawing a button. */
-  .bld-tabs{display:flex;gap:2px;background:var(--surface);border:1px solid var(--border);
-    border-radius:9px;padding:3px;margin:0 0 10px;}
-  .bld-tab{flex:1;background:transparent;border:0;border-radius:7px;cursor:pointer;padding:6px 4px;
+  .bld-tabs{display:flex;flex-wrap:wrap;gap:2px;background:var(--surface);
+    border:1px solid var(--border);border-radius:9px;padding:3px;margin:0 0 10px;}
+  .bld-tab{flex:1 1 auto;min-width:0;background:transparent;border:0;border-radius:7px;
+    cursor:pointer;padding:6px 6px;white-space:nowrap;
     color:var(--text-3);font-family:var(--font-display);font-weight:800;font-size:10px;
     letter-spacing:.06em;text-transform:uppercase;}
   .bld-tab.on{background:var(--surface-2);color:var(--text);}
@@ -8287,7 +8288,7 @@ function nbaRestSection(key, g){
   }).filter(Boolean);
   if (rows.length < 2) return '';
   var diff = (rows[1].r.rest || 0) - (rows[0].r.rest || 0);
-  return '<div class="dayband"><span>The schedule</span></div>'
+  return paneBand('The schedule')
     + '<div class="rest-wrap">' + rows.map(function(x){
         return '<div class="rest-card' + (x.hard ? ' rest-hard' : '') + '">'
           + '<b>' + esc(abbrOf(key, x.team)) + '</b>'
@@ -8892,9 +8893,22 @@ var FOLD_NAME = { form:'Recent form', dvp:'Defence by position', dist:'Distribut
 
    BUILD_PANE lets each section skip its own dayband when it is drawn inside the card. Their
    innards are untouched; only the heading they used to print for themselves goes. */
-var BUILD_PANE = false;
+var BUILD_PANE = false, CTX_PANE = false;
 function paneBand(txt){
-  return BUILD_PANE ? '' : '<div class="dayband"><span>' + txt + '</span></div>';
+  return (BUILD_PANE || CTX_PANE) ? '' : '<div class="dayband"><span>' + txt + '</span></div>';
+}
+/* A .sig-tile card when the read stands on its own, and just its contents when it is a pane
+   inside another card - otherwise the Context card would wrap a card in a card. The two NBA reads
+   that were rebuilt onto the shared row components both ended with the same eleven lines of card
+   chrome; this is that, once. */
+function readCard(icon, title, desc, count, body, note){
+  if (CTX_PANE) return body + (note || '');
+  return '<details class="sig-tile" open><summary class="sig-head">'
+    + '<span class="sig-ico"><i class="ti ' + esc(icon) + '"></i></span>'
+    + '<span><span class="sig-ttl">' + esc(title) + '</span>'
+    + '<span class="sig-desc">' + esc(desc) + '</span></span>'
+    + (count != null ? '<span class="sig-n">' + count + '</span>' : '')
+    + '</summary>' + body + (note || '') + '</details>';
 }
 /* Nerd Mode showed Jupiter and Déjà Vu but not the simulator or the builder, so the card keeps
    each source's old visibility rather than imposing one: in Nerd Mode the two reads stay and the
@@ -8970,6 +8984,55 @@ function buildRender(){
   if (!html){ render(); return; }
   el.outerHTML = html;
 }
+/* THE CONTEXT CARD ---------------------------------------------------------------------------
+   Five NBA-only reads - the schedule, the game environment, the first quarter, the shot matchup
+   and who an absence helps - stacked as five separate sections on the busiest fixture page in the
+   tool. None of them carries a price or a side: they are all answering "what should I know about
+   this game before I read anything else". So they become one card with five sources, the same
+   shape as Build, and the page goes from five headings to one. */
+/* Short labels on purpose: five tabs at phone width is the constraint, and "First Quarter" plus
+   "Shot Matchup" already crowd the strip at 460px. The pane itself still says what it is. */
+var CTX_SOURCES = [['sched','Schedule'], ['env','Pace'], ['q1','Q1'],
+                   ['shots','Shots'], ['outs','Absences']];
+var CTX_NOW = null;
+function ctxPane(key, g, src){
+  CTX_PANE = true;
+  try {
+    if (src === 'sched') return nbaRestSection(key, g) || '';
+    if (src === 'env')   return nbaPaceSection(key, g) || '';
+    if (src === 'q1')    return nbaQ1Section(key, g) || '';
+    if (src === 'shots') return nbaShotMatchup(key, g) || '';
+    if (src === 'outs')  return nbaOutSection(key, g) || '';
+    return '';
+  } catch(e){ return ''; }
+  finally { CTX_PANE = false; }
+}
+function ctxSection(key, g){
+  if (key !== 'nba') return '';
+  // only offer a source that has something; a tab that opens on nothing is worse than no tab
+  var have = CTX_SOURCES.filter(function(x){ return !!ctxPane(key, g, x[0]); });
+  if (!have.length) return '';
+  var src = have.some(function(x){ return x[0] === state.view.ctxSrc; })
+    ? state.view.ctxSrc : have[0][0];
+  CTX_NOW = { key:key, g:g };
+  var tabs = have.length < 2 ? '' : '<div class="bld-tabs">' + have.map(function(x){
+      return '<button class="bld-tab' + (x[0] === src ? ' on' : '') + '" onclick="LAB.ctxSrc(\''
+        + x[0] + '\')">' + esc(x[1]) + '</button>';
+    }).join('') + '</div>';
+  return '<div id="ctx-panel"><details class="sig-tile" open>'
+    + '<summary class="sig-head"><span class="sig-ico"><i class="ti ti-telescope"></i></span>'
+    + '<span><span class="sig-ttl">Context</span>'
+    + '<span class="sig-desc">What to know before you read a price</span></span>'
+    + '<span class="sig-n">' + have.length + '</span></summary>'
+    + '<div class="bld-body">' + tabs + ctxPane(key, g, src) + '</div></details></div>';
+}
+function ctxRender(){
+  var el = document.getElementById('ctx-panel');
+  if (!el || !CTX_NOW){ render(); return; }
+  var html = ctxSection(CTX_NOW.key, CTX_NOW.g);
+  if (!html){ render(); return; }
+  el.outerHTML = html;
+}
 function fold(id, html){
   if (!html) return '';
   var open = state.view.fold && state.view.fold[id] != null
@@ -9034,11 +9097,7 @@ function focusPage(){
     + (S.status === 'ready' && !state.view.nerd ? matchRadar(key, g) : '')
     + (S.t3 === 'ready' && !state.view.nerd ? goalieSection(key, g) : '')
     + (S.t3 === 'ready' && !state.view.nerd ? firstReadSection(key, g) : '')
-    + (!state.view.nerd ? nbaRestSection(key, g) : '')
-    + (S.t3 === 'ready' && !state.view.nerd ? nbaPaceSection(key, g) : '')
-    + (S.t3 === 'ready' && !state.view.nerd ? nbaQ1Section(key, g) : '')
-    + (S.t3 === 'ready' && !state.view.nerd ? nbaShotMatchup(key, g) : '')
-    + (S.t3 === 'ready' && !state.view.nerd ? nbaOutSection(key, g) : '')
+    + (!state.view.nerd ? ctxSection(key, g) : '')
 
     // Nerd Mode replaces the signals rather than adding to them: it is a different read of the
     // same fixture (the market against itself), and stacking both made the page enormous.
@@ -16488,7 +16547,7 @@ function nbaPaceSection(key, g){
   // the projection's own rank among every pairing is meaningless; what matters is where it sits
   // against a normal night
   var band = d >= 2.5 ? 'fast' : d <= -2.5 ? 'slow' : 'about normal';
-  return '<div class="dayband"><span>Game environment</span></div>'
+  return paneBand('Game environment')
     + '<div class="pf-grid">'
       // no colour on it: green for fast and red for slow would say a slow game is a worse bet,
       // when it is only a different one - good for unders, bad for overs. The word carries it.
@@ -16677,7 +16736,7 @@ function nbaOutSection(key, g){
       + hits.slice(0, 3).map(function(h){ return wwRow(h.w, h.p.name); }).join('') + '</div>');
   });
   if (!blocks.length) return '';
-  return '<div class="dayband"><span>Who it helps</span></div>' + blocks.join('')
+  return paneBand('Who it helps') + blocks.join('')
     + '<div class="deg-note">Players ruled out tonight, and the team-mates whose numbers have '
     + 'moved most when they have sat before. Measured on games already played, so a gap has to '
     + 'clear its own noise to appear here at all.</div>';
@@ -16816,13 +16875,9 @@ function nbaQ1Section(key, g){
       + '</div>';
   }).join('');
   var seasons = ((state.sports[key].data.quarters || {}).seasons || []).join(', ');
-  return '<details class="sig-tile" open><summary class="sig-head">'
-    + '<span class="sig-ico"><i class="ti ti-stairs-up"></i></span>'
-    + '<span><span class="sig-ttl">First Quarter</span>'
-    + '<span class="sig-desc">When his scoring arrives — context, not a bet</span></span>'
-    + '<span class="sig-n">' + show.length + '</span></summary>'
-    + body
-    + '<div class="sig-empty">First-quarter production per game, from the play-by-play'
+  return readCard('ti-stairs-up', 'First Quarter',
+    'When his scoring arrives \u2014 context, not a bet', show.length, body,
+      '<div class="sig-empty">First-quarter production per game, from the play-by-play'
     + (seasons ? ' (' + esc(seasons) + ' season)' : '') + '. The share column is how much of his '
     + 'own scoring arrives in the first: a quarter is 25% of a game, and among the ' + ix._n
     + ' players who are regularly out there for it, the '
@@ -16834,7 +16889,7 @@ function nbaQ1Section(key, g){
     + 'a bet — it is context for the full-game line, which averages four quarters that are '
     + 'not alike. Neither end is better than the other: front-loading suits an over that needs '
     + 'an early start, and a slow starter is the one you want if the first twelve minutes ever '
-    + 'get a market of their own.</div></details>';
+    + 'get a market of their own.</div>');
 }
 function nbaQuarters(key, name){
   if (key !== 'nba') return null;
@@ -16961,13 +17016,9 @@ function nbaShotMatchup(key, g){
   var kp = (zf.zones || []).filter(function(z){ return keep[z] != null; })
     .map(function(z){ return esc(ZONE_LAB[z] || z).toLowerCase() + ' ' + (+keep[z]).toFixed(2); })
     .join(', ');
-  return '<details class="sig-tile" open><summary class="sig-head">'
-    + '<span class="sig-ico"><i class="ti ti-target"></i></span>'
-    + '<span><span class="sig-ttl">Shot Matchup</span>'
-    + '<span class="sig-desc">Where he shoots against who he is shooting at</span></span>'
-    + '<span class="sig-n">' + Math.min(rows.length, SZ_SHOW) + '</span></summary>'
-    + body
-    + '<div class="sig-empty">What his shot diet is worth against THIS defence, zone by zone. '
+  return readCard('ti-target', 'Shot Matchup',
+    'Where he shoots against who he is shooting at', Math.min(rows.length, SZ_SHOW), body,
+      '<div class="sig-empty">What his shot diet is worth against THIS defence, zone by zone. '
     + 'Position defence cannot see it: it treats every centre alike whether he lives at the rim or '
     + 'settles for long twos. '
     + '<b>The points figure is already shrunk</b> by how much of a defensive gap actually carries '
@@ -16978,7 +17029,7 @@ function nbaShotMatchup(key, g){
     + 'After that shrinking the largest matchup in the league is worth <b>under half a point</b>, '
     + 'and the typical one 0.3% of a player’s own number — well inside the margin. So '
     + 'this carries no side and no price, and it is not going to become a tile. The value here is '
-    + 'knowing where he shoots and who he is shooting at, not the points translation.</div></details>';
+    + 'knowing where he shoots and who he is shooting at, not the points translation.</div>');
 }
 function nbaZones(key, name){
   if (key !== 'nba') return null;
@@ -19952,6 +20003,7 @@ window.LAB = {
   resPeriod: function(p){ state.view.resPeriod = p; render(); },
   /* Switches the Build card's source and redraws that card only - see buildRender. */
   buildSrc: function(src){ state.view.buildSrc = src; buildRender(); },
+  ctxSrc: function(src){ state.view.ctxSrc = src; ctxRender(); },
   crewOpen: function(id){ state.view.crewTile = id || null; if (window.scrollTo) window.scrollTo(0, 0); render(); },
   nerd: function(){ state.view.nerd = !state.view.nerd; render(); },
   degSport: function(k){ state.view.degSport = k; state.view.degStat = null; render(); },
@@ -20666,6 +20718,17 @@ window.LAB = {
     return out;
   },
   ouTileProbe: function(key, g, kind){ return ouTile(key, g, kind); },
+  ctxProbe: function(key, src){
+    var fx = asArray(state.sports[key].data.fixture) || [], was = state.view.ctxSrc, out = {};
+    if (src != null) state.view.ctxSrc = src;
+    try {
+      for (var i = 0; i < fx.length; i++){
+        var h = ctxSection(key, fx[i]);
+        if (h){ out = { html:h, fixture:fx[i].away + '@' + fx[i].home }; break; }
+      }
+    } finally { state.view.ctxSrc = was; }
+    return out;
+  },
   buildProbe: function(key, src){
     var fx = asArray(state.sports[key].data.fixture) || [], was = state.view.buildSrc, out = {};
     if (src != null) state.view.buildSrc = src;
