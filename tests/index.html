@@ -3130,7 +3130,7 @@ function formSection(key, g){
   if (!resultRows(key).length)
     return secNote('Last 5', 'results.json returned nothing for '+SPORTS[key].name+' \u2014 the file is missing, empty, or failed to load.');
   var ms = gameStart(g).ms;
-  return '<div class="dayband"><span>Last 5</span></div>'
+  return paneBand('Last 5')
     + '<div class="l5-grid">'+formCard(key, g.away, ms)+formCard(key, g.home, ms)+'</div>';
 }
 
@@ -3464,7 +3464,7 @@ function luCard(key, team, g){
 }
 function lineupSection(key, g){
   var a = luCard(key, g.away, g), h = luCard(key, g.home, g);
-  return '<div class="dayband"><span>Lineup</span></div><div class="lu-grid">'+a+h+'</div>';
+  return paneBand('Lineup') + '<div class="lu-grid">'+a+h+'</div>';
 }
 
 /* ---- team section: DVP by position ----------------------------------------
@@ -3652,7 +3652,7 @@ function pdCard(key, team){
 function distSection(key, g){
   var cfg = POS_DIST_CFG[key]; if (!cfg) return '';       // sport has no positional volume stat - not a failure
   var a = pdCard(key, g.away), h = pdCard(key, g.home);
-  return '<div class="dayband"><span>'+esc(cfg.label)+' Distribution</span></div>'
+  return paneBand(esc(cfg.label)+' Distribution')
     + '<div class="ds-grid">'+a+h+'</div>';
 }
 
@@ -3723,7 +3723,7 @@ function starterSection(key, g){
   var cond = [ pk.name || g.venue || '' ];
   if (pk.hrFactor != null) cond.push('Park HR '+(pk.hrFactor>=1?'+':'')+Math.round((pk.hrFactor-1)*100)+'%');
   if (wx.hrMult != null && wx.hrMult !== 1) cond.push('Wind '+(wx.hrMult>=1?'+':'')+Math.round((wx.hrMult-1)*100)+'%');
-  return '<div class="dayband"><span>Starter Matchup</span></div>'
+  return paneBand('Starter Matchup')
     + '<div class="ms-sub" style="margin:-2px 0 6px">'+esc(cond.filter(Boolean).join(' \u00b7 '))+'</div>'
     + '<div class="ms-grid">'+msCard(key, g.away, g.homePitcher)+msCard(key, g.home, g.awayPitcher)+'</div>';
 }
@@ -3791,7 +3791,7 @@ function btCard(key, team){
 function halvesSection(key, g){
   if (key !== 'epl') return '';                            // half-time scores are an EPL-only feed
   var a = btCard(key, g.away), h = btCard(key, g.home);
-  return '<div class="dayband"><span>By The Halves</span></div><div class="bt-grid">'+a+h+'</div>';
+  return paneBand('By The Halves') + '<div class="bt-grid">'+a+h+'</div>';
 }
 function sbCard(key, team){
   var ev = eventsFor(key, team);
@@ -3812,7 +3812,7 @@ function sbCard(key, team){
 function subsSection(key, g){
   if (key !== 'epl') return '';                            // substitution events are an EPL-only feed
   var a = sbCard(key, g.away), h = sbCard(key, g.home);
-  return '<div class="dayband"><span>Substitution Trends</span></div><div class="bt-grid">'+a+h+'</div>';
+  return paneBand('Substitution Trends') + '<div class="bt-grid">'+a+h+'</div>';
 }
 
 /* ---- team section: first & last -------------------------------------------
@@ -3888,7 +3888,7 @@ function flCard(key, team){
 function firstLastSection(key, g){
   if (key !== 'epl' && key !== 'nfl') return '';           // no scoring-timing feed for AFL or MLB
   var a = flCard(key, g.away), h = flCard(key, g.home);
-  return '<div class="dayband"><span>'+(key === 'nfl' ? 'First TD' : 'First &amp; Last')+'</span></div>'
+  return paneBand(key === 'nfl' ? 'First TD' : 'First &amp; Last')
     + '<div class="bt-grid">'+a+h+'</div>';
 }
 
@@ -8877,6 +8877,20 @@ function secNote(title, why){
    page is actually FOR stays open. What a reader opens is remembered for the session, so anyone who
    wants everything gets it after one tap per section. */
 var FOLD_SHUT = { form:1, dvp:1, dist:1, starter:1, halves:1, subs:1, firstLast:1, jupiter:1, dejaVu:1 };
+/* Every folded section that went into the Compare and Build cards started CLOSED - form, dist,
+   starter, halves, subs, firstLast, jupiter, dejaVu are all in FOLD_SHUT above. A card that
+   opens by default would make the page busier than the four sections it replaced, which is the
+   opposite of the point. So those two start shut and Context does not: Context replaced reads
+   that were always on screen.
+   The open state has to be carried in view state rather than left to the <details> element,
+   because the page re-renders and the element is rebuilt - the same reason fold() tracks it. */
+var CARD_SHUT = { cmp:1, build:1 };
+function cardOpen(id){
+  var v = state.view.cardOpen && state.view.cardOpen[id];
+  return v != null ? v : !CARD_SHUT[id];
+}
+function cardAttr(id){ return cardOpen(id) ? ' open' : ''; }
+function cardTog(id){ return ' onclick="LAB.cardToggle(\'' + id + '\')"'; }
 var FOLD_NAME = { form:'Recent form', dvp:'Defence by position', dist:'Distribution',
                   starter:'Starters', halves:'By half', subs:'Substitutes',
                   firstLast:'First and last', jupiter:'Jupiter', dejaVu:'D\u00e9j\u00e0 Vu' };
@@ -8963,8 +8977,8 @@ function buildSection(key, g){
       return '<button class="bld-tab' + (x[0] === src ? ' on' : '') + '" onclick="LAB.buildSrc(\''
         + x[0] + '\')">' + esc(x[1]) + '</button>';
     }).join('') + '</div>';
-  return '<div id="build-panel"><details class="sig-tile" open>'
-    + '<summary class="sig-head"><span class="sig-ico"><i class="ti ti-layers-subtract"></i></span>'
+  return '<div id="build-panel"><details class="sig-tile"' + cardAttr('build') + '>'
+    + '<summary class="sig-head"' + cardTog('build') + '><span class="sig-ico"><i class="ti ti-layers-subtract"></i></span>'
     + '<span><span class="sig-ttl">Build</span>'
     + '<span class="sig-desc">Four ways to the same multi</span></span></summary>'
     + '<div class="bld-body">' + tabs
@@ -9019,8 +9033,8 @@ function ctxSection(key, g){
       return '<button class="bld-tab' + (x[0] === src ? ' on' : '') + '" onclick="LAB.ctxSrc(\''
         + x[0] + '\')">' + esc(x[1]) + '</button>';
     }).join('') + '</div>';
-  return '<div id="ctx-panel"><details class="sig-tile" open>'
-    + '<summary class="sig-head"><span class="sig-ico"><i class="ti ti-telescope"></i></span>'
+  return '<div id="ctx-panel"><details class="sig-tile"' + cardAttr('ctx') + '>'
+    + '<summary class="sig-head"' + cardTog('ctx') + '><span class="sig-ico"><i class="ti ti-telescope"></i></span>'
     + '<span><span class="sig-ttl">Context</span>'
     + '<span class="sig-desc">What to know before you read a price</span></span>'
     + '<span class="sig-n">' + have.length + '</span></summary>'
@@ -9030,6 +9044,58 @@ function ctxRender(){
   var el = document.getElementById('ctx-panel');
   if (!el || !CTX_NOW){ render(); return; }
   var html = ctxSection(CTX_NOW.key, CTX_NOW.g);
+  if (!html){ render(); return; }
+  el.outerHTML = html;
+}
+/* THE COMPARE CARD ---------------------------------------------------------------------------
+   Seven of these were the same four lines with a different card function:
+
+       var a = XCard(key, g.away), h = XCard(key, g.home);
+       return band(LABEL) + '<div class="GRID">' + a + h + '</div>';
+
+   halvesSection was six lines, subsSection fourteen. They are a config table that had been
+   written out as seven functions, and because most carry a sport guard, only some apply to any
+   one fixture - EPL stacked five of them, NFL four, NBA and NBL two. One card, one strip, and
+   only the sources this sport actually has. */
+var CMP_SOURCES = [['form','Last 5'], ['lineup','Lineup'], ['dist','Usage'], ['starter','Starter'],
+                   ['halves','Halves'], ['subs','Subs'], ['firstlast','First'], ['goalie','In Goal']];
+var CMP_NOW = null;
+function cmpPane(key, g, src){
+  CTX_PANE = true;                                  // same "you are a pane" flag the Context card uses
+  try {
+    if (src === 'form')      return formSection(key, g) || '';
+    if (src === 'lineup')    return lineupSection(key, g) || '';
+    if (src === 'dist')      return distSection(key, g) || '';
+    if (src === 'starter')   return starterSection(key, g) || '';
+    if (src === 'halves')    return halvesSection(key, g) || '';
+    if (src === 'subs')      return subsSection(key, g) || '';
+    if (src === 'firstlast') return firstLastSection(key, g) || '';
+    if (src === 'goalie')    return goalieSection(key, g) || '';
+    return '';
+  } catch(e){ return ''; }
+  finally { CTX_PANE = false; }
+}
+function cmpSection(key, g){
+  var have = CMP_SOURCES.filter(function(x){ return !!cmpPane(key, g, x[0]); });
+  if (!have.length) return '';
+  var src = have.some(function(x){ return x[0] === state.view.cmpSrc; })
+    ? state.view.cmpSrc : have[0][0];
+  CMP_NOW = { key:key, g:g };
+  var tabs = have.length < 2 ? '' : '<div class="bld-tabs">' + have.map(function(x){
+      return '<button class="bld-tab' + (x[0] === src ? ' on' : '') + '" onclick="LAB.cmpSrc(\''
+        + x[0] + '\')">' + esc(x[1]) + '</button>';
+    }).join('') + '</div>';
+  return '<div id="cmp-panel"><details class="sig-tile"' + cardAttr('cmp') + '>'
+    + '<summary class="sig-head"' + cardTog('cmp') + '><span class="sig-ico"><i class="ti ti-versions"></i></span>'
+    + '<span><span class="sig-ttl">Compare</span>'
+    + '<span class="sig-desc">' + esc(abbrOf(key, g.away)) + ' against ' + esc(abbrOf(key, g.home))
+    + '</span></span><span class="sig-n">' + have.length + '</span></summary>'
+    + '<div class="bld-body">' + tabs + cmpPane(key, g, src) + '</div></details></div>';
+}
+function cmpRender(){
+  var el = document.getElementById('cmp-panel');
+  if (!el || !CMP_NOW){ render(); return; }
+  var html = cmpSection(CMP_NOW.key, CMP_NOW.g);
   if (!html){ render(); return; }
   el.outerHTML = html;
 }
@@ -9085,17 +9151,10 @@ function focusPage(){
     + conditionsSection(key, g)
     + h2hSection(key, g)
     + h2hHistory(key, g)
-    + (S.t3==='ready' ? fold('form', formSection(key, g)) : '')
+    + (S.t3==='ready' ? cmpSection(key, g) : '')
     + (S.t3==='ready' ? leadersSection(key, g) : '')
-    + (S.t3==='ready' ? lineupSection(key, g) : '')
     + (S.t3==='ready' ? fold('dvp', dvpSection(key, g)) : '')
-    + (S.t3==='ready' ? fold('dist', distSection(key, g)) : '')
-    + (S.t3==='ready' ? fold('starter', starterSection(key, g)) : '')
-    + (S.t3==='ready' ? fold('halves', halvesSection(key, g)) : '')
-    + (S.t3==='ready' ? fold('subs', subsSection(key, g)) : '')
-    + (S.t3==='ready' ? fold('firstLast', firstLastSection(key, g)) : '')
     + (S.status === 'ready' && !state.view.nerd ? matchRadar(key, g) : '')
-    + (S.t3 === 'ready' && !state.view.nerd ? goalieSection(key, g) : '')
     + (S.t3 === 'ready' && !state.view.nerd ? firstReadSection(key, g) : '')
     + (!state.view.nerd ? ctxSection(key, g) : '')
 
@@ -19701,7 +19760,7 @@ function goalieSection(key, g){
         })() + '</div></div>';
   }).filter(Boolean).join('');
   if (!cards) return '';
-  return '<div class="dayband"><span>In goal</span></div><div class="lg-wrap">' + cards + '</div>'
+  return paneBand('In goal') + '<div class="lg-wrap">' + cards + '</div>'
     + '<div class="deg-note" style="padding:2px 2px 8px">'
     + (named && named.confirmed
         ? 'Starters as named by the clubs. Teams do change their mind late, so a very late scratch '
@@ -20004,6 +20063,11 @@ window.LAB = {
   /* Switches the Build card's source and redraws that card only - see buildRender. */
   buildSrc: function(src){ state.view.buildSrc = src; buildRender(); },
   ctxSrc: function(src){ state.view.ctxSrc = src; ctxRender(); },
+  cmpSrc: function(src){ state.view.cmpSrc = src; cmpRender(); },
+  cardToggle: function(id){
+    state.view.cardOpen = state.view.cardOpen || {};
+    state.view.cardOpen[id] = !cardOpen(id);
+  },
   crewOpen: function(id){ state.view.crewTile = id || null; if (window.scrollTo) window.scrollTo(0, 0); render(); },
   nerd: function(){ state.view.nerd = !state.view.nerd; render(); },
   degSport: function(k){ state.view.degSport = k; state.view.degStat = null; render(); },
@@ -20718,6 +20782,17 @@ window.LAB = {
     return out;
   },
   ouTileProbe: function(key, g, kind){ return ouTile(key, g, kind); },
+  cmpProbe: function(key, src){
+    var fx = asArray(state.sports[key].data.fixture) || [], was = state.view.cmpSrc, out = {};
+    if (src != null) state.view.cmpSrc = src;
+    try {
+      for (var i = 0; i < fx.length; i++){
+        var h = cmpSection(key, fx[i]);
+        if (h){ out = { html:h, fixture:fx[i].away + '@' + fx[i].home }; break; }
+      }
+    } finally { state.view.cmpSrc = was; }
+    return out;
+  },
   ctxProbe: function(key, src){
     var fx = asArray(state.sports[key].data.fixture) || [], was = state.view.ctxSrc, out = {};
     if (src != null) state.view.ctxSrc = src;
