@@ -59,9 +59,11 @@ WHO       = ['passer_player_name', 'receiver_player_name', 'rusher_player_name']
 GRADE     = ['wp', 'wpa', 'epa']
 KEEP = SITUATION + CALL + RESULT + WHO + GRADE
 
-# The drill offers a handful of calls, not 27. Each is a bucket of real plays, so a call can only
-# ever be answered by a play that genuinely was that call.
+# The drill offers four calls, not 27. Each is a bucket of real plays, so a call can only ever be
+# answered by a play that genuinely was that call. pass_broken is the fifth bucket but NOT a fifth
+# call: it is how a pass call goes wrong, drawn at the team's own rate.
 CALLS = ('run_inside', 'run_outside', 'pass_short', 'pass_deep')
+BUCKETS = CALLS + ('pass_broken',)
 
 # Fewest plays a (team, call) pair needs before the drill starts handing out the same play twice.
 MIN_BUCKET = 10
@@ -89,9 +91,13 @@ def call_of(r):
             return 'pass_deep'
         if pl == 'short':
             return 'pass_short'
-        # A sack or a throwaway carries no pass_length. Grading a call against a play the drill
-        # never offered would score the player on something they could not have picked.
-        return None
+        # A dropback that never became a charted throw: a sack, or the ball thrown away. These have
+        # no pass_length, and dropping them was a real bug - it made a pass call in the drill
+        # incapable of going wrong. Measured over four seasons of Q4: 1,579 of 18,550 dropbacks,
+        # 1,349 of them sacks, mean -5.6 yards and mean wpa -0.037, and the rate runs from 6.2%
+        # of dropbacks (LA) to 11.4% (LAC). So they are their own bucket, and a pass call resolves
+        # against the team's own real rate of them before any charted throw is drawn.
+        return 'pass_broken'
     return None
 
 
@@ -189,11 +195,24 @@ def main():
     by_call = {}
     for r in rows:
         by_call[r['call']] = by_call.get(r['call'], 0) + 1
+
+    # Per-team bucket counts, shipped with the pool. Two jobs: the drill reads a club's real
+    # broken-dropback rate straight off it instead of scanning every row, and the depth that
+    # decided the season range is auditable in the artifact rather than only in a build log.
+    depth = {}
+    for r in rows:
+        if r['off']:
+            depth.setdefault(r['off'], {})
+            depth[r['off']][r['call']] = depth[r['off']].get(r['call'], 0) + 1
+    for t in depth:
+        for b in BUCKETS:
+            depth[t].setdefault(b, 0)
+
     out = {
         'updated': datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%MZ'),
         'seasons': loaded, 'quarters': a.quarters,
         'source': 'nflverse play-by-play; charting CC-BY-SA 4.0, credit FTN Data via nflverse',
-        'calls': sorted(by_call), 'plays': rows,
+        'calls': list(CALLS), 'buckets': list(BUCKETS), 'depth': depth, 'plays': rows,
     }
     os.makedirs(a.out, exist_ok=True)
     path = os.path.join(a.out, 'plays.json')
@@ -210,23 +229,22 @@ def main():
     # the drill either repeats the same play or has nothing to answer with. Measured: all of Q4
     # across four seasons gives a minimum of 41 and a median near 200, while the current season
     # alone, inside two minutes, collapses to a median of 3 with 22 pairs empty.
-    buckets = {}
-    for r in rows:
-        if r['off']:
-            k = (r['off'], r['call'])
-            buckets[k] = buckets.get(k, 0) + 1
-    if buckets:
-        vals = sorted(buckets.values())
-        teams = len(set(k[0] for k in buckets))
-        thin = [k for k, v in buckets.items() if v < MIN_BUCKET]
-        print('  depth: %d teams, %d of %d team-call pairs filled, smallest %d, median %d'
-              % (teams, len(buckets), teams * len(CALLS), vals[0], vals[len(vals) // 2]))
+    if depth:
+        pairs = [(t, b, depth[t][b]) for t in depth for b in BUCKETS]
+        vals = sorted(v for _, _, v in pairs)
+        thin = sorted([p for p in pairs if p[2] < MIN_BUCKET], key=lambda p: p[2])
+        print('  depth: %d teams, %d of %d team-bucket pairs filled, smallest %d, median %d'
+              % (len(depth), sum(1 for v in vals if v), len(pairs), vals[0], vals[len(vals) // 2]))
+        brk = [(depth[t]['pass_broken'] /
+                max(1, sum(depth[t][b] for b in ('pass_short', 'pass_deep', 'pass_broken'))), t)
+               for t in depth]
+        brk.sort()
+        print('  broken-dropback rate: %s %.1f%% lowest, %s %.1f%% highest (the drill\'s sack risk)'
+              % (brk[0][1], 100 * brk[0][0], brk[-1][1], 100 * brk[-1][0]))
         if thin:
-            thin.sort(key=lambda k: buckets[k])
-            print('  WARNING: %d team-call pairs hold fewer than %d plays - the drill will repeat '
+            print('  WARNING: %d team-bucket pairs hold fewer than %d plays - the drill will repeat '
                   'itself there. Widen --seasons or --quarters.' % (len(thin), MIN_BUCKET))
-            print('    thinnest: ' + ', '.join('%s %s %d' % (t, c, buckets[(t, c)])
-                                               for t, c in thin[:6]))
+            print('    thinnest: ' + ', '.join('%s %s %d' % p for p in thin[:6]))
     return 0
 
 
@@ -250,19 +268,22 @@ def selftest():
        call_of({'play_type': 'pass', 'pass_length': 'deep'}) == 'pass_deep')
     ok('a short pass is a short pass',
        call_of({'play_type': 'pass', 'pass_length': 'short'}) == 'pass_short')
-    ok('a pass with no length charted is left out',
-       call_of({'play_type': 'pass', 'pass_length': None}) is None,
-       '(sacks and throwaways - the drill never offered that call)')
+    ok('a dropback with no charted throw is kept, as its own bucket',
+       call_of({'play_type': 'pass', 'pass_length': None}) == 'pass_broken',
+       '(sacks and throwaways - without these a pass call could never go wrong)')
+    ok('and that bucket is not offered as a call',
+       'pass_broken' in BUCKETS and 'pass_broken' not in CALLS,
+       '(nobody calls a sack; it is drawn at the team\'s own rate)')
     ok('a punt is not a drill call', call_of({'play_type': 'punt'}) is None)
     ok('a field goal is not a drill call', call_of({'play_type': 'field_goal'}) is None)
     ok('a kneel-down is not a drill call', call_of({'play_type': 'qb_kneel'}) is None)
     ok('a wiped-out play is not a drill call', call_of({'play_type': 'no_play'}) is None)
-    ok('it never returns a call the drill does not offer',
-       all(call_of(p) in CALLS or call_of(p) is None for p in [
+    ok('it never returns a bucket the pool does not define',
+       all(call_of(p) in BUCKETS or call_of(p) is None for p in [
            {'play_type': 'run', 'run_gap': 'tackle'}, {'play_type': 'run', 'run_location': None},
            {'play_type': 'pass', 'pass_length': 'short'}, {'play_type': 'pass'},
            {'play_type': 'extra_point'}, {'play_type': None}, {}]),
-       '(' + ', '.join(CALLS) + ')')
+       '(' + ', '.join(BUCKETS) + ')')
     ok('every column it reads is one the build asks the parquet for',
        all(c in KEEP for c in ['play_type', 'run_gap', 'run_location', 'pass_length']),
        '(or call_of reads a column that was trimmed away and every play buckets as None)')
