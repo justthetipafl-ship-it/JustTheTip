@@ -3274,7 +3274,7 @@ function leadersSection(key, g){
   var wins = [['season','Season'],['l5','Last 5']].map(function(w){
     return '<button class="sl-chip'+(w[0]===win?' on':'')+'" onclick="LAB.slWin(\''+w[0]+'\')">'+w[1]+'</button>';
   }).join('');
-  return '<div class="dayband"><span>Stat Leaders</span></div>'
+  return paneBand('Stat Leaders')
     + '<div class="sl-bar">'+chips+'<span class="sl-win">'+wins+'</span></div>'
     + '<div class="sl-grid">'+slCard(key,g.away,mkt,win,max)+slCard(key,g.home,mkt,win,max)+'</div>';
 }
@@ -3544,7 +3544,7 @@ function dvpSection(key, g){
   var chips = mkts.map(function(m){
     return '<button class="sl-chip'+(m[0]===mkt?' on':'')+'" onclick="LAB.dvpMkt(\''+key+'\',\''+m[0]+'\')">'
       + esc(m[1])+'</button>'; }).join('');
-  return '<div class="dayband"><span>DVP by Position</span></div>'
+  return paneBand('DVP by Position')
     + '<div class="sl-bar">'+chips+'</div>'
     + '<div class="dv-grid">'+dvpCard(key,g.away,mkt,board)+dvpCard(key,g.home,mkt,board)+'</div>';
 }
@@ -8868,7 +8868,7 @@ function signalsSection(key, g){
     + '';                                   // the quiet list is gone: it was longer than the signals
 }
 function secNote(title, why){
-  return '<div class="dayband"><span>'+title+'</span></div>'
+  return paneBand(title)
     + '<div class="sec-miss"><i class="ti ti-alert-triangle"></i>'+esc(why)+'</div>';
 }
 /* A focused fixture renders eighteen sections, and most of them are reference rather than decision
@@ -8884,7 +8884,7 @@ var FOLD_SHUT = { form:1, dvp:1, dist:1, starter:1, halves:1, subs:1, firstLast:
    that were always on screen.
    The open state has to be carried in view state rather than left to the <details> element,
    because the page re-renders and the element is rebuilt - the same reason fold() tracks it. */
-var CARD_SHUT = { cmp:1, build:1 };
+var CARD_SHUT = { build:1 };    // cmp opens: it holds reads that were never folded
 function cardOpen(id){
   var v = state.view.cardOpen && state.view.cardOpen[id];
   return v != null ? v : !CARD_SHUT[id];
@@ -9057,14 +9057,27 @@ function ctxRender(){
    written out as seven functions, and because most carry a sport guard, only some apply to any
    one fixture - EPL stacked five of them, NFL four, NBA and NBL two. One card, one strip, and
    only the sources this sport actually has. */
-var CMP_SOURCES = [['form','Last 5'], ['lineup','Lineup'], ['dist','Usage'], ['starter','Starter'],
-                   ['halves','Halves'], ['subs','Subs'], ['firstlast','First'], ['goalie','In Goal']];
+/* Stat Leaders and DVP by Position turned out to be the same away/home compare as the rest -
+   slCard(away)+slCard(home), dvpCard(away)+dvpCard(home) - just with a market chip bar above the
+   grid. They were going to be their own "Board" card until the shape was read properly; they are
+   two more sources here instead, and the chip bar rides along inside the pane. */
+/* Order matters: the first source that a fixture has is the one the card opens on, and three of
+   these were on screen without being asked for (Lineup, Leaders, In Goal) while the other seven
+   were folded shut. A tabbed card can only show one, so Lineup leads - it is the one you need
+   before anything else on the page means much - and the card opens rather than starting closed,
+   which is what those three did. Everything formerly folded is still one tap away, which is more
+   than it was worth as seven separate headings. */
+var CMP_SOURCES = [['lineup','Lineup'], ['leaders','Leaders'], ['form','Last 5'], ['dvp','DvP'],
+                   ['dist','Usage'], ['starter','Starter'], ['halves','Halves'], ['subs','Subs'],
+                   ['firstlast','First'], ['goalie','In Goal']];
 var CMP_NOW = null;
 function cmpPane(key, g, src){
   CTX_PANE = true;                                  // same "you are a pane" flag the Context card uses
   try {
     if (src === 'form')      return formSection(key, g) || '';
     if (src === 'lineup')    return lineupSection(key, g) || '';
+    if (src === 'leaders')   return leadersSection(key, g) || '';
+    if (src === 'dvp')       return dvpSection(key, g) || '';
     if (src === 'dist')      return distSection(key, g) || '';
     if (src === 'starter')   return starterSection(key, g) || '';
     if (src === 'halves')    return halvesSection(key, g) || '';
@@ -9152,8 +9165,6 @@ function focusPage(){
     + h2hSection(key, g)
     + h2hHistory(key, g)
     + (S.t3==='ready' ? cmpSection(key, g) : '')
-    + (S.t3==='ready' ? leadersSection(key, g) : '')
-    + (S.t3==='ready' ? fold('dvp', dvpSection(key, g)) : '')
     + (S.status === 'ready' && !state.view.nerd ? matchRadar(key, g) : '')
     + (S.t3 === 'ready' && !state.view.nerd ? firstReadSection(key, g) : '')
     + (!state.view.nerd ? ctxSection(key, g) : '')
