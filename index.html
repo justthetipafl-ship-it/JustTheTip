@@ -2192,7 +2192,7 @@ function buildIndexes(key){
 
   ix.hasUp = null;        // recomputed whenever the index is rebuilt, so a new fixture re-sorts
   TR_CACHE = { key:null, name:{}, vals:{} };     // trends cache is stale once the data changes
-  ix.lgAvg = {}; ix.winAvg = {}; ix.matchOpp = null; ix.fs = null;
+  ix.lgAvg = {}; ix.winAvg = {}; ix.matchOpp = null; ix.fs = null; ix.specRank = null;
   ix.pricedSet = null; ix.oddsName = null; ix.oddsIni = null; ix.oddsHyp = null; ix.vac = null; ix.bookList = null; ix.resIdx = null; ix.mlbLg = null; ix.lgRate = null; ix.scState = null; ix.nhlPim = null; ix.injIdx = null; ix.ww = null; ix.usg = null; ix.mrg = null; ix.luRows = null; ix.luPos = null; ix.luSheet = null; ix.foldName = null;
   var logs = asArray(d.gamelogs) || [];
   ix.logsByName = {};
@@ -8009,6 +8009,30 @@ function specHitRate(key, name, mkt, line){
   });
   return n >= 8 ? hits / n : null;
 }
+var SPEC_MIN_GAMES = 5;
+/* The tile ranks inside the fixture, which is the right read - but the row said "#1 in the
+   league", and those are not the same number. Tyler Herro came out "#1 in the league for points"
+   on 20.6/gm, which no league leader has ever been; he was top of the eight candidates in HIS
+   game. Zach Edey "#8", Siakam "#4 for assists" - all in-game places wearing a league label.
+   So compute the real one too, over the same pool and the same minimum as the fixture field, and
+   let the row say both. The in-game place is why the tile fires; the league place is the context
+   that makes it mean something. */
+function specLeagueRank(key, stat, name){
+  var S = state.sports[key];
+  var cache = S.idx.specRank || (S.idx.specRank = {});
+  if (!cache[stat]){
+    var lg = leagueAvg(key, stat), rows = [];
+    Object.keys(lg).forEach(function(n){
+      if (lg[n] && lg[n].games >= SPEC_MIN_GAMES && lg[n].avg != null) rows.push({ n:n, a:lg[n].avg });
+    });
+    rows.sort(function(a, b){ return b.a - a.a; });
+    var m = {};
+    rows.forEach(function(r, i){ m[r.n] = i + 1; });
+    cache[stat] = { rank:m, total:rows.length };
+  }
+  var c = cache[stat];
+  return { rank:c.rank[name] || null, total:c.total };
+}
 function nblSpecialist(key, g, stat){
   var S = state.sports[key], lg = leagueAvg(key, stat);
   var inGame = {}; inGame[normTeam(g.home)] = g.away; inGame[normTeam(g.away)] = g.home;
@@ -8017,7 +8041,7 @@ function nblSpecialist(key, g, stat){
   // Splashers, Dishers and Boarders almost never fired. The read is "the best in this game", so
   // the field is this game.
   var top = (S.idx.players || []).filter(function(p){
-      return lg[p.name] && lg[p.name].games >= 5 && inGame[normTeam(p.team)];
+      return lg[p.name] && lg[p.name].games >= SPEC_MIN_GAMES && inGame[normTeam(p.team)];
     })
     .sort(function(a,b){ return lg[b.name].avg - lg[a.name].avg; }).slice(0, 8);
   var out = [];
@@ -8046,14 +8070,20 @@ function nblSpecialist(key, g, stat){
     var hit = specHitRate(key, p.name, stat, b.od.line);
     if (hit != null && hit * px - 1 <= 0) return;
     b.hit = hit;
-    out.push({ name:p.name, p:p, opp:opp, rank:i+1, avg:lg[p.name].avg, dr:dr, b:b,
+    var lr = specLeagueRank(key, stat, p.name);
+    out.push({ name:p.name, p:p, opp:opp, rank:i+1, lgRank:lr.rank, lgOf:lr.total,
+               avg:lg[p.name].avg, dr:dr, b:b,
                ev:(hit != null ? hit * px - 1 : null) });
   });
   out.sort(function(a,b){ return b.b.ev - a.b.ev; });
   return out;
 }
 function nblSpecRow(key, r, label){
-  return mlbRow(key, r, label, [['#'+r.rank+' in the league \u00b7 '+r.avg.toFixed(1)+'/gm', true],
+  // "#2 in this game" is what the rank is; the league place goes next to it when we have one
+  var place = '#' + r.rank + ' in this game'
+    + (r.lgRank ? ' \u00b7 #' + r.lgRank + ' of ' + r.lgOf + ' in the league' : '')
+    + ' \u00b7 ' + r.avg.toFixed(1) + '/gm';
+  return mlbRow(key, r, label, [[place, true],
     [abbrOf(key, r.opp)+' concede +'+Math.round(r.dr.pct)+'% to '+esc(posShortP(r.p) || r.p.position || ''), true]]);
 }
 /* DOUBLE TROUBLE - double-doubles in 40%+ of his last 10. No book posts a double-double market,
@@ -20319,6 +20349,21 @@ window.LAB = {
   /* exposed for tests: which positions the lineup file actually lists for a team, and that the
      gate tracer is not left switched on in the page. */
   lineupPosProbe: function(key, team){ return lineupPosSet(key, team); },
+  leagueAvgProbe: function(key, stat){ return leagueAvg(key, stat); },
+  /* exposed for tests: the specialist rows across the whole board, with the in-game place and the
+     league place side by side, so a test can check the row never claims a league rank it has not
+     earned. */
+  specRowsProbe: function(key, stat){
+    var fx = asArray(state.sports[key].data.fixture) || [], out = [];
+    fx.forEach(function(g){
+      nblSpecialist(key, g, stat).forEach(function(r){
+        out.push({ fixture:g.away + '@' + g.home, name:r.name, rank:r.rank,
+                   lgRank:r.lgRank, lgOf:r.lgOf, avg:r.avg, row:nblSpecRow(key, r, stat) });
+      });
+    });
+    return out;
+  },
+  specRankProbe: function(key, stat, name){ return specLeagueRank(key, stat, name); },
   /* exposed for tests: how a roster name resolves to the book's spelling, and whether that
      resolved name is actually priced. */
   nameResolveProbe: function(key, name){
