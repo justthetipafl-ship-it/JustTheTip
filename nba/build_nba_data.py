@@ -371,21 +371,78 @@ def build_teams(tb_frames, cfg, current, form_only=False):
     return rows
 
 
-def build_dvp(logs, current):
-    """Per (defTeam, posBucket): per-game totals allowed for each DVP stat.
-    No minutes gate - everything conceded to the bucket counts."""
-    cur = logs[logs["Year"] == str(current)]
-    if cur.empty:
-        return []
-    per_game = (cur.groupby(["Opp", "pos", "MatchId"], as_index=False)[DVP_STATS]
-                   .sum(min_count=1))
+# How many games of the new season it takes before a defence is judged on it alone, rather than on
+# what it did last year. A team-position DvP is weighted games/(games+DVP_PRIOR_K) toward this
+# season and the rest toward last.
+#
+# WHY THIS EXISTS
+# A DvP built from the current season alone is close to worthless for the first month, and the
+# tool opens the season showing exactly that. Replaying 2025-26 from its own opening night and
+# scoring each estimate against where that team-position actually finished the season, median
+# absolute error summed over points/rebounds/assists/PRA:
+#
+#     blend K      day 1    day 3    day 7   day 14   day 30   avg over the month
+#     0 (today)     6.39    35.78    16.76    11.67     8.51     17.94
+#     10            5.66     6.50     6.81     6.56     5.46      6.30
+#     15-20         ~5.7     ~6.3     ~5.9     ~6.0     ~5.0      ~5.85
+#
+# Day 3 is the worst case, not day 1: that is when all thirty clubs have exactly one game each and
+# nothing is missing enough to be skipped. The curve is flat from 14 to 30, so the exact value is
+# not delicate; 15 sits in the middle of it. Three times better than what ships today.
+#
+# Last season is a weak prior - it beats simply assuming the league average by about 5% on points,
+# 8% on assists and 10% on PRA, and is slightly WORSE on rebounds - but a weak prior comfortably
+# beats one game of evidence, which is the only thing on offer in October.
+DVP_PRIOR_K = 15
+
+
+def _dvp_raw(frame):
+    """Per (defTeam, posBucket): per-game totals allowed, and how many games that is over."""
+    if frame.empty:
+        return {}
+    per_game = (frame.groupby(["Opp", "pos", "MatchId"], as_index=False)[DVP_STATS]
+                     .sum(min_count=1))
     agg = per_game.groupby(["Opp", "pos"], as_index=False).agg(
         **{k: (k, "mean") for k in DVP_STATS}, games=("MatchId", "nunique"))
-    rows = []
+    out = {}
     for _, r in agg.iterrows():
-        row = dict(team=r["Opp"], pos=r["pos"], games=int(r["games"]))
+        out[(r["Opp"], r["pos"])] = (
+            {k: (float(r[k]) if pd.notna(r[k]) else None) for k in DVP_STATS},
+            int(r["games"]))
+    return out
+
+
+def build_dvp(logs, current, prior_k=DVP_PRIOR_K):
+    """Per (defTeam, posBucket): per-game totals allowed for each DVP stat, shrunk toward last
+    season while this one is young. No minutes gate - everything conceded to the bucket counts."""
+    cur = _dvp_raw(logs[logs["Year"] == str(current)])
+    try:
+        prev = _dvp_raw(logs[logs["Year"] == str(int(current) - 1)])
+    except (TypeError, ValueError):
+        prev = {}
+    if not cur and not prev:
+        return []
+
+    rows = []
+    for key in sorted(set(cur) | set(prev)):
+        team, pos = key
+        cvals, cgames = cur.get(key, ({}, 0))
+        pvals, pgames = prev.get(key, ({}, 0))
+        # a club with no history (an expansion side, or one the previous file does not cover)
+        # simply carries its own weight, whatever that is worth
+        w = 1.0 if not pgames else (cgames / (cgames + prior_k) if cgames else 0.0)
+        row = dict(team=team, pos=pos, games=cgames, priorGames=pgames,
+                   wCurrent=round(w, 3))
         for k in DVP_STATS:
-            row[k] = round(float(r[k]), 2) if pd.notna(r[k]) else None
+            c, p = cvals.get(k), pvals.get(k)
+            if c is None and p is None:
+                row[k] = None
+            elif c is None:
+                row[k] = round(p, 2)
+            elif p is None:
+                row[k] = round(c, 2)
+            else:
+                row[k] = round(w * c + (1 - w) * p, 2)
         rows.append(row)
     rows.sort(key=lambda r: (r["team"], r["pos"]))
     return rows
@@ -817,6 +874,54 @@ def selftest():
     assert bbbG["points"] == 35.0, f"dvp allowed math ({bbbG['points']})"
     aaaG = next(r for r in dvp if r["team"] == "AAA" and r["pos"] == "G")
     assert aaaG["points"] == 22.5, "dvp both games (25, 20)"
+    assert bbbG["wCurrent"] == 1.0 and bbbG["priorGames"] == 0, \
+        "with no previous season there is nothing to shrink toward"
+
+    # --- DvP SHRINKAGE TOWARD LAST SEASON ---------------------------------------------------
+    # A DvP built from this season alone is close to worthless for the first month: replayed over
+    # 2025-26, it carried three times the error of a shrunk one across the first thirty game-days.
+    # These hold the shrinkage down, because it is invisible in the output - a wrong weight still
+    # looks like a plausible number.
+    prior_rows = [
+        _pbrow("p1", "2025-01-01", "3", "Gam Three", "BBB", "AAA", "away", "G", 2, 36, 10, 4, 9),
+        _pbrow("p1", "2025-01-01", "1", "Alpha One", "AAA", "BBB", "home", "G", 2, 34, 10, 5, 8),
+    ]
+    for r in prior_rows:
+        r["season"] = 2025
+        r["game_date"] = r["game_date_time"] = "2025-01-01"
+    two = normalize_player_box(pd.DataFrame(rows + prior_rows))
+    assert set(two["Year"]) == {"2025", "2026"}, "both seasons must survive normalisation"
+
+    bl = build_dvp(two, 2026, prior_k=15)
+    b = next(r for r in bl if r["team"] == "BBB" and r["pos"] == "G")
+    # BBB allowed to G: 35.0 over 2 games this season, 10.0 over 1 last season.
+    # w = 2/(2+15) = 0.1176 -> 0.1176*35 + 0.8824*10 = 12.94
+    assert b["games"] == 2 and b["priorGames"] == 1, f"game counts ({b})"
+    assert abs(b["wCurrent"] - 2 / 17) < 1e-3, f"weight is games/(games+K) ({b['wCurrent']})"
+    assert abs(b["points"] - (2 / 17 * 35 + 15 / 17 * 10)) < 0.02, \
+        f"two games must not outvote a full season ({b['points']})"
+
+    # the same club with a long current season leans on the current season instead
+    many = pd.DataFrame(rows * 30 + prior_rows)
+    many["game_id"] = ["m%d" % i for i in range(len(many))]
+    deep = build_dvp(normalize_player_box(many), 2026, prior_k=15)
+    d = next(r for r in deep if r["team"] == "BBB" and r["pos"] == "G")
+    # 60 current-season games against K=15 is 60/75, so last season is down to a fifth of the say
+    assert abs(d["wCurrent"] - 60 / 75) < 1e-6, \
+        f"a long season should own its own number ({d['wCurrent']} over {d['games']} games)"
+    assert d["wCurrent"] > b["wCurrent"] * 6, "the handover must actually move with games played"
+
+    # K=0 must reproduce exactly what shipped before, so the change can be backed out
+    raw = build_dvp(two, 2026, prior_k=0)
+    r0 = next(r for r in raw if r["team"] == "BBB" and r["pos"] == "G")
+    assert r0["points"] == 35.0 and r0["wCurrent"] == 1.0, \
+        f"prior_k=0 must be the old behaviour exactly ({r0['points']})"
+
+    # a club with no current-season game at all shows last season rather than nothing
+    only_prior = build_dvp(normalize_player_box(pd.DataFrame(prior_rows)), 2026, prior_k=15)
+    op = next(r for r in only_prior if r["team"] == "BBB" and r["pos"] == "G")
+    assert op["games"] == 0 and op["points"] == 10.0 and op["wCurrent"] == 0.0, \
+        f"opening night must still have a number for every club ({op})"
     # team box synth
     def _tbrow(gid, date, team, opp, score, fga, oreb, to, fta):
         return dict(game_id=gid, season=2026, season_type=2, game_date=date,
