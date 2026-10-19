@@ -478,6 +478,11 @@
   .stk-vals span{flex:1;text-align:center;font-family:var(--font-mono);font-size:7px;color:var(--text-3);}
   .stk-right{flex:none;width:74px;text-align:right;}
   .stk-hit{font-family:var(--font-display);font-size:18px;line-height:1;color:var(--accent);}
+  /* how unlikely the run is, and how many chances it had. Muted by default: it is context, not a
+     headline. Green only when the search genuinely did not expect to find it. */
+  .stk-rare{font-family:var(--font-mono);font-size:9px;color:var(--text-3);margin-top:4px;line-height:1.4;}
+  .stk-rare.rare{color:var(--accent);}
+  .stk-rare.common{color:var(--text-3);opacity:.72;}
   .stk-hitl{font-family:var(--font-mono);font-size:7px;color:var(--text-3);letter-spacing:.06em;margin-top:3px;}
   .stk-odds{margin-top:7px;display:inline-block;font-family:var(--font-mono);font-size:10px;color:var(--text);
     border:1px solid var(--border);border-radius:5px;padding:3px 7px;}
@@ -4012,10 +4017,53 @@ function sigBand(title, body){
   if (SIG_CAPTURE) return '';
   return body && body.replace(/\s+/g, '') ? '<div class="dayband"><span>'+title+'</span></div>'+body : '';
 }
+/* HOW UNLIKELY IS A RUN, AND HOW MANY CHANCES DID IT HAVE?
+   A streak is the easiest thing in sport to over-read. Two numbers keep it honest, and both fall
+   out of this scan for free.
+
+   RARITY. At decimal odds the book prices a single game at 1/price. A live run of k games is then
+   (1/price)^k, so the odds against it are price^k - $4.90 five times running is 4.90^5, about 1 in
+   2,825. The price carries the bookmaker's margin, which overstates the chance of each leg and so
+   UNDERSTATES how rare the run is. The number is conservative on purpose.
+
+   CHANCES. A 1-in-2,825 run means nothing on its own if the tool tested three thousand lines
+   looking for one. So the scan counts every player-market it examined, and each row says how many
+   runs that long you would expect to turn up by chance across all of them. Above one, the streak
+   is what the search was always going to find, and the row says so. Well below one, it is worth a
+   second look. A run you can see is not evidence until you know how hard you looked.
+
+   WHAT THIS ASSUMES, AND IT IS NOT NOTHING. Each game in the run is treated as independent and as
+   carrying TODAY'S price. A long run can span months - Kawhi Leonard's 58 straight over 19.5
+   points ran from December to April - and a man's real rate moves with role, health and team over
+   that stretch, so a single implied probability across all of it is a simplification. It is the
+   same one every "N straight" claim makes silently; the difference here is that it is written
+   down. The number is a scale, not a p-value. */
+var STREAK_TESTS = null;
+
+function streakRarity(price, streak){
+  if (!(price > 1) || !(streak > 0)) return null;
+  var odds = Math.pow(price, streak);
+  return isFinite(odds) ? odds : null;
+}
+/* Expected number of live runs at least this long across everything the scan looked at. */
+function streakExpected(streak){
+  if (!STREAK_TESTS || !STREAK_TESTS.length || !(streak > 0)) return null;
+  var exp = 0;
+  for (var i = 0; i < STREAK_TESTS.length; i++) exp += Math.pow(STREAK_TESTS[i], streak);
+  return { tests: STREAK_TESTS.length, expected: exp };
+}
+function oneIn(n){
+  if (n == null) return '';
+  if (n >= 1e9) return '1 in ' + (n / 1e9).toFixed(1) + ' billion';
+  if (n >= 1e6) return '1 in ' + (n / 1e6).toFixed(1) + ' million';
+  return '1 in ' + Math.round(n).toLocaleString('en-US');
+}
+
 function streakers(key, g){
   var S = state.sports[key], cfg = S.config || {};
   var mkts = cfg.oddsMkts || cfg.multiMkts || [];
   var out = [];
+  STREAK_TESTS = [];
   [g.away, g.home].forEach(function(team){
     var opp = (team === g.home) ? g.away : g.home;
     playersOnTeam(key, team).forEach(function(p){
@@ -4042,7 +4090,20 @@ function streakers(key, g){
         }
         if (vals.length < 5) return;
         var row = null, chalk = null;
-        streakCandidates(key, p.name, k).forEach(function(od){
+        var cands = streakCandidates(key, p.name, k);
+        /* ONE TEST PER PLAYER-MARKET, NOT PER RUNG.
+           The scan reports at most one row for a player and market, and a man's 0.5/1.5/2.5 rungs
+           are nested rather than independent - a 20-game run over 0.5 is largely the same event as
+           one over 1.5. Counting each rung separately inflated how many runs chance should produce
+           and made every streak look ordinary. So each player-market contributes a single test, at
+           its EASIEST rung (shortest price, highest implied chance), because that is the rung most
+           likely to produce a long run and so the one that sets the odds of this pair turning up. */
+        var easiest = 0;
+        cands.forEach(function(od){
+          if (od && od.price > 1) easiest = Math.max(easiest, 1 / od.price);
+        });
+        if (easiest > 0) STREAK_TESTS.push(easiest);
+        cands.forEach(function(od){
           if (row) return;                                   // candidates are hardest-first: first hit wins
           var streak = 0;
           for (var i=0;i<vals.length;i++){ if (vals[i] > od.line) streak++; else break; }
@@ -4081,11 +4142,36 @@ function streakers(key, g){
   // claim, so inside a band the better-paying run leads, then the bigger clearance.
   var margin = function(r){ return (r.med == null) ? 0 : (r.med - r.line) / Math.max(r.line, 0.5); };
   var band = function(n){ return n >= 15 ? 0 : (n >= 10 ? 1 : (n >= 7 ? 2 : 3)); };
-  out.forEach(function(r){ r.margin = margin(r); r.band = band(r.streak); });
+  // rarity and chances are attached AFTER the whole scan, because how many lines were tested is
+  // only known once every player has been walked
+  out.forEach(function(r){
+    r.margin = margin(r); r.band = band(r.streak);
+    r.rarity = streakRarity(r.price, r.streak);
+    r.chance = streakExpected(r.streak);
+  });
+
   out.sort(function(a,b){
     return (a.band - b.band) || (b.price - a.price) || (b.margin - a.margin) || (b.streak - a.streak);
   });
   return out.slice(0, SIG_MAX_ROWS);
+}
+/* The honesty line under the pips:
+     1 in 2,825 at this price - 412 lines tested, ~0.08 expected
+   The second half is what stops the first half being a sales pitch. Above one expected, the run is
+   what the search was bound to find, and the line says so rather than leaving the reader to guess. */
+function streakRareLine(r){
+  if (r.rarity == null) return '';
+  var txt = oneIn(r.rarity) + ' at this price';
+  var cls = '';
+  if (r.chance && r.chance.tests){
+    var e = r.chance.expected;
+    var shown = e >= 10 ? Math.round(e) : (e >= 1 ? e.toFixed(1) : e.toFixed(2));
+    // "player-lines" because a test is one man and one market, not one alt rung - see the note
+    // on the scan counter above
+    txt += ' \u00b7 ' + r.chance.tests.toLocaleString('en-US') + ' player-lines scanned, ~' + shown + ' expected';
+    cls = e >= 1 ? ' common' : (e <= 0.2 ? ' rare' : '');
+  }
+  return '<div class="stk-rare' + cls + '">' + txt + '</div>';
 }
 function streakRow(key, r){
   var btns = rowBtns(key, { name:r.name, mkt:mktFromLabel(key, r.label), line:r.line, side:'over',
@@ -4109,6 +4195,7 @@ function streakRow(key, r){
         + (r.med != null ? ' \u00b7 med '+(r.med % 1 ? r.med.toFixed(1) : r.med) : '')
         + (r.alt ? ' \u00b7 alt' : '')+(r.short ? ' \u00b7 under $'+STREAK_ODDS_FLOOR.toFixed(2) : '')+'</div>'
       + pips
+      + streakRareLine(r)
     + moveChip(key, r.name, r.mkt, r.line, r.book, r.price)
     + '</div>'
     + '<div class="stk-right"><div class="stk-hit">'+r.streak+'</div>'
@@ -20784,6 +20871,27 @@ window.LAB = {
     });
     return out;
   },
+  /* Streakers with the rarity maths attached, across every fixture on the board. Returns the
+     rows plus how many lines the scan tested, which is the number that decides whether a run is
+     remarkable or merely found. */
+  streakProbe: function(key, limit){
+    // fixture.json can hold a whole season (NBA ships 1,206 games), and walking all of it
+    // reports the same man once per fixture. The page only ever renders the focused game.
+    var fx = (state.sports[key].data.fixture || []).slice(0, limit || 8);
+    var all = [], tests = 0;
+    fx.forEach(function(g){
+      var rows = streakers(key, g) || [];
+      tests = Math.max(tests, (STREAK_TESTS || []).length);
+      rows.forEach(function(r){
+        all.push({ name:r.name, label:r.label, line:r.line, price:r.price, streak:r.streak,
+                   rarity:r.rarity, tests:r.chance && r.chance.tests,
+                   expected:r.chance && r.chance.expected });
+      });
+    });
+    return { rows: all, lastScanTests: tests };
+  },
+  rarityProbe: function(price, streak){ return streakRarity(price, streak); },
+  oneInProbe: function(n){ return oneIn(n); },
   gateProbe: function(key, which){
     var g = (state.sports[key].data.fixture || []), out = { fixtures:0, rows:0, gates:{} };
     SIG_TRACE = out.gates;
