@@ -1210,7 +1210,11 @@ def build_dvp(gamelogs, players, current):
     out = []
     for (team, pos), s in sorted(sums.items()):
         n = max(len(games[(team, pos)]), 1)
-        rec = {"team": team, "pos": pos}
+        # How many games this average is over. The count was already being worked out to divide by
+        # and then thrown away, so nothing downstream could tell a six-game sample from a full
+        # season - and the page now prints how far each club sits from the league, which is a
+        # percentage off that sample. NBA and NHL both ship this field; NFL was the odd one out.
+        rec = {"team": team, "pos": pos, "games": n}
         for k in STAT_KEYS + ["anytimeTd"]:
             rec[k] = r3(s[k] / n)
         la = lagg.get((team, pos))
