@@ -1036,6 +1036,10 @@
   .sr-t-tbl td{font-family:var(--font-mono);}
   .sr-t-tbl td.sr-t{font-family:var(--font-display);text-align:left;}
   .sr-t-tbl td.sr-t i{font-style:normal;font-size:9px;color:var(--text-3);margin-left:7px;}
+  .dvp-d{display:block;font-style:normal;font-family:var(--font-mono);font-size:8.5px;
+    color:var(--text-3);line-height:1.5;}
+  .st-t td.hi .dvp-d{color:color-mix(in srgb,var(--accent) 78%,var(--text-3));}
+  .st-t td.lo .dvp-d{color:color-mix(in srgb,#f97316 72%,var(--text-3));}
   .av-wrap{display:grid;grid-template-columns:1fr 1fr;gap:9px;}
   .av-col{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:9px 10px;}
   .av-tm{display:flex;align-items:center;gap:6px;padding-bottom:7px;border-bottom:1px solid var(--border);}
@@ -12275,7 +12279,10 @@ function dvpView(key){
       return '<button class="sl-chip'+(p2===pos?' on':'')+'" onclick="LAB.stPos(\''+key+'\',\''+esc(p2)+'\')">'
         + esc(p2 === 'ALL' ? 'All' : p2)+'</button>'; }).join('')+'</div>'
     + '<div class="cmb-corr" style="margin:0 0 7px">Per game, conceded to '
-    + esc(pos === 'ALL' ? 'all players' : pos)+'. Green concedes more than the league \u2014 the softer draw.</div>'
+    + esc(pos === 'ALL' ? 'all players' : pos)
+    + '. Green concedes more than the league, orange less, and the small figure is how far from '
+    + 'average that is. Read that figure before the colour: a defence can sit last in the league '
+    + 'and still be within a few per cent of the middle, which is not the soft draw it looks.</div>'
     + '<div class="st-wrap"><table class="st-t"><thead><tr><th>Team</th>'
     + stats.map(function(c){
         return '<th class="'+(sortKey===c[0]?'on':'')+'" onclick="LAB.stDvpSort(\''+c[0]+'\')">'
@@ -12288,7 +12295,14 @@ function dvpView(key){
               if (val == null) return '<td>\u2014</td>';
               var a = avg[c[0]], d = a ? (+val - a) / a * 100 : 0;
               var cls = Math.abs(d) < 4 ? '' : (d > 0 ? 'hi' : 'lo');
-              return '<td class="'+cls+'">'+(+val < 3 ? (+val).toFixed(2) : (+val).toFixed(1))+'</td>';
+              /* The gap was already being worked out here and then thrown away on a colour, so a
+                 green cell could be four per cent off the league or twenty and the reader had no
+                 way to tell them apart. Measured across the NBA, what a defence concedes to a
+                 position spans about five per cent from best to worst, which means most of this
+                 board is noise wearing a colour. Printing the number is the whole fix. */
+              return '<td class="'+cls+'">'+(+val < 3 ? (+val).toFixed(2) : (+val).toFixed(1))
+                + '<i class="dvp-d">' + (d >= 0 ? '+' : '\u2212') + Math.abs(d).toFixed(0) + '%</i>'
+                + '</td>';
             }).join('')+'</tr>';
       }).join('')+'</tbody></table></div>';
   return h;
