@@ -1036,6 +1036,31 @@
   .sr-t-tbl td{font-family:var(--font-mono);}
   .sr-t-tbl td.sr-t{font-family:var(--font-display);text-align:left;}
   .sr-t-tbl td.sr-t i{font-style:normal;font-size:9px;color:var(--text-3);margin-left:7px;}
+  .pfb-g{font-family:var(--font-display);font-size:9px;font-weight:800;letter-spacing:.1em;
+    text-transform:uppercase;color:var(--text-3);margin:12px 0 5px;}
+  .pfb-g:first-child{margin-top:4px;}
+  /* the header mirrors the row grid so each caption sits over its own column */
+  .pfb-head{display:grid;grid-template-columns:minmax(78px,1.25fr) 2fr 48px 28px;gap:7px;
+    font-family:var(--font-mono);font-size:8.5px;color:var(--text-3);letter-spacing:.05em;
+    text-transform:uppercase;padding:0 0 2px;}
+  .pfb-head span:nth-child(2){text-align:center;}
+  .pfb-head span:nth-child(3),.pfb-head span:nth-child(4){text-align:right;}
+  .pfb-row{display:grid;grid-template-columns:minmax(78px,1.25fr) 2fr 48px 28px;gap:7px;
+    align-items:center;padding:3px 0;}
+  .pfb-lab{font-size:11px;color:var(--text-2);line-height:1.25;}
+  .pfb-lab i{display:block;font-family:var(--font-mono);font-style:normal;font-size:10px;color:var(--text);}
+  .pfb-track{position:relative;height:9px;background:var(--surface-2);border-radius:5px;overflow:hidden;}
+  .pfb-mid{position:absolute;left:50%;top:0;bottom:0;width:1px;background:var(--border);}
+  .pfb-fill{position:absolute;top:1px;bottom:1px;border-radius:4px;}
+  .pfb-fill.hi{background:color-mix(in srgb,var(--accent) 72%,transparent);}
+  .pfb-fill.lo{background:color-mix(in srgb,#f97316 66%,transparent);}
+  .pfb-pct{font-family:var(--font-mono);font-size:10px;text-align:right;}
+  .pfb-pct.hi{color:var(--accent);} .pfb-pct.lo{color:#f97316;}
+  .pfb-rank{font-family:var(--font-mono);font-size:10px;color:var(--text-3);text-align:right;}
+  .pfb-note{font-size:10px;color:var(--text-3);line-height:1.5;margin:8px 0 2px;}
+  @media (max-width:430px){
+    .pfb-row,.pfb-head{grid-template-columns:minmax(66px,1.2fr) 1.6fr 44px 24px;gap:5px;}
+  }
   .sr-t-tbl td.sr-band{font-size:10px;color:var(--text-3);white-space:nowrap;}
   .sr-t-tbl tr.sr-young td{opacity:.45;}
   .sr-t-tbl td.good{color:var(--accent);} .sr-t-tbl td.bad{color:#f97316;}
@@ -18826,6 +18851,103 @@ function teamFormSection(key, team){
     + pfCell('Conceded', dp(all.a), 'a game')
     + '</div></div>';
 }
+/* A team's numbers against the league, grouped, with the SIZE of the gap shown and not just the
+   rank.
+
+   WHY THE BAR MATTERS MORE THAN THE RANK
+   Every matchup cheat sheet in this corner of the internet is built on rank alone - "32nd in yards
+   allowed to WRs", "30th in rushing". Rank hides magnitude, and magnitude is usually small:
+   measured across the NBA, points allowed to guards spans 58.2 plus or minus 2.8 over all thirty
+   clubs, a range of about five per cent from best to worst. "30th of 30" reads as a gaping hole in
+   a defence when it is often a rounding error. So this draws the distance from league average to
+   scale, with the rank beside it rather than instead of it: a club that is genuinely an outlier
+   shows a long bar, and a club that is merely last shows a stub. The reader can see which they are
+   looking at, which is the whole job. */
+var PROFILE_GROUPS = {
+  nba: [['Scoring', ['points','fgm','fga','threes','threesAtt','ftm','fta']],
+        ['Boards and assists', ['rebounds','oreb','dreb','assists']],
+        ['Defence events', ['turnovers','steals','blocks','pace']]],
+  nbl: [['Scoring', ['points','fgm','fga','threes','threesAtt','ftm','fta']],
+        ['Boards and assists', ['rebounds','oreb','dreb','assists']],
+        ['Defence events', ['turnovers','steals','blocks','pace']]],
+  nhl: [['Scoring', ['goals','goalsFor','shots','shotsFor','points']],
+        ['Conceded', ['goalsAgainst','shotsAgainst']],
+        ['Discipline and specials', ['pim','ppGoals','ppOpp','hits','blocks']]],
+  nfl: [['Offence', ['points','passYds','rushYds','totalYds','plays']],
+        ['Discipline', ['turnovers','sacks','penalties']]],
+  /* AFL carries thirty-odd columns a side and ungrouped it is a wall of bars nobody reads. The
+     grouping is the ordinary football one - where the ball goes, who wins it, what happens at the
+     contest - rather than alphabetical, which is how the data file happens to arrive. */
+  afl: [['Scoring', ['goals','behinds','shotsAtGoal','xScore','scoreInvolvements','goalAssists']],
+        ['Ball movement', ['disposals','kicks','handballs','handballReceives','disposalEff',
+                           'metresGained','inside50s','rebound50s','forward50Poss']],
+        ['Contest and clearances', ['contested','clearances','cba','groundBallGets','hitouts',
+                                    'postClearCont','postClearGBG']],
+        ['Marking', ['marks','marksInside50','contestedMarks','interceptMarks','marksOnLead']],
+        ['Defence and pressure', ['tackles','tacklesInside50','intercepts','pressureActs']],
+        ['Ratings', ['ratingPoints','dreamteam','supercoach','tog']]],
+  epl: [['Attack', ['goals','gf','shots','shotsOn','st_shots','st_shotsInsideBox','keyPasses',
+                    'assists','corners','cornersFor']],
+        ['Defence', ['ga','saves','tackles','cornersAgainst']],
+        ['Possession', ['st_possession','st_passes','st_passAccuracy']],
+        ['Discipline', ['cards','cardsPG','st_yellows','foulsCommitted','st_fouls']]],
+  mlb: [['Bats', ['R','H','TB','HR','BB','SB']],
+        ['Arms', ['SO','kRate']]]
+};
+var PROFILE_SCALE = 0.15;     // a bar reaches the end of its track at 15% from the league average
+
+function profileBars(rows, me, cols, allowed){
+  if (!cols.length) return '';
+  var out = [];
+  cols.forEach(function(col){
+    var vals = rows.map(function(t){ return t[col]; })
+                   .filter(function(v){ return typeof v === 'number' && isFinite(v); });
+    if (vals.length < 4 || typeof me[col] !== 'number') return;
+    var avg = vals.reduce(function(x, y){ return x + y; }, 0) / vals.length;
+    if (!avg) return;
+    var v = me[col];
+    var pct = (v - avg) / Math.abs(avg);
+    // rank: for what a club DOES, more is first; for what it ALLOWS, more is last, so the badge
+    // reads the way every other board does - 30th allows the most
+    var sorted = vals.slice().sort(function(a, b){ return allowed ? a - b : b - a; });
+    var rank = sorted.indexOf(v) + 1;
+    var w = Math.min(1, Math.abs(pct) / PROFILE_SCALE) * 50;
+    var hi = pct >= 0;
+    out.push('<div class="pfb-row">'
+      + '<div class="pfb-lab">' + esc(profileLabel(col)) + '<i>'
+        + (Math.abs(v) >= 100 ? Math.round(v) : v.toFixed(1)) + '</i></div>'
+      + '<div class="pfb-track"><span class="pfb-mid"></span>'
+        + '<span class="pfb-fill ' + (hi ? 'hi' : 'lo') + '" style="'
+        + (hi ? 'left:50%;' : 'right:50%;') + 'width:' + w.toFixed(1) + '%"></span></div>'
+      + '<div class="pfb-pct ' + (hi ? 'hi' : 'lo') + '">'
+        + (hi ? '+' : '\u2212') + Math.abs(pct * 100).toFixed(1) + '%</div>'
+      + '<div class="pfb-rank">' + rank + '</div>'
+      + '</div>');
+  });
+  return out.join('');
+}
+function profileLabel(c){
+  var n = String(c).replace(/_a$/, '').replace(/Against$/, '');
+  n = n.replace(/([a-z])([A-Z])/g, '$1 $2');
+  return n.charAt(0).toUpperCase() + n.slice(1);
+}
+/* Grouped sections for a side of the ball. Columns the sport's map does not mention are gathered
+   into a final group rather than dropped, so a new stat in the data file still appears. */
+function profileSections(key, rows, me, cols, allowed){
+  var groups = PROFILE_GROUPS[key] || [];
+  var used = {}, html = '';
+  groups.forEach(function(g){
+    var want = g[1].map(function(c){ return allowed ? c + '_a' : c; })
+                   .filter(function(c){ return cols.indexOf(c) >= 0; });
+    want.forEach(function(c){ used[c] = 1; });
+    var body = profileBars(rows, me, want, allowed);
+    if (body) html += '<div class="pfb-g">' + esc(g[0]) + '</div>' + body;
+  });
+  var rest = cols.filter(function(c){ return !used[c]; });
+  var restBody = profileBars(rows, me, rest, allowed);
+  if (restBody) html += (html ? '<div class="pfb-g">Everything else</div>' : '') + restBody;
+  return html;
+}
 function teamProfile(key, team){
   var S = state.sports[key];
   var rows = teamRowsFor(key);
@@ -18863,12 +18985,32 @@ function teamProfile(key, team){
   var h = '';
   h += teamFormSection(key, team) + teamWorm(key, team) + teamH2HSection(key, team)
      + teamGameShapeSection(key, team) + teamTotalsChart(key, team);
-  if (forCols.length)
+  // the full column list, not the first ten: the grouped view has room for all of it
+  var allFor = numeric.filter(function(c){ return !isAgainst(c) && !SKIP_COLS[c]; });
+  var allAg  = numeric.filter(isAgainst);
+  var gm = me.games || me.matches || me.gp || null;
+  var sampleNote = (gm && gm < 10)
+    ? '<div class="pfb-note">' + gm + ' game' + (gm === 1 ? '' : 's') + ' so far this season \u2014 '
+      + 'far too few for any of these to mean much.</div>' : '';
+  var forBody = profileSections(key, rows, me, allFor, false);
+  var agBody  = profileSections(key, rows, me, allAg, true);
+  if (forBody)
+    h += '<div class="dd-sec"><div class="dd-h">What they do</div>' + sampleNote
+       + '<div class="pfb-head"><span>per game</span><span>vs league average</span>'
+         + '<span>gap</span><span>rank</span></div>'
+       + forBody + '</div>';
+  if (agBody)
+    h += '<div class="dd-sec"><div class="dd-h">What they allow</div>'
+       + '<div class="pfb-head"><span>per game</span><span>vs league average</span>'
+         + '<span>gap</span><span>rank</span></div>'
+       + agBody
+       + '<div class="pfb-note">Green means they concede MORE than the league. The rank on the '
+       + 'right counts from the stingiest, so the highest number allows the most. Watch the bar '
+       + 'rather than the rank: most of these gaps are a few per cent, and last of thirty is '
+       + 'usually much closer to first than it sounds.</div></div>';
+  if (!forBody && !agBody && (forCols.length || agCols.length))
     h += '<div class="dd-sec"><div class="dd-h">What they do</div><div class="pf-grid">'
-       + forCols.map(cell).join('') + '</div></div>';
-  if (agCols.length)
-    h += '<div class="dd-sec"><div class="dd-h">What they allow</div><div class="pf-grid">'
-       + agCols.map(cell).join('') + '</div></div>';
+       + forCols.map(cell).join('') + agCols.map(cell).join('') + '</div></div>';
   h += teamDvpSection(key, team);
 
   // NBA: what this defence concedes by shot zone, which is the read that matters for a scorer
