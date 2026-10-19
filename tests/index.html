@@ -1036,6 +1036,9 @@
   .sr-t-tbl td{font-family:var(--font-mono);}
   .sr-t-tbl td.sr-t{font-family:var(--font-display);text-align:left;}
   .sr-t-tbl td.sr-t i{font-style:normal;font-size:9px;color:var(--text-3);margin-left:7px;}
+  .dvp-carry{font-size:10.5px;line-height:1.5;color:#eab308;margin:0 0 8px;
+    background:color-mix(in srgb,#eab308 9%,transparent);border:1px solid
+    color-mix(in srgb,#eab308 32%,transparent);border-radius:8px;padding:7px 9px;}
   .dvp-d{display:block;font-style:normal;font-family:var(--font-mono);font-size:8.5px;
     color:var(--text-3);line-height:1.5;}
   .st-t td.hi .dvp-d{color:color-mix(in srgb,var(--accent) 78%,var(--text-3));}
@@ -12275,6 +12278,31 @@ function dvpView(key){
   rows.sort(function(a,b){ return (+b[sortKey]||0) - (+a[sortKey]||0); });
   var avg = {};
   stats.forEach(function(c){ avg[c[0]] = rows.reduce(function(a,t){ return a + (+t[c[0]]||0); }, 0) / Math.max(1, rows.length); });
+  /* WHOSE SEASON IS THIS, ACTUALLY?
+     The build shrinks a young season's defensive numbers toward last year's, because one night of
+     basketball is worth less than a full season of it - opening-night DvP missed where a club
+     would finish by a median of 17.5 points a game, and only twelve of ninety team-position pairs
+     had any data at all. It ships wCurrent with every row: 1 means the number is entirely this
+     season, 0 means entirely last. The board showed the result and said nothing about which, so
+     in October it would have presented last year's defence as this year's. */
+  var wv = rows.map(function(t){ return t.wCurrent; })
+               .filter(function(x){ return typeof x === 'number'; });
+  var carried = '';
+  if (wv.length){
+    wv.sort(function(a, b){ return a - b; });
+    var wMed = wv[Math.floor(wv.length / 2)];
+    var gv = rows.map(function(t){ return t.games; }).filter(function(x){ return typeof x === 'number'; });
+    gv.sort(function(a, b){ return a - b; });
+    var gMed = gv.length ? gv[Math.floor(gv.length / 2)] : null;
+    if (wMed < 0.75)
+      carried = '<div class="dvp-carry">' + (wMed <= 0.02
+          ? 'Nothing has been played yet, so every number here is last season\u2019s.'
+          : 'Mostly last season. ' + (gMed != null ? 'Clubs have played around ' + Math.round(gMed)
+              + ' game' + (Math.round(gMed) === 1 ? '' : 's') + ' so far, so these are weighted '
+              : 'These are weighted ') + Math.round(wMed * 100) + '% toward this season and the '
+            + 'rest toward last.')
+        + ' They move across as the games are played.</div>';
+  }
   var h = '<div class="sl-bar">'+positions.map(function(p2){
       return '<button class="sl-chip'+(p2===pos?' on':'')+'" onclick="LAB.stPos(\''+key+'\',\''+esc(p2)+'\')">'
         + esc(p2 === 'ALL' ? 'All' : p2)+'</button>'; }).join('')+'</div>'
@@ -12283,6 +12311,7 @@ function dvpView(key){
     + '. Green concedes more than the league, orange less, and the small figure is how far from '
     + 'average that is. Read that figure before the colour: a defence can sit last in the league '
     + 'and still be within a few per cent of the middle, which is not the soft draw it looks.</div>'
+    + carried
     + '<div class="st-wrap"><table class="st-t"><thead><tr><th>Team</th>'
     + stats.map(function(c){
         return '<th class="'+(sortKey===c[0]?'on':'')+'" onclick="LAB.stDvpSort(\''+c[0]+'\')">'
