@@ -480,6 +480,12 @@
   .stk-hit{font-family:var(--font-display);font-size:18px;line-height:1;color:var(--accent);}
   /* how unlikely the run is, and how many chances it had. Muted by default: it is context, not a
      headline. Green only when the search genuinely did not expect to find it. */
+  .stk-cut.lead{border-top:0;border-bottom:1px dashed color-mix(in srgb,#f97316 42%,transparent);
+    margin:0 0 6px;padding:2px 2px 9px;}
+  .stk-cut{border-top:1px dashed color-mix(in srgb,#f97316 42%,transparent);margin:9px 0 2px;
+    padding:9px 2px 4px;font-size:10px;line-height:1.55;color:var(--text-3);}
+  .stk-cut b{display:block;font-family:var(--font-display);font-size:10px;font-weight:800;
+    letter-spacing:.08em;text-transform:uppercase;color:#f97316;margin-bottom:3px;}
   .stk-rare{font-family:var(--font-mono);font-size:9px;color:var(--text-3);margin-top:4px;line-height:1.4;}
   .stk-rare.rare{color:var(--accent);}
   .stk-rare.common{color:var(--text-3);opacity:.72;}
@@ -4005,7 +4011,30 @@ function statOf(key, row, mkt){
 // Production runs one floor for every signal (SIG_ODDS_FLOOR = 1.60, enforced in
 // collectOU). Streakers gets its own, lower one: the play here is a live run, not a
 // price edge, so $1.20 still pays while $1.05 chalk stays out.
-var SIG_ODDS_FLOOR = 1.60, STREAK_ODDS_FLOOR = 1.20, SIG_KEEP_CHALK = false;
+var SIG_ODDS_FLOOR = 1.60, STREAK_ODDS_FLOOR = 1.20;
+/* THE STREAKERS TILE LEADS WITH WHAT PAYS, AND STILL SHOWS THE REST.
+   Streakers was the one signal exempted from the house floor, on the reasoning just above: a live
+   run is its own case, so $1.20 was allowed to stand. The ledger disagrees. Over the 160 priced,
+   settled Streakers bets on file:
+
+       under $1.60   100 bets   63 won against 74.8 the price expected   -15.9%   95% band -29% to -3%
+       $1.60 and up   60 bets   33 won against 32.4 expected              +5.0%   95% band -20% to +34%
+
+   The short half is the clearest negative result in the whole ledger - the entire band sits below
+   zero and 1% of bootstrap resamples finish in front - and it holds inside NHL alone, 78 bets at
+   -17.7%, so it is not the sport mix. The band above it is UNDETERMINED, not proven: its own band
+   straddles zero. The mechanism is ordinary - the bookmaker's margin is a far larger share of a
+   short price - which is why this is worth acting on rather than a number fitted to 160 bets.
+
+   So the tile now leads at the house floor. It does NOT hide the rest: a run that only exists at a
+   short price still appears, below a divider carrying that record, because the job here is to show
+   the strand and say what it has been worth, not to decide for the reader.
+
+   SEPARATE from STREAK_ODDS_FLOOR deliberately. That one also gates Bunnies, Tackle Machines,
+   Bogey and the Multi Builder, whose records show nothing like the same losses (Bunnies +1.4%,
+   Bogey +2.8%), and moving them on evidence gathered about Streakers would be changing four
+   things having measured one. */
+var STREAK_TILE_FLOOR = SIG_ODDS_FLOOR, SIG_KEEP_CHALK = true;
 // MLB ships batters and pitchers in one players.json, and both carry an 'H'. Without this
 // gate a pitcher's hits-ALLOWED gets streak-tested against the batter hits market.
 var BAT_ONLY = { H:1, TB:1, HR:1, RBI:1, R:1, SB:1 }, ARM_ONLY = { K:1 };
@@ -4159,11 +4188,11 @@ function streakers(key, g){
           var streak = 0;
           for (var i=0;i<vals.length;i++){ if (vals[i] > od.line) streak++; else break; }
           if (streak < STREAK_MIN) return;
-          if (od.price < STREAK_ODDS_FLOOR && !chalk){          // remember it, but keep looking for one that pays
+          if (od.price < STREAK_TILE_FLOOR && !chalk){          // remember it, but keep looking for one that pays
             chalk = { od:od, streak:streak };
             return;
           }
-          if (od.price < STREAK_ODDS_FLOOR) return;
+          if (od.price < STREAK_TILE_FLOOR) return;
           var n = Math.min(10, vals.length), hits = 0;
           for (var j=0;j<n;j++){ if (vals[j] > od.line) hits++; }
           var w = vals.slice(0, 10).slice().sort(function(x,y){ return x-y; });
@@ -4202,7 +4231,10 @@ function streakers(key, g){
   });
 
   out.sort(function(a,b){
-    return (a.band - b.band) || (b.price - a.price) || (b.margin - a.margin) || (b.streak - a.streak);
+    // a run that only exists below the floor sorts last however long it is, because length is
+    // exactly what makes a short-priced run look better than its record says it is
+    return ((a.short ? 1 : 0) - (b.short ? 1 : 0))
+        || (a.band - b.band) || (b.price - a.price) || (b.margin - a.margin) || (b.streak - a.streak);
   });
   return out.slice(0, SIG_MAX_ROWS);
 }
@@ -4224,6 +4256,40 @@ function streakRareLine(r){
   }
   return '<div class="stk-rare' + cls + '">' + txt + '</div>';
 }
+/* The rows, with a divider wherever the short-priced ones begin.
+   These are runs that exist ONLY at a price under the house floor, and the ledger has a verdict on
+   them, so the divider carries it. Stating the record is the honest alternative to deleting the
+   rows: the reader still sees the strand and is told what it has been worth, rather than being
+   handed a long run with nothing attached or nothing at all. */
+function streakRowsWithDivider(key, rows){
+  var f = STREAK_TILE_FLOOR.toFixed(2);
+  var record = 'In the graded record, Streakers rows priced under $' + f + ' have gone 63 from 100 '
+    + 'against the 74.8 their prices expected \u2014 the one clearly losing band on the board.';
+  /* Whole boards come back short-priced, and for good reason: a long run is easiest to build on an
+     easy line, and an easy line is a short price. Measured on one fixture a side, every NHL and NBA
+     run on the board was below the floor, against about half for NFL and AFL. A divider sitting
+     above the very first row reads like a mistake, so when nothing clears the floor the tile says
+     so once, at the top, and then lists what it has. */
+  var allShort = rows.length && rows.every(function(r){ return r.short; });
+  if (allShort)
+    return ['<div class="stk-cut lead"><b>Every run here is short-priced</b>'
+      + 'Nothing on this fixture has a rung paying $' + f + ' or better. ' + record
+      + ' They are listed because a long run is still a fact, not because the record backs '
+      + 'them.</div>'].concat(rows.map(function(r){ return streakRow(key, r); }));
+
+  var out = [], cut = false;
+  rows.forEach(function(r){
+    if (r.short && !cut){
+      cut = true;
+      out.push('<div class="stk-cut"><b>Only at a short price</b>'
+        + 'These runs have no rung paying $' + f + ' or better. ' + record
+        + ' Shown because a long run is still a fact; placed here because of what that band has '
+        + 'returned.</div>');
+    }
+    out.push(streakRow(key, r));
+  });
+  return out;
+}
 function streakRow(key, r){
   var btns = rowBtns(key, { name:r.name, mkt:mktFromLabel(key, r.label), line:r.line, side:'over',
                             odds:r.price, book:r.book, opp:r.opp, team:r.team, label:r.label });
@@ -4244,7 +4310,7 @@ function streakRow(key, r){
         + esc((r.pos ? r.pos+' \u00b7 ' : '')+abbrOf(key, r.team))+'</span></div>'
       + '<div class="stk-bet">'+ask+'+ '+esc(r.label)+' \u00b7 v '+esc(abbrOf(key, r.opp))
         + (r.med != null ? ' \u00b7 med '+(r.med % 1 ? r.med.toFixed(1) : r.med) : '')
-        + (r.alt ? ' \u00b7 alt' : '')+(r.short ? ' \u00b7 under $'+STREAK_ODDS_FLOOR.toFixed(2) : '')+'</div>'
+        + (r.alt ? ' \u00b7 alt' : '')+(r.short ? ' \u00b7 only at $'+(+r.price).toFixed(2) : '')+'</div>'
       + pips
       + streakRareLine(r)
     + moveChip(key, r.name, r.mkt, r.line, r.book, r.price)
@@ -8962,7 +9028,7 @@ function signalsSection(key, g){
   var priced = oddsRows(S.data.odds).length;
   var rows = priced ? streakers(key, g) : [];
   var why = priced
-    ? 'No player on this fixture has cleared a line paying $'+STREAK_ODDS_FLOOR.toFixed(2)+'+ in their last '
+    ? 'No player on this fixture has cleared a line paying $'+STREAK_TILE_FLOOR.toFixed(2)+'+ in their last '
       + STREAK_MIN+' games. A run also ends at any game where the stat wasn\u2019t recorded, so a sport whose '
       + 'feed has gone stale will show nothing here rather than counting across them.'
     : 'No posted lines loaded for '+SPORTS[key].name+' \u2014 streaks are measured against a real market, so nothing can fire.';
@@ -8978,7 +9044,7 @@ function signalsSection(key, g){
   var picks = ouTile(key, g, 'over')
     + ouTile(key, g, 'under')
     + sigTile('ti-flame', 'Streakers', 'Cleared the posted line, game after game',
-              rows.map(function(r){ return streakRow(key, r); }), why)
+              streakRowsWithDivider(key, rows), why)
     + sigTile('ti-trophy', 'Elite Matchups', 'League\u2019s best against the softest defences',
               elite.map(function(r){ return eliteRow(key, r); }), eliteWhy)
     + (WRAP_CFG[key] ? (function(){
@@ -21196,6 +21262,11 @@ window.LAB = {
     return { rows: all, lastScanTests: tests };
   },
   rarityProbe: function(price, streak){ return streakRarity(price, streak); },
+  // the Streakers tile has its own floor; the shared one still gates Bunnies, Bogey, Tackle
+  // Machines and the Multi Builder, and a test should be able to prove it did not move
+  floorsProbe: function(){
+    return { shared: STREAK_ODDS_FLOOR, streakTile: STREAK_TILE_FLOOR, house: SIG_ODDS_FLOOR };
+  },
   oneInProbe: function(n){ return oneIn(n); },
   gateProbe: function(key, which){
     var g = (state.sports[key].data.fixture || []), out = { fixtures:0, rows:0, gates:{} };
