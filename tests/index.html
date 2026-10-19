@@ -1036,6 +1036,24 @@
   .sr-t-tbl td{font-family:var(--font-mono);}
   .sr-t-tbl td.sr-t{font-family:var(--font-display);text-align:left;}
   .sr-t-tbl td.sr-t i{font-style:normal;font-size:9px;color:var(--text-3);margin-left:7px;}
+  .av-wrap{display:grid;grid-template-columns:1fr 1fr;gap:9px;}
+  .av-col{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:9px 10px;}
+  .av-tm{display:flex;align-items:center;gap:6px;padding-bottom:7px;border-bottom:1px solid var(--border);}
+  .av-tm img{width:18px;height:18px;object-fit:contain;}
+  .av-tm b{font-size:12px;} .av-tm span{font-family:var(--font-mono);font-size:9px;color:var(--text-3);margin-left:auto;}
+  .av-h{font-family:var(--font-mono);font-size:8.5px;letter-spacing:.08em;text-transform:uppercase;
+    margin:8px 0 3px;color:var(--text-3);}
+  .av-h.out{color:#f97316;} .av-h.doubt{color:#eab308;}
+  .av-row{display:flex;justify-content:space-between;gap:7px;padding:3px 0;align-items:baseline;}
+  .av-nm{font-size:11.5px;color:var(--text);line-height:1.3;}
+  .av-nm i{font-style:normal;font-size:9px;color:var(--text-3);margin-left:5px;}
+  .av-st{text-align:right;white-space:nowrap;}
+  .av-st b{display:block;font-family:var(--font-mono);font-size:9.5px;font-weight:500;color:var(--text-2);}
+  .av-st b.out{color:#f97316;} .av-st b.doubt{color:#eab308;}
+  .av-st span{font-size:9px;color:var(--text-3);}
+  .av-none{font-size:10.5px;color:var(--text-3);line-height:1.5;padding:8px 0 2px;}
+  .av-note{font-size:10px;color:var(--text-3);line-height:1.5;margin-top:9px;}
+  @media (max-width:520px){ .av-wrap{grid-template-columns:1fr;} }
   .pfb-g{font-family:var(--font-display);font-size:9px;font-weight:800;letter-spacing:.1em;
     text-transform:uppercase;color:var(--text-3);margin:12px 0 5px;}
   .pfb-g:first-child{margin-top:4px;}
@@ -8999,6 +9017,8 @@ function secNote(title, why){
    things you need before you can read the page. Those fold away behind their own heading; what the
    page is actually FOR stays open. What a reader opens is remembered for the session, so anyone who
    wants everything gets it after one tap per section. */
+// avail is NOT in here: who is missing is the first thing anyone checks before reading a number,
+// so it opens with the page rather than hiding behind a click.
 var FOLD_SHUT = { form:1, dvp:1, dist:1, starter:1, halves:1, subs:1, firstLast:1, jupiter:1, dejaVu:1 };
 /* Every folded section that went into the Compare and Build cards started CLOSED - form, dist,
    starter, halves, subs, firstLast, jupiter, dejaVu are all in FOLD_SHUT above. A card that
@@ -9016,7 +9036,11 @@ function cardAttr(id){ return cardOpen(id) ? ' open' : ''; }
 function cardTog(id){ return ' onclick="LAB.cardToggle(\'' + id + '\')"'; }
 var FOLD_NAME = { form:'Recent form', dvp:'Defence by position', dist:'Distribution',
                   starter:'Starters', halves:'By half', subs:'Substitutes',
-                  firstLast:'First and last', jupiter:'Jupiter', dejaVu:'D\u00e9j\u00e0 Vu' };
+                  firstLast:'First and last', jupiter:'Jupiter', dejaVu:'D\u00e9j\u00e0 Vu',
+                  // "Availability", not "Who is not playing": most of what a feed carries is day-to-day or
+                  // questionable, and those men usually DO play. The heading should not decide that for
+                  // the reader when the rows underneath say otherwise.
+                  avail:'Availability' };
 /* THE BUILD CARD ----------------------------------------------------------------------------
    Jupiter, Déjà Vu, the Simulator and the Multi Builder were four stacked sections, and three of
    them were already the same tool: dejaVuSection, jupiterSection and the builder all construct
@@ -9297,6 +9321,8 @@ function focusPage(){
     + (S.status === 'ready' && !state.view.nerd ? matchRadar(key, g) : '')
     + (S.t3 === 'ready' && !state.view.nerd ? firstReadSection(key, g) : '')
     + (!state.view.nerd ? ctxSection(key, g) : '')
+    // who is not playing sits with the other reference material, folded, for every sport
+    + availSection(key, g)
 
     // Nerd Mode replaces the signals rather than adding to them: it is a different read of the
     // same fixture (the market against itself), and stacking both made the page enormous.
@@ -16918,6 +16944,81 @@ function nbaWWSection(key, name){
 }
 
 /* The same read pointed at tonight: who is ruled out, and whose numbers that has moved. */
+/* WHO IS NOT PLAYING - a plain availability board for both clubs, every sport.
+   injury.json has been in the build for every sport all along and only ever reached the page two
+   ways: as a flag beside a name on a team sheet, and through the NBA Absences card, which is a
+   signal rather than a list - it shows only men ruled OUT whose absence has a MEASURED effect on a
+   team-mate's numbers, and drops everyone else. So a questionable starter, or an out player whose
+   replacement has no history, appeared nowhere. This is the list itself: name, position, what is
+   wrong, and the feed's own words for how likely he is to play.
+
+   The statuses differ by sport and are left in the feed's language - "Day-To-Day", "Injured
+   Reserve", "60-Day-IL", "Questionable" all mean something specific to the people who follow that
+   sport, and flattening them into "out/maybe" would throw that away. They are only grouped by how
+   definite they are, hardest first. */
+var AVAIL_ORDER = [
+  ['out',   'Ruled out',   /^out$|injured reserve|\bir\b|-day-il|day il|suspen|season|indefinite/i],
+  ['doubt', 'In doubt',    /doubtful|questionable|game.?time|gtd|test/i],
+  ['soft',  'Carrying something', /day.?to.?day|probable|paternity|personal/i]
+];
+function availBucket(raw){
+  var t = String(raw || '').trim();
+  for (var i = 0; i < AVAIL_ORDER.length; i++) if (AVAIL_ORDER[i][2].test(t)) return AVAIL_ORDER[i][0];
+  return t ? 'soft' : null;
+}
+function availFor(key, team){
+  var inj = asArray(state.sports[key].data.injury) || [];
+  var want = [normTeam(team), normTeam(teamFullName(key, team) || '')].filter(Boolean);
+  var out = [];
+  inj.forEach(function(r){
+    if (!r) return;
+    var rt = normTeam(r.Team || r.team || '');
+    if (want.indexOf(rt) < 0) return;
+    var raw = String(r.Status || r.status || r.Returning || '').trim();
+    var b = availBucket(raw);
+    if (!b) return;
+    out.push({ name:r.Player || r.player || '', pos:r.Position || r.position || '',
+               what:r.Injury || r.injury || '', raw:raw, bucket:b });
+  });
+  var rank = {}; AVAIL_ORDER.forEach(function(x, i){ rank[x[0]] = i; });
+  out.sort(function(a, b){ return (rank[a.bucket] - rank[b.bucket]) || a.name.localeCompare(b.name); });
+  return out;
+}
+function availSide(key, team){
+  var rows = availFor(key, team);
+  var head = '<div class="av-tm">' + teamLogo(key, team) + '<b>' + esc(abbrOf(key, team)) + '</b>'
+    + '<span>' + (rows.length ? rows.length + ' listed' : 'nobody listed') + '</span></div>';
+  if (!rows.length)
+    /* An empty list is not a clean bill of health and must never read like one: most feeds only
+       publish what they have, and a club with nothing posted is a club nobody has filed on yet. */
+    return '<div class="av-col">' + head
+      + '<div class="av-none">No one listed for this club. That means nothing has been filed, '
+      + 'not that everyone is fit.</div></div>';
+  var body = '', last = null;
+  rows.forEach(function(r){
+    if (r.bucket !== last){
+      last = r.bucket;
+      var lab = AVAIL_ORDER.filter(function(x){ return x[0] === r.bucket; })[0];
+      body += '<div class="av-h ' + r.bucket + '">' + esc(lab ? lab[1] : 'Listed') + '</div>';
+    }
+    body += '<div class="av-row"><div class="av-nm">' + esc(r.name)
+      + (r.pos ? '<i>' + esc(r.pos) + '</i>' : '') + '</div>'
+      + '<div class="av-st"><b class="' + r.bucket + '">' + esc(r.raw) + '</b>'
+      + (r.what ? '<span>' + esc(r.what) + '</span>' : '') + '</div></div>';
+  });
+  return '<div class="av-col">' + head + body + '</div>';
+}
+function availSection(key, g){
+  if (!g || !g.home || !g.away) return '';
+  var inj = asArray(state.sports[key].data.injury) || [];
+  if (!inj.length) return '';
+  var any = availFor(key, g.home).length + availFor(key, g.away).length;
+  if (!any) return '';
+  return fold('avail',
+    '<div class="av-wrap">' + availSide(key, g.away) + availSide(key, g.home) + '</div>'
+    + '<div class="av-note">Straight from the injury feed, in its own words. A man in doubt may '
+    + 'still play, and a team sheet posted closer to the game beats anything here.</div>');
+}
 function nbaOutSection(key, g){
   if (key !== 'nba' && key !== 'nbl') return '';
   var S = state.sports[key];
