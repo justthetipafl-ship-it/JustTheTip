@@ -1036,6 +1036,7 @@
   .sr-t-tbl td{font-family:var(--font-mono);}
   .sr-t-tbl td.sr-t{font-family:var(--font-display);text-align:left;}
   .sr-t-tbl td.sr-t i{font-style:normal;font-size:9px;color:var(--text-3);margin-left:7px;}
+  .sr-t-tbl td.sr-band{font-size:10px;color:var(--text-3);white-space:nowrap;}
   .sr-t-tbl tr.sr-young td{opacity:.45;}
   .sr-t-tbl td.good{color:var(--accent);} .sr-t-tbl td.bad{color:#f97316;}
   .sig-quiet{margin:4px 0 10px;background:var(--surface-2);border:1px solid var(--border);border-radius:9px;}
@@ -15218,7 +15219,15 @@ function sigRecAbsorb(j){
           n:+t.n || 0, decided:decided, priced:priced,
           w:+t.w || 0, l:+t.l || 0, v:+t.v || 0, u:+t.u || 0,
           hit:decided ? (+t.w || 0) / decided : null,
-          roi:priced ? (+t.u || 0) / priced : null
+          roi:priced ? (+t.u || 0) / priced : null,
+          /* How far this same record could have landed on the same bets, from the grader's
+             bootstrap, plus what the PRICE expected to win. A tile on +9u from 31 bets reads as
+             settled fact; its band runs from -1% to +57%, which is the first thing anyone should
+             know before the headline. Older reports carry none of this and show no band rather
+             than a made-up one. */
+          lo:t.lo == null ? null : +t.lo, hi:t.hi == null ? null : +t.hi,
+          ahead:t.ahead == null ? null : +t.ahead,
+          exp:t.exp == null ? null : +t.exp
         };
       });
 }
@@ -15258,11 +15267,14 @@ function signalRecordSection(){
       + '<td class="' + (none ? '' : pos ? 'good' : 'bad') + '">'
         + (none ? '\u2014' : (pos ? '+' : '') + r.u.toFixed(1) + 'u') + '</td>'
       + '<td class="' + (none ? '' : pos ? 'good' : 'bad') + '">' + (r.roi != null
-          ? (r.roi >= 0 ? '+' : '') + Math.round(r.roi * 100) + '%' : '\u2014') + '</td></tr>';
+          ? (r.roi >= 0 ? '+' : '') + Math.round(r.roi * 100) + '%' : '\u2014') + '</td>'
+      + '<td class="sr-band">' + (r.lo == null ? '\u2014'
+          : (Math.round(r.lo * 100) + '% to ' + (r.hi >= 0 ? '+' : '') + Math.round(r.hi * 100) + '%'))
+        + '</td></tr>';
   }).join('');
   return '<div class="dayband"><span>How the signals have done</span></div>'
     + '<div class="st-wrap"><table class="st-t sr-t-tbl"><thead><tr><th>Signal</th><th>Bets</th>'
-    + '<th>Hit</th><th>Units</th><th>ROI</th></tr></thead><tbody>' + body + '</tbody></table></div>'
+    + '<th>Hit</th><th>Units</th><th>ROI</th><th>Could be</th></tr></thead><tbody>' + body + '</tbody></table></div>'
     + '<div class="deg-note">Every signal is recorded as close to an hour before its game as the '
     + 'snapshot gets, and settled from the game logs at one unit a bet. A player who did not take '
     + 'the field is a void, not a loss. '
@@ -15271,6 +15283,13 @@ function signalRecordSection(){
     + (unpriced.length ? 'A dash under units means the price those signals were posted at was not '
         + 'recorded, so what they returned is unknown \u2014 they still count toward the hit rate. '
         : '')
+    /* The honest reading of this table, in the table itself. Without it a reader takes the best
+       row as proof; with a dozen tiles on the board, one of them looking excellent is what chance
+       produces on its own. */
+    + '\u201cCould be\u201d is the range this same record could have landed in on the same bets. '
+    + 'Where it crosses zero, the tile has not yet shown it beats the price. With this many '
+    + 'signals on the board, expect one to look good by chance alone \u2014 a strong row is a '
+    + 'reason to keep watching it, not a finding. '
     + waitNote
     + (SIG_REC.updated ? 'Updated ' + esc(SIG_REC.updated) + '.' : '') + '</div>';
 }
