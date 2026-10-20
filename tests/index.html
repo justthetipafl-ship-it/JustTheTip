@@ -9109,11 +9109,19 @@ var FOLD_SHUT = { form:1, dvp:1, dist:1, starter:1, halves:1, subs:1, firstLast:
    argument was already won by the merge itself. Build stays shut because it is a tool you go to,
    not a read you pass. */
 var CARD_SHUT = { build:1 };
-function cardOpen(id){
-  var v = state.view.cardOpen && state.view.cardOpen[id];
+/* WHICH READING CARDS THE USER HAS COLLAPSED.
+   This lives under its own key, and the reason is a bug it caused. It used to be kept in
+   state.view.cardOpen - which was already taken: that flag is a BOOLEAN meaning "the My Card
+   slip is open", read at the top of the slip's renderer as `if (!state.view.cardOpen) return ''`.
+   Folding a Team or Players card wrote an OBJECT there, an object is truthy, and the slip opened
+   itself. Every collapse of any card popped My Card open, which looked like stray clicks opening
+   it at random. Two different ideas, one key, and the one that lost was the one being read as a
+   boolean. */
+function cardIsOpen(id){
+  var v = state.view.cardFold && state.view.cardFold[id];
   return v != null ? v : !CARD_SHUT[id];
 }
-function cardAttr(id){ return cardOpen(id) ? ' open' : ''; }
+function cardAttr(id){ return cardIsOpen(id) ? ' open' : ''; }
 function cardTog(id){ return ' onclick="LAB.cardToggle(\'' + id + '\')"'; }
 var FOLD_NAME = { form:'Recent form', dvp:'Defence by position', dist:'Distribution',
                   starter:'Starters', halves:'By half', subs:'Substitutes',
@@ -20605,8 +20613,9 @@ window.LAB = {
     cardRender(kind);
   },
   cardToggle: function(id){
-    state.view.cardOpen = state.view.cardOpen || {};
-    state.view.cardOpen[id] = !cardOpen(id);
+    // cardFold, NOT cardOpen: that one is the My Card slip's own boolean
+    state.view.cardFold = state.view.cardFold || {};
+    state.view.cardFold[id] = !cardIsOpen(id);
   },
   crewOpen: function(id){ state.view.crewTile = id || null; if (window.scrollTo) window.scrollTo(0, 0); render(); },
   nerd: function(){ state.view.nerd = !state.view.nerd; render(); },
