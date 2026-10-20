@@ -1049,6 +1049,18 @@
     color:var(--text-3);line-height:1.5;}
   .st-t td.hi .dvp-d{color:color-mix(in srgb,var(--accent) 78%,var(--text-3));}
   .st-t td.lo .dvp-d{color:color-mix(in srgb,#f97316 72%,var(--text-3));}
+  .rz-wrap{display:grid;grid-template-columns:1fr 1fr;gap:9px;}
+  .rz-col{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:9px 10px;}
+  .rz-row{padding:6px 0;border-top:1px solid var(--border);}
+  .rz-row:first-of-type{border-top:0;}
+  .rz-nm{font-size:11.5px;color:var(--text);}
+  .rz-nm i{font-style:normal;font-size:9px;color:var(--text-3);margin-left:5px;}
+  .rz-cells{display:flex;flex-wrap:wrap;gap:4px;margin-top:4px;}
+  .rz-c{background:var(--surface-2);border-radius:6px;padding:3px 6px;font-size:9px;
+    color:var(--text-3);line-height:1.35;}
+  .rz-c b{display:block;font-family:var(--font-mono);font-size:12px;color:var(--text);font-weight:600;}
+  .rz-c i{display:block;font-style:normal;font-size:8.5px;color:var(--accent);}
+  @media (max-width:520px){ .rz-wrap{grid-template-columns:1fr;} }
   .av-wrap{display:grid;grid-template-columns:1fr 1fr;gap:9px;}
   .av-col{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:9px 10px;}
   .av-tm{display:flex;align-items:center;gap:6px;padding-bottom:7px;border-bottom:1px solid var(--border);}
@@ -9071,15 +9083,69 @@ function signalsSection(key, g){
   SIG_PHASE = 'u';
   // radar / coverage / usage are reads, not signals - and the most expensive part - so skip them
   // when Degen Crew is only capturing tiles
-  var reads = SIG_CAPTURE ? '' : (radarSection(key, g) + coverageSection(key, g) + usageSection(key, g));
-  var form = sigTile('ti-trending-up', 'Form Alerts', 'Running hot or cold against their own season',
-              formAlerts(key, g).map(function(r){ return formRow(key, r); }),
-              'No priced player is '+Math.round(ALERT_THRESHOLD*100)+'%+ above or below their season '
-              + 'average on a market that carries enough volume to mean anything.');
+
+  /* Radar, Coverage, Usage Leaders and Form Alerts have moved into the Players card. They were
+     never signals - they are reads about the men in this game, which is the question that card
+     answers - and leaving them at the foot of the signals meant the page asked the same question
+     in two places. SIG_CAPTURE still skips them, because Degen Crew only wants tiles. */
   return sigBand('Degen Signals \u00b7 Picks', picks)
     + nfl
-    + sigBand('Form &amp; Matchups', reads + form)
     + '';                                   // the quiet list is gone: it was longer than the signals
+}
+/* Form Alerts, lifted out of the signals band so the Players card can host it. */
+/* WHO GETS THE BALL WHERE POINTS ARE SCORED.
+   redzone.json has been in the build all along and only ever surfaced one player at a time, inside
+   the Tuddy Targets tile and the player panel. The question it answers - of the men in THIS game,
+   who actually gets the ball inside the twenty, and inside the five - had nowhere to be asked.
+
+   Share, not just count. A back with 43 red-zone carries tells you he plays; 76.8% of his club's
+   red-zone carries tells you nobody else is getting them, and that is the number that decides a
+   touchdown market. The file carries both, so both are shown: the raw count, and the share where
+   the feed has it. */
+var RZ_COLS = [['rzAtt','RZ carries','rzRushPct'], ['i5Att','Inside-5','i5RushPct'],
+               ['rzTgt','RZ targets','rzTgtPct'], ['i10Tgt','Inside-10','i10TgtPct'],
+               ['rzRushTd','RZ rush TD',null], ['rzRecTd','RZ rec TD',null]];
+function redZoneSide(key, team, rows){
+  var mine = rows.filter(function(r){ return normTeam(r.team) === normTeam(team); });
+  if (!mine.length) return '';
+  // rank by involvement near the line, so the men who matter lead
+  var touch = function(r){ return (+r.rzAtt || 0) + (+r.rzTgt || 0); };
+  mine = mine.slice().sort(function(a, b){ return touch(b) - touch(a); }).slice(0, 6);
+  var body = mine.map(function(r){
+    var p = (state.sports[key].idx.byName || {})[r.player];
+    var cells = RZ_COLS.map(function(c){
+      var v = +r[c[0]] || 0;
+      if (!v) return '';
+      var pct = c[2] != null && r[c[2]] != null ? (+r[c[2]]).toFixed(0) + '%' : null;
+      return '<span class="rz-c"><b>' + v + '</b>' + esc(c[1])
+        + (pct ? '<i>' + pct + ' of club</i>' : '') + '</span>';
+    }).filter(Boolean).join('');
+    if (!cells) return '';
+    return '<div class="rz-row"><div class="rz-nm">' + esc(r.player)
+      + (p && p.position ? '<i>' + esc(p.position) + '</i>' : '') + '</div>'
+      + '<div class="rz-cells">' + cells + '</div></div>';
+  }).filter(Boolean).join('');
+  if (!body) return '';
+  return '<div class="rz-col"><div class="av-tm">' + teamLogo(key, team) + '<b>'
+    + esc(abbrOf(key, team)) + '</b></div>' + body + '</div>';
+}
+function redZoneSection(key, g){
+  if (key !== 'nfl' || !g || !g.home || !g.away) return '';
+  var rows = asArray(state.sports[key].data.redzone) || [];
+  if (!rows.length) return '';
+  var a = redZoneSide(key, g.away, rows), h = redZoneSide(key, g.home, rows);
+  if (!a && !h) return '';
+  return paneBand('Inside the twenty')
+    + '<div class="rz-wrap">' + a + h + '</div>'
+    + '<div class="av-note">Season to date. A share is of the club\u2019s own red-zone work, so '
+    + 'it says who the ball goes to down there rather than how often the club gets there.</div>';
+}
+function formAlertTile(key, g){
+  if (SIG_CAPTURE) return '';
+  return sigTile('ti-trending-up', 'Form Alerts', 'Running hot or cold against their own season',
+    formAlerts(key, g).map(function(r){ return formRow(key, r); }),
+    'No priced player is ' + Math.round(ALERT_THRESHOLD * 100) + '%+ above or below their season '
+    + 'average on a market that carries enough volume to mean anything.');
 }
 function secNote(title, why){
   return paneBand(title)
@@ -9100,7 +9166,14 @@ var FOLD_SHUT = { form:1, dvp:1, dist:1, starter:1, halves:1, subs:1, firstLast:
    that were always on screen.
    The open state has to be carried in view state rather than left to the <details> element,
    because the page re-renders and the element is rebuilt - the same reason fold() tracks it. */
-var CARD_SHUT = { build:1 };    // cmp opens: it holds reads that were never folded
+/* All three cards open; only Build starts shut.
+   The first cut had Players and Scoring closed to keep the page short, and that hid things which
+   had never been hidden: First Read, the matchup radar, Form Alerts and the Q1 and Shots boards
+   were all on screen without being asked for, and a closed card renders none of its panes. Three
+   open cards still show three panes where the page used to run nineteen sections, so the length
+   argument was already won by the merge itself. Build stays shut because it is a tool you go to,
+   not a read you pass. */
+var CARD_SHUT = { build:1 };
 function cardOpen(id){
   var v = state.view.cardOpen && state.view.cardOpen[id];
   return v != null ? v : !CARD_SHUT[id];
@@ -9232,47 +9305,10 @@ function buildRender(){
    shape as Build, and the page goes from five headings to one. */
 /* Short labels on purpose: five tabs at phone width is the constraint, and "First Quarter" plus
    "Shot Matchup" already crowd the strip at 460px. The pane itself still says what it is. */
-var CTX_SOURCES = [['sched','Schedule'], ['env','Pace'], ['q1','Q1'],
-                   ['shots','Shots'], ['outs','Absences']];
-var CTX_NOW = null;
-function ctxPane(key, g, src){
-  CTX_PANE = true;
-  try {
-    if (src === 'sched') return nbaRestSection(key, g) || '';
-    if (src === 'env')   return nbaPaceSection(key, g) || '';
-    if (src === 'q1')    return nbaQ1Section(key, g) || '';
-    if (src === 'shots') return nbaShotMatchup(key, g) || '';
-    if (src === 'outs')  return nbaOutSection(key, g) || '';
-    return '';
-  } catch(e){ return ''; }
-  finally { CTX_PANE = false; }
-}
-function ctxSection(key, g){
-  if (key !== 'nba') return '';
-  // only offer a source that has something; a tab that opens on nothing is worse than no tab
-  var have = CTX_SOURCES.filter(function(x){ return !!ctxPane(key, g, x[0]); });
-  if (!have.length) return '';
-  var src = have.some(function(x){ return x[0] === state.view.ctxSrc; })
-    ? state.view.ctxSrc : have[0][0];
-  CTX_NOW = { key:key, g:g };
-  var tabs = have.length < 2 ? '' : '<div class="bld-tabs">' + have.map(function(x){
-      return '<button class="bld-tab' + (x[0] === src ? ' on' : '') + '" onclick="LAB.ctxSrc(\''
-        + x[0] + '\')">' + esc(x[1]) + '</button>';
-    }).join('') + '</div>';
-  return '<div id="ctx-panel"><details class="sig-tile"' + cardAttr('ctx') + '>'
-    + '<summary class="sig-head"' + cardTog('ctx') + '><span class="sig-ico"><i class="ti ti-telescope"></i></span>'
-    + '<span><span class="sig-ttl">Context</span>'
-    + '<span class="sig-desc">Schedule \u00b7 pace \u00b7 first quarter \u00b7 shots \u00b7 absences</span></span>'
-    + '<span class="sig-n">' + have.length + '</span></summary>'
-    + '<div class="bld-body">' + tabs + ctxPane(key, g, src) + '</div></details></div>';
-}
-function ctxRender(){
-  var el = document.getElementById('ctx-panel');
-  if (!el || !CTX_NOW){ render(); return; }
-  var html = ctxSection(CTX_NOW.key, CTX_NOW.g);
-  if (!html){ render(); return; }
-  el.outerHTML = html;
-}
+/* The Context card is gone. Its five sources - Schedule, Pace, Q1, Shots, Absences - were split
+   by the question each answers: Rest and Pace are about the two clubs and sit in Team, Q1 and
+   Shots are about how points arrive and sit in Scoring, and Absences joined the team sheet in
+   Players. Nothing was dropped. */
 /* THE COMPARE CARD ---------------------------------------------------------------------------
    Seven of these were the same four lines with a different card function:
 
@@ -9293,48 +9329,108 @@ function ctxRender(){
    before anything else on the page means much - and the card opens rather than starting closed,
    which is what those three did. Everything formerly folded is still one tap away, which is more
    than it was worth as seven separate headings. */
-var CMP_SOURCES = [['lineup','Lineup'], ['leaders','Leaders'], ['form','Last 5'], ['dvp','DvP'],
-                   ['dist','Usage'], ['starter','Starter'], ['halves','Halves'], ['subs','Subs'],
-                   ['firstlast','First'], ['goalie','In Goal']];
-var CMP_NOW = null;
-function cmpPane(key, g, src){
-  CTX_PANE = true;                                  // same "you are a pane" flag the Context card uses
+/* THREE CARDS: TEAM, PLAYER, SCORING.
+   Compare held ten reads and Context five, split by nothing more than when each was written, and
+   four more (Radar, Coverage, Usage Leaders, Form Alerts) sat in a band at the bottom of the
+   signals. Nineteen reads across three places, and the only way to know which held what was to
+   open all of them.
+
+   They are grouped by the question being asked instead. Is this about the two CLUBS, about the
+   MEN, or about how points actually get on the board? That is the division a reader already has
+   in their head before they open anything, so the tabs match it and both old cards disappear.
+
+   A source that renders nothing for a sport never gets a tab - NFL has no Q1 board, NBA has no
+   goalie - so each sport shows only its own, and a card with no sources does not appear at all. */
+var TEAM_SOURCES = [['web','Attack v Def'], ['dvp','DvP'], ['form','Last 5'], ['dist','Usage'],
+                    ['starter','Starters'], ['halves','Halves'], ['subs','Subs'],
+                    ['pace','Pace'], ['sched','Rest']];
+var PLAYER_SOURCES = [['radar','Radar'], ['leaders','Leaders'], ['formal','Form Alerts'],
+                      ['coverage','Coverage'], ['usage','Usage'], ['firstread','First Read'],
+                      ['avail','Available'], ['goalie','In Goal']];
+var SCORE_SOURCES = [['q1','Q1'], ['shots','Shots'], ['first','First Score'], ['rz','Red Zone']];
+var TEAM_NOW = null, PLAYER_NOW = null, SCORE_NOW = null;
+function cardPane(kind, key, g, src){
+  CTX_PANE = true;                            // the "you are a pane, skip your own heading" flag
   try {
-    if (src === 'form')      return formSection(key, g) || '';
-    if (src === 'lineup')    return lineupSection(key, g) || '';
-    if (src === 'leaders')   return leadersSection(key, g) || '';
-    if (src === 'dvp')       return dvpSection(key, g) || '';
-    if (src === 'dist')      return distSection(key, g) || '';
-    if (src === 'starter')   return starterSection(key, g) || '';
-    if (src === 'halves')    return halvesSection(key, g) || '';
-    if (src === 'subs')      return subsSection(key, g) || '';
-    if (src === 'firstlast') return firstLastSection(key, g) || '';
-    if (src === 'goalie')    return goalieSection(key, g) || '';
+    if (kind === 'team'){
+      if (src === 'web')     return matchRadar(key, g) || '';
+      if (src === 'dvp')     return dvpSection(key, g) || '';
+      if (src === 'form')    return formSection(key, g) || '';
+      if (src === 'dist')    return distSection(key, g) || '';
+      if (src === 'starter') return starterSection(key, g) || '';
+      if (src === 'halves')  return halvesSection(key, g) || '';
+      if (src === 'subs')    return subsSection(key, g) || '';
+      if (src === 'pace')    return nbaPaceSection(key, g) || '';
+      if (src === 'sched')   return nbaRestSection(key, g) || '';
+      return '';
+    }
+    if (kind === 'player'){
+      if (src === 'radar')     return radarSection(key, g) || '';
+      if (src === 'leaders')   return leadersSection(key, g) || '';
+      if (src === 'formal')    return formAlertTile(key, g) || '';
+      if (src === 'coverage')  return coverageSection(key, g) || '';
+      if (src === 'usage')     return usageSection(key, g) || '';
+      if (src === 'firstread') return firstReadSection(key, g) || '';
+      // the team sheet and who is missing answer one question, so they share a tab
+      if (src === 'avail')     return (lineupSection(key, g) || '') + (availBody(key, g) || '');
+      if (src === 'goalie')    return goalieSection(key, g) || '';
+      return '';
+    }
+    if (kind === 'score'){
+      if (src === 'q1')    return nbaQ1Section(key, g) || '';
+      if (src === 'shots') return nbaShotMatchup(key, g) || '';
+      if (src === 'first') return firstLastSection(key, g) || '';
+      if (src === 'rz')    return redZoneSection(key, g) || '';
+      return '';
+    }
     return '';
   } catch(e){ return ''; }
   finally { CTX_PANE = false; }
 }
-function cmpSection(key, g){
-  var have = CMP_SOURCES.filter(function(x){ return !!cmpPane(key, g, x[0]); });
+/* One builder for all three cards. The only things that differ are the source list, the heading
+   and which "currently showing" variable the self-redraw reads, so they are arguments rather than
+   three near-identical functions - the Compare and Context pair had already drifted apart in small
+   ways that meant nothing. */
+var CARD_DEFS = {
+  team:   { srcs:function(){ return TEAM_SOURCES; },   icon:'ti-shield-half',
+            title:'Team', id:'team-panel', fold:'team',
+            desc:function(key, g){ return esc(abbrOf(key, g.away)) + ' against ' + esc(abbrOf(key, g.home)); } },
+  player: { srcs:function(){ return PLAYER_SOURCES; }, icon:'ti-users',
+            title:'Players', id:'player-panel', fold:'player',
+            desc:function(){ return 'Who is in form, who is covered, who is out'; } },
+  score:  { srcs:function(){ return SCORE_SOURCES; },  icon:'ti-target-arrow',
+            title:'Scoring', id:'score-panel', fold:'score',
+            desc:function(){ return 'How the points actually get on the board'; } }
+};
+function cardSection(kind, key, g){
+  var def = CARD_DEFS[kind];
+  if (!def) return '';
+  var have = def.srcs().filter(function(x){ return !!cardPane(kind, key, g, x[0]); });
   if (!have.length) return '';
-  var src = have.some(function(x){ return x[0] === state.view.cmpSrc; })
-    ? state.view.cmpSrc : have[0][0];
-  CMP_NOW = { key:key, g:g };
+  var cur = state.view.cardSrc && state.view.cardSrc[kind];
+  var src = have.some(function(x){ return x[0] === cur; }) ? cur : have[0][0];
+  var now = { key:key, g:g };
+  if (kind === 'team') TEAM_NOW = now;
+  else if (kind === 'player') PLAYER_NOW = now;
+  else SCORE_NOW = now;
   var tabs = have.length < 2 ? '' : '<div class="bld-tabs">' + have.map(function(x){
-      return '<button class="bld-tab' + (x[0] === src ? ' on' : '') + '" onclick="LAB.cmpSrc(\''
-        + x[0] + '\')">' + esc(x[1]) + '</button>';
+      return '<button class="bld-tab' + (x[0] === src ? ' on' : '') + '" onclick="LAB.cardSrc(\''
+        + kind + '\',\'' + x[0] + '\')">' + esc(x[1]) + '</button>';
     }).join('') + '</div>';
-  return '<div id="cmp-panel"><details class="sig-tile"' + cardAttr('cmp') + '>'
-    + '<summary class="sig-head"' + cardTog('cmp') + '><span class="sig-ico"><i class="ti ti-versions"></i></span>'
-    + '<span><span class="sig-ttl">Compare</span>'
-    + '<span class="sig-desc">' + esc(abbrOf(key, g.away)) + ' against ' + esc(abbrOf(key, g.home))
-    + '</span></span><span class="sig-n">' + have.length + '</span></summary>'
-    + '<div class="bld-body">' + tabs + cmpPane(key, g, src) + '</div></details></div>';
+  return '<div id="' + def.id + '"><details class="sig-tile"' + cardAttr(def.fold) + '>'
+    + '<summary class="sig-head"' + cardTog(def.fold) + '><span class="sig-ico"><i class="ti '
+    + def.icon + '"></i></span>'
+    + '<span><span class="sig-ttl">' + esc(def.title) + '</span>'
+    + '<span class="sig-desc">' + def.desc(key, g) + '</span></span>'
+    + '<span class="sig-n">' + have.length + '</span></summary>'
+    + '<div class="bld-body">' + tabs + cardPane(kind, key, g, src) + '</div></details></div>';
 }
-function cmpRender(){
-  var el = document.getElementById('cmp-panel');
-  if (!el || !CMP_NOW){ render(); return; }
-  var html = cmpSection(CMP_NOW.key, CMP_NOW.g);
+function cardRender(kind){
+  var def = CARD_DEFS[kind];
+  var now = kind === 'team' ? TEAM_NOW : (kind === 'player' ? PLAYER_NOW : SCORE_NOW);
+  var el = def && document.getElementById(def.id);
+  if (!el || !now){ render(); return; }
+  var html = cardSection(kind, now.key, now.g);
   if (!html){ render(); return; }
   el.outerHTML = html;
 }
@@ -9390,12 +9486,13 @@ function focusPage(){
     + conditionsSection(key, g)
     + h2hSection(key, g)
     + h2hHistory(key, g)
-    + (S.t3==='ready' ? cmpSection(key, g) : '')
-    + (S.status === 'ready' && !state.view.nerd ? matchRadar(key, g) : '')
-    + (S.t3 === 'ready' && !state.view.nerd ? firstReadSection(key, g) : '')
-    + (!state.view.nerd ? ctxSection(key, g) : '')
-    // who is not playing sits with the other reference material, folded, for every sport
-    + availSection(key, g)
+    /* Three cards, in the order a reader asks the questions: the two CLUBS, then the MEN, then
+       how points get on the board. Compare, Context, the team radar, First Read and the standalone
+       Availability fold are all inside them now - nineteen reads that used to be spread across
+       three cards and a band at the foot of the signals. */
+    + (S.t3==='ready' && !state.view.nerd ? cardSection('team', key, g) : '')
+    + (S.t3==='ready' && !state.view.nerd ? cardSection('player', key, g) : '')
+    + (S.t3==='ready' && !state.view.nerd ? cardSection('score', key, g) : '')
 
     // Nerd Mode replaces the signals rather than adding to them: it is a different read of the
     // same fixture (the market against itself), and stacking both made the page enormous.
@@ -17117,16 +17214,24 @@ function availSide(key, team){
   });
   return '<div class="av-col">' + head + body + '</div>';
 }
-function availSection(key, g){
+/* The body on its own, because the Players card hosts it next to the team sheet - the sheet says
+   who is named and this says who is hurt, which is one question asked twice. */
+function availBody(key, g){
   if (!g || !g.home || !g.away) return '';
   var inj = asArray(state.sports[key].data.injury) || [];
   if (!inj.length) return '';
-  var any = availFor(key, g.home).length + availFor(key, g.away).length;
-  if (!any) return '';
-  return fold('avail',
-    '<div class="av-wrap">' + availSide(key, g.away) + availSide(key, g.home) + '</div>'
+  if (!(availFor(key, g.home).length + availFor(key, g.away).length)) return '';
+  /* An explicit band, not paneBand: that one goes quiet inside a card pane to avoid a doubled
+     heading, but this pane deliberately holds two things - the named side above and the injury
+     list below - so the reader needs to be told where one ends. */
+  return '<div class="dayband"><span>Who is not playing</span></div>'
+    + '<div class="av-wrap">' + availSide(key, g.away) + availSide(key, g.home) + '</div>'
     + '<div class="av-note">Straight from the injury feed, in its own words. A man in doubt may '
-    + 'still play, and a team sheet posted closer to the game beats anything here.</div>');
+    + 'still play, and a team sheet posted closer to the game beats anything here.</div>';
+}
+function availSection(key, g){
+  var body = availBody(key, g);
+  return body ? fold('avail', body) : '';
 }
 function nbaOutSection(key, g){
   if (key !== 'nba' && key !== 'nbl') return '';
@@ -20547,8 +20652,10 @@ window.LAB = {
   resPeriod: function(p){ state.view.resPeriod = p; render(); },
   /* Switches the Build card's source and redraws that card only - see buildRender. */
   buildSrc: function(src){ state.view.buildSrc = src; buildRender(); },
-  ctxSrc: function(src){ state.view.ctxSrc = src; ctxRender(); },
-  cmpSrc: function(src){ state.view.cmpSrc = src; cmpRender(); },
+  cardSrc: function(kind, src){
+    (state.view.cardSrc = state.view.cardSrc || {})[kind] = src;
+    cardRender(kind);
+  },
   cardToggle: function(id){
     state.view.cardOpen = state.view.cardOpen || {};
     state.view.cardOpen[id] = !cardOpen(id);
@@ -21293,28 +21400,24 @@ window.LAB = {
     return out;
   },
   ouTileProbe: function(key, g, kind){ return ouTile(key, g, kind); },
-  cmpProbe: function(key, src){
-    var fx = asArray(state.sports[key].data.fixture) || [], was = state.view.cmpSrc, out = {};
-    if (src != null) state.view.cmpSrc = src;
+  /* One probe for all three cards. cmpProbe and ctxProbe stay as thin aliases so a test written
+     against the old pair fails on the CARD being wrong rather than on the probe having vanished. */
+  cardProbe: function(kind, key, src){
+    var fx = asArray(state.sports[key].data.fixture) || [];
+    var was = (state.view.cardSrc || {})[kind], out = {};
+    if (src != null) (state.view.cardSrc = state.view.cardSrc || {})[kind] = src;
     try {
       for (var i = 0; i < fx.length; i++){
-        var h = cmpSection(key, fx[i]);
+        var h = cardSection(kind, key, fx[i]);
         if (h){ out = { html:h, fixture:fx[i].away + '@' + fx[i].home }; break; }
       }
-    } finally { state.view.cmpSrc = was; }
+    } finally {
+      if (state.view.cardSrc) state.view.cardSrc[kind] = was;
+    }
     return out;
   },
-  ctxProbe: function(key, src){
-    var fx = asArray(state.sports[key].data.fixture) || [], was = state.view.ctxSrc, out = {};
-    if (src != null) state.view.ctxSrc = src;
-    try {
-      for (var i = 0; i < fx.length; i++){
-        var h = ctxSection(key, fx[i]);
-        if (h){ out = { html:h, fixture:fx[i].away + '@' + fx[i].home }; break; }
-      }
-    } finally { state.view.ctxSrc = was; }
-    return out;
-  },
+  cmpProbe: function(key, src){ return LAB.cardProbe('team', key, src); },
+  ctxProbe: function(key, src){ return LAB.cardProbe('player', key, src); },
   buildProbe: function(key, src){
     var fx = asArray(state.sports[key].data.fixture) || [], was = state.view.buildSrc, out = {};
     if (src != null) state.view.buildSrc = src;
