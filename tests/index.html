@@ -1049,6 +1049,27 @@
     color:var(--text-3);line-height:1.5;}
   .st-t td.hi .dvp-d{color:color-mix(in srgb,var(--accent) 78%,var(--text-3));}
   .st-t td.lo .dvp-d{color:color-mix(in srgb,#f97316 72%,var(--text-3));}
+  .cz-wrap{background:var(--surface);border:1px solid var(--border);border-radius:11px;
+    padding:10px 10px 7px;margin:0 0 9px;}
+  .cz-svg{display:block;width:100%;max-width:330px;margin:0 auto;height:auto;
+    background:var(--surface-2);border-radius:8px;}
+  /* .cz IS the <g>'s own class, so the shapes are its children - ".cz g path" asked for a g
+     inside a .cz and matched nothing, which is why the court drew as bare outlines. */
+  .cz{cursor:pointer;}
+  .cz path,.cz circle{stroke:var(--border);stroke-width:2;transition:opacity .15s;}
+  .cz:hover path,.cz:hover circle{opacity:.85;}
+  .cz.on path,.cz.on circle{stroke:var(--accent);stroke-width:4;}
+  .cz-line{fill:none;stroke:var(--text-3);stroke-width:2;opacity:.5;pointer-events:none;}
+  .cz-key{display:flex;align-items:center;justify-content:center;gap:6px;margin-top:7px;
+    font-family:var(--font-mono);font-size:9px;color:var(--text-3);}
+  .cz-k{width:22px;height:8px;border-radius:3px;display:inline-block;}
+  .cz-k.lo{background:color-mix(in srgb,#f97316 52%,var(--surface-2));}
+  .cz-k.hi{background:color-mix(in srgb,var(--accent) 52%,var(--surface-2));}
+  .cz-sp{width:10px;}
+  .cz-sel{font-family:var(--font-display);font-size:11px;font-weight:800;letter-spacing:.06em;
+    text-transform:uppercase;color:var(--accent);margin:0 0 7px;}
+  .rz-c i{display:block;font-style:normal;font-size:8.5px;color:var(--accent);}
+  .rz-nm i{font-style:normal;font-size:9px;color:var(--text-3);margin-left:5px;}
   .rz-wrap{display:grid;grid-template-columns:1fr 1fr;gap:9px;}
   .rz-col{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:9px 10px;}
   .rz-row{padding:6px 0;border-top:1px solid var(--border);}
@@ -9304,7 +9325,8 @@ var TEAM_SOURCES = [['web','Attack v Def'], ['dvp','DvP'], ['form','Last 5'], ['
 var PLAYER_SOURCES = [['radar','Radar'], ['leaders','Leaders'], ['formal','Form Alerts'],
                       ['coverage','Coverage'], ['usage','Usage'], ['firstread','First Read'],
                       ['avail','Available'], ['goalie','In Goal']];
-var SCORE_SOURCES = [['q1','Q1'], ['shots','Shots'], ['first','First Score'], ['rz','Red Zone']];
+var SCORE_SOURCES = [['court','The Floor'], ['q1','Q1'], ['shots','Shots'],
+                    ['first','First Score'], ['rz','Red Zone']];
 var TEAM_NOW = null, PLAYER_NOW = null, SCORE_NOW = null;
 function cardPane(kind, key, g, src){
   CTX_PANE = true;                            // the "you are a pane, skip your own heading" flag
@@ -9334,6 +9356,7 @@ function cardPane(kind, key, g, src){
       return '';
     }
     if (kind === 'score'){
+      if (src === 'court') return shotCourtSection(key, g) || '';
       if (src === 'q1')    return nbaQ1Section(key, g) || '';
       if (src === 'shots') return nbaShotMatchup(key, g) || '';
       if (src === 'first') return firstLastSection(key, g) || '';
@@ -17456,6 +17479,142 @@ function nbaShotSwing(key, name, opp){
   parts.sort(function(a, b){ return Math.abs(b.add) - Math.abs(a.add); });
   return { swing:swing, raw:raw, parts:parts, fga:fga, shots:me.shots, lead:parts[0] };
 }
+/* THE COURT, BY ZONE, WITH THE MEN WHO SHOOT THERE.
+   zones.json has carried three things since it was built and the page only ever used two of them:
+   514 players with their attempts, share and accuracy in each of the five zones, all thirty team
+   defences with what they concede there, and the league baseline. The Shots tab ranks PLAYERS by
+   how much a matchup moves them. This asks the question the other way round - pick the patch of
+   floor, see who lives there and what the defence does about it - which is how anyone actually
+   looks at a court.
+
+   WHAT IT IS AND IS NOT. The fill is what the opposing defence concedes in that zone against the
+   league, so green is a soft patch. It is a READ, not a signal: measured earlier against actual
+   outcomes, shot zone carried 0.47 points of predictive value, which is as close to nothing as
+   these things get. It tells you where a man shoots and what he will meet there; it does not tell
+   you he will make them. The percentages are printed rather than implied by colour for the same
+   reason as the DvP board - a defence can be ranked last and still sit a couple of per cent from
+   average. */
+var COURT_ZONES = [
+  ['rim',         'At the rim'],
+  ['paint',       'In the paint'],
+  ['midRange',    'Mid-range'],
+  ['cornerThree', 'Corner three'],
+  ['armsThree',   'Above the break']
+];
+/* Half court, hoop at the top, drawn to the shape of the real thing: a 50ft by 47ft floor in a
+   500 x 470 box, hoop on the centre line, the key 16ft wide, the arc 23ft 9in out with the corners
+   cut straight at 22ft. The zones are the same five the data file defines, so a click maps to a
+   key rather than to a guess about where the mouse was. */
+function courtShape(z){
+  if (z === 'rim')         return '<circle cx="250" cy="70" r="48"/>';
+  if (z === 'paint')       return '<path d="M170 0 H330 V190 H170 Z M250 70 m-48 0 a48 48 0 1 0 96 0 a48 48 0 1 0 -96 0"'
+                                 + ' fill-rule="evenodd"/>';
+  if (z === 'cornerThree') return '<path d="M0 0 H30 V150 H0 Z"/><path d="M470 0 H500 V150 H470 Z"/>';
+  if (z === 'midRange')    return '<path d="M30 0 H170 V190 H330 V0 H470 V150'
+                                 + ' A220 220 0 0 1 30 150 Z" fill-rule="evenodd"/>';
+  return '<path d="M0 150 H30 A220 220 0 0 0 470 150 H500 V470 H0 Z"/>';
+}
+function courtZonePick(key){
+  var z = state.view.szZone;
+  return COURT_ZONES.some(function(x){ return x[0] === z; }) ? z : 'rim';
+}
+/* Players of this club who shoot from this zone, most first, with what the other lot allow there. */
+function courtZoneRows(key, team, opp, zone){
+  var zf = state.sports[key].data.zones;
+  if (!zf || !zf.players) return [];
+  var out = [];
+  (zf.players || []).forEach(function(pz){
+    if (!pz || normTeam(pz.team) !== normTeam(team)) return;
+    var z = pz[zone];
+    if (!z || !z.att) return;
+    if (!isPlayingP(key, pz.name, team)) return;
+    out.push({ name:pz.name, att:z.att, share:z.share, pct:z.pct, dist:z.dist,
+               priced:hasAnyOddsFor(key, pz.name) });
+  });
+  out.sort(function(a, b){ return b.att - a.att; });
+  return out.slice(0, 5);
+}
+function courtSide(key, team, opp, zone){
+  var zf = state.sports[key].data.zones;
+  var d = (zf.defence || {})[normTeam(opp)] || (zf.defence || {})[opp] || null;
+  var dz = d && d[zone], lg = (zf.league || {})[zone];
+  var gap = (dz && lg && lg.pct) ? (dz.pct - lg.pct) / lg.pct * 100 : null;
+  var head = '<div class="av-tm">' + teamLogo(key, team) + '<b>' + esc(abbrOf(key, team)) + '</b>'
+    + '<span>v ' + esc(abbrOf(key, opp))
+    + (dz ? ' \u00b7 allows ' + (dz.pct * 100).toFixed(1) + '%'
+          + (gap != null ? ' (' + (gap >= 0 ? '+' : '\u2212') + Math.abs(gap).toFixed(0) + '% vs league'
+             + (dz.rank ? ', ' + ordinalish(dz.rank) + ' of ' + (dz.of || 30) : '') + ')' : '')
+        : '') + '</span></div>';
+  var rows = courtZoneRows(key, team, opp, zone);
+  if (!rows.length)
+    return '<div class="rz-col">' + head + '<div class="av-none">Nobody named for this game has '
+      + 'taken enough shots from here.</div></div>';
+  var lgPct = ((zf.league || {})[zone] || {}).pct;
+  var body = rows.map(function(r){
+    var vs = (lgPct ? (r.pct - lgPct) * 100 : null);
+    return '<div class="rz-row"><div class="rz-nm">' + esc(r.name)
+      + (r.priced ? '' : '<i>no price</i>') + '</div>'
+      + '<div class="rz-cells">'
+      + '<span class="rz-c"><b>' + r.att + '</b>shots</span>'
+      + '<span class="rz-c"><b>' + Math.round(r.share * 100) + '%</b>of his shots</span>'
+      + '<span class="rz-c"><b>' + (r.pct * 100).toFixed(0) + '%</b>makes'
+        + (vs != null ? '<i>' + (vs >= 0 ? '+' : '\u2212') + Math.abs(vs).toFixed(0)
+           + ' vs league</i>' : '') + '</span>'
+      + '</div></div>';
+  }).join('');
+  return '<div class="rz-col">' + head + body + '</div>';
+}
+function shotCourtSection(key, g){
+  if (key !== 'nba' || !g || !g.home || !g.away) return '';
+  var zf = state.sports[key].data.zones;
+  if (!zf || !zf.players || !zf.defence || !zf.league) return '';
+  var zone = courtZonePick(key);
+  // the floor is painted with what the HOME side's opponent concedes, so one court serves both
+  // lists underneath it; the away club's defence colours it when you read the home club's men
+  // zones.json keys its defence block by the raw club code, so the normalised form misses it -
+  // courtSide below already tried both and this one did not, which left every zone unpainted
+  var d = (zf.defence || {})[normTeam(g.home)] || (zf.defence || {})[g.home] || null;
+  var fill = function(z){
+    var dz = d && d[z], lg = (zf.league || {})[z];
+    if (!dz || !lg || !lg.pct) return 'var(--surface-2)';
+    var gap = (dz.pct - lg.pct) / lg.pct;
+    /* Proportional from neutral, with +-6% filling the scale - about the real spread between the
+       best and worst defence in a zone. An earlier version started every zone at a visible tint so
+       the court would read, and that painted a defence sitting 17th of 30 at dead average in solid
+       orange, which says the opposite of the truth. The shape of the floor comes from the strokes
+       and the court lines instead, so the colour is free to mean only one thing. */
+    var t = Math.max(-1, Math.min(1, gap / 0.06));
+    var mix = Math.round(6 + Math.abs(t) * 56);
+    return t >= 0 ? 'color-mix(in srgb,var(--accent) ' + mix + '%,var(--surface-2))'
+                  : 'color-mix(in srgb,#f97316 ' + mix + '%,var(--surface-2))';
+  };
+  var shapes = COURT_ZONES.map(function(z){
+    /* style=, not fill=. A CSS custom property does not resolve inside an SVG presentation
+       attribute, so fill="color-mix(... var(--accent) ...)" is simply dropped and every zone
+       painted the same - which is what a court with no colour on it looked like. */
+    return '<g class="cz' + (z[0] === zone ? ' on' : '') + '" style="fill:' + fill(z[0]) + '"'
+      + ' onclick="LAB.szZone(\'' + z[0] + '\')"><title>' + esc(z[1]) + '</title>'
+      + courtShape(z[0]) + '</g>';
+  }).join('');
+  var label = (COURT_ZONES.filter(function(x){ return x[0] === zone; })[0] || [])[1] || zone;
+  return paneBand('The floor')
+    + '<div class="cz-wrap"><svg viewBox="0 0 500 470" class="cz-svg" aria-label="shot zones">'
+    + shapes
+    + '<path d="M170 0 H330 V190 H170 Z" class="cz-line"/>'
+    + '<path d="M30 0 V150 A220 220 0 0 0 470 150 V0" class="cz-line"/>'
+    + '<circle cx="250" cy="63" r="9" class="cz-line"/>'
+    + '</svg>'
+    + '<div class="cz-key"><span class="cz-k lo"></span>' + esc(abbrOf(key, g.home))
+    + ' allows less<span class="cz-sp"></span>more<span class="cz-k hi"></span></div></div>'
+    + '<div class="cz-sel">' + esc(label) + ' \u2014 tap the floor to change zone</div>'
+    + '<div class="rz-wrap">' + courtSide(key, g.away, g.home, zone)
+    + courtSide(key, g.home, g.away, zone) + '</div>'
+    + '<div class="av-note">Shares are of that man\u2019s own shots, and makes are his accuracy in '
+    + 'that zone against the league\u2019s. Where a defence sits is printed as a percentage as well '
+    + 'as a rank, because last of thirty is often only a few per cent from the middle. This says '
+    + 'where a man shoots and what he meets there \u2014 measured against results, shot zone carried '
+    + '0.47 points of predictive value, so it is a read and not a signal.</div>';
+}
 function nbaShotMatchup(key, g){
   if (key !== 'nba') return '';
   if (!g || !g.home || !g.away) return '';
@@ -20608,6 +20767,8 @@ window.LAB = {
   resPeriod: function(p){ state.view.resPeriod = p; render(); },
   /* Switches the Build card's source and redraws that card only - see buildRender. */
   buildSrc: function(src){ state.view.buildSrc = src; buildRender(); },
+  // picking a patch of floor redraws only the Scoring card, not the page
+  szZone: function(z){ state.view.szZone = z; cardRender('score'); },
   cardSrc: function(kind, src){
     (state.view.cardSrc = state.view.cardSrc || {})[kind] = src;
     cardRender(kind);
