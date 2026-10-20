@@ -9223,14 +9223,28 @@ function readCard(icon, title, desc, count, body, note){
 var BUILD_SOURCES_ALL = [['search','Search'], ['history','D\u00e9j\u00e0 Vu'],
                          ['sim','Simulator'], ['radar','Jupiter']];
 var BUILD_NERD_OK = { history:1, radar:1 };
-/* The builder used to be gated on the fixture appearing in mbFixtures() - not a user pin, but a
-   staleness guard: upcoming games only, nothing finished or outside the window. Folding it into
-   the card dropped that, so Search would have offered legs on a game already played. The guard
-   comes back here, per source, rather than over the whole card. */
+/* IS THIS FIXTURE STILL WORTH BUILDING ON?
+   Search is gated on the game being upcoming - not a user pin, a staleness guard, so the builder
+   cannot offer legs on a game already played. That guard used to ask whether the fixture appeared
+   in mbFixtures(), and that was wrong in a way that only ever bit one sport.
+
+   mbFixtures() builds a list across EVERY active sport and ends with .slice(0, 40), because it
+   feeds the builder's own fixture picker, which wants a manageable list. It walks SPORTS in key
+   order, and NBA is last of the seven. So with the other six switched on their upcoming games
+   filled all forty slots, NBA never reached the list, and every NBA fixture failed a test that had
+   nothing to do with whether that game had been played - the Multi Builder simply had no Search
+   tab for the sport. The pane itself was fine the whole time; only the gate was wrong.
+
+   The two conditions the guard actually means are tested here directly, on this fixture, with no
+   cap and no other sport involved. */
+function fixtureIsLive(key, g){
+  if (!key || !g) return true;
+  var st = gameStart(g);
+  if (st.ms && st.ms < Date.now() - 3 * 36e5) return false;      // done and dusted
+  return inFixtureWindow(key, g, fixtureHorizon(key));
+}
 function buildSources(key, g){
-  var live = !g || !key || mbFixtures().some(function(x){
-    return x.key === key && x.g && x.g.home === g.home && x.g.away === g.away;
-  });
+  var live = fixtureIsLive(key, g);
   return BUILD_SOURCES_ALL.filter(function(x){
     if (state.view.nerd && !BUILD_NERD_OK[x[0]]) return false;
     if (x[0] === 'search' && !live) return false;
