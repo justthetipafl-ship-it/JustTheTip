@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """NBA shot actions - how a man gets his points, and what a defence gives up to each.
 
-    python nba/build_nba_playtypes.py --out nba/data [--seasons 2026]
+    python nba/build_nba_playtypes.py --out nba/data [--seasons 2026,2027]
+      (no --seasons = the season just gone and the one under way, same window as build_nba_zones)
     python nba/build_nba_playtypes.py --selftest          # offline, no network, no pandas
 
 THIS IS NOT SYNERGY AND MUST NEVER BE LABELLED AS IF IT WERE
@@ -46,6 +47,7 @@ a third of a percentage point, which is fine for ranking thirty clubs and is sta
 """
 
 import argparse
+import datetime
 import io
 import json
 import os
@@ -356,12 +358,21 @@ def selftest():
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--out', default='nba/data')
-    ap.add_argument('--seasons', default='2026')
+    ap.add_argument('--seasons', default=None)
     ap.add_argument('--selftest', action='store_true')
     a = ap.parse_args()
     if a.selftest:
         sys.exit(selftest())
-    build([s.strip() for s in a.seasons.split(',') if s.strip()], a.out)
+    # THE SAME ROLLING WINDOW build_nba_zones.py USES, and for the same reason: these two files sit
+    # side by side on one screen, so a fixed default here would have quietly pinned shot actions to
+    # last season while zones rolled onto the new one, and the page would have shown a man's shot
+    # diet from one season against a defence measured in another with nothing to say it had.
+    # A season with no play-by-play yet is skipped by build() rather than failing, which is what
+    # makes asking for the season about to start harmless.
+    today = datetime.date.today()
+    nxt = today.year + 1 if today.month >= 9 else today.year
+    seasons = [s.strip() for s in (a.seasons or '%d,%d' % (nxt - 1, nxt)).split(',') if s.strip()]
+    build(seasons, a.out)
 
 
 if __name__ == '__main__':
