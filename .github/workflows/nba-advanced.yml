@@ -1,7 +1,7 @@
-name: NBA quarters and zones
+name: NBA quarters, zones and shot actions
 
-# Per-quarter production from the play-by-play. Runs after the NBA data build, since it reads the
-# same season files and writes alongside them.
+# Per-quarter production, shot zones and shot actions from the play-by-play. Runs after the NBA
+# data build, since all three read the same season files and write alongside them.
 
 on:
   schedule:
@@ -65,6 +65,23 @@ jobs:
           if [ "${{ inputs.per_season }}" = "true" ]; then ARGS="$ARGS --per-season"; fi
           python3 nba/build_nba_zones.py $ARGS
 
+      # Shot actions: WHERE he shoots is zones.json, HOW he gets there is this. Same feed, same
+      # rolling season window - the script defaults to the season just gone plus the one under
+      # way, exactly as the zone build does, so the two files on screen together never end up
+      # describing different seasons.
+      #
+      # The selftest is offline and takes no time. It pins all 51 of ESPN's action labels to the
+      # group each must land in, and the classifier is ORDER-DEPENDENT: a reordering that reads
+      # as a tidy-up silently moves thousands of shots between groups and nothing downstream
+      # looks wrong. Worth the two seconds on every run.
+      - name: Shot action selftest
+        run: python3 nba/build_nba_playtypes.py --selftest
+      - name: Build shot actions
+        run: |
+          ARGS="--out nba/data"
+          if [ -n "${{ inputs.seasons }}" ]; then ARGS="$ARGS --seasons ${{ inputs.seasons }}"; fi
+          python3 nba/build_nba_playtypes.py $ARGS
+
       # Does a defence's zone record persist? The page shows the shot matchup as a read and
       # carries no price on it precisely because that has never been measured. This runs only
       # when the per-season file has just been written, needs no network, and prints the one
@@ -80,13 +97,14 @@ jobs:
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           for f in nba/data/quarters.json nba/data/zones.json \
-                   nba/data/zones_by_season.json nba/data/zone_persistence.json; do
+                   nba/data/zones_by_season.json nba/data/zone_persistence.json \
+                   nba/data/playtypes.json; do
             [ -f "$f" ] && git add "$f" && echo "staged $f"
           done
           if git diff --cached --quiet; then
             echo "nothing new"
           else
-            git commit -m "NBA quarters and shot zones"
+            git commit -m "NBA quarters, shot zones and shot actions"
             for i in 1 2 3; do
               git pull --rebase --autostash origin main && git push && break
               sleep 5
