@@ -661,6 +661,10 @@
     background:var(--surface-3,var(--border));color:var(--text-3);}
   .gl-chip.good{color:var(--accent);background:color-mix(in srgb,var(--accent) 13%,transparent);}
   .gl-chip.bad{color:#f97316;background:color-mix(in srgb,#f97316 13%,transparent);}
+  /* a statement about the MODEL, not a verdict on the bet - so it must not borrow the colour
+     the page uses for "this is against you" */
+  .gl-chip.warnish{color:var(--text-3);border:1px dashed var(--border);background:transparent;
+    font-style:italic;cursor:help;}
   .gl-right{flex:none;width:80px;text-align:right;}
   .gl-ev{font-family:var(--font-display);font-size:17px;line-height:1;}
   .gl-ev.pos{color:var(--accent);} .gl-ev.neg{color:#f97316;}
@@ -1362,6 +1366,22 @@
   .dd-verdict{margin-left:auto;text-align:right;font-family:var(--font-display);font-size:24px;line-height:1;}
   .dd-verdict.good{color:var(--accent);} .dd-verdict.bad{color:#f97316;}
   .dd-verdict i{display:block;font-style:normal;font-size:8px;letter-spacing:.08em;text-transform:uppercase;color:var(--text-3);}
+  /* ---- every read, side by side ---- */
+  .rd-wrap{margin:0 0 9px;}
+  .rd-strip{display:flex;gap:6px;flex-wrap:wrap;}
+  .rd-t{flex:1 1 92px;min-width:92px;border:1px solid var(--border);border-radius:9px;
+    padding:7px 9px;background:var(--surface-2);}
+  .rd-t b{display:block;font-family:var(--font-mono);font-size:17px;line-height:1.1;
+    color:var(--text);}
+  .rd-t span{display:block;font-family:var(--font-display);font-size:8.5px;letter-spacing:.06em;
+    text-transform:uppercase;color:var(--text-3);margin-top:2px;}
+  .rd-t i{display:block;font-style:normal;font-size:8.5px;color:var(--text-3);margin-top:3px;
+    line-height:1.3;}
+  .rd-t.pos b{color:var(--accent);}
+  .rd-t.neg b{color:#f97316;}
+  .rd-t.dna{border-style:dashed;}
+  .rd-note{font-size:9.5px;color:var(--text-3);margin-top:6px;line-height:1.4;}
+  @media(max-width:520px){ .rd-t{flex:1 1 calc(50% - 3px);} }
   .dd-sub{font-size:10px;color:var(--text-3);margin-bottom:10px;}
   .dd-sec{border-top:1px solid var(--border);padding:10px 0;}
   .dd-h{font-size:10px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:var(--text-3);margin-bottom:7px;}
@@ -5168,12 +5188,30 @@ function ouRow(key, r){
   var ask = (Math.round(r.line) === r.line) ? r.line + 1 : Math.ceil(r.line);
   var btns = rowBtns(key, { name:r.name, mkt:r.mkt, line:r.line, side:(r.over === false ? 'under' : 'over'),
                             odds:r.price, book:r.book, opp:r.opp, team:r.team, label:r.label });
+  /* THE EDGE CHIP IS NOT PRINTED WHEN THE MODEL CANNOT RANK.
+     edge is model probability minus the market's no-vig fair price, and it only means something
+     if the model means something. NBA's does not: its calibrated Brier beats the base rate by
+     0.0007, so the fit squashes it almost flat - slope 0.124 against 0.511 to 0.843 everywhere
+     else - and a calibrated NBA probability cannot get above about 52% whatever the raw model
+     says. Subtract a fair price from that and the answer is negative every time, and worse the
+     MORE likely the leg is: a raw 90% lands at 52.4% against a fair of 90%, and the row printed
+     a red "-38 pts vs fair".
+
+     That is the display saying the opposite of the truth. It reads as terrible value when what
+     it means is that this model has no opinion, and a reader cannot tell those apart from a red
+     chip. So on an untrusted sport the edge is withheld and the reason is printed in its place.
+     The model percentage still shows, because it is what the model said; it is only the
+     comparison against the market that is meaningless here. */
+  var evOk = evTrusted(key);
   var chips = '<div class="gl-why">'
     + '<span class="gl-chip '+(r.prob >= 0.6 ? 'good' : '')+'">'+Math.round(r.prob*100)+'% model</span>'
-    + (r.edge != null ? '<span class="gl-chip '+(r.edge > 0 ? 'good' : 'bad')+'">'
+    + (evOk && r.edge != null ? '<span class="gl-chip '+(r.edge > 0 ? 'good' : 'bad')+'">'
         + (r.edge > 0 ? '+' : '')+Math.round(r.edge*100)+' pts vs fair</span>' : '')
     + '<span class="gl-chip">score '+r.score.toFixed(1)+'</span>'
-    + (evTrusted(key) ? '' : '<span class="gl-chip bad">unranked model</span>')
+    + (evOk ? '' : '<span class="gl-chip warnish" title="This sport\u2019s model beats guessing '
+        + 'by 0.0007 on a calibrated Brier score, so it is squashed nearly flat and cannot be '
+        + 'compared against a market price. Rows here are ordered by score, not edge.">'
+        + 'model can\u2019t price this \u2014 ranked by score</span>')
     + (r.vac ? '<span class="gl-chip '+(r.over ? 'good' : 'bad')+'">'+esc(r.vac.text)+'</span>' : '')
     + (r.dvpPct != null ? '<span class="gl-chip '+(r.over ? 'good' : 'bad')+'">'
         + (r.dvpPct > 0 ? '+' : '')+r.dvpPct.toFixed(0)+'% DVP</span>' : '')
@@ -16343,6 +16381,77 @@ function drawShareCard(){
   });
 }
 
+/* ---- EVERY READ, SIDE BY SIDE --------------------------------------------------------------
+   The page carried several numbers about one bet and let them look like they disagreed. They
+   did not: they were one model reported in two units against two baselines.
+
+     signal row    edge = prob - novigFair      a gap between PROBABILITIES, in points
+     deep dive     ev   = prob * price - 1      a RETURN per dollar staked
+     deep dive sub                v 1/price     the implied price with the margin still in it
+     signal row                   v novigFair   the same price with the margin stripped out
+
+   A five point probability gap and a five percent return are not the same quantity and do not
+   move together, and the two baselines differ by the bookmaker's margin - so the dive held a bet
+   to a tougher standard than the board did, by two to five points, purely from which baseline
+   each happened to use. Nothing on the page said so, which is the whole of the problem.
+
+   Both are true and both are worth seeing. So they are shown together, each with its unit named
+   and the thing it is measured against named, rather than one of them being picked as the
+   headline. Cover DNA sits alongside because it answers a question neither of them asks - not
+   how likely or how well priced, but how much of what he needs on a night like this is actually
+   true tonight. ------------------------------------------------------------------------------ */
+function readTile(cls, val, lab, sub){
+  return '<div class="rd-t ' + cls + '"><b>' + val + '</b><span>' + lab + '</span>'
+    + (sub ? '<i>' + sub + '</i>' : '') + '</div>';
+}
+function readsStrip(key, p, name, mkt, line, side, price, opp, prob, raw){
+  var tiles = '', evOk = evTrusted(key);
+  if (prob == null) return '';
+  var capped = (raw != null && prob < raw - 0.005);
+  tiles += readTile('', Math.round(prob * 100) + '%', 'model',
+    capped ? 'capped from ' + Math.round(raw * 100) + '% by his record' : 'his chance tonight');
+
+  var fair = novigFair(key, name, mkt, line, side);
+  var implied = price ? 1 / price : null;
+  if (fair != null){
+    tiles += readTile('', Math.round(fair * 100) + '%', 'market fair',
+      'margin stripped' + (implied ? ', ' + Math.round(implied * 100) + '% with it in' : ''));
+  } else if (implied != null){
+    tiles += readTile('', Math.round(implied * 100) + '%', 'market implied', 'margin still in');
+  }
+
+  /* Both comparisons are withheld on a sport whose model cannot rank, because both are the model
+     measured against a price and the model has no opinion to measure. Printing them anyway is
+     how a strong leg came to show a red "-38 pts vs fair" - see the note on ouRow. */
+  if (evOk && fair != null){
+    var gap = (prob - fair) * 100;
+    tiles += readTile(gap >= 0 ? 'pos' : 'neg', (gap >= 0 ? '+' : '−')
+      + Math.abs(gap).toFixed(0), 'points of probability', 'model minus fair');
+  }
+  if (evOk && price){
+    var ev = prob * price - 1;
+    tiles += readTile(ev >= 0 ? 'pos' : 'neg', (ev >= 0 ? '+' : '−')
+      + Math.abs(ev * 100).toFixed(0) + '%', 'return a dollar', 'at $' + (+price).toFixed(2));
+  }
+
+  // Cover DNA: not how likely, and not how priced - how much of what he needs is true tonight.
+  try {
+    var dd = coverDna(key, name, mkt, +line);
+    var sc = dd ? cdnaScore(dd, side || 'over') : null;
+    if (sc && sc.pct != null)
+      tiles += readTile('dna', sc.pct + '%', 'cover DNA', 'of what he needs is true');
+  } catch(e){}
+
+  if (!tiles) return '';
+  var note = evOk
+    ? 'Different questions, different units — a gap in probability points and a return per '
+      + 'dollar are not the same number and do not move together.'
+    : 'This sport’s model cannot be ranked against a price, so the two market comparisons '
+      + 'are left out rather than printed as a verdict it cannot support.';
+  return '<div class="rd-wrap"><div class="rd-strip">' + tiles + '</div>'
+    + '<div class="rd-note">' + note + '</div></div>';
+}
+
 /* DEEP DIVE ----------------------------------------------------------------------------------
    Everything that bears on ONE bet, in one place: the model's read, his own record at that exact
    line cut every way that matters, the game-by-game worm, who he is facing, whether he will even
@@ -20016,15 +20125,15 @@ function deepPanel(){
   var ev = (pr != null && price) ? pr * price - 1 : null;
   var head = '<div class="dd-head"><div class="dd-bet"><b>'+esc(name)+'</b>'
     + '<span>'+esc(betTxt)+(price ? ' \u00b7 $'+price.toFixed(2)+(d.book ? ' '+esc(d.book) : '') : '')+'</span></div>'
-    + (pr != null ? '<div class="dd-verdict '+(ev != null && ev >= 0 ? 'good' : 'bad')+'">'
-        + (ev != null ? (ev >= 0 ? '+' : '')+Math.round(ev*100)+'%' : Math.round(pr*100)+'%')
-        + '<i>'+(ev != null ? 'edge' : 'model')+'</i></div>' : '')
+    /* The single headline is gone. It printed EV and called it "edge" while the signal board
+       printed a probability gap and called it the same thing, so the two screens disagreed about
+       one bet and neither named its units. readsStrip shows both, each against the baseline it
+       actually uses, plus the cover-DNA match. */
     + '</div>'
-    + (pr != null ? '<div class="dd-sub">model '+Math.round(pr*100)+'%'
-        + (implied ? ' v '+Math.round(implied*100)+'% implied' : '')
-        + (raw != null && pr < raw - 0.005 ? ' \u00b7 capped down from '+Math.round(raw*100)+'% by his own record' : '')
+    + (pr != null ? readsStrip(key, p, name, mkt, line, side, price, d.opp, pr, raw) : '')
+    + (pr != null ? '<div class="dd-sub">'
         + (MODEL_SOURCE && MODEL_SOURCE.from === 'record'
-            ? ' \u00b7 from his record over ' + MODEL_SOURCE.n + ' games, not a model' : '')
+            ? 'From his record over ' + MODEL_SOURCE.n + ' games, not a model.' : '')
         + (function(){
             // where the price opened, if today's snapshot has it: the market's own opinion, moving
             var o = d.book ? openPrice(key, name, mkt, line, d.book) : null;
@@ -21286,6 +21395,29 @@ window.LAB = {
   cmbLad: function(open){ state.view.cmbLadOpen = !!open; },
   // test hook: the shell's own statOf, so tests check the real function rather than a copy
   statProbe: function(key, row, mkt){ return statOf(key, row, mkt); },
+  /* What the Green Lights / Death Riders pool actually contains, before any rendering. Added to
+     answer one question with numbers rather than impressions: how many rows sit at a negative
+     edge, and whether that tracks the model being untrusted for the sport. */
+  /* NOT evTrustProbe - that name is taken further down and returns a plain boolean, which an
+     existing test compares with ===. Two keys of the same name in one object literal silently
+     keep the last one, so the duplicate did not fail, it just quietly won nothing. */
+  evGateProbe: function(key){
+    var c = calibFor(key) || {};
+    return { trusted: evTrusted(key), spread: c.spread,
+             gain: (c.brierBaseRate != null && c.brierCalibrated != null)
+               ? c.brierBaseRate - c.brierCalibrated : null,
+             minSpread: EV_MIN_SPREAD, minGain: EV_MIN_BRIER_GAIN };
+  },
+  // the calibrated probability for a raw model number, so a test can show what the fit does
+  calProbe: function(key, raw){ return calibrate(key, raw); },
+  glProbe: function(key, over){
+    var g = state.view.focus;
+    var rows = ouSignals(key, g && g.g, over === false ? 'under' : 'over') || [];
+    return { trusted: evTrusted(key), calib: calibFor(key) || null,
+             rows: rows.map(function(r){
+               return { name:r.name, mkt:r.mkt, line:r.line, price:r.price, prob:r.prob,
+                        ev:r.ev, edge:r.edge, score:r.score }; }) };
+  },
   doneProbe: function(key, g){ return gameDone(key, g, gameStart(g).ms); },
   countProbe: function(key){ return countGames(key); },
   umProbe: function(key, i){ var f = (state.sports[key].data.fixture || [])[i]; return f ? umRows(key, f) : []; },
