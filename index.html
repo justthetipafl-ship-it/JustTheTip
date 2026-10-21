@@ -1490,8 +1490,20 @@
   .worm-ax{display:flex;justify-content:space-between;font-size:9px;color:var(--text-3);
     font-family:var(--font-mono);padding:3px 0 0;}
   .sim-score{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:2px 0 8px;}
-  .sim-sc{display:flex;align-items:center;gap:7px;}
+  /* The margin row gained a second dropdown ("or more" / "or under") and the total row is a
+     third control beside a stepper, so at phone widths these no longer fit on one line. They wrap
+     instead of running off the edge - the old row was short enough never to need it. */
+  .sim-sc{display:flex;align-items:center;gap:7px;flex-wrap:wrap;min-width:0;}
   .sim-sc>span{font-family:var(--font-display);font-size:12px;min-width:34px;}
+  .sim-sc .sim-msel{flex:0 1 auto;max-width:45%;}
+  .sim-tot{width:100%;}
+  .sim-tot>.sim-by:first-child{font-family:var(--font-display);min-width:34px;}
+  @media(max-width:430px){
+    /* the trailing words are the first thing worth losing: the dropdown beside them already
+       says "or under", and "between them" is implied by a total */
+    .sim-tot>.sim-by:last-child{display:none;}
+    .sim-msel{font-size:11px;padding:0 20px 0 6px;}
+  }
   .sim-stp{display:inline-flex;align-items:center;gap:4px;}
   .sim-stp button{width:20px;height:20px;line-height:1;padding:0;border-radius:6px;
     background:var(--surface-2);border:1px solid var(--border);color:var(--text-2);cursor:pointer;}
@@ -19025,7 +19037,8 @@ var SIM_TOL = 0.12;               // how loosely a sim has to match the score yo
 
 function simState(){
   state.view.sim = state.view.sim || { legs:3, mkt:null, book:'', hs:null, as:null, runs:0,
-                                     mode:'likely', sw:'score', mSide:'home', mMin:null };
+                                     mode:'likely', sw:'score', mSide:'home', mMin:null,
+                                     mDir:'more', tDir:'', tVal:null };
   return state.view.sim;
 }
 function simFilter(sims, hs, as, scale, extra){
@@ -19046,10 +19059,37 @@ function simFilter(sims, hs, as, scale, extra){
     else if (v === 'styleHi' && S2.svHi != null) tests.push(function(i){ return S2.sv[i] != null && S2.sv[i] >= S2.svHi; });
     else if (v === 'styleLo' && S2.svLo != null) tests.push(function(i){ return S2.sv[i] != null && S2.sv[i] <= S2.svLo; });
   }
-  // "<side> by N or more" - for when you have a view on the game without a view on the scoreline
+  /* A VIEW ON THE GAME WITHOUT A VIEW ON THE SCORELINE.
+     Four statements from two controls: a side (or either), and a direction. "or more" and "under"
+     tile the axis between them with no gap and no overlap, so N means the same thing whichever
+     way you read it - HOU by 7 or more, and HOU by under 7, partition every game HOU wins.
+     EITHER is the one that needed adding: a margin band around zero, which is the only way to ask
+     for a tight game without first deciding who wins it. It reads |margin|, so it keeps both
+     sides, and at the "under" end it keeps a draw too - a nil-all IS inside any margin, and
+     dropping it would quietly exclude the most common scoreline in a low-scoring sport. */
   if (x.mMin != null && x.mSide){
-    var sgn = x.mSide === 'home' ? 1 : -1, mn = x.mMin;
-    tests.push(function(i){ var m = sims[i].margin; return m != null && m * sgn >= mn; });
+    var mn = x.mMin, under = x.mDir === 'under';
+    if (x.mSide === 'either'){
+      tests.push(under
+        ? function(i){ var m = sims[i].margin; return m != null && Math.abs(m) < mn; }
+        : function(i){ var m = sims[i].margin; return m != null && Math.abs(m) >= mn; });
+    } else {
+      var sgn = x.mSide === 'home' ? 1 : -1;
+      tests.push(under
+        // that side still has to WIN - "by under 7" is a win of 1 to 6, not a loss of 20
+        ? function(i){ var m = sims[i].margin; return m != null && m * sgn > 0 && m * sgn < mn; }
+        : function(i){ var m = sims[i].margin; return m != null && m * sgn >= mn; });
+    }
+  }
+  /* THE TOTAL. A separate axis from the margin, not a rival statement - "either club within 6"
+     and "over 215 between them" describe different things and are worth asking together, so this
+     stacks rather than switching. Posted totals carry a half point and sims are whole numbers, so
+     this reads strictly over or strictly under and a .5 line can never land on a push. */
+  if (x.tVal != null && x.tDir){
+    var tv = x.tVal, tOver = x.tDir === 'over';
+    tests.push(tOver
+      ? function(i){ var t = sims[i].total; return t != null && t > tv; }
+      : function(i){ var t = sims[i].total; return t != null && t < tv; });
   }
   if (x.star && x.C){
     var sArr = x.C.col[x.star.k + '|' + x.star.stat], sSeen = x.C.seen[x.star.k], scut = x.star.cut;
@@ -19071,8 +19111,22 @@ function simFilter(sims, hs, as, scale, extra){
     var bnd = { idx:idx0, all:false, byShape:true };
     // a margin filter is a band on the same axis the chart draws, so it shades like a scoreline
     if (x.mMin != null && x.mSide){
-      bnd.loM = x.mSide === 'home' ? x.mMin : -1e9;
-      bnd.hiM = x.mSide === 'home' ? 1e9 : -x.mMin;
+      // the chart shades the margin axis, so each statement becomes the band it actually describes
+      if (x.mSide === 'either'){
+        if (x.mDir === 'under'){ bnd.loM = -x.mMin; bnd.hiM = x.mMin; }
+        // "either by N or more" is two bands, which this shading cannot draw - so it draws none
+        // rather than one wrong one, and the words above the chart still say what was asked
+      } else if (x.mDir === 'under'){
+        bnd.loM = x.mSide === 'home' ? 0 : -x.mMin;
+        bnd.hiM = x.mSide === 'home' ? x.mMin : 0;
+      } else {
+        bnd.loM = x.mSide === 'home' ? x.mMin : -1e9;
+        bnd.hiM = x.mSide === 'home' ? 1e9 : -x.mMin;
+      }
+    }
+    if (x.tVal != null && x.tDir){
+      bnd.loT = x.tDir === 'over' ? x.tVal : -1e9;
+      bnd.hiT = x.tDir === 'over' ? 1e9 : x.tVal;
     }
     return bnd;
   }
@@ -19096,6 +19150,25 @@ function simFilter(sims, hs, as, scale, extra){
            loM:mar - mTol, hiM:mar + mTol, loT:tot - tTol, hiT:tot + tTol };
 }
 
+/* A starting total for this fixture: the median of its own simulated games, rounded to the half
+   point the market would post it at. Zero would be useless and a constant would be wrong in six
+   sports out of seven. */
+function simTotalSeed(){
+  var fx = simFixtureNow();
+  var st = simState();
+  var C = fx ? simSims(fx.key, fx.g, 7 + (st.runs || 0)) : null;
+  if (!C || !C.sims || !C.sims.length) return 0;
+  var t = [];
+  for (var i = 0; i < C.sims.length; i++) if (C.sims[i].total != null) t.push(C.sims[i].total);
+  if (!t.length) return 0;
+  t.sort(function(a, b){ return a - b; });
+  var med = t.length % 2 ? t[(t.length - 1) / 2] : (t[t.length / 2 - 1] + t[t.length / 2]) / 2;
+  /* FLOOR then add the half, do not round then add it. With an even number of sims the median is
+     itself a .5, and rounding that and adding another half landed back on a whole number - which
+     is exactly the push this line exists to avoid, and it printed as "219" where every market in
+     the world would post 219.5. */
+  return Math.floor(med) + 0.5;
+}
 /* Candidate legs: what the books actually post, so every result is bettable. */
 function simCandidates(key, g, mkt, book){
   var out = [], seen = {};
@@ -19218,7 +19291,8 @@ function simRun(key, g){
   // the scoreline and the two filters. Changing the leg count or the objective does not touch it,
   // so cache it and let those two controls answer instantly.
   var rk = [normTeam(g.home), normTeam(g.away), seed, st.hs, st.as, st.mkt || '', st.book || '',
-            st.shape || '', st.star || '', st.sw || '', st.mSide || '', st.mMin].join('|');
+            st.shape || '', st.star || '', st.sw || '', st.mSide || '', st.mMin,
+            st.mDir || '', st.tDir || '', st.tVal].join('|');
   var S0 = state.sports[key];
   if (S0.idx.simRated && S0.idx.simRated.k === rk) return S0.idx.simRated.v;
   var sims = C.sims;
@@ -19226,7 +19300,11 @@ function simRun(key, g){
   var f = simFilter(sims, st.hs, st.as, (state.sports[key].idx.simGames || {}).meanTot,
                     { shape:st.shape, sh:simShapeOf(key, C), star:star, C:C,
                       mSide: st.sw === 'margin' ? (st.mSide || 'home') : null,
-                      mMin: st.sw === 'margin' && st.mMin != null ? st.mMin : null });
+                      mMin: st.sw === 'margin' && st.mMin != null ? st.mMin : null,
+                      mDir: st.mDir || 'more',
+                      // the total stacks with a margin but an exact score already fixes it
+                      tDir: (st.sw === 'score' && st.hs != null && st.as != null) ? null : st.tDir,
+                      tVal: (st.sw === 'score' && st.hs != null && st.as != null) ? null : st.tVal });
   var idx = f.idx;
   var cands = simCandidates(key, g, st.mkt, st.book);
   var rated = [];
@@ -19350,6 +19428,9 @@ var SIM_SHAPE_KIND = { blowout:'margin', close:'margin', homeup:'margin', awayup
                        shootout:'total', grind:'total', styleHi:'style', styleLo:'style' };
 var SIM_SCORE_SHAPES = ['blowout', 'close', 'shootout', 'grind', 'homeup', 'awayup'];
 var SIM_MARGIN_SHAPES = ['blowout', 'close', 'homeup', 'awayup'];
+// the shapes that are statements about the TOTAL, so a typed total replaces them rather than
+// stacking a second, vaguer version of the same condition on top
+var SIM_TOTAL_SHAPES = ['shootout', 'grind'];
 var SIM_NOW = null;                 // the fixture the panel last drew, for its own handlers
 function simFixtureNow(){ return SIM_NOW; }
 /* Redraw the simulator and nothing else. Falls back to the whole page if the panel is not on
@@ -19406,9 +19487,11 @@ function simSection(key, g){
   var body;
   if ((st.sw || 'score') === 'margin'){
     body = '<div class="sim-sc"><select class="ob-sel sim-msel" onchange="LAB.simMSide(this.value)">'
-      + ['home', 'away'].map(function(sd){
-          return '<option value="' + sd + '"' + ((st.mSide || 'home') === sd ? ' selected' : '')
-            + '>' + esc(abbrOf(key, sd === 'home' ? g.home : g.away)) + '</option>'; }).join('')
+      + [['home', esc(abbrOf(key, g.home))], ['away', esc(abbrOf(key, g.away))],
+         ['either', 'Either team']].map(function(sd){
+          return '<option value="' + sd[0] + '"'
+            + ((st.mSide || 'home') === sd[0] ? ' selected' : '') + '>' + sd[1] + '</option>';
+        }).join('')
       + '</select><span class="sim-by">by</span>'
       + '<div class="sim-stp"><button onclick="LAB.simMargin(-1)">−</button>'
       + '<input class="sim-in" type="number" inputmode="numeric" min="1" step="1"'
@@ -19416,7 +19499,12 @@ function simSection(key, g){
         + ' value="' + (st.mMin == null ? '' : st.mMin) + '" placeholder="—"'
         + ' onchange="LAB.simMarginSet(this.value)">'
       + '<button onclick="LAB.simMargin(1)">+</button></div>'
-      + '<span class="sim-by">or more</span></div>';
+      + '<select class="ob-sel sim-msel" onchange="LAB.simMDir(this.value)">'
+      + [['more', 'or more'], ['under', 'or under']].map(function(d){
+          return '<option value="' + d[0] + '"'
+            + ((st.mDir || 'more') === d[0] ? ' selected' : '') + '>' + d[1] + '</option>';
+        }).join('')
+      + '</select></div>';
   } else {
     body = ['away', 'home'].map(function(sideKey){
         var team = sideKey === 'home' ? g.home : g.away;
@@ -19430,7 +19518,26 @@ function simSection(key, g){
           + '<button onclick="LAB.simScore(\'' + sideKey + '\',1)">+</button></div></div>';
       }).join('');
   }
-  var sc = swTabs + '<div class="sim-score">' + body + note + '</div>';
+  /* THE TOTAL, stacked rather than switched. A margin and a total are different axes - "either
+     club within 6" and "over 215 between them" are worth asking together - so this is an extra
+     row, not a third tab. It is hidden once an exact scoreline is set, because that already
+     fixes the total and two statements about one number can only disagree. */
+  var scored0 = (st.sw || 'score') === 'score' && st.hs != null && st.as != null;
+  var totRow = scored0 ? '' :
+    '<div class="sim-sc sim-tot"><span class="sim-by">Total</span>'
+    + '<select class="ob-sel sim-msel" onchange="LAB.simTDir(this.value)">'
+    + [['', 'any'], ['over', 'over'], ['under', 'under']].map(function(d){
+        return '<option value="' + d[0] + '"' + ((st.tDir || '') === d[0] ? ' selected' : '')
+          + '>' + d[1] + '</option>'; }).join('')
+    + '</select>'
+    + '<div class="sim-stp"><button onclick="LAB.simTotal(-1)">−</button>'
+    + '<input class="sim-in" type="number" inputmode="decimal" step="0.5"'
+      + ' aria-label="Total points in the game"'
+      + ' value="' + (st.tVal == null ? '' : st.tVal) + '" placeholder="—"'
+      + ' onchange="LAB.simTotalSet(this.value)">'
+    + '<button onclick="LAB.simTotal(1)">+</button></div>'
+    + '<span class="sim-by">between them</span></div>';
+  var sc = swTabs + '<div class="sim-score">' + body + totRow + note + '</div>';
 
   // Game shape. Every threshold is a quartile of this fixture's own simulated spread, so the
   // wording means the same thing in every sport without a number being hardcoded anywhere.
@@ -19440,7 +19547,8 @@ function simSection(key, g){
   var shOpts = [['', 'Any shape']];
   if (sh){
     // an exact score hides both kinds; a margin hides only the margin ones
-    var dropMargin = hasScore || hasMargin, dropTotal = hasScore;
+    var hasTotal = !hasScore && !!st.tDir && st.tVal != null;
+    var dropMargin = hasScore || hasMargin, dropTotal = hasScore || hasTotal;
     if (!dropMargin && sh.amHi != null)
       shOpts.push(['blowout', 'Blowout'], ['close', 'Close finish']);
     if (!dropTotal && sh.ttHi != null)
@@ -19491,8 +19599,24 @@ function simSection(key, g){
   // pointed at a shaded band that was not drawn.
   var on = [];
   if (hasScore) on.push('finishing ' + st.as + '\u2013' + st.hs);
-  if (hasMargin) on.push(abbrOf(key, st.mSide === 'away' ? g.away : g.home)
-    + ' winning by ' + st.mMin + ' or more');
+  /* No claim about draws either way. The obvious test - does any simulated game finish level? -
+     answers yes in every sport, including basketball and baseball, which cannot end level: the
+     simulator models regulation only and never resolves overtime, so 2.2% of NBA games and 10.5%
+     of MLB games come out tied. So the sim cannot be asked whether this code draws, and the band
+     is simply stated as what it is. Those phantom ties sit inside any "within N" band and nudge
+     it up; the effect is small but it is real, and it belongs to the simulator, not to this
+     filter. */
+  if (hasMargin) on.push(
+    (st.mSide === 'either'
+      ? ((st.mDir === 'under')
+          ? 'either club within ' + st.mMin
+          : 'a margin of ' + st.mMin + ' or more either way')
+      : abbrOf(key, st.mSide === 'away' ? g.away : g.home)
+        + (st.mDir === 'under' ? ' winning by under ' + st.mMin
+                               : ' winning by ' + st.mMin + ' or more')));
+  if (!hasScore && st.tDir && st.tVal != null)
+    on.push((st.tDir === 'over' ? 'more than ' : 'fewer than ') + st.tVal
+      + ' points between them');
   var shLab = (shOpts.filter(function(o){ return o[0] === (st.shape || ''); })[0] || [])[1];
   if (st.shape && shLab) on.push(shLab.toLowerCase());
   if (res.star) on.push('a big game from ' + res.star.name);
@@ -22310,6 +22434,20 @@ window.LAB = {
   },
   // exposed for tests: where the run time goes. The panel re-runs on every dropdown change, so a
   // slow stage is felt on every interaction, and the slow one has not been where I guessed twice.
+  /* The filtered pool itself, so a test can check the predicate against the simulated games
+     rather than against the sentence the panel prints about them. */
+  simFiltProbe: function(key, gi){
+    var g = (asArray(state.sports[key].data.fixture) || [])[gi || 0];
+    if (!g) return null;
+    var res = simRun(key, g);
+    if (!res) return null;
+    var st = simState();
+    return { n:res.n, kept:res.idx.length, filtered:!!res.filtered,
+             rows:res.idx.map(function(i){
+               return { m:res.sims[i].margin, t:res.sims[i].total }; }),
+             st:{ sw:st.sw, mSide:st.mSide, mMin:st.mMin, mDir:st.mDir,
+                  tDir:st.tDir, tVal:st.tVal } };
+  },
   simTimeProbe: function(key, gi){
     var g = (asArray(state.sports[key].data.fixture) || [])[gi || 0];
     if (!g) return { error:'no fixture' };
@@ -22346,6 +22484,7 @@ window.LAB = {
     // a shape replaces whichever of the two it would contradict, rather than fighting it
     if (SIM_SCORE_SHAPES.indexOf(st.shape) >= 0){ st.hs = null; st.as = null; }
     if (SIM_MARGIN_SHAPES.indexOf(st.shape) >= 0) st.mMin = null;
+    if (SIM_TOTAL_SHAPES.indexOf(st.shape) >= 0){ st.tDir = ''; st.tVal = null; }
     simRender();
   },
   simSw: function(v){
@@ -22356,7 +22495,38 @@ window.LAB = {
     else st.mMin = null;
     simRender();
   },
-  simMSide: function(v){ simState().mSide = v === 'away' ? 'away' : 'home'; simRender(); },
+  simMSide: function(v){
+    simState().mSide = (v === 'away' || v === 'either') ? v : 'home';
+    simRender();
+  },
+  simMDir: function(v){ simState().mDir = v === 'under' ? 'under' : 'more'; simRender(); },
+  /* THE TOTAL. Seeded from this fixture's own simulated median rather than from zero or from a
+     number baked into the page - an NFL total and an NBA total are forty points apart, and
+     stepping from one to the other is a hundred clicks. Half-point steps, because that is how
+     totals are posted and a .5 line cannot land on a push against a whole-number sim. */
+  simTDir: function(v){
+    var st = simState();
+    st.tDir = (v === 'over' || v === 'under') ? v : '';
+    if (st.tDir && st.tVal == null) st.tVal = simTotalSeed();
+    simRender();
+  },
+  simTotalSet: function(v){
+    var st = simState();
+    var n = String(v).trim() === '' ? null : Math.round(+v * 2) / 2;
+    if (n != null && (!isFinite(n) || n < 0)) n = null;
+    st.tVal = n;
+    if (n != null && !st.tDir) st.tDir = 'over';
+    if (n != null && SIM_TOTAL_SHAPES.indexOf(st.shape) >= 0) st.shape = '';
+    simRender();
+  },
+  simTotal: function(d){
+    var st = simState();
+    if (st.tVal == null) st.tVal = simTotalSeed();
+    else st.tVal = Math.max(0, Math.round((st.tVal + (d || 0) * 0.5) * 2) / 2);
+    if (!st.tDir) st.tDir = 'over';
+    if (SIM_TOTAL_SHAPES.indexOf(st.shape) >= 0) st.shape = '';
+    simRender();
+  },
   simMarginSet: function(v){
     var st = simState();
     var n = String(v).trim() === '' ? null : Math.max(1, Math.round(+v));
@@ -22393,6 +22563,7 @@ window.LAB = {
   simScore: function(side, d){
     var st = simState();
     if (side === 'clear'){ st.hs = null; st.as = null; st.mMin = null; st.shape = ''; st.star = '';
+      st.tDir = ''; st.tVal = null;
                            simRender(); return; }
     var cur = side === 'home' ? st.hs : st.as;
     if (cur == null){
