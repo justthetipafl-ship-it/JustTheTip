@@ -14743,7 +14743,14 @@ function cdnaToday(key, field, player, team, pos){
                how:field === 'won' ? ('the market has him ' + (sp < 0 ? 'favoured' : 'the outsider'))
                                    : ('the spread, he is ' + (sp > 0 ? '+' : '') + sp), group:1 };
     }
-    if (field === 'atHome')
+    /* NOT from matchOdds. cdnaGame returns the FIRST entry naming this team, and the book file
+       can carry more than one of their games - so whether he is at home was answered about
+       whichever fixture happened to sit first in that list. cdnaOpp already refuses to work this
+       way for the same reason, and says so: the focused fixture is the right one, because the
+       panel was opened from a game. Falling through to the fixture-based branch below does that.
+       Left here, this branch answered a different game's question with total confidence. */
+    if (field === 'atHome' && !(state.view.focus && state.view.focus.sport === key
+                                && state.view.focus.g))
       return { num:cdnaSame(key, g.home, team) ? 1 : 0, group:1,
                how:cdnaSame(key, g.home, team) ? 'he is at home today' : 'he is on the road today' };
     /* The two implied totals are the same arithmetic read from either end: the total and the
@@ -15241,11 +15248,24 @@ function cdnaChance(p){
 var CDNA_BOOL_WORDS = { won:['a win', 'a loss'], atHome:['a home game', 'a road game'] };
 function cdnaBoolWord(s){
   var w = CDNA_BOOL_WORDS[s.field] || ['yes', 'no'];
-  /* 'hi' at 1 means the covering games were the ones with the flag SET; 'lo' at 0 means the same
-     thing read from the other end. Any other combination covers every game and is caught by the
-     splits-nothing guard before it reaches here. */
-  var on = s.dir === 'hi' ? s.at === 1 : s.at === 0;
-  return on ? w[0] : w[1];
+  /* ASK cdnaMeets, do not re-derive the direction. The previous line read
+         var on = s.dir === 'hi' ? s.at === 1 : s.at === 0;
+     on the belief that 'lo' at 0 was "the flag SET, read from the other end". It is the opposite:
+     a boolean column only ever yields two useful cuts, 'hi' at 1 which needs the flag SET and
+     'lo' at 0 which needs it CLEAR, so that second case printed the wrong one of the two words -
+     43% of every boolean strand on the page, measured across three sports.
+
+     What it looked like: a strand that needed a ROAD game, labelled "needs a home game", sitting
+     red on a night he is at home. The words disagreed with the colour, and the colour was right.
+     Nothing was wrong with the data or the match - only the sentence describing it.
+
+     cdnaMeets is the single place direction is interpreted, and its own comment says it exists so
+     direction "can never be applied in one place and forgotten in another". This is that, so it
+     asks the same question the colour asks and cannot drift from it again. */
+  var set = cdnaMeets(s, 1), clear = cdnaMeets(s, 0);
+  if (set && !clear) return w[0];
+  if (clear && !set) return w[1];
+  return w[0];        // covers both values: splits nothing, and is guarded upstream
 }
 /* What today's posted number amounts to for a yes/no strand, in the same words the threshold uses
    so the two can be compared at a glance. */
@@ -21401,6 +21421,41 @@ window.LAB = {
   /* NOT evTrustProbe - that name is taken further down and returns a plain boolean, which an
      existing test compares with ===. Two keys of the same name in one object literal silently
      keep the last one, so the duplicate did not fail, it just quietly won nothing. */
+  /* For the home/away audit: which game each resolver picks for a team, and whether they agree. */
+  /* Every boolean strand the file can produce, with the words it prints and what it really
+     requires, so the label and the colour can be compared on real data. */
+  cdnaBoolProbe: function(key, mkt, line, names){
+    var out = [];
+    (names || []).forEach(function(n){
+      var d; try { d = coverDna(key, n, mkt, +line); } catch(e){ return; }
+      if (!d || !d.strands) return;
+      d.strands.forEach(function(st){
+        if (!st.bool) return;
+        out.push({ player:n, field:st.field, dir:st.dir, at:st.at,
+                   label:cdnaBoolWord(st),
+                   needsSet: cdnaMeets(st, 1) && !cdnaMeets(st, 0),
+                   needsClear: cdnaMeets(st, 0) && !cdnaMeets(st, 1),
+                   todayNum: st.today ? st.today.num : null,
+                   clears: st.clears });
+      });
+    });
+    return out;
+  },
+  cdnaHomeProbe: function(key, team){
+    var mo = cdnaGame(key, team);
+    var fx = (state.view.focus && state.view.focus.sport === key) ? state.view.focus.g : null;
+    var all = ((state.sports[key].data.odds || {}).matchOdds || []).filter(function(m){
+      return cdnaSame(key, m.home, team) || cdnaSame(key, m.away, team); });
+    return {
+      team: team,
+      moGame: mo ? { home:mo.home, away:mo.away, utc:mo.utc || mo.date || null } : null,
+      moMatches: all.length,
+      fxGame: fx ? { home:fx.home, away:fx.away, utc:fx.utc || null } : null,
+      moSaysHome: mo ? (cdnaSame(key, mo.home, team) ? 1 : 0) : null,
+      fxSaysHome: fx ? (cdnaSame(key, fx.home, team) ? 1 : 0) : null,
+      fxKnowsHim: fx ? (cdnaSame(key, fx.home, team) || cdnaSame(key, fx.away, team)) : false
+    };
+  },
   evGateProbe: function(key){
     var c = calibFor(key) || {};
     return { trusted: evTrusted(key), spread: c.spread,
