@@ -60,6 +60,18 @@ jobs:
           # Include the new season only once its box scores actually exist. Listing it early kills
           # the run (a required season that 404s is fatal); listing it late leaves currentSeason on
           # last year all through the new one. So ask.
+          #
+          # NOTE: this probe answers "does the file exist", which is NOT "has the season been
+          # played". On 2026-10-21, the morning after the season opened, player_box_2027.parquet
+          # existed and held three games - so CURRENT became 2027 and the build produced
+          # players.json with 0 rows and teams.json empty. check_data.py refused to publish,
+          # which is the only reason the live tool kept working.
+          #
+          # CURRENT below is therefore a REQUEST, not a decision. build_nba_data.py checks the
+          # median games per club and stays on the previous season until the new one has actually
+          # been played (pick_current, floor of 3). The branch still matters for SEASONS: the new
+          # season has to be loaded for its schedule, which is where fixtures come from on day
+          # one. Do not "simplify" this by trusting the probe again.
           BOX="https://github.com/sportsdataverse/sportsdataverse-data/releases/download"
           BOX="$BOX/espn_nba_player_boxscores/player_box_$NEXT.parquet"
           if curl -sfL -o /dev/null -r 0-0 "$BOX"; then
