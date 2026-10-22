@@ -221,6 +221,69 @@ def _pid(v):
     return t if t.isdigit() else ""
 
 
+# A club needs a few games on the board before a per-game average is worth publishing. Three is
+# the floor, measured on the MEDIAN club so one team playing twice in the opening week cannot
+# carry the decision - and a median rather than a count of rows, because this script builds the
+# WNBA too and a flat row floor would mean something different in a twelve-team league.
+CURRENT_MIN_GAMES = 3
+
+
+def pick_current(logs, requested):
+    """The most recent season with enough played to stand as 'current', at or below `requested`.
+
+    WHY THIS EXISTS
+    The workflow decides which season is current by asking whether the new season's box-score
+    file EXISTS upstream. On opening night it does - containing one night of basketball, or in
+    practice nothing at all, because the file is published before the first tip. The build then
+    computed every current-season artefact against a season nobody had played:
+
+        players.json     477 -> 0
+        teams.json        30 -> 0
+        teams_form.json   30 -> 0
+
+    which is exactly what check_data.py refused to publish on 2026-10-21, the morning after the
+    season opened. dvp.json survived the same rollover only because it blends toward a prior and
+    had something to fall back on; nothing else did.
+
+    Existence is the wrong question. This asks the right one - has it been PLAYED - and if the
+    answer is no, stays on the season that has. The new season is still loaded and still supplies
+    the schedule, so fixtures appear from day one; only the averages wait until there are some.
+    """
+    if logs is None or logs.empty or "Year" not in logs.columns:
+        return requested
+    played = {}
+    for yr, d in logs.groupby("Year"):
+        try:
+            per_team = d.groupby("Team")["MatchId"].nunique()
+        except Exception:
+            continue
+        if len(per_team):
+            played[str(yr)] = float(per_team.median())
+    if not played:
+        return requested
+    want = str(requested)
+    if played.get(want, 0) >= CURRENT_MIN_GAMES:
+        return requested
+    # step back to the most recent season that HAS been played
+    ok_years = sorted((y for y, n in played.items() if n >= CURRENT_MIN_GAMES), reverse=True)
+    older = [y for y in ok_years if y <= want]
+    chosen = older[0] if older else (ok_years[0] if ok_years else want)
+    if str(chosen) == want:
+        # nothing older has been played either - this is a first run, or the history is missing.
+        # Say so plainly rather than printing "stays on 2027" about the season being complained of.
+        print(f"  [warn] season {want} has a median of {played.get(want, 0):.0f} games per club, "
+              f"under the floor of {CURRENT_MIN_GAMES}, and no earlier season has been played "
+              f"either - building it anyway, so the current-season files will be thin.")
+    else:
+        print(f"  [warn] season {want} has a median of {played.get(want, 0):.0f} games per club, "
+              f"under the floor of {CURRENT_MIN_GAMES} - current stays on {chosen}. "
+              f"Fixtures still come from {want}; the averages wait until it has been played.")
+    try:
+        return int(chosen)
+    except (TypeError, ValueError):
+        return chosen
+
+
 def build_players(logs, rosters, cfg, current):
     """Current-season rep-gated averages + role + roster bio join."""
     cur = logs[logs["Year"] == str(current)]
@@ -739,6 +802,7 @@ def run_league(lg, seasons, current, outroot, password, src_local):
     logs = filter_real_teams(logs, ok)
     tb_frames = [filter_real_teams(t, ok) for t in tb_frames]
 
+    current = pick_current(logs, current)
     players = build_players(logs, rosters, cfg, current)
     teams   = build_teams(tb_frames, cfg, current, form_only=False)
     teamsF  = build_teams(tb_frames, cfg, current, form_only=True)
@@ -966,6 +1030,33 @@ def selftest():
                       ("fixture", fixture), ("results", results),
                       ("lineups", lineups), ("gamelogs", glogs)]:
         json.loads(json.dumps(_clean(obj), allow_nan=False))   # raises on NaN leak
+
+    # --- THE SEASON ROLLOVER -------------------------------------------------------------
+    # The morning after the 2026-27 season opened, the workflow saw that the new season's
+    # box-score file existed upstream, called it current, and the build produced players.json
+    # with 0 rows and teams.json empty - because existence is not the same as having been
+    # played. check_data.py refused to publish, which is the only reason the live tool did not
+    # go blank. These pin the question that should have been asked.
+    import pandas as _pd
+    _rows = []
+    for _t in ("AAA", "BBB"):
+        for _i in range(5):                      # a played season: 5 games each
+            _rows.append({"Year": "2026", "Team": _t, "MatchId": f"26-{_t}-{_i}"})
+    _rows.append({"Year": "2027", "Team": "AAA", "MatchId": "27-AAA-0"})   # opening night only
+    _rows.append({"Year": "2027", "Team": "BBB", "MatchId": "27-BBB-0"})
+    _lg = _pd.DataFrame(_rows)
+    assert pick_current(_lg, 2027) == 2026, "one game played must not become the current season"
+    assert pick_current(_lg, 2026) == 2026, "a played season is left alone"
+    # once the new season has been played, it takes over without anyone editing anything
+    for _t in ("AAA", "BBB"):
+        for _i in range(1, 4):
+            _rows.append({"Year": "2027", "Team": _t, "MatchId": f"27-{_t}-{_i}"})
+    assert pick_current(_pd.DataFrame(_rows), 2027) == 2027, "a played new season must take over"
+    # a season nobody has played at all, with nothing older, still returns something usable
+    assert pick_current(_pd.DataFrame([{"Year": "2027", "Team": "AAA", "MatchId": "x"}]),
+                        2027) in (2027, "2027")
+    assert pick_current(_pd.DataFrame(), 2027) == 2027, "no data: leave the request alone"
+
     print("selftest: ALL PASS ok")
 
 
