@@ -202,8 +202,29 @@ const wait = ms => new Promise(r => setTimeout(r, ms));
              The dollar sign is now required. Every box that holds a price prints one, so a number
              without it is not a price, and null is the right answer - a missing price costs the
              row its units, a wrong one poisons the whole tile. */
+          /* THE PRICE COMES FROM data-d FIRST, and only falls back to reading the page.
+             Scraping a rendered price was always the fragile half of this: the selector list
+             above names four classes, and a whole family of tiles prints its price somewhere
+             else entirely. eplRow - which mlbRow and nblSpecRow both build on - puts it inside
+             .gl-bet, as "2+ Assists · $3.05 Bet365". That class is not on the list, so every
+             tile in that family logged price:null and graded as unpriced forever: Playmakers,
+             Finishers, Producers, Power Play, Dishers, Triple Threat, Double Trouble, Locked In,
+             Next Man Up, Tuddy Targets, Kicker Picker and Let's Climb, every row of every one of
+             them. They have a price on screen; nothing was reading it.
+
+             rowBtns already embeds the number in the deep-dive button's data-d, and this
+             function already reads mkt, line, side and book out of exactly that object. Taking
+             the price from there too is both the fix and the simpler thing: a number carried as
+             a number, rather than one recovered from display text - which is how 270 was once
+             logged as a price and the ledger paid a winner at 269-to-1.
+
+             The text scrape stays as a fallback for any row that renders a price without
+             rowBtns, and keeps its required dollar sign for the same reason as before. */
+          const specOdds = (spec && typeof spec.odds === 'number' && isFinite(spec.odds)
+                            && spec.odds > 1) ? spec.odds : null;
           const priceTxt = ((row.querySelector('.gl-odds, .stk-odds, .elm-odds, .h2h-sig-odds') || {}).textContent || '');
-          const price = parseFloat((priceTxt.match(/\$\s*([\d.]+)/) || [])[1]);
+          const scraped = parseFloat((priceTxt.match(/\$\s*([\d.]+)/) || [])[1]);
+          const price = specOdds != null ? specOdds : scraped;
           const evTxt = ((row.querySelector('.gl-ev') || {}).textContent || '');
           const ev = parseFloat(evTxt.replace('%', ''));
           // the key is the BET, not the moment: one row per player-market-line-fixture
