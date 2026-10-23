@@ -482,6 +482,23 @@
   .sig-tile[open] > .sig-head::after{transform:rotate(-135deg) translate(-2px,-2px);}
   .sig-head:hover::after{opacity:1;border-color:var(--accent);}
   .sig-empty{padding:0 12px 10px;font-size:10px;color:var(--text-3);line-height:1.5;}
+  /* ---- the Multi Builder: the page's one tool, styled as one ---- */
+  .bld-card{border-color:color-mix(in srgb,var(--accent) 38%,var(--border));
+    background:linear-gradient(180deg,color-mix(in srgb,var(--accent) 7%,var(--surface-2)),
+      var(--surface-2) 62%);}
+  .bld-card:hover{border-color:color-mix(in srgb,var(--accent) 55%,var(--border));}
+  .bld-card .sig-ico{background:var(--accent);color:#06240f;
+    box-shadow:inset 0 0 0 1px color-mix(in srgb,#000 18%,transparent);}
+  .bld-card .sig-ttl{color:var(--accent);}
+  .bld-n{border-color:color-mix(in srgb,var(--accent) 45%,var(--border));color:var(--accent);}
+  .bld-chips{display:flex;gap:5px;flex-wrap:wrap;margin-top:6px;}
+  .bld-chip{font-family:var(--font-mono);font-size:9.5px;font-weight:700;padding:3px 8px;
+    border-radius:999px;cursor:pointer;
+    border:1px solid color-mix(in srgb,var(--accent) 32%,var(--border));
+    background:color-mix(in srgb,var(--accent) 10%,transparent);color:var(--text-2);
+    transition:background .15s,color .15s;}
+  .bld-chip:hover{background:color-mix(in srgb,var(--accent) 26%,transparent);color:var(--accent);}
+  @media(max-width:430px){ .bld-chip{font-size:9px;padding:3px 6px;} }
   .stk-row{display:flex;gap:11px;padding:10px 12px;border-top:1px solid var(--border);align-items:center;cursor:pointer;}
   .stk-left{flex:1;min-width:0;}
   .stk-nm{font-size:12px;font-weight:700;display:flex;align-items:center;gap:6px;min-width:0;}
@@ -7355,14 +7372,18 @@ function jupiterData(key, g){
         ? bestPriceFor(key, p.name, mkt)
         : bestPriceFor(key, p.name, mkt, state.view.jLine - 0.5);
       if (!od) return;
-      var raw = null;
-      try { raw = S.scoring && S.scoring.prob ? S.scoring.prob(p, mkt, od.line, opp) : null; } catch(e){}
-      if (raw == null && (key === 'epl' || key === 'mlb')){
-        try { var sc = S.scoring.scoreCMP(p, mkt, od.line, opp);
-          if (sc != null && isFinite(sc)) raw = Math.max(0.01, Math.min(0.99, sc/20 + 0.5)); } catch(e){}
-      }
-      if (raw == null) return;
-      var prob = calibrate(key, raw);
+      /* modelProbAt, not a private copy of half of it. This asked the sport's scoring module for
+         prob() and, when there wasn't one, fell back to scoreCMP for EPL and MLB BY NAME. Only
+         four of the seven modules define prob() - AFL, NFL, EPL and NHL do, MLB and NBA do not -
+         so MLB was carried by its name being on that list and NBA simply fell through. Every NBA
+         player returned here, rows came back empty, and jupiterSection renders nothing at all
+         when it has no rows: the tab was silently missing for the sport all season.
+
+         modelProbAt is the chain the Deep Dive and the signals already use - prob(), then
+         scoreCMP, then his own record - and it calibrates on the way out, so Jupiter now agrees
+         with the rest of the page instead of keeping its own model path. */
+      var prob = modelProbAt(key, p, mkt, od.line, opp);
+      if (prob == null) return;
       var ev = prob * (od.price - 1) - (1 - prob);
       // the original's odds-range filter: keep a selected player regardless, so a pick you have
       // already made never vanishes when you narrow the band
@@ -9498,15 +9519,24 @@ function buildSection(key, g){
       return '<button class="bld-tab' + (x[0] === src ? ' on' : '') + '" onclick="LAB.buildSrc(\''
         + x[0] + '\')">' + esc(x[1]) + '</button>';
     }).join('') + '</div>';
-  return '<div id="build-panel"><details class="sig-tile"' + cardAttr('build') + '>'
+  /* THE ONE TOOL ON A PAGE OF READS, and it looked like all sixteen of them. Same tile, same
+     grey, same chevron, sitting shut among the signals - so the only thing here you can actually
+     build with announced itself exactly as loudly as a list of players who met a threshold.
+
+     Two changes, and the second is the one that matters. It carries its own styling so the eye
+     lands on it. And the four tool names are no longer a dot-separated sentence nobody reads:
+     they are buttons, each opening the card straight onto that tool. A closed card that names
+     four things you cannot click is a worse advertisement than no card at all. */
+  var toolChips = '<span class="bld-chips">' + srcs.map(function(x){
+      return '<button class="bld-chip" onclick="event.stopPropagation();LAB.buildOpen(\''
+        + x[0] + '\')">' + esc(x[1]) + '</button>';
+    }).join('') + '</span>';
+  return '<div id="build-panel"><details class="sig-tile bld-card"' + cardAttr('build') + '>'
     + '<summary class="sig-head"' + cardTog('build') + '><span class="sig-ico"><i class="ti ti-layers-subtract"></i></span>'
-    /* "Build" said nothing about what was inside it. The card absorbed four tools that already
-       had names, so it uses them: the title says what the card makes, the line underneath names
-       the four, and the tabs carry their names too - which is how anyone who knew them finds
-       them again. */
     + '<span><span class="sig-ttl">Multi Builder</span>'
-    + '<span class="sig-desc">Search \u00b7 D\u00e9j\u00e0 Vu \u00b7 Simulator \u00b7 Jupiter</span>'
-    + '</span></summary>'
+    + '<span class="sig-desc">Four ways to put a multi together</span>'
+    + toolChips + '</span>'
+    + '<span class="sig-n bld-n">' + srcs.length + '</span></summary>'
     + '<div class="bld-body">' + tabs
     + (pane || '<div class="sig-empty">' + esc(BUILD_EMPTY[src] || 'Nothing here for this fixture.')
         + '</div>')
@@ -21454,6 +21484,15 @@ window.LAB = {
   resPeriod: function(p){ state.view.resPeriod = p; render(); },
   /* Switches the Build card's source and redraws that card only - see buildRender. */
   buildSrc: function(src){ state.view.buildSrc = src; buildRender(); },
+  /* From a chip in the closed header: choose the tool AND open the card. cardToggle on the
+     summary would otherwise fight this - the chip's own handler stops the event before it gets
+     there, so the card is opened here explicitly rather than toggled. */
+  buildOpen: function(src){
+    state.view.buildSrc = src;
+    state.view.cardFold = state.view.cardFold || {};
+    state.view.cardFold.build = true;
+    render();
+  },
   // picking a patch of floor redraws only the Scoring card, not the page
   szZone: function(z){ state.view.szZone = z; cardRender('score'); },
   szTeam: function(side){ state.view.szTeam = side; cardRender('score'); },
