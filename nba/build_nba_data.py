@@ -189,15 +189,40 @@ def representative(df, floor):
     return df[(m.isna()) | (m >= floor)]
 
 
-MIN_TEAM_GAMES = 8       # per season - filters All-Star squads (STARS/STRIPES/WORLD
-                         # etc. arrive mislabelled as regular season with 1-2 games)
+# A FRACTION OF THE LEAGUE LEADER, NOT A FLAT COUNT.
+#
+# This filter exists to drop the exhibition squads - STARS, STRIPES and WORLD in 2026, CAN, KEN,
+# CHK and SHQ in 2025 - which arrive mislabelled as regular season with one to three games while
+# real clubs have seventy or eighty. A flat floor of 8 games separated those two groups perfectly
+# for most of a season.
+#
+# It also separated every real club from itself for the first three weeks of one. On opening night
+# every club in the league has played once, so NONE of them cleared 8, filter_real_teams dropped
+# every row of the new season, and the build wrote no gamelogs for it at all. Replaying 2026 day
+# by day, a flat floor of 8 kept ZERO clubs until 9 November - nineteen days into the season, with
+# games being played the whole time and none of them reaching the page.
+#
+# The distinction was never really "has it played 8 games". It is "has it played anything like as
+# many games as the clubs around it", and that holds on opening night as well as in March. Against
+# the same replay this keeps thirty clubs from 25 October and lets no exhibition squad through at
+# any point in the season: by mid-February, when the All-Star teams appear, the leader is past
+# fifty games and the bar is over twelve, while those squads never play more than three.
+TEAM_GAMES_FRAC = 0.25
 
 def valid_teams_by_year(team_rows):
-    """{Year: set(teams with >= MIN_TEAM_GAMES games)} from per-game team frame."""
+    """{Year: set(real franchises)} from a per-game team frame.
+
+    A club is real for a season if it has played at least TEAM_GAMES_FRAC of whatever the busiest
+    club in that season has played. The bar therefore starts at one game and grows with the season,
+    which is what lets the new season's rows through on opening night - see the note on
+    TEAM_GAMES_FRAC for what a flat floor did instead.
+    """
     ok = {}
     g = team_rows.groupby(["Year", "Team"])["MatchId"].nunique().reset_index()
     for year, d in g.groupby("Year"):
-        ok[year] = set(d[d["MatchId"] >= MIN_TEAM_GAMES]["Team"])
+        mx = int(d["MatchId"].max()) if len(d) else 0
+        thr = max(1, int(mx * TEAM_GAMES_FRAC))
+        ok[year] = set(d[d["MatchId"] >= thr]["Team"])
     return ok
 
 
@@ -1031,13 +1056,36 @@ def selftest():
                       ("lineups", lineups), ("gamelogs", glogs)]:
         json.loads(json.dumps(_clean(obj), allow_nan=False))   # raises on NaN leak
 
+    import pandas as _pd
+
+    # --- OPENING NIGHT MUST NOT LOOK LIKE AN EXHIBITION ----------------------------------
+    # valid_teams_by_year drops squads that are not real franchises. It used to do that with a
+    # flat floor of 8 games, which on opening night describes every club in the league - so the
+    # whole of the new season was filtered away and no gamelogs were written for it until
+    # November. The bar scales with the season now; these pin both ends of that.
+    _tb = []
+    for _t in ("AAA", "BBB", "CCC"):
+        _tb.append({"Year": "2027", "Team": _t, "MatchId": f"27-{_t}-1"})
+    _open = valid_teams_by_year(_pd.DataFrame(_tb))
+    assert _open["2027"] == {"AAA", "BBB", "CCC"}, "one game each is a league, not an exhibition"
+
+    # mid-season: real clubs on 50-ish games, an All-Star squad on two
+    _mid = []
+    for _t in ("AAA", "BBB", "CCC"):
+        for _i in range(50):
+            _mid.append({"Year": "2026", "Team": _t, "MatchId": f"26-{_t}-{_i}"})
+    for _i in range(2):
+        _mid.append({"Year": "2026", "Team": "STARS", "MatchId": f"26-STARS-{_i}"})
+    _m = valid_teams_by_year(_pd.DataFrame(_mid))
+    assert "STARS" not in _m["2026"], "an exhibition squad must still be dropped"
+    assert _m["2026"] == {"AAA", "BBB", "CCC"}, "and the real clubs must all survive"
+
     # --- THE SEASON ROLLOVER -------------------------------------------------------------
     # The morning after the 2026-27 season opened, the workflow saw that the new season's
     # box-score file existed upstream, called it current, and the build produced players.json
     # with 0 rows and teams.json empty - because existence is not the same as having been
     # played. check_data.py refused to publish, which is the only reason the live tool did not
     # go blank. These pin the question that should have been asked.
-    import pandas as _pd
     _rows = []
     for _t in ("AAA", "BBB"):
         for _i in range(5):                      # a played season: 5 games each
