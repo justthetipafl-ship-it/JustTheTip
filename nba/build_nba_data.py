@@ -341,6 +341,7 @@ def build_players(logs, rosters, cfg, current):
                 headshot=(str(r.get("headshot_href")) if pd.notna(r.get("headshot_href")) else None),
                 team=tm, teamFull=tmf,
             )
+            b["name"] = str(r.get("display_name") or "").strip() or None
             bio[str(r.get("athlete_id"))] = b
             nm = str(r.get("display_name") or "").strip().lower()
             if nm:
@@ -388,6 +389,47 @@ def build_players(logs, rosters, cfg, current):
             v = r[k]
             row[k] = round(float(v), 2) if pd.notna(v) else None
         players.append(row)
+
+    # --- MEN ON A ROSTER WHO DID NOT PLAY LAST SEASON ------------------------------------
+    # Everything above starts from the current season's GAME LOGS, so the roster could only ever
+    # correct a club or drop a leaver - it could never add anybody. Two groups fall through that
+    # hole, and both are exactly the players people look up in October:
+    #
+    #   rookies            AJ Dybantsa, Cameron Boozer, Darryn Peterson - no logs anywhere
+    #   last season's lost Damian Lillard, Kyrie Irving, Tyrese Haliburton, Fred VanVleet -
+    #                      out injured for most or all of it, so no current-season logs either
+    #
+    # 87 men on a published roster were missing from the file, nine of them with prices already
+    # posted. A player the file does not know cannot be matched to his own odds, cannot appear on
+    # a team sheet, and cannot be searched for - he simply does not exist to the tool.
+    #
+    # They are added with NO averages rather than invented ones: games 0 and every stat null, so
+    # nothing downstream can mistake an absence for a performance. Where he has older seasons on
+    # file - Lillard, Irving - the page still reads form and streaks from those, because those
+    # come from the gamelogs, not from here.
+    if bio:
+        have = {str(p.get("playerId") or "") for p in players}
+        have_nm = {str(p.get("name") or "").strip().lower() for p in players}
+        added = 0
+        for aid, b in bio.items():
+            pid = _pid(aid)
+            nm = b.get("name") or ""
+            if not pid or not nm:
+                continue
+            if pid in have or nm.strip().lower() in have_nm:
+                continue
+            row = dict(playerId=pid, name=nm, team=b.get("team"), teamFull=b.get("teamFull"),
+                       rostered=1, position=b.get("pos5"), pos5=b.get("pos5"),
+                       games=0, starterPct=0.0, role="Rotation", roles=[],
+                       age=b.get("age"), height=b.get("height"), exp=b.get("exp"),
+                       headshot=b.get("headshot"))
+            for k in statkeys:
+                row[k] = None
+            players.append(row)
+            added += 1
+        if added:
+            print(f"  roster: {added} player(s) added who have not played this season yet "
+                  f"(no averages - rookies and men returning from a season out)")
 
     if bio:
         off = [p for p in players if not p["rostered"]]
