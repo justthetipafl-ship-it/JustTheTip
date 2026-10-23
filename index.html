@@ -482,6 +482,45 @@
   .sig-tile[open] > .sig-head::after{transform:rotate(-135deg) translate(-2px,-2px);}
   .sig-head:hover::after{opacity:1;border-color:var(--accent);}
   .sig-empty{padding:0 12px 10px;font-size:10px;color:var(--text-3);line-height:1.5;}
+  /* ---- settings ---- */
+  .hdr-set{background:none;border:0;color:var(--text-3);cursor:pointer;padding:4px 6px;
+    font-size:16px;line-height:1;display:inline-flex;align-items:center;}
+  .hdr-set:hover{color:var(--accent);}
+  .set-modal{position:fixed;z-index:61;left:50%;top:50%;transform:translate(-50%,-50%);
+    width:min(560px,94vw);max-height:88vh;display:flex;flex-direction:column;
+    background:var(--surface-2);border:1px solid var(--border);border-radius:14px;
+    box-shadow:0 20px 60px rgba(0,0,0,.55);overflow:hidden;}
+  .set-hdr{display:flex;align-items:center;gap:8px;padding:12px 14px;
+    border-bottom:1px solid var(--border);}
+  .set-hdr h2{margin:0;font-family:var(--font-display);font-size:13px;letter-spacing:.05em;}
+  .set-hdr i{color:var(--accent);font-size:16px;}
+  .set-hdr .pp-x{margin-left:auto;}
+  .set-body{overflow:auto;padding:12px 14px 16px;}
+  .set-sec{margin-bottom:16px;}
+  .set-h{font-family:var(--font-display);font-size:10px;letter-spacing:.07em;
+    text-transform:uppercase;color:var(--accent);margin-bottom:6px;}
+  .set-note{font-size:10px;color:var(--text-3);line-height:1.5;margin-bottom:8px;}
+  .set-note b{color:var(--text-2);}
+  .set-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:6px;}
+  .set-grid-wide{grid-template-columns:repeat(auto-fill,minmax(172px,1fr));}
+  .set-row{display:flex;align-items:center;gap:8px;text-align:left;cursor:pointer;
+    border:1px solid var(--border);border-radius:9px;padding:7px 9px;
+    background:var(--surface);color:var(--text-3);font-size:11px;min-width:0;}
+  .set-row:hover{border-color:color-mix(in srgb,var(--accent) 40%,var(--border));}
+  .set-row.on{color:var(--text);border-color:color-mix(in srgb,var(--accent) 32%,var(--border));}
+  .set-box{flex:none;width:17px;height:17px;border-radius:5px;display:grid;place-items:center;
+    font-size:11px;border:1px solid var(--border);color:var(--text-3);}
+  .set-row.on .set-box{background:var(--accent);border-color:var(--accent);color:#06240f;}
+  .set-lab{min-width:0;overflow:hidden;text-overflow:ellipsis;}
+  .set-lab i{display:block;font-style:normal;font-size:8.5px;color:var(--text-3);margin-top:2px;}
+  .set-none{font-size:10px;color:var(--text-3);font-style:italic;}
+  .set-clear,.set-reset{margin-top:8px;font-family:var(--font-mono);font-size:10px;
+    padding:4px 10px;border-radius:7px;cursor:pointer;
+    border:1px solid var(--border);background:var(--surface);color:var(--text-2);}
+  .set-clear:hover,.set-reset:hover{border-color:var(--accent);color:var(--accent);}
+  .set-foot{font-size:9.5px;color:var(--text-3);line-height:1.5;
+    border-top:1px solid var(--border);padding-top:10px;}
+  .set-reset{margin-left:4px;}
   /* ---- the Multi Builder: the page's one tool, styled as one ---- */
   .bld-card{border-color:color-mix(in srgb,var(--accent) 38%,var(--border));
     background:linear-gradient(180deg,color-mix(in srgb,var(--accent) 7%,var(--surface-2)),
@@ -1980,8 +2019,11 @@
     <span class="brand-text">Just The Tip</span><span class="lab-tag">Lab</span>
   </span>
   <a class="hdr-guide" href="/guide.html">Guide</a>
+  <button class="hdr-set" onclick="LAB.settings(true)" title="Settings" aria-label="Settings">
+    <i class="ti ti-adjustments"></i></button>
   <span class="hdr-status" id="status">starting…</span>
 </div></div>
+<div id="set-host"></div>
 <div class="auth-overlay" id="auth-overlay">
   <div class="auth-card">
     <div class="auth-brand">
@@ -2094,9 +2136,50 @@ function dedupeFixtures(list){
 }
 var TIER1 = { fixture:'data/fixture.json', teams:'data/teams.json', meta:'data/meta.json' };
 
+/* ---- PREFERENCES ---------------------------------------------------------------------------
+   What this browser wants shown. Kept beside the bet slip in localStorage and read in exactly
+   two places: the settings panel writes it, and a handful of filters read it.
+
+   EVERY FIELD IS OPTIONAL AND EVERY DEFAULT IS "SHOW EVERYTHING". A preferences file that has
+   never been written, or one written by an older version, or one a browser refuses to hand back,
+   all have to leave the tool exactly as it was before this existed - so absent means unfiltered
+   rather than empty, and an unknown key is ignored rather than guessed at.
+
+   sports   {key:false}      a sport switched OFF; anything not named stays on
+   books    [name] or null   null means every book; a list means only these
+   tiles    {title:false}    a signal switched off by its own title
+   nerd     bool             Nerd Mode, remembered between visits
+*/
+var PREF_KEY = 'jtt_lab_prefs';
+var PREF = (function(){
+  try {
+    var o = JSON.parse(localStorage.getItem(PREF_KEY) || '{}');
+    if (!o || typeof o !== 'object') return {};
+    return o;
+  } catch(e){ return {}; }
+})();
+function prefSave(){ try { localStorage.setItem(PREF_KEY, JSON.stringify(PREF)); } catch(e){} }
+function prefSportOn(k){ return !(PREF.sports && PREF.sports[k] === false); }
+function prefTileOn(title){ return !(PREF.tiles && PREF.tiles[title] === false); }
+/* The chosen books, or null for "all of them". An EMPTY list is treated as null on purpose: a
+   person who unticks every book has not asked for a tool with no prices in it, and silently
+   showing nothing would look like the odds feed had died. */
+function prefBooks(){
+  var b = PREF.books;
+  return (b && b.length) ? b : null;
+}
+function prefBookOk(book){
+  var want = prefBooks();
+  if (!want) return true;
+  if (!book) return false;         // a row with no book named cannot be matched to one you hold
+  for (var i = 0; i < want.length; i++) if (want[i] === book) return true;
+  return false;
+}
+
 var state = {
   sports: {},                               // sports[key] = {data:{}, idx:{}, status:''}
   view:   { active: {}, tab: 'fixture', mkt: {}, match: {}, odSort: {}, player: null, books: null, showDone: false, focus: null, h2hMode: 'for',
+             settings: false, nerd: !!PREF.nerd,       // Nerd Mode is remembered between visits
              slMkt: {}, slWin: 'season', dvpMkt: {}, ppTab: 'form',
              cmbQ: '', cmbSel: null, cmbRecent: [],
              cmbOpen: false, cmbMode: 'single', cmbLegs: [], cmbResult: null, cmbSugOff: false,
@@ -2112,7 +2195,8 @@ var state = {
 };
 Object.keys(SPORTS).forEach(function(k){
   state.sports[k] = { data:{}, idx:{teamMap:{}}, status:'idle' };
-  state.view.active[k] = true;              // all on by default
+  // all on by default, unless this browser has switched one off in settings
+  state.view.active[k] = prefSportOn(k);
 });
 
 function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g, function(c){
@@ -2271,6 +2355,9 @@ function loadTier2(key){
       if (!nRows) S.noOdds = 'books haven\u2019t posted player prices yet'
         + (od0.updated ? ' (last checked '+String(od0.updated).replace('T',' ').replace('Z',' UTC')+')' : '');
     }
+    // the chosen books, applied before anything indexes or reads these rows
+    applyBookFilter(S);
+    state.view.booksAll = null;    // a new feed may name a book nobody has seen before
     // player -> team, so odds rows can be filtered by match
     S.idx.playerTeam = {};
     var pl = S.data.players;
@@ -2317,7 +2404,7 @@ var TIER3 = { gamelogs:'data/gamelogs.json', dvp:'data/dvp.json', teams_form:'da
 function loadTier3(key){
   var S = state.sports[key];
   if (S.t3 === 'ready' || S.t3 === 'loading') return Promise.resolve();
-  S.t3 = 'loading'; render();
+  S.t3 = 'loading'; S.idx.sigTitles = null; render();
   var q = S.version ? ('?v='+encodeURIComponent(S.version)) : '';
   var extra = (S.config && S.config.dataFiles) || {};      // sport-specific extras (NFL: redzone, firsttd, dbs)
   var want = {};
@@ -2375,7 +2462,18 @@ function loadTier3(key){
       });
     }catch(e){}
     S.t3 = 'ready'; render();
+    /* Work out which tiles this sport can produce while nobody is waiting. It costs a full
+       signal build - 3.4 seconds on a throttled phone - and the settings panel needs the answer
+       the moment it opens. Done here, on idle, the first open is instant instead; done lazily,
+       the first person to touch the gear paid for it. The result is cached on the sport, so this
+       runs once. Wrapped because a failure here must never affect the page. */
+    sigTitlesWarm(key);
   });
+}
+function sigTitlesWarm(key){
+  var go = function(){ try { sigTitlesFor(key); } catch(e){} };
+  if (typeof requestIdleCallback === 'function') requestIdleCallback(go, { timeout:4000 });
+  else setTimeout(go, 1200);
 }
 
 // scoring.js and signals.js assign single globals (JTTScoring / JTTSignals), same as
@@ -2493,17 +2591,12 @@ function buildIndexes(key){
     }
   })();
 
+  /* THE BOOK FILTER HAS TO REACH THE INDEXES TOO. oddsForP reads oddsIdx and bookIdx, not the
+     arrays, so filtering only the array helpers left every price on screen exactly as it was -
+     the filter was real and simply never on the path anything used. These are rebuilt whenever
+     the book preference changes (prefBooksChanged), because they are built once at load. */
   var od = d.odds || {};
-  ix.oddsIdx = {}; ix.bookIdx = {};
-  (od.lines || []).forEach(function(r){
-    if (!r || !r.player) return;
-    (ix.oddsIdx[r.player] = ix.oddsIdx[r.player] || {})[r.market] = r;
-  });
-  ((od.books && od.books.length ? od.books : od.lines) || []).forEach(function(r){
-    if (!r || !r.player) return;
-    var m = ix.bookIdx[r.player] = ix.bookIdx[r.player] || {};
-    (m[r.market] = m[r.market] || []).push(r);
-  });
+  buildOddsIdx(ix, od);
   ix.matchOddsIdx = {};
   (od.matchOdds || []).forEach(function(m){
     if (m && m.home && m.away) ix.matchOddsIdx[m.home+'|'+m.away] = m;
@@ -2639,6 +2732,75 @@ function teamLogo(key, t){
 // while its other seven markets exist purely as milestone ladders in `alt`; EPL is alt-only
 // throughout; NFL/MLB have both. So discover markets across every array, and for a given
 // market prefer real two-way rows, falling back to the ladder when that's all there is.
+/* THE BOOK FILTER LIVES HERE, in the two functions everything else reads its odds through, so a
+   price the reader cannot actually get never reaches a tile. A sport whose rows carry no book name
+   is unaffected, because prefBookOk only rejects a named book that was not chosen. */
+/* THE FILTER IS APPLIED TO THE DATA, ONCE, not at every point that reads it.
+   The first attempt filtered the two array helpers, then also the two odds indexes, and prices
+   from unselected books still reached the page - because fifteen other functions open
+   state.sports[k].data.odds and walk it themselves. Chasing readers is a losing game: the next
+   tile anyone writes opens the same object and bypasses whatever was added here.
+
+   So the sport keeps its unfiltered odds in data.oddsAll, and data.odds becomes a view of it
+   holding only the chosen books. Every reader inherits the filter without knowing it exists.
+   The row OBJECTS are shared, not copied, so the canonical-name rewrite that edits r.player in
+   place still reaches both - a copy would have silently un-renamed every row. */
+function applyBookFilter(S){
+  if (!S || !S.data) return;
+  var all = S.data.oddsAll || S.data.odds;
+  if (!all) return;
+  S.data.oddsAll = all;
+  if (!prefBooks()){ S.data.odds = all; return; }
+  S.data.odds = {
+    books:   bookKeep(all.books || []),
+    lines:   bookKeep(all.lines || []),
+    alt:     bookKeep(all.alt || []),
+    // team markets are not a player price and carry no book choice
+    matchOdds: all.matchOdds || [],
+    updated: all.updated
+  };
+}
+/* Built out of buildIndexes so a change of book preference can re-run exactly this and nothing
+   else: the rest of the index is about players and logs and does not move when books do. */
+function buildOddsIdx(ix, od){
+  ix.oddsIdx = {}; ix.bookIdx = {};
+  (od.lines || []).forEach(function(r){
+    if (!r || !r.player) return;
+    (ix.oddsIdx[r.player] = ix.oddsIdx[r.player] || {})[r.market] = r;
+  });
+  ((od.books && od.books.length ? od.books : od.lines) || []).forEach(function(r){
+    if (!r || !r.player) return;
+    var m = ix.bookIdx[r.player] = ix.bookIdx[r.player] || {};
+    (m[r.market] = m[r.market] || []).push(r);
+  });
+}
+/* Every cache downstream of a price, dropped, so the next read rebuilds against the books now
+   chosen. Cheap: these are per-sport maps rebuilt lazily on first lookup. */
+function prefBooksChanged(){
+  Object.keys(SPORTS).forEach(function(k){
+    var S = state.sports[k];
+    if (!S || !S.idx || !S.data) return;
+    /* Every loaded sport, including ones switched off. Skipping them would need the rebuild to
+       happen when a sport is switched back on, and a staleness flag nothing reads leaves that
+       sport with empty indexes and no prices at all - a worse bug than the work it saves. */
+    applyBookFilter(S);
+    buildOddsIdx(S.idx, S.data.odds || {});
+    S.idx.pricedSet = null;
+    S.idx.simRated = null;       // the simulator rates legs off posted prices
+    /* NOT sigTitles. Which tiles EXIST does not depend on the books: sigTile records itself for
+       the capture pass before it checks whether it has any rows, so the list is the same whether
+       a tile is full or empty. Clearing it here threw away the warm cache on every book change
+       and put 2.6 seconds back onto the next panel open, for no gain. */
+    S.idx.simCache = null;
+  });
+  state.crewCache = {};          // Degen Crew is built from the tiles, which are built from prices
+}
+function bookKeep(rows){
+  if (!prefBooks()) return rows;
+  var out = [];
+  for (var i = 0; i < rows.length; i++) if (rows[i] && prefBookOk(rows[i].book)) out.push(rows[i]);
+  return out;
+}
 function twoWayRows(d){
   if (!d) return [];
   return (d.books && d.books.length) ? d.books : (d.lines || []);
@@ -4234,6 +4396,10 @@ function sigTile(icon, title, desc, rows, emptyWhy){
     SIG_CAPTURE.push({ phase:SIG_PHASE, icon:icon, title:title, desc:desc, rows:(rows || []).slice(), why:emptyWhy || '' });
     return '';
   }
+  /* Switched off in settings. Checked AFTER the capture branch above on purpose: the capture
+     pass is how the settings panel discovers which tiles exist, so a hidden tile has to stay
+     visible to it or there would be no way to switch it back on. */
+  if (!prefTileOn(title)) return '';
   if (!rows || !rows.length){
     SIG_QUIET.push({ title:title, why:emptyWhy || 'Nothing cleared the gate for this fixture.' });
     return '';
@@ -4771,7 +4937,7 @@ function oppOf(key, r){
 // The main posted line, from a two-way row only.
 function twoWayMarketCount(key){
   var d = state.sports[key].data.odds || {};
-  var rows = (d.books && d.books.length ? d.books : (d.lines || []));
+  var rows = twoWayRows(d);
   var seen = {};
   rows.forEach(function(r){ if (r && r.over != null && r.market) seen[r.market] = 1; });
   return Object.keys(seen).length;
@@ -4779,7 +4945,7 @@ function twoWayMarketCount(key){
 function twoWayOverFor(key, name, mkt){
   name = oddsPlayer(key, name);   // books spell accents differently to players.json
   var d = state.sports[key].data.odds || {};
-  var rows = (d.books && d.books.length ? d.books : (d.lines || [])), out = [];
+  var rows = twoWayRows(d), out = [];
   rows.forEach(function(r){
     if (!r || r.player !== name || r.market !== mkt || r.over == null || r.line == null) return;
     out.push({ line:+r.line, price:+r.over, book:r.book, alt:false });
@@ -4790,7 +4956,7 @@ function underCandidates(key, name, mkt){
   name = oddsPlayer(key, name);   // books spell accents differently to players.json
   // Unders live only on two-way rows - no alt ladder in any sport carries one - so a Bogey
   // can only be priced where a posted under exists. EPL has none at all today.
-  var d = state.sports[key].data.odds || {}, rows = (d.books && d.books.length ? d.books : (d.lines || [])), out = [];
+  var d = state.sports[key].data.odds || {}, rows = twoWayRows(d), out = [];
   rows.forEach(function(r){
     if (!r || r.player !== name || r.market !== mkt || r.under == null || r.line == null) return;
     out.push({ line:+r.line, price:+r.under, book:r.book });
@@ -5089,7 +5255,7 @@ function glProb(key, p, mkt, line, score){
 }
 function novigFair(key, name, mkt, line, side){
   var d = state.sports[key].data.odds || {};
-  var rows = (d.books && d.books.length ? d.books : (d.lines || []));
+  var rows = twoWayRows(d);
   for (var i=0;i<rows.length;i++){
     var r = rows[i];
     if (!r || r.player !== name || r.market !== mkt || +r.line !== +line) continue;
@@ -10497,7 +10663,7 @@ function cmbLegLabel(l){
 function cmbLadder(key, name, mkt){
   name = oddsPlayer(key, name);   // books spell accents differently to players.json
   var d = state.sports[key].data.odds || {}, seen = {}, out = [];
-  var two = (d.books && d.books.length ? d.books : (d.lines || []));
+  var two = twoWayRows(d);
   two.concat(d.alt || []).forEach(function(r){
     if (!r || r.player !== name || r.market !== mkt || r.line == null || r.over == null) return;
     var k = String(r.line);
@@ -10520,7 +10686,7 @@ function foldName(n){
 }
 function oddsRowsAll(key){
   var d = state.sports[key].data.odds || {};
-  return (d.books && d.books.length ? d.books : (d.lines || [])).concat(d.alt || []);
+  return oddsRows(d);
 }
 // Books abbreviate and expand names differently from the box score: "M Deng" for Majok Deng,
 // "Mitchell Norton" for Mitch Norton, "Dakota Daniel Mathias" for Dakota Mathias. After the exact
@@ -10670,7 +10836,7 @@ function hasAnyOddsFor(key, name){
   var S = state.sports[key];
   if (!S.idx.pricedSet){
     var set = {}, d = S.data.odds || {};
-    (d.books && d.books.length ? d.books : (d.lines || [])).concat(d.alt || []).forEach(function(r){
+    oddsRows(d).forEach(function(r){
       if (r && r.player && r.over != null) set[r.player] = 1;
     });
     S.idx.pricedSet = set;
@@ -10706,7 +10872,7 @@ function bestPriceFor(key, name, mkt, line){
   if (od && od.over != null && (line == null || Math.ceil(+od.line) === Math.ceil(line)))
     return { price:+od.over, line:+od.line, book:od.book };
   var d = state.sports[key].data.odds || {}, best = null;
-  var rows = (d.books && d.books.length ? d.books : (d.lines || [])).concat(d.alt || []);
+  var rows = oddsRows(d);
   rows.forEach(function(r){
     if (!r || r.player !== name || r.market !== mkt || r.over == null) return;
     if (line != null && Math.ceil(+r.line) !== Math.ceil(line)) return;
@@ -10717,7 +10883,7 @@ function bestPriceFor(key, name, mkt, line){
 function cmbPosted(key, name, mkt){
   name = oddsPlayer(key, name);   // books spell accents differently to players.json
   var d = state.sports[key].data.odds || {};
-  var two = (d.books && d.books.length ? d.books : (d.lines || []));
+  var two = twoWayRows(d);
   for (var i=0;i<two.length;i++){
     var r = two[i];
     if (r && r.player === name && r.market === mkt && r.line != null && r.over != null) return r;
@@ -10874,7 +11040,7 @@ function firstScorerRead(key, p){
 function fsPrice(key, name){
   name = oddsPlayer(key, name);   // books spell accents differently to players.json
   var d = state.sports[key].data.odds || {};
-  var rows = (d.books && d.books.length ? d.books : (d.lines || [])).concat(d.alt || []);
+  var rows = oddsRows(d);
   var best = null;
   rows.forEach(function(r){
     if (!r || r.market !== 'firstScorer' || r.player !== name || r.over == null) return;
@@ -15918,6 +16084,132 @@ function resultsPage(){
    your own stake. Singles can be combined into a multi. Nothing here is sent anywhere - it is your
    card, not a tip sheet, and it survives a refresh so it can be built before a slate and tracked
    during it.                                                                                    */
+/* ---- SETTINGS ------------------------------------------------------------------------------
+   One panel, four things, and every one of them only ever HIDES. Nothing here changes a number:
+   a price is the price whichever books you hold, and a signal's record is its record whether or
+   not you have the tile switched on. That is the whole design rule, and it is what makes the
+   panel safe to ship on a tool that publishes a graded record - a reader cannot accidentally
+   configure themselves a better-looking history. ------------------------------------------- */
+function setBooksAvailable(){
+  /* Cached across opens: this walks every odds row of every loaded sport, which on a full board
+     is tens of thousands of rows, and the set of books a feed names does not change until new
+     odds arrive. Cleared where odds land. */
+  if (state.view.booksAll) return state.view.booksAll;
+  // whatever the loaded feeds actually name, rather than a list in the page that goes stale
+  var seen = {};
+  Object.keys(SPORTS).forEach(function(k){
+    var S = state.sports[k];
+    if (!S || !S.data || !S.data.odds) return;
+    var d = S.data.oddsAll || S.data.odds;
+    // the UNFILTERED copy on purpose: the panel has to offer the books you have switched off, or
+    // there would be no way to switch them back on
+    var all = ((d.books && d.books.length) ? d.books : (d.lines || [])).concat(d.alt || []);
+    all.forEach(function(r){ if (r && r.book) seen[r.book] = (seen[r.book] || 0) + 1; });
+  });
+  return (state.view.booksAll =
+    Object.keys(seen).sort(function(a, b){ return seen[b] - seen[a] || a.localeCompare(b); }));
+}
+/* Every tile a sport can produce, by running the signal build with the capture flag on - the
+   same pass Degen Crew uses. Built this way rather than from a list in the page so a tile added
+   later turns up in the settings panel without anyone remembering to register it, and one that
+   is removed stops appearing. The capture suppresses all rendering, so this costs a build and
+   draws nothing. */
+function sigTitlesFor(key){
+  var S = state.sports[key];
+  /* Cached on the sport. SIG_CAPTURE records a tile whether or not it has rows, so the SET of
+     tiles a sport can produce does not change from fixture to fixture - only their contents do.
+     Running the whole signal build to rediscover that list cost 990ms every time the panel
+     opened, which is most of what made it feel slow. Cleared when tier 3 reloads. */
+  if (S && S.idx && S.idx.sigTitles) return S.idx.sigTitles;
+  var f = state.view.focus, g = (f && f.sport === key) ? f.g
+        : (asArray(state.sports[key].data.fixture) || [])[0];
+  if (!g) return [];
+  var wasC = SIG_CAPTURE, wasP = SIG_PHASE, out = [];
+  SIG_CAPTURE = []; SIG_PHASE = 'u';
+  try { signalsSection(key, g); } catch(e){}
+  try { (SIG_CAPTURE || []).forEach(function(t){ if (t && t.title) out.push(t.title); }); }
+  finally { SIG_CAPTURE = wasC; SIG_PHASE = wasP; }
+  if (S && S.idx) S.idx.sigTitles = out;
+  return out;
+}
+function setTilesAvailable(){
+  /* Every tile this sport can produce, taken from the capture pass the crew view already uses,
+     so a tile added later appears here without anyone remembering to list it. */
+  var out = [], seen = {};
+  Object.keys(SPORTS).forEach(function(k){
+    if (!state.view.active[k] || !state.sports[k] || state.sports[k].t3 !== 'ready') return;
+    (sigTitlesFor(k) || []).forEach(function(t){
+      if (t && !seen[t]){ seen[t] = 1; out.push(t); }
+    });
+  });
+  return out.sort();
+}
+function setRow(label, on, click, sub){
+  return '<button class="set-row' + (on ? ' on' : '') + '" onclick="' + click + '">'
+    + '<span class="set-box"><i class="ti ti-' + (on ? 'check' : 'minus') + '"></i></span>'
+    + '<span class="set-lab">' + esc(label) + (sub ? '<i>' + esc(sub) + '</i>' : '') + '</span></button>';
+}
+/* WHAT THE PANEL OFFERS IS WORKED OUT ONCE, WHEN IT OPENS.
+   setTilesAvailable runs the whole signal build per sport to discover which tiles exist, and
+   setBooksAvailable walks every odds row of every loaded sport. Both were being re-run on every
+   render - so opening the panel cost 2.8 seconds and each tick another 1.2 to 2.0, on a desktop.
+   Neither list can change while the panel is open: no fixture moves, no feed arrives. */
+function settingsCache(){
+  if (!state.view.setCache)
+    state.view.setCache = { books:setBooksAvailable(), tiles:setTilesAvailable() };
+  return state.view.setCache;
+}
+function settingsPanel(){
+  if (!state.view.settings) return '';
+  var cache = settingsCache();
+  var books = cache.books, want = prefBooks();
+  var tiles = cache.tiles;
+  var sportRows = Object.keys(SPORTS).map(function(k){
+    return setRow(SPORTS[k].name, prefSportOn(k), 'LAB.setSport(\'' + k + '\')');
+  }).join('');
+  var bookRows = books.length
+    ? books.map(function(b){
+        return setRow(b, !want || want.indexOf(b) >= 0,
+                      'LAB.setBook(' + JSON.stringify(b).replace(/"/g, '&quot;') + ')');
+      }).join('')
+    : '<div class="set-none">No books have loaded yet. Open a fixture first and they will '
+      + 'appear here.</div>';
+  var tileRows = tiles.length
+    ? tiles.map(function(t){
+        return setRow(t, prefTileOn(t),
+                      'LAB.setTile(' + JSON.stringify(t).replace(/"/g, '&quot;') + ')');
+      }).join('')
+    : '<div class="set-none">Open a fixture and the signals it can show will be listed here.</div>';
+  return '<div class="pp-back" style="z-index:60" onclick="LAB.settings(false)"></div>'
+    + '<div class="set-modal">'
+    + '<div class="set-hdr"><i class="ti ti-adjustments"></i><h2>Settings</h2>'
+      + '<button class="pp-x" onclick="LAB.settings(false)">&times;</button></div>'
+    + '<div class="set-body">'
+      + '<div class="set-sec"><div class="set-h">Sports</div>'
+        + '<div class="set-grid">' + sportRows + '</div></div>'
+      + '<div class="set-sec"><div class="set-h">Bookmakers</div>'
+        + '<div class="set-note">Only prices from the books you tick are shown. '
+        + '<b>The published record is not re-measured.</b> Every signal in the graded ledger was '
+        + 'taken at the best price on the board at the time, across every book — so narrowing '
+        + 'this changes what you see, not what that record describes.</div>'
+        + '<div class="set-grid">' + bookRows + '</div>'
+        + (want ? '<button class="set-clear" onclick="LAB.setBooksAll()">Show every book</button>'
+                : '') + '</div>'
+      + '<div class="set-sec"><div class="set-h">Signals</div>'
+        + '<div class="set-note">Switching a signal off hides its tile. It does not change what '
+        + 'the signal found, and the tile’s record stays exactly as it was.</div>'
+        + '<div class="set-grid set-grid-wide">' + tileRows + '</div></div>'
+      + '<div class="set-sec"><div class="set-h">Display</div>'
+        + '<div class="set-grid">'
+        + setRow('Nerd Mode on by default', !!PREF.nerd, 'LAB.setNerd()',
+                 'arbs, middles and line value across books')
+        + '</div></div>'
+      + '<div class="set-foot">Kept in this browser only — nothing is sent anywhere, and '
+        + 'clearing your browser data clears it. '
+        + '<button class="set-reset" onclick="LAB.setReset()">Reset everything</button></div>'
+    + '</div></div>';
+}
+
 var CARD_KEY = 'jtt_lab_card';
 var CARD = (function(){ try { var a = JSON.parse(localStorage.getItem(CARD_KEY) || '[]'); return Array.isArray(a) ? a : []; } catch(e){ return []; } })();
 function cardSave(){ try { localStorage.setItem(CARD_KEY, JSON.stringify(CARD)); } catch(e){} }
@@ -22711,6 +23003,87 @@ window.LAB = {
     render();
   },
   showDone: function(){ state.view.showDone = !state.view.showDone; render(); },
+  /* The panel covers the page, so nothing behind it needs redrawing until it closes - and
+     redrawing it was the whole cost. A tick repaints the modal; the page is rebuilt once, on the
+     way out, and only as far as what actually changed demands. */
+  settings: function(on){
+    state.view.settings = !!on;
+    if (on){
+      state.view.setCache = null; state.view.setDirty = null;
+      LAB.settingsRender();                    // no full render: the panel is not inside #app
+      return;
+    }
+    var d = state.view.setDirty || {};
+    state.view.setCache = null; state.view.setDirty = null;
+    LAB.settingsRender();                      // clears the host
+    /* Nothing was changed, so nothing behind the panel is stale: opening settings, looking, and
+       closing again used to cost a full page rebuild - four seconds on a throttled phone - for
+       no reason at all. */
+    if (!d.books && !d.sports && !d.tiles && !d.nerd) return;
+    // only the work the changes actually require, and only once
+    if (d.books) prefBooksChanged();
+    if (d.sports) Object.keys(SPORTS).forEach(function(k){
+      if (!!state.view.active[k] !== prefSportOn(k)) LAB.toggle(k);
+    });
+    render();
+  },
+  /* The panel is painted into #set-host, which sits outside #app, so neither opening it nor
+     ticking anything in it touches the page underneath. */
+  settingsRender: function(){
+    var host = document.getElementById('set-host');
+    if (host) host.innerHTML = settingsPanel();
+  },
+  sigTitlesProbe: function(key){ return sigTitlesFor(key); },
+  setSport: function(k){
+    PREF.sports = PREF.sports || {};
+    var on = prefSportOn(k);
+    if (on) PREF.sports[k] = false; else delete PREF.sports[k];
+    prefSave();
+    // toggling a sport loads or unloads it; that waits until the panel closes
+    (state.view.setDirty = state.view.setDirty || {}).sports = 1;
+    if (state.view.settings) LAB.settingsRender();
+    else if (!!state.view.active[k] !== prefSportOn(k)) LAB.toggle(k);
+    else render();
+  },
+  setBook: function(b){
+    var all = setBooksAvailable(), want = prefBooks();
+    // first tick starts from "all of them", so unticking one leaves the rest on
+    var next = want ? want.slice() : all.slice();
+    var i = next.indexOf(b);
+    if (i >= 0) next.splice(i, 1); else next.push(b);
+    // back to every book available is the same statement as "no preference"
+    PREF.books = (next.length && next.length < all.length) ? next : null;
+    prefSave();
+    (state.view.setDirty = state.view.setDirty || {}).books = 1;
+    if (state.view.settings) LAB.settingsRender(); else { prefBooksChanged(); render(); }
+  },
+  setBooksAll: function(){
+    PREF.books = null; prefSave();
+    (state.view.setDirty = state.view.setDirty || {}).books = 1;
+    if (state.view.settings) LAB.settingsRender(); else { prefBooksChanged(); render(); }
+  },
+  setTile: function(t){
+    PREF.tiles = PREF.tiles || {};
+    if (prefTileOn(t)) PREF.tiles[t] = false; else delete PREF.tiles[t];
+    prefSave();
+    (state.view.setDirty = state.view.setDirty || {}).tiles = 1;
+    if (state.view.settings) LAB.settingsRender(); else render();
+  },
+  setNerd: function(){
+    PREF.nerd = !PREF.nerd; prefSave(); state.view.nerd = !!PREF.nerd;
+    (state.view.setDirty = state.view.setDirty || {}).nerd = 1;
+    if (state.view.settings) LAB.settingsRender(); else render();
+  },
+  setReset: function(){
+    PREF = {};
+    prefSave();
+    (state.view.setDirty = state.view.setDirty || {}).books = 1;
+    (state.view.setDirty = state.view.setDirty || {}).sports = 1;
+    if (state.view.settings) LAB.settingsRender();
+    else { prefBooksChanged();
+      Object.keys(SPORTS).forEach(function(k){ if (!state.view.active[k]) LAB.toggle(k); });
+      render(); }
+  },
   books: function(k, player, market, line){ state.view.books = k ? {sport:k, player:player, market:market, line:line} : null; render(); },
   state: state
 };
