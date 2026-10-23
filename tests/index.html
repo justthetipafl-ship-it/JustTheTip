@@ -2023,6 +2023,7 @@
     <i class="ti ti-adjustments"></i></button>
   <span class="hdr-status" id="status">starting…</span>
 </div></div>
+<div id="set-host"></div>
 <div class="auth-overlay" id="auth-overlay">
   <div class="auth-card">
     <div class="auth-brand">
@@ -2356,6 +2357,7 @@ function loadTier2(key){
     }
     // the chosen books, applied before anything indexes or reads these rows
     applyBookFilter(S);
+    state.view.booksAll = null;    // a new feed may name a book nobody has seen before
     // player -> team, so odds rows can be filtered by match
     S.idx.playerTeam = {};
     var pl = S.data.players;
@@ -2402,7 +2404,7 @@ var TIER3 = { gamelogs:'data/gamelogs.json', dvp:'data/dvp.json', teams_form:'da
 function loadTier3(key){
   var S = state.sports[key];
   if (S.t3 === 'ready' || S.t3 === 'loading') return Promise.resolve();
-  S.t3 = 'loading'; render();
+  S.t3 = 'loading'; S.idx.sigTitles = null; render();
   var q = S.version ? ('?v='+encodeURIComponent(S.version)) : '';
   var extra = (S.config && S.config.dataFiles) || {};      // sport-specific extras (NFL: redzone, firsttd, dbs)
   var want = {};
@@ -2460,7 +2462,18 @@ function loadTier3(key){
       });
     }catch(e){}
     S.t3 = 'ready'; render();
+    /* Work out which tiles this sport can produce while nobody is waiting. It costs a full
+       signal build - 3.4 seconds on a throttled phone - and the settings panel needs the answer
+       the moment it opens. Done here, on idle, the first open is instant instead; done lazily,
+       the first person to touch the gear paid for it. The result is cached on the sport, so this
+       runs once. Wrapped because a failure here must never affect the page. */
+    sigTitlesWarm(key);
   });
+}
+function sigTitlesWarm(key){
+  var go = function(){ try { sigTitlesFor(key); } catch(e){} };
+  if (typeof requestIdleCallback === 'function') requestIdleCallback(go, { timeout:4000 });
+  else setTimeout(go, 1200);
 }
 
 // scoring.js and signals.js assign single globals (JTTScoring / JTTSignals), same as
@@ -2767,10 +2780,17 @@ function prefBooksChanged(){
   Object.keys(SPORTS).forEach(function(k){
     var S = state.sports[k];
     if (!S || !S.idx || !S.data) return;
+    /* Every loaded sport, including ones switched off. Skipping them would need the rebuild to
+       happen when a sport is switched back on, and a staleness flag nothing reads leaves that
+       sport with empty indexes and no prices at all - a worse bug than the work it saves. */
     applyBookFilter(S);
     buildOddsIdx(S.idx, S.data.odds || {});
     S.idx.pricedSet = null;
     S.idx.simRated = null;       // the simulator rates legs off posted prices
+    /* NOT sigTitles. Which tiles EXIST does not depend on the books: sigTile records itself for
+       the capture pass before it checks whether it has any rows, so the list is the same whether
+       a tile is full or empty. Clearing it here threw away the warm cache on every book change
+       and put 2.6 seconds back onto the next panel open, for no gain. */
     S.idx.simCache = null;
   });
   state.crewCache = {};          // Degen Crew is built from the tiles, which are built from prices
@@ -16071,6 +16091,10 @@ function resultsPage(){
    panel safe to ship on a tool that publishes a graded record - a reader cannot accidentally
    configure themselves a better-looking history. ------------------------------------------- */
 function setBooksAvailable(){
+  /* Cached across opens: this walks every odds row of every loaded sport, which on a full board
+     is tens of thousands of rows, and the set of books a feed names does not change until new
+     odds arrive. Cleared where odds land. */
+  if (state.view.booksAll) return state.view.booksAll;
   // whatever the loaded feeds actually name, rather than a list in the page that goes stale
   var seen = {};
   Object.keys(SPORTS).forEach(function(k){
@@ -16082,7 +16106,8 @@ function setBooksAvailable(){
     var all = ((d.books && d.books.length) ? d.books : (d.lines || [])).concat(d.alt || []);
     all.forEach(function(r){ if (r && r.book) seen[r.book] = (seen[r.book] || 0) + 1; });
   });
-  return Object.keys(seen).sort(function(a, b){ return seen[b] - seen[a] || a.localeCompare(b); });
+  return (state.view.booksAll =
+    Object.keys(seen).sort(function(a, b){ return seen[b] - seen[a] || a.localeCompare(b); }));
 }
 /* Every tile a sport can produce, by running the signal build with the capture flag on - the
    same pass Degen Crew uses. Built this way rather than from a list in the page so a tile added
@@ -16090,6 +16115,12 @@ function setBooksAvailable(){
    is removed stops appearing. The capture suppresses all rendering, so this costs a build and
    draws nothing. */
 function sigTitlesFor(key){
+  var S = state.sports[key];
+  /* Cached on the sport. SIG_CAPTURE records a tile whether or not it has rows, so the SET of
+     tiles a sport can produce does not change from fixture to fixture - only their contents do.
+     Running the whole signal build to rediscover that list cost 990ms every time the panel
+     opened, which is most of what made it feel slow. Cleared when tier 3 reloads. */
+  if (S && S.idx && S.idx.sigTitles) return S.idx.sigTitles;
   var f = state.view.focus, g = (f && f.sport === key) ? f.g
         : (asArray(state.sports[key].data.fixture) || [])[0];
   if (!g) return [];
@@ -16098,6 +16129,7 @@ function sigTitlesFor(key){
   try { signalsSection(key, g); } catch(e){}
   try { (SIG_CAPTURE || []).forEach(function(t){ if (t && t.title) out.push(t.title); }); }
   finally { SIG_CAPTURE = wasC; SIG_PHASE = wasP; }
+  if (S && S.idx) S.idx.sigTitles = out;
   return out;
 }
 function setTilesAvailable(){
@@ -16117,10 +16149,21 @@ function setRow(label, on, click, sub){
     + '<span class="set-box"><i class="ti ti-' + (on ? 'check' : 'minus') + '"></i></span>'
     + '<span class="set-lab">' + esc(label) + (sub ? '<i>' + esc(sub) + '</i>' : '') + '</span></button>';
 }
+/* WHAT THE PANEL OFFERS IS WORKED OUT ONCE, WHEN IT OPENS.
+   setTilesAvailable runs the whole signal build per sport to discover which tiles exist, and
+   setBooksAvailable walks every odds row of every loaded sport. Both were being re-run on every
+   render - so opening the panel cost 2.8 seconds and each tick another 1.2 to 2.0, on a desktop.
+   Neither list can change while the panel is open: no fixture moves, no feed arrives. */
+function settingsCache(){
+  if (!state.view.setCache)
+    state.view.setCache = { books:setBooksAvailable(), tiles:setTilesAvailable() };
+  return state.view.setCache;
+}
 function settingsPanel(){
   if (!state.view.settings) return '';
-  var books = setBooksAvailable(), want = prefBooks();
-  var tiles = setTilesAvailable();
+  var cache = settingsCache();
+  var books = cache.books, want = prefBooks();
+  var tiles = cache.tiles;
   var sportRows = Object.keys(SPORTS).map(function(k){
     return setRow(SPORTS[k].name, prefSportOn(k), 'LAB.setSport(\'' + k + '\')');
   }).join('');
@@ -21485,7 +21528,7 @@ function render(){
 
   if (state.view.focus){
     h = '' + focusPage();                       // focused fixture replaces the page
-    $('app').innerHTML = configBanner() + h + playerPanel() + teamPanel() + booksPanel() + settingsPanel() + cmbFab() + cmbPanel() + cardFab() + cardPanel() + livePanel() + deepPanel() + dnaPanel() + mrPanel();
+    $('app').innerHTML = configBanner() + h + playerPanel() + teamPanel() + booksPanel() + cmbFab() + cmbPanel() + cardFab() + cardPanel() + livePanel() + deepPanel() + dnaPanel() + mrPanel();
     return;
   }
   if (state.view.tab === 'tips'){
@@ -21518,7 +21561,7 @@ function render(){
       });
     }
   }
-  $('app').innerHTML = configBanner() + h + playerPanel() + teamPanel() + booksPanel() + settingsPanel() + cmbFab() + cmbPanel() + cardFab() + cardPanel() + livePanel() + deepPanel() + dnaPanel();
+  $('app').innerHTML = configBanner() + h + playerPanel() + teamPanel() + booksPanel() + cmbFab() + cmbPanel() + cardFab() + cardPanel() + livePanel() + deepPanel() + dnaPanel();
 }
 
 /* ---- public ------------------------------------------------------------- */
@@ -22960,15 +23003,46 @@ window.LAB = {
     render();
   },
   showDone: function(){ state.view.showDone = !state.view.showDone; render(); },
-  settings: function(on){ state.view.settings = !!on; render(); },
+  /* The panel covers the page, so nothing behind it needs redrawing until it closes - and
+     redrawing it was the whole cost. A tick repaints the modal; the page is rebuilt once, on the
+     way out, and only as far as what actually changed demands. */
+  settings: function(on){
+    state.view.settings = !!on;
+    if (on){
+      state.view.setCache = null; state.view.setDirty = null;
+      LAB.settingsRender();                    // no full render: the panel is not inside #app
+      return;
+    }
+    var d = state.view.setDirty || {};
+    state.view.setCache = null; state.view.setDirty = null;
+    LAB.settingsRender();                      // clears the host
+    /* Nothing was changed, so nothing behind the panel is stale: opening settings, looking, and
+       closing again used to cost a full page rebuild - four seconds on a throttled phone - for
+       no reason at all. */
+    if (!d.books && !d.sports && !d.tiles && !d.nerd) return;
+    // only the work the changes actually require, and only once
+    if (d.books) prefBooksChanged();
+    if (d.sports) Object.keys(SPORTS).forEach(function(k){
+      if (!!state.view.active[k] !== prefSportOn(k)) LAB.toggle(k);
+    });
+    render();
+  },
+  /* The panel is painted into #set-host, which sits outside #app, so neither opening it nor
+     ticking anything in it touches the page underneath. */
+  settingsRender: function(){
+    var host = document.getElementById('set-host');
+    if (host) host.innerHTML = settingsPanel();
+  },
   sigTitlesProbe: function(key){ return sigTitlesFor(key); },
   setSport: function(k){
     PREF.sports = PREF.sports || {};
     var on = prefSportOn(k);
     if (on) PREF.sports[k] = false; else delete PREF.sports[k];
     prefSave();
-    // the live toggle follows the preference, so the change is visible immediately
-    if (!!state.view.active[k] !== prefSportOn(k)) LAB.toggle(k);
+    // toggling a sport loads or unloads it; that waits until the panel closes
+    (state.view.setDirty = state.view.setDirty || {}).sports = 1;
+    if (state.view.settings) LAB.settingsRender();
+    else if (!!state.view.active[k] !== prefSportOn(k)) LAB.toggle(k);
     else render();
   },
   setBook: function(b){
@@ -22979,20 +23053,36 @@ window.LAB = {
     if (i >= 0) next.splice(i, 1); else next.push(b);
     // back to every book available is the same statement as "no preference"
     PREF.books = (next.length && next.length < all.length) ? next : null;
-    prefSave(); prefBooksChanged(); render();
+    prefSave();
+    (state.view.setDirty = state.view.setDirty || {}).books = 1;
+    if (state.view.settings) LAB.settingsRender(); else { prefBooksChanged(); render(); }
   },
-  setBooksAll: function(){ PREF.books = null; prefSave(); prefBooksChanged(); render(); },
+  setBooksAll: function(){
+    PREF.books = null; prefSave();
+    (state.view.setDirty = state.view.setDirty || {}).books = 1;
+    if (state.view.settings) LAB.settingsRender(); else { prefBooksChanged(); render(); }
+  },
   setTile: function(t){
     PREF.tiles = PREF.tiles || {};
     if (prefTileOn(t)) PREF.tiles[t] = false; else delete PREF.tiles[t];
-    prefSave(); render();
+    prefSave();
+    (state.view.setDirty = state.view.setDirty || {}).tiles = 1;
+    if (state.view.settings) LAB.settingsRender(); else render();
   },
-  setNerd: function(){ PREF.nerd = !PREF.nerd; prefSave(); state.view.nerd = !!PREF.nerd; render(); },
+  setNerd: function(){
+    PREF.nerd = !PREF.nerd; prefSave(); state.view.nerd = !!PREF.nerd;
+    (state.view.setDirty = state.view.setDirty || {}).nerd = 1;
+    if (state.view.settings) LAB.settingsRender(); else render();
+  },
   setReset: function(){
     PREF = {};
-    prefSave(); prefBooksChanged();
-    Object.keys(SPORTS).forEach(function(k){ if (!state.view.active[k]) LAB.toggle(k); });
-    render();
+    prefSave();
+    (state.view.setDirty = state.view.setDirty || {}).books = 1;
+    (state.view.setDirty = state.view.setDirty || {}).sports = 1;
+    if (state.view.settings) LAB.settingsRender();
+    else { prefBooksChanged();
+      Object.keys(SPORTS).forEach(function(k){ if (!state.view.active[k]) LAB.toggle(k); });
+      render(); }
   },
   books: function(k, player, market, line){ state.view.books = k ? {sport:k, player:player, market:market, line:line} : null; render(); },
   state: state
