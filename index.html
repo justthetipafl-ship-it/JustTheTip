@@ -2298,6 +2298,24 @@ Object.keys(SPORTS).forEach(function(k){
 
 function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g, function(c){
   return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
+/* A STRING BOUND FOR A JS CALL INSIDE AN HTML ATTRIBUTE.
+   The page built these as jsq(name) - but esc() has already turned the
+   apostrophe into &#39;, so the replace matched nothing, and the HTML parser then turned &#39;
+   back into a bare ' before the JS was ever compiled:
+       onclick="LAB.player('nfl','D&#39;Andre Swift')"   ->   LAB.player('nfl','D'Andre Swift')
+   which is a syntax error, so the click did nothing at all. 102 players across the seven
+   sports have an apostrophe - Ja'Marr Chase, De'Aaron Fox, D'Andre Swift, Ryan O'Reilly - and
+   every clickable row, chip and cell carrying one of those names was dead.
+   Escape for JS FIRST, then HTML-escape everything except the apostrophe, so the parser hands
+   JS back exactly the \' we wrote. */
+function jsq(s){
+  return String(s == null ? '' : s)
+    .replace(/\\/g, '\\\\')
+    .replace(/'/g, "\\'")
+    .replace(/[\r\n]+/g, ' ')
+    .replace(/[&<>"]/g, function(c){
+      return { '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;' }[c]; });
+}
 function $(id){ return document.getElementById(id); }
 function sportPath(key, p){ return '/'+SPORTS[key].dir+'/'+String(p).replace(/^[.\/]+/,''); }
 
@@ -2964,7 +2982,7 @@ function altLadder(key, player, mk){
   return '<div class="alt-rows">'+rungs.map(function(r){
     var n = bookRows(key, player, mk, r.line).length;
     return '<div class="od-row alt-row" title="'+esc(bookTitle(key, player, mk, r.line))+'"'
-      + ' onclick="event.stopPropagation();LAB.books(\''+key+'\',\''+esc(player).replace(/'/g,"\\'")+'\',\''+esc(mk)+'\','+r.line+')">'
+      + ' onclick="event.stopPropagation();LAB.books(\''+key+'\',\''+jsq(player)+'\',\''+esc(mk)+'\','+r.line+')">'
       + '<span class="od-nm alt-nm">'+esc(r.line)+'+</span>'
       + '<span class="od-ln"></span>'
       + '<span class="od-o">'+(+r.over).toFixed(2)+'</span>'
@@ -3715,7 +3733,7 @@ function slCard(key, team, mkt, win, max){
   var dec = max < 3 ? 2 : 1;
   var body = rows.map(function(r, i){
     var pct = max > 0 ? Math.max(3, Math.round(r.avg / max * 100)) : 0;
-    return '<div class="sl-row" onclick="LAB.player(\''+key+'\',\''+esc(r.name).replace(/'/g,"\\'")+'\')">'
+    return '<div class="sl-row" onclick="LAB.player(\''+key+'\',\''+jsq(r.name)+'\')">'
       + '<span class="sl-rk">'+(i+1)+'</span>'
       + '<span class="sl-who"><b>'+esc(r.name)+'</b><span>'+esc(r.pos||'')+(r.pos?' \u00b7 ':'')+r.n+' gm</span></span>'
       + '<span class="sl-bars"><span class="sl-bar-t"><i style="width:'+pct+'%"></i></span></span>'
@@ -3932,7 +3950,7 @@ function luCard(key, team, g){
   if (!d) return '<div class="lu-card">'+head+'<div class="sl-none">No lineup on file for this team.</div></div>';
   var body = d.groups.map(function(gr){
     return '<div class="lu-grp">'+esc(gr.name)+'</div>' + gr.players.map(function(p){
-      return '<div class="lu-row" onclick="LAB.player(\''+key+'\',\''+esc(p.name).replace(/'/g,"\\'")+'\')">'
+      return '<div class="lu-row" onclick="LAB.player(\''+key+'\',\''+jsq(p.name)+'\')">'
         + '<span class="lu-tag">'+esc(p.tag||'')+'</span><span class="lu-p">'+esc(p.name)+'</span>'
         + (p.flag ? '<span class="lu-flag'+(p.flag.out?' out':'')+'">'+esc(p.flag.label)+'</span>' : '')
         + '</div>'; }).join('');
@@ -4186,7 +4204,7 @@ function msCard(key, battingTeam, pitcherName){
                 x.ops != null ? x.ops.toFixed(3).replace(/^0/,'')+' OPS vs '+(st.throws||'')+'HP' : '',
                 (x.bvp && x.bvp.PA) ? x.bvp.PA+' PA h2h \u00b7 '+(x.bvp.AVG != null ? (+x.bvp.AVG).toFixed(3).replace(/^0/,'') : '')
                   + (x.bvp.HR ? ' \u00b7 '+x.bvp.HR+' HR' : '') : '' ].filter(Boolean).join(' \u00b7 ');
-    return '<div class="ms-row" onclick="LAB.player(\''+key+'\',\''+esc(x.b.name).replace(/'/g,"\\'")+'\')">'
+    return '<div class="ms-row" onclick="LAB.player(\''+key+'\',\''+jsq(x.b.name)+'\')">'
       + '<span class="ms-who"><b>'+esc(x.b.name)+'</b><span>'+esc(sub)+'</span></span>'
       + '<span class="ms-tag '+cls+'">'+lab+' '+(x.score>0?'+':'')+x.score+'</span></div>';
   }).join('');
@@ -4278,7 +4296,7 @@ function sbCard(key, team){
     return '<div class="bt-card">'+head+'<div class="sl-none">No substitution history on file.</div></div>';
   var rows = ev.hooked.slice(0, 8).map(function(x){
     var pct = Math.max(3, Math.round(Math.min(90, x.offAvg||0) / 90 * 100));
-    return '<div class="sb-row" onclick="LAB.player(\''+key+'\',\''+esc(x.player).replace(/'/g,"\\'")+'\')">'
+    return '<div class="sb-row" onclick="LAB.player(\''+key+'\',\''+jsq(x.player)+'\')">'
       + '<span class="sb-nm">'+esc(x.player)+'</span>'
       + '<span class="sb-bar"><i style="width:'+pct+'%"></i></span>'
       + '<span class="sb-meta">'+(x.offAvg||0)+'\u2032 \u00b7 '+(x.n||0)+'\u00d7</span></div>';
@@ -4332,7 +4350,7 @@ function flCard(key, team){
   var list = function(title, arr, sfx){
     if (!arr || !arr.length) return '';
     return '<div class="fl-sec">'+esc(title)+'</div>' + arr.map(function(p){
-      return '<div class="fl-row" onclick="LAB.player(\''+key+'\',\''+esc(p[0]).replace(/'/g,"\\'")+'\')">'
+      return '<div class="fl-row" onclick="LAB.player(\''+key+'\',\''+jsq(p[0])+'\')">'
         + '<span class="fl-nm">'+esc(p[0])+'</span><span class="fl-c">'+p[1]+' '+esc(sfx)+'</span></div>';
     }).join('');
   };
@@ -4778,7 +4796,7 @@ function streakRow(key, r){
       return '<span>'+(v % 1 ? v.toFixed(1) : v)+'</span>'; }).join('')+'</div>';
   var ask = (Math.round(r.line) === r.line) ? (r.line + 1) : Math.ceil(r.line);
   return '<div class="stk-row" onclick="LAB.player(\''
-    +key+'\',\''+esc(r.name).replace(/'/g,"\\'")+'\')">'
+    +key+'\',\''+jsq(r.name)+'\')">'
     + btns
     + playerImgP(key, r.name, 28)
     + '<div class="stk-left">'
@@ -4907,7 +4925,7 @@ function eliteRow(key, r){
     ? Math.round((1 - (r.dvp.rank - 1) / Math.max(1, r.dvp.total - 1)) * 100) : 4;
   var ask = r.entry ? ((Math.round(r.entry.line) === r.entry.line) ? r.entry.line + 1 : Math.ceil(r.entry.line)) : null;
   return '<div class="elm-row" onclick="LAB.player(\''
-    +key+'\',\''+esc(r.name).replace(/'/g,"\\'")+'\')">'
+    +key+'\',\''+jsq(r.name)+'\')">'
     + btns
     + playerImgP(key, r.name, 28)
     + '<div class="elm-left">'
@@ -4962,7 +4980,7 @@ function volumeRow(key, r){
                        label:mktLabel(key, r.market) }) : '';
   var gap = Math.round(Math.abs(r.edge) * 100);
   return '<div class="elm-row vl-row" onclick="LAB.player(\'' + key + '\',\''
-    + esc(r.player).replace(/'/g, "\\'") + '\')">'
+    + jsq(r.player) + '\')">'
     + btns
     + playerImgP(key, r.player, 28)
     + '<div class="elm-left">'
@@ -5155,7 +5173,7 @@ function h2hSigRow(key, r){
     ? (up ? '+' : '-')+Math.abs(r.diffPct).toFixed(0)+'% vs next-'+(up ? 'best' : 'worst')+' matchup'
     : 'only matchup on file';
   return '<div class="h2h-sig-row" onclick="LAB.player(\''
-    +key+'\',\''+esc(r.name).replace(/'/g,"\\'")+'\')">'
+    +key+'\',\''+jsq(r.name)+'\')">'
     + btns
     + playerImgP(key, r.name, 28)
     + '<div class="h2h-sig-left">'
@@ -5631,7 +5649,7 @@ function ouRow(key, r){
     + ctxChips(key, (state.sports[key].idx.byName||{})[r.name], r.mkt, r.line, r.opp)
     + '<span class="gl-chip">'+r.avg.toFixed(r.avg < 3 ? 2 : 1)+' avg \u00b7 '+r.games+' gm</span></div>';
   return '<div class="gl-row" onclick="LAB.player(\''
-    +key+'\',\''+esc(r.name).replace(/'/g,"\\'")+'\')">'
+    +key+'\',\''+jsq(r.name)+'\')">'
     + btns
     + playerImgP(key, r.name, 28)
     + '<div class="gl-left">'
@@ -5751,7 +5769,7 @@ function formRow(key, r){
     ? 'No '+esc(r.label).toLowerCase()+' in '+r.dry+' game'+(r.dry===1?'':'s')+' \u00b7 '
       + dec(r.seasonAvg)+' season \u00b7 v '+esc(abbrOf(key, r.opp))
     : esc(r.label)+' L3 '+dec(r.l3)+' v '+dec(r.seasonAvg)+' season \u00b7 v '+esc(abbrOf(key, r.opp));
-  return '<div class="fa-row" onclick="LAB.player(\''+key+'\',\''+esc(r.name).replace(/'/g,"\\'")+'\')">'
+  return '<div class="fa-row" onclick="LAB.player(\''+key+'\',\''+jsq(r.name)+'\')">'
     + playerImgP(key, r.name, 28)
     + '<div class="fa-left">'
       + '<div class="fa-nm"><b>'+esc(r.name)+'</b><span class="fa-dir '+(r.dry ? 'down' : (r.up?'up':'down'))+'">'
@@ -6257,7 +6275,7 @@ function dueRow(key, r){
   var btns = rowBtns(key, { name:r.name, mkt:'goals', line:b.line, side:'over',
                             odds:b.price, book:b.book, opp:r.opp, team:r.team, label:'Goals' });
   return '<div class="gl-row" onclick="LAB.player(\'' + key + '\',\''
-      + esc(r.name).replace(/'/g, "\\'") + '\')">'
+      + jsq(r.name) + '\')">'
     + btns + playerImgP(key, r.name, 28)
     + '<div class="gl-left"><div class="gl-nm"><b>' + esc(r.name) + '</b>'
       + '<span class="gl-tag">' + esc((posShortP(r.p) ? posShortP(r.p) + ' \u00b7 ' : '') + abbrOf(key, r.team))
@@ -6346,7 +6364,7 @@ function ppMerchantRow(key, r){
   var btns = rowBtns(key, { name:r.name, mkt:b.mkt, line:b.line, side:'over',
                             odds:b.price, book:b.book, opp:r.opp, team:r.team, label:lab });
   return '<div class="gl-row" onclick="LAB.player(\'' + key + '\',\''
-      + esc(r.name).replace(/'/g, "\\'") + '\')">'
+      + jsq(r.name) + '\')">'
     + btns + playerImgP(key, r.name, 28)
     + '<div class="gl-left"><div class="gl-nm"><b>' + esc(r.name) + '</b>'
       + '<span class="gl-tag">' + esc((posShortP(r.p) ? posShortP(r.p) + ' \u00b7 ' : '') + abbrOf(key, r.team))
@@ -6427,7 +6445,7 @@ function shotMachineRow(key, r){
   var btns = rowBtns(key, { name:r.name, mkt:'shots', line:r.line, side:'over',
                             odds:r.price, book:r.book, opp:r.opp, team:r.team, label:'Shots' });
   return '<div class="gl-row" onclick="LAB.player(\'' + key + '\',\''
-      + esc(r.name).replace(/'/g, "\\'") + '\')">'
+      + jsq(r.name) + '\')">'
     + btns + playerImgP(key, r.name, 28)
     + '<div class="gl-left"><div class="gl-nm"><b>' + esc(r.name) + '</b>'
       + '<span class="gl-tag">' + esc((posShortP(r.p) ? posShortP(r.p) + ' \u00b7 ' : '') + abbrOf(key, r.team))
@@ -6613,7 +6631,7 @@ function nflDueRow(key, r){
                             odds:b.price, book:b.book, opp:r.opp, team:r.team, label:'Anytime TD' });
   // its own class: the over/under tests scan .gl-row, and an anytime-TD row is neither
   return '<div class="um-row" onclick="LAB.player(\'' + key + '\',\''
-      + esc(r.name).replace(/'/g, "\\'") + '\')">'
+      + jsq(r.name) + '\')">'
     + btns + playerImgP(key, r.name, 28)
     + '<div class="gl-left"><div class="gl-nm"><b>' + esc(r.name) + '</b>'
       + '<span class="gl-tag">' + esc((posShortP(r.p) ? posShortP(r.p) + ' \u00b7 ' : '') + abbrOf(key, r.team))
@@ -6716,7 +6734,7 @@ function umRow(key, r){
   // its own class, not .gl-row: these are two-leg rows and anything scanning the over/under rows
   // would otherwise read "Under 3.5 Receptions + 60+ Rec Yds" as a plain under bet
   return '<div class="um-row" onclick="LAB.player(\'' + key + '\',\''
-      + esc(r.name).replace(/'/g, "\\'") + '\')">'
+      + jsq(r.name) + '\')">'
     + btns
     + playerImgP(key, r.name, 28)
     + '<div class="gl-left"><div class="gl-nm"><b>' + esc(r.name) + '</b>'
@@ -6736,7 +6754,7 @@ function umRow(key, r){
 function nflTuddyRow(key, r){
   var btns = rowBtns(key, { name:r.name, mkt:'anytimeTd', line:0.5, side:'over', odds:r.price, book:r.book, opp:r.opp, team:(r.p||{}).team, label:'Anytime TD' });
   // reuses the Green Lights row chrome, tagged so the two are distinguishable
-  return '<div class="gl-row nfl-row" onclick="LAB.player(\'' + key + '\',\'' + esc(r.name).replace(/'/g,"\\'") + '\')">'
+  return '<div class="gl-row nfl-row" onclick="LAB.player(\'' + key + '\',\'' + jsq(r.name) + '\')">'
     + btns
     + playerImgP(key, r.name, 28)
     + '<div class="gl-left"><div class="gl-nm"><b>'+esc(r.name)+'</b><span class="gl-tag">'
@@ -6762,7 +6780,7 @@ function nflChunkRow(key, r){
     + '<div class="stk-vals">'+seq.map(function(v){
         return '<span>'+(v % 1 ? v.toFixed(1) : v)+'</span>'; }).join('')+'</div>';
   // shares the streak-row look, but must be distinguishable from Streakers in the DOM
-  return '<div class="stk-row chunk-row" onclick="LAB.player(\'' + key + '\',\'' + esc(r.name).replace(/'/g,"\\'") + '\')">'
+  return '<div class="stk-row chunk-row" onclick="LAB.player(\'' + key + '\',\'' + jsq(r.name) + '\')">'
     + btns
     + playerImgP(key, r.name, 28)
     + '<div class="stk-left"><div class="stk-nm"><b>'+esc(r.name)+'</b><span class="stk-tag">'
@@ -6781,7 +6799,7 @@ function nflChunkRow(key, r){
 }
 function nflAngleRow(key, r, kind){
   var btns = rowBtns(key, { name:r.name, mkt:r.mkt, line:r.line, side:'over', odds:r.price, book:r.book, opp:r.opp, team:(r.p||{}).team });
-  return '<div class="gl-row nfl-row" onclick="LAB.player(\'' + key + '\',\'' + esc(r.name).replace(/'/g,"\\'") + '\')">'
+  return '<div class="gl-row nfl-row" onclick="LAB.player(\'' + key + '\',\'' + jsq(r.name) + '\')">'
     + btns
     + playerImgP(key, r.name, 28)
     + '<div class="gl-left"><div class="gl-nm"><b>'+esc(r.name)+'</b><span class="gl-tag">'
@@ -6809,7 +6827,7 @@ function nflAngleRow(key, r, kind){
       + (r.line != null ? '<span class="gl-book">line '+r.line+'</span>' : '')+'</div></div>';
 }
 function nflWxRow(key, r){
-  return '<div class="fa-row wx-row" onclick="LAB.player(\'' + key + '\',\'' + esc(r.name).replace(/'/g,"\\'") + '\')">'
+  return '<div class="fa-row wx-row" onclick="LAB.player(\'' + key + '\',\'' + jsq(r.name) + '\')">'
     + playerImgP(key, r.name, 28)
     + '<div class="fa-left"><div class="fa-nm"><b>'+esc(r.name)+'</b><span class="fa-dir '+(r.dir === 'up' ? 'up' : 'down')+'">'
       + (r.dir === 'up' ? 'BOOST' : 'FADE')+'</span></div>'
@@ -7069,7 +7087,7 @@ function coverageSection(key, g){
           + b.recs.map(function(r){
               var tag = r.lean > 0 ? 'man' : 'zone';
               return '<div class="cov-row" onclick="LAB.player(\''+key+'\',\''
-                + esc(r.p.name).replace(/'/g,"\\'")+'\')">'+playerImgP(key, r.p, 22)
+                + jsq(r.p.name)+'\')">'+playerImgP(key, r.p, 22)
                 + '<span class="cov-nm">'+esc(r.p.name)+'<br><span class="cov-split">'
                 + r.mypt.toFixed(1)+' yd/tgt vs man ('+r.m.tgt+' tgt, '+(r.m.td||0)+' TD) \u00b7 '
                 + r.zypt.toFixed(1)+' vs zone ('+r.z.tgt+' tgt, '+(r.z.td||0)+' TD)</span></span>'
@@ -7124,7 +7142,7 @@ function usageSection(key, g){
       + '<button class="sl-chip'+(!tf ? ' on' : '')+'" onclick="LAB.ulTeam(\'\')">Both</button>'
       + [g.away, g.home].map(function(t){
           return '<button class="sl-chip'+(tf === t ? ' on' : '')+'" onclick="LAB.ulTeam(\''
-            + esc(t).replace(/'/g,"\\'")+'\')">'+esc(abbrOf(key, t))+'</button>'; }).join('')
+            + jsq(t)+'\')">'+esc(abbrOf(key, t))+'</button>'; }).join('')
       + '<span class="sl-win">'+[['l5','L5'],['l10','L10'],['all','Season']].map(function(w){
           return '<button class="sl-chip'+(win === w[0] ? ' on' : '')+'" onclick="LAB.ulWin(\''+w[0]+'\')">'
             + w[1]+'</button>'; }).join('')+'</span></div>'
@@ -7137,7 +7155,7 @@ function usageSection(key, g){
         var big = d != null && Math.abs(d) > r.avg * 0.2;
         var col = !big ? 'var(--text-3)' : (d > 0 ? 'var(--accent)' : '#f97316');
         var ar = !big ? '' : (d > 0 ? '\u25b2' : '\u25bc');
-        return '<div class="sl-row ul-row" onclick="LAB.player(\'' + key + '\',\'' + esc(r.p.name).replace(/'/g,"\\'") + '\')">'
+        return '<div class="sl-row ul-row" onclick="LAB.player(\'' + key + '\',\'' + jsq(r.p.name) + '\')">'
           + '<span class="sl-rk">'+(i+1)+'</span>'+playerImgP(key, r.p, 22)
           + '<span class="sl-who"><b>'+esc(r.p.name)+'</b><span>'
           + esc([posShortP(r.p), abbrOf(key, r.team), r.n+'g'].filter(Boolean).join(' \u00b7 '))+'</span></span>'
@@ -7204,7 +7222,7 @@ function kickerRow(key, r){
   var btns = pod.line != null ? rowBtns(key, { name:(r.p||{}).name, mkt:pk.mkt || 'kickingPts', line:pod.line,
                     side:'over', odds:pod.price, book:pod.book, opp:r.opp, team:r.team, label:pk.label }) : '';
   var pct = function(v){ return v.toFixed(1); };
-  return '<div class="gl-row nfl-row" onclick="LAB.player(\'' + key + '\',\'' + esc(r.p.name).replace(/'/g,"\\'") + '\')">'
+  return '<div class="gl-row nfl-row" onclick="LAB.player(\'' + key + '\',\'' + jsq(r.p.name) + '\')">'
     + btns
     + playerImgP(key, r.p, 28)
     + '<div class="gl-left"><div class="gl-nm"><b>'+esc(r.p.name)+'</b><span class="gl-tag">'
@@ -7323,7 +7341,7 @@ function tackleRow(key, r){
   var seq = r.last.slice().reverse();
   var mx = Math.max.apply(null, seq.concat([r.line])) || 1;
   return '<div class="stk-row chunk-row" onclick="LAB.player(\''
-    + key + '\',\'' + esc(r.name).replace(/'/g,"\\'") + '\')">'
+    + key + '\',\'' + jsq(r.name) + '\')">'
     + btns
     + playerImgP(key, r.name, 28)
     + '<div class="stk-left"><div class="stk-nm"><b>'+esc(r.name)+'</b><span class="stk-tag">'
@@ -7525,7 +7543,7 @@ function dejaVuSection(key, g){
         var rungs = dvRungs(key, l);
         var posted = +l.line - 0.5;
         var at = rungs.findIndex(function(r){ return Math.abs(r.line - posted) < 0.01; });
-        var nm = esc(l.name).replace(/'/g, "\\'");
+        var nm = jsq(l.name);
         return '<div class="deja-card">'+playerImgP(key, l.p, 26)
           + '<div class="deja-m"><b>'+esc(l.name)+'</b><span>'+esc(l.label)
           + ' \u00b7 '+esc(abbrOf(key, l.team))+' \u00b7 <span class="deja-vals">'+l.vals.join(' / ')+'</span></span></div>'
@@ -7689,7 +7707,7 @@ function jupiterOrb(rows, g, key){
     var x = C + Math.cos(d.pos.angle)*r, y = C + Math.sin(d.pos.angle)*r;
     var on = state.view.jSel && state.view.jSel[d.name];
     var t = function(k){ return d.rates[k] == null ? '\u2014' : Math.round(d.rates[k]*100)+'% ('+d.rates[k+'N']+')'; };
-    return '<g class="j-dot" onclick="LAB.jPick(\'' + esc(d.name).replace(/'/g,"\\'") + '\')">'
+    return '<g class="j-dot" onclick="LAB.jPick(\'' + jsq(d.name) + '\')">'
       + '<circle cx="'+x.toFixed(1)+'" cy="'+y.toFixed(1)+'" r="'+(on ? 9 : 6)+'" fill="'+col(d.ev)+'" '
       + 'stroke="'+(d.home ? '#38bdf8' : '#fb7185')+'" stroke-width="'+(on ? 3 : 1.5)+'"/>'
       + '<title>'+esc(d.name)+' \u00b7 '+Math.ceil(d.line)+'+ \u00b7 $'+d.price.toFixed(2)
@@ -7719,7 +7737,7 @@ function jupiterSection(key, g){
     + '<div class="sl-bar">'
       + [g.home, g.away].map(function(t){
           return '<button class="sl-chip'+(hide[t] ? '' : ' on')+'" onclick="LAB.jTeam(\''
-            + esc(t).replace(/'/g,"\\'")+'\')">'+esc(abbrOf(key, t))+'</button>'; }).join('')+'</div>'
+            + jsq(t)+'\')">'+esc(abbrOf(key, t))+'</button>'; }).join('')+'</div>'
     + '<div class="sl-bar j-mkts">'+mkts.slice(0, 8).map(function(m){
           return '<button class="sl-chip'+(m[0] === data.mkt ? ' on' : '')+'" onclick="LAB.jMkt(\''+m[0]+'\')">'
             + esc(m[1])+'</button>'; }).join('')+'</div>'
@@ -8030,7 +8048,7 @@ function aflRowHead(key, r, tag){
   // the AFL tiles build this markup themselves rather than going through eplRow, so they need the
   // buttons wired in here or Snags, Hunting Grounds and Kick In Merchants have none
   var od = r.od || (r.b && r.b.od) || (r.bet && r.bet.od) || {};   // tiles store the price three ways
-  return '<div class="gl-row sig-extra" onclick="LAB.player(\'' + key + '\',\'' + esc(r.name).replace(/'/g,"\\'") + '\')">'
+  return '<div class="gl-row sig-extra" onclick="LAB.player(\'' + key + '\',\'' + jsq(r.name) + '\')">'
     + rowBtns(key, { name:r.name, mkt:r.mkt || (r.b && r.b.mkt), line:(od.line != null ? od.line : r.line),
                      side:(r.b && r.b.side) || 'over', odds:od.price || r.price, book:od.book || r.book,
                      opp:r.opp, team:(r.p || {}).team, label:r.label })
@@ -8084,7 +8102,7 @@ function climbRow(key, r){
       + '<span class="lad-hit" title="season / last 10">'+pc(l.hit)+'% \u00b7 '+pc(l.hitR)+'%</span>'
       + '<span class="lad-ev '+(l.ev >= 0 ? 'pos' : 'neg')+'">'+(l.ev >= 0 ? '+' : '')+pc(l.ev)+'%</span></div>';
   }).join('');
-  return '<div class="gl-row sig-extra lad-row" onclick="LAB.player(\'' + key + '\',\'' + esc(r.name).replace(/'/g,"\\'") + '\')">'
+  return '<div class="gl-row sig-extra lad-row" onclick="LAB.player(\'' + key + '\',\'' + jsq(r.name) + '\')">'
     + btns
     + playerImgP(key, r.name, 28)
     + '<div class="gl-left"><div class="gl-nm"><b>'+esc(r.name)+'</b><span class="gl-tag">'
@@ -8146,7 +8164,7 @@ function eachSkater(key, g, fn){
   });
 }
 function eplRow(key, r, bet, chips, big, bigL, good, cardLbl, betOd){
-  return '<div class="gl-row sig-extra" onclick="LAB.player(\'' + key + '\',\'' + esc(r.name).replace(/'/g,"\\'") + '\')">'
+  return '<div class="gl-row sig-extra" onclick="LAB.player(\'' + key + '\',\'' + jsq(r.name) + '\')">'
     + (function(){
         // every caller gets the buttons, label or not: the EPL tiles pass no label and had none.
         // Their price hides under one of three shapes (b.od, od, pick.c), so try each.
@@ -9061,7 +9079,7 @@ function nbaBigRow(key, r, want){
                                   odds:(r.b.price || r.b.over), book:r.b.book, opp:r.opp,
                                   team:(r.p || {}).team, label:mktLabel(key, r.hard.k) }) : '';
   return '<div class="gl-row" onclick="LAB.player(\'' + key + '\',\''
-      + esc(r.name).replace(/'/g, "\\'") + '\')">'
+      + jsq(r.name) + '\')">'
     + btns + playerImgP(key, r.p, 28)
     + '<div class="gl-left"><div class="gl-nm"><b>' + esc(r.name) + '</b>'
       + '<span class="gl-tag">' + esc(posShortP(r.p) ? posShortP(r.p) + ' \u00b7 ' : '')
@@ -10009,14 +10027,14 @@ function focusPage(){
     + '<i class="ti ti-math-symbols"></i>Nerd Mode</button></div>'
     + ''
     + '<div class="fx-hero">'
-    + '<div class="fxr-team tp-link" onclick="LAB.teamView(\''+key+'\',\''+esc(g.away).replace(/'/g,"\\'")+'\')">'
+    + '<div class="fxr-team tp-link" onclick="LAB.teamView(\''+key+'\',\''+jsq(g.away)+'\')">'
       + teamLogo(key,g.away)+'<div class="fxr-name">'+esc(teamName(key,g.away))+'</div></div>'
     + '<div class="fxr-center"><span class="fxr-badge" style="color:var(--accent);background:color-mix(in srgb,var(--accent) 16%,transparent)">'
       + esc(SPORTS[key].name)+'</span>'
       + (st.ms!=null?'<span class="fxr-ko-date">'+esc(localDate(st.ms))+'</span>'
           +'<span class="fxr-ko-time">'+esc(st.hasTime?localTime(st.ms):'time TBC')+'</span>':'<span class="fxr-ko-date">TBC</span>')
       + '<div class="fxr-vs">@</div><div class="fxr-venue">'+esc(g.venue||'TBC')+'</div></div>'
-    + '<div class="fxr-team tp-link" onclick="LAB.teamView(\''+key+'\',\''+esc(g.home).replace(/'/g,"\\'")+'\')">'+teamLogo(key,g.home)+'<div class="fxr-name">'+esc(teamName(key,g.home))+'</div></div>'
+    + '<div class="fxr-team tp-link" onclick="LAB.teamView(\''+key+'\',\''+jsq(g.home)+'\')">'+teamLogo(key,g.home)+'<div class="fxr-name">'+esc(teamName(key,g.home))+'</div></div>'
     + '</div>';
   if (S.t2 !== 'ready') return head + '<div class="empty"><i class="ti ti-loader"></i>Loading '+esc(SPORTS[key].name)+' odds…</div>';
   if (S.noOdds) head += secNote('Odds', 'No prices for '+SPORTS[key].name+' \u2014 '+S.noOdds
@@ -10031,7 +10049,7 @@ function focusPage(){
   var ps = gamePlayers(key, g);
   var list = ps.length ? ps.map(function(p){
     var n = Object.keys(p.mkts).length;
-    return '<div class="gp-row" onclick="LAB.player(\''+key+'\',\''+esc(p.name).replace(/'/g,"\\'")+'\')">'
+    return '<div class="gp-row" onclick="LAB.player(\''+key+'\',\''+jsq(p.name)+'\')">'
       + '<span class="gp-nm">'+esc(p.name)+'</span>'
       + '<span class="gp-tm">'+esc(abbrOf(key,p.team))+'</span>'
       + '<span class="gp-n">'+n+' market'+(n===1?'':'s')+'</span></div>';
@@ -11474,7 +11492,7 @@ function cmbSugInner(q, mode){
   var sug = (state.view.cmbSugOff ? [] : cmbSuggest(q));
   if (!sug.length) return '';
   return '<div class="cmb-hits">'+sug.map(function(r){
-    return '<div class="cmb-hit" onclick="LAB.cmbUse(\''+esc(r.name).replace(/'/g,"\\'")+'\',\''+mode+'\')">'
+    return '<div class="cmb-hit" onclick="LAB.cmbUse(\''+jsq(r.name)+'\',\''+mode+'\')">'
       + (playerImgP(r.key, r.name, 22) || teamLogo(r.key, r.team))+'<b>'+esc(r.name)+'</b>'
       + '<span>'+esc((r.pos ? r.pos+' \u00b7 ' : '')+abbrOf(r.key, r.team))+' \u00b7 '
       + esc(SPORTS[r.key].name)+'</span></div>'; }).join('')+'</div>';
@@ -11869,7 +11887,7 @@ function signalsMultiPanel(key, g){
               ? ' <span class="deja-vals">(signal '+Math.ceil(l.sigLine)+'+)</span>' : '')
           + ' \u00b7 '+l.hits+'/'+l.n+' \u00b7 '+esc(l.src)+'</span></div>'
           + '<span class="deja-px">$'+l.price.toFixed(2)+'</span>'
-          + '<button class="cmb-leg-x" onclick="LAB.smDrop(\'' + esc(l.name).replace(/'/g,"\\'") + '\')">'
+          + '<button class="cmb-leg-x" onclick="LAB.smDrop(\'' + jsq(l.name) + '\')">'
           + (off ? '+' : '&times;')+'</button></div>';
       }).join('')
     + '<div class="deja-sum">'
@@ -11961,7 +11979,7 @@ function mbPanel(pin){
       parts.push('<span class="mb-badge sig-b">' + esc(x[1]) + '</span>');
     });
     var bad = parts.join('');
-    return '<div class="mb-leg'+(picked ? ' on' : '')+'" onclick="LAB.mbAdd(\''+esc(c.id).replace(/'/g, "\\'")+'\')">'
+    return '<div class="mb-leg'+(picked ? ' on' : '')+'" onclick="LAB.mbAdd(\''+jsq(c.id)+'\')">'
       + playerImgP(f.key, c.p, 26)
       + '<div class="mb-l"><div class="mb-nm"><b>'+esc(c.name)+'</b>'
       + '<span class="mb-bet">'+esc(c.label)+' \u00b7 '+esc(abbrOf(f.key, c.team))+'</span></div>'
@@ -11970,7 +11988,7 @@ function mbPanel(pin){
       + '<span>'+Math.round(c.prob*100)+'%<span class="mb-ev">'
       + (c.ev > 0 ? '+' : '')+Math.round(c.ev*100)+'%</span></span></div>'
       + (picked ? '<i class="ti ti-check mb-tick"></i>' : '')
-      + '<button class="mb-hide" onclick="event.stopPropagation();LAB.mbHide(\''+esc(c.id).replace(/'/g, "\\'")+'\')" '
+      + '<button class="mb-hide" onclick="event.stopPropagation();LAB.mbHide(\''+jsq(c.id)+'\')" '
       + 'title="hide this leg"><i class="ti ti-eye-off"></i></button></div>';
   }).join('');
   return h;
@@ -12081,11 +12099,11 @@ function cmbPanel(){
                + '<button class="sl-chip" onclick="LAB.cmbShare()"><i class="ti ti-share"></i> Share</button>'
                + '</div>')) : '')
       + (v.cmbRecent && v.cmbRecent.length ? '<div class="cmb-recent">'+v.cmbRecent.map(function(r){
-          return '<button class="sl-chip" onclick="LAB.cmbRun(\''+esc(r).replace(/'/g,"\\'")+'\')">'
+          return '<button class="sl-chip" onclick="LAB.cmbRun(\''+jsq(r)+'\')">'
             + esc(r)+'</button>'; }).join('')+'</div>' : '')
       + (!res && ex.length ? '<div class="cmb-ex"><span class="cmb-ex-h">Live right now \u2014 tap one</span>'
           + ex.map(function(q){
-              return '<button class="cmb-ex-b" onclick="LAB.cmbRun(\''+esc(q).replace(/'/g,"\\'")+'\')">'
+              return '<button class="cmb-ex-b" onclick="LAB.cmbRun(\''+jsq(q)+'\')">'
                 + '<i class="ti ti-bolt"></i>'+esc(q)+'</button>'; }).join('')
           + '</div>' : '')
       + '<div class="cmb-hint">'
@@ -12512,7 +12530,7 @@ function scannerView(key){
     + cols.map(th).join('')+'</tr></thead><tbody>'
     + rows.map(function(r){
         var face = playerImgP(key, r.p, 24);
-        return '<tr onclick="LAB.player(\''+key+'\',\''+esc(r.p.name).replace(/'/g,"\\'")+'\')">'
+        return '<tr onclick="LAB.player(\''+key+'\',\''+jsq(r.p.name)+'\')">'
           + '<td class="nm"><span class="st-team">'+(face || '')
           + '<span><b>'+esc(r.p.name)+'</b><span class="sub">'
           + esc([posShortP(r.p), abbrOf(key, r.p.team)].filter(Boolean).join(' \u00b7 '))
@@ -13046,7 +13064,7 @@ function teamsView(key){
     + rows.map(function(t){
         // the board is the obvious place to click a club, so open the profile from here too
         return '<tr class="tp-link" onclick="LAB.teamView(\''+key+'\',\''
-          + esc(t.team).replace(/'/g,"\\'")+'\')"><td class="nm"><span class="st-team">'
+          + jsq(t.team)+'\')"><td class="nm"><span class="st-team">'
           + teamLogo(key, t.team)
           + '<span>'+esc(teamFullName(key, t.team))+'</span></span></td>'
           + '<td>'+(t.matches || 0)+'</td>'
@@ -13261,7 +13279,7 @@ function playerPanel(){
       + rungs.map(function(r){
           var n = bookRows(key, name, mk, r.line).length;
           return '<span class="alt-rung'+(n>1?' multi':'')+'" title="'+esc(bookTitle(key, name, mk, r.line))+'"'
-            + ' onclick="LAB.books(\''+key+'\',\''+esc(name).replace(/'/g,"\\'")+'\',\''+esc(mk)+'\','+r.line+')">'
+            + ' onclick="LAB.books(\''+key+'\',\''+jsq(name)+'\',\''+esc(mk)+'\','+r.line+')">'
             + '<b>'+esc(r.line)+'+</b>'+(+r.over).toFixed(2)
             + (r.under!=null?'<u>'+(+r.under).toFixed(2)+'</u>':'')
             + '<i>'+esc(r.book||'')+(n>1?' +'+(n-1):'')+'</i></span>'; }).join('')
@@ -13417,7 +13435,7 @@ function trendsBoard(key){
         + esc(c[1]) + (on ? (TR_SORT.dir < 0 ? ' \u2193' : ' \u2191') : '') + '</th>';
     }).join('');
   var body = rows.map(function(r){
-    return '<tr onclick="LAB.player(\'' + key + '\',\'' + esc(r.name).replace(/'/g, "\\'") + '\')">'
+    return '<tr onclick="LAB.player(\'' + key + '\',\'' + jsq(r.name) + '\')">'
       + '<td class="tr-nm">' + esc(r.name) + (r.opp ? '<i>v ' + esc(abbrOf(key, r.opp)) + '</i>' : '') + '</td>'
       + '<td>' + r.line + '</td>'
       + '<td>' + (r.price ? '$' + r.price.toFixed(2) : '\u2014') + '<i>' + esc(r.book || '') + '</i></td>'
@@ -13584,14 +13602,14 @@ function oddsPage(){
       var nb = bookRows(k, r.player, sel, r.line).length;
       var t = pt[r.player] || '';
       var head = '<div class="od-row">'
-        + '<span class="od-nm" onclick="event.preventDefault();event.stopPropagation();LAB.player(\''+k+'\',\''+esc(r.player).replace(/'/g,"\\'")+'\')">'
+        + '<span class="od-nm" onclick="event.preventDefault();event.stopPropagation();LAB.player(\''+k+'\',\''+jsq(r.player)+'\')">'
           + esc(r.player)+(t?'<i class="od-tm">'+esc(abbrOf(k,t))+'</i>':'')+'</span>'
         + '<span class="od-ln">'+esc(r.line)+'</span>'
         + '<span class="od-o">'+(+r.over).toFixed(2)+'</span>'
         + '<span class="od-u">'+(r.under!=null?(+r.under).toFixed(2):'—')+'</span>'
         + odHit(k, r.player, sel, r.line)
         + '<span class="od-bk'+(nb>1?' multi':'')+'" title="'+esc(bookTitle(k, r.player, sel, r.line))+'"'
-        + ' onclick="event.preventDefault();event.stopPropagation();LAB.books(\''+k+'\',\''+esc(r.player).replace(/'/g,"\\'")+'\',\''+esc(sel)+'\','+r.line+')">'
+        + ' onclick="event.preventDefault();event.stopPropagation();LAB.books(\''+k+'\',\''+jsq(r.player)+'\',\''+esc(sel)+'\','+r.line+')">'
         + esc(r.book||'')+(nb>1?' <u>+'+(nb-1)+'</u>':'')+'</span></div>';
       return lad ? ('<details class="od-det"><summary>'+head+'</summary>'+lad+'</details>') : head;
     }).join('') : '<div class="empty" style="padding:16px">Nothing posted'+(mSel?' for this match':'')+'.</div>';
@@ -13830,7 +13848,7 @@ function crewTile(t, sportLabels){
     return '<div class="crew-row">'+(sportLabels ? '<span class="crew-sp">'+esc(SPORTS[r.k].name)+'</span>' : '')+r.html+'</div>';
   });
   if (rows.length > CREW_SHOW)
-    html.push('<button class="crew-more" onclick="LAB.crewMore(\'' + esc(id).replace(/'/g,"\\'") + '\')">'
+    html.push('<button class="crew-more" onclick="LAB.crewMore(\'' + jsq(id) + '\')">'
       + (open ? 'Show top '+CREW_SHOW : 'Show all '+rows.length)+'</button>');
   // the badge counts rows passed in, which includes the Show-all button - put the real total back
   return sigTile(t.icon, t.title, t.desc, html, t.why)
@@ -13853,7 +13871,7 @@ var DEG_TILES = [['train','The Train','ti-train','One banker per game, combined'
                  ['build','Multi Builder','ti-layers-subtract','Build one yourself, game by game']];
 function crewTileCard(id, icon, title, desc, n, sport){
   var badge = n == null ? '' : '<span class="ct-n'+(n ? '' : ' zero')+'">'+n+'</span>';
-  return '<button class="ct" onclick="LAB.crewOpen(\'' + id.replace(/'/g,"\\'") + '\')">'
+  return '<button class="ct" onclick="LAB.crewOpen(\'' + jsq(id) + '\')">'
     + '<i class="ti '+icon+'"></i>'+badge
     + '<span class="ct-t">'+esc(title)+'</span>'
     + '<span class="ct-d">'+esc(desc || '')+'</span>'
@@ -14247,7 +14265,7 @@ function degPyramid(sc, book){
   state.view._pyrLegs = { sc:sc.sc, book:book || '', stat:state.view.degStat, legs:all };
   var price = all.reduce(function(a,l){ return a * l.price; }, 1), prob = cmbJoint(all);
   var card = function(l){
-    return '<div class="pyr-card"><button class="pyr-swap" title="Swap for the next best" onclick="LAB.degSkip(\''+esc(l.p.name).replace(/'/g,"\\'")+'\')">'
+    return '<div class="pyr-card"><button class="pyr-swap" title="Swap for the next best" onclick="LAB.degSkip(\''+jsq(l.p.name)+'\')">'
       + '<i class="ti ti-refresh"></i></button>'+playerImgP(k, l.p, 26)+'<div class="pyr-nm">'+esc(String(l.p.name).split(' ').pop())+'</div>'
       + '<div class="pyr-ln">'+Math.ceil(l.line)+'+</div><div class="pyr-od">$'+l.price.toFixed(2)+'</div></div>';
   };
@@ -18265,7 +18283,7 @@ function nbaQ1Section(key, g){
        cursor:pointer, so a row that opens nothing is a dead affordance. No rowBtns, though -
        those add a leg to the slip, and there is no bet on this row to add. */
     return '<div class="gl-row" onclick="LAB.player(\'' + key + '\',\''
-      + esc(x.p.name).replace(/'/g, "\\'") + '\')">'
+      + jsq(x.p.name) + '\')">'
       + playerImgP(key, x.p.name, 28)
       + '<div class="gl-left">'
         + '<div class="gl-nm"><b>' + esc(x.p.name) + '</b>'
@@ -18648,7 +18666,7 @@ function nbaShotMatchup(key, g){
     var up = sw.swing >= 0;
     var gapPts = Math.round(lead.gap * 1000) / 10;
     return '<div class="gl-row" onclick="LAB.player(\'' + key + '\',\''
-      + esc(x.p.name).replace(/'/g, "\\'") + '\')">'
+      + jsq(x.p.name) + '\')">'
       + playerImgP(key, x.p.name, 28)
       + '<div class="gl-left">'
         + '<div class="gl-nm"><b>' + esc(x.p.name) + '</b>'
@@ -18747,7 +18765,7 @@ function nbaActionSection(key, g){
   var floor = pf.rankFloor != null ? pf.rankFloor : 0.5;
   var chips = cands.map(function(c){
     return '<button class="pt-chip' + (c.name === me.name ? ' on' : '') + '" onclick="LAB.ptName(\'' 
-      + esc(c.name).replace(/'/g, "\\'") + '\')">' + esc(c.name)
+      + jsq(c.name) + '\')">' + esc(c.name)
       + '<i>' + esc(abbrOf(key, c.team)) + '</i></button>';
   }).join('');
 
@@ -20738,7 +20756,7 @@ function teamProfile(key, team){
     h += '<div class="dd-sec"><div class="dd-h">Who does the work</div>'
       + squad.map(function(p){
           return '<div class="lg-p" onclick="LAB.player(\'' + key + '\',\''
-            + esc(p.name).replace(/'/g, "\\'") + '\')"><span>' + esc(p.name) + '</span>'
+            + jsq(p.name) + '\')"><span>' + esc(p.name) + '</span>'
             + '<b>' + (+p[head]).toFixed(1) + '</b><i>' + esc(mktLabel(key, head)) + '</i></div>';
         }).join('') + '</div>';
   }
@@ -21081,7 +21099,7 @@ function deepPanel(){
         'LAB.deepClose()')
     + '<div class="cmb-body">'+head+worm+rates+drivers+mlbAdv+teams+script+shape+matchup+role+market
     + '<div class="dd-acts"><button class="pc-add" onclick="LAB.deepToCard()">Add to my card</button>'
-    + '<button class="sl-chip" onclick="LAB.player(\''+key+'\',\''+esc(name).replace(/'/g,"\\'")+'\')">Full player page</button></div>'
+    + '<button class="sl-chip" onclick="LAB.player(\''+key+'\',\''+jsq(name)+'\')">Full player page</button></div>'
     + '</div></div></div>';
 }
 
@@ -22307,6 +22325,7 @@ window.LAB = {
   cmbLad: function(open){ state.view.cmbLadOpen = !!open; },
   // test hook: the shell's own statOf, so tests check the real function rather than a copy
   statProbe: function(key, row, mkt){ return statOf(key, row, mkt); },
+  jsqProbe: function(v){ return jsq(v); },
   /* What the Green Lights / Death Riders pool actually contains, before any rendering. Added to
      answer one question with numbers rather than impressions: how many rows sit at a negative
      edge, and whether that tracks the model being untrusted for the sport. */
