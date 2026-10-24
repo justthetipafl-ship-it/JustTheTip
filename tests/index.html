@@ -3305,13 +3305,13 @@ function h2hSection(key, g){
   });
 
   if (!any) return mode === 'allowed'
-    ? '<div class="dayband"><span>Head to Head</span></div><div class="empty" style="padding:16px">No conceded stats for this sport.</div>'
+    ? paneBand('Head to Head') + '<div class="empty" style="padding:16px">No conceded stats for this sport.</div>'
     : '';
 
   var tab = function(m, lab){
     return '<button class="h2h-tb'+(mode===m?' on':'')+'" onclick="LAB.h2hMode(\''+m+'\')">'+lab+'</button>';
   };
-  return '<div class="dayband"><span>Head to Head \u00b7 season averages</span></div>'
+  return paneBand('Head to Head \u00b7 season averages')
     + '<div class="h2h-wrap">'
     + '<div class="h2h-tabs">'+tab('for','For')+tab('allowed','Allowed')
       + '<span class="h2h-note">'+(mode==='allowed'?'conceded per game':'own output per game')+' \u00b7 % vs league</span></div>'
@@ -3390,7 +3390,7 @@ function h2hHistory(key, g){
       ? '<details class="lm-det"><summary>'+head+'</summary><div class="ml-wrap">'+lead+'</div></details>'
       : head;
   }).join('');
-  return '<div class="dayband"><span>Last time they met \u00b7 '+n+' meeting'+(n===1?'':'s')+'</span></div>'
+  return paneBand('Last time they met \u00b7 '+n+' meeting'+(n===1?'':'s'))
     + '<div class="lm-wrap">'+summary+'<div class="lm-list">'+list+'</div></div>';
 }
 
@@ -6790,7 +6790,7 @@ function conditionsSection(key, g){
     lines.push([g.park.hrFactor > 1 ? 'up' : 'down',
       esc(g.park.name || 'This park')+' plays '+(g.park.hrFactor > 1 ? '+' : '')
       + Math.round((g.park.hrFactor - 1)*100)+'% for home runs']);
-  return '<div class="dayband"><span>Conditions</span></div>'
+  return paneBand('Conditions')
     + '<div class="ca-block"><div class="ca-bt">'+esc(w.venue || g.venue || 'Venue')+'</div>'
     + '<div class="ca-bv" style="color:'+(cls === 'bad' ? '#f97316' : (cls === 'good' ? 'var(--accent)' : 'var(--text)'))+'">'
       + esc(verdict)+'</div>'
@@ -9788,6 +9788,12 @@ var TEAM_NOW = null, PLAYER_NOW = null, SCORE_NOW = null;
 function cardPane(kind, key, g, src){
   CTX_PANE = true;                            // the "you are a pane, skip your own heading" flag
   try {
+    if (kind === 'match'){
+      if (src === 'h2h')     return h2hSection(key, g) || '';
+      if (src === 'history') return h2hHistory(key, g) || '';
+      if (src === 'cond')    return conditionsSection(key, g) || '';
+      return '';
+    }
     if (kind === 'team'){
       if (src === 'web')     return matchRadar(key, g) || '';
       if (src === 'dvp')     return dvpSection(key, g) || '';
@@ -9828,7 +9834,15 @@ function cardPane(kind, key, g, src){
    and which "currently showing" variable the self-redraw reads, so they are arguments rather than
    three near-identical functions - the Compare and Context pair had already drifted apart in small
    ways that meant nothing. */
+/* The match-level reads. These were three stacked sections with three headings - the season
+   averages head to head, the previous meetings, and the conditions - all answering the same
+   question from different angles: what kind of game is this likely to be. Same treatment as the
+   other three cards, and for the same reason. */
+var MATCH_SOURCES = [['h2h','Head to head'], ['history','Last meetings'], ['cond','Conditions']];
 var CARD_DEFS = {
+  match:  { srcs:function(){ return MATCH_SOURCES; }, icon:'ti-swords',
+            title:'The Match', id:'match-panel', fold:'match',
+            desc:function(key, g){ return 'Season averages, previous meetings and conditions'; } },
   team:   { srcs:function(){ return TEAM_SOURCES; },   icon:'ti-shield-half',
             title:'Team', id:'team-panel', fold:'team',
             desc:function(key, g){ return esc(abbrOf(key, g.away)) + ' against ' + esc(abbrOf(key, g.home)); } },
@@ -9924,9 +9938,11 @@ function focusPage(){
   if (S.noOdds) head += secNote('Odds', 'No prices for '+SPORTS[key].name+' \u2014 '+S.noOdds
     + '. Form, matchups, stats and player cards all work; the signals, value bets, D\u00e9j\u00e0 Vu and '
     + 'Jupiter need a posted price and stay empty until odds arrive.');
-  var t3 = S.t3 === 'ready'
-    ? '<div class="t3-ok"><i class="ti ti-database-check"></i>'+esc(SPORTS[key].name)+' research data ready \u00b7 '
-      + ((S.idx.logsByName ? Object.keys(S.idx.logsByName).length : 0))+' players indexed</div>'
+  /* The "research data ready - 727 players indexed" line is gone. It reported that a background
+     fetch had finished, which is the page's business rather than the reader's, and it sat in the
+     most valuable strip on the screen. The LOADING line stays: that one explains why parts of the
+     page are missing, which is worth saying. */
+  var t3 = S.t3 === 'ready' ? ''
     : '<div class="t3-load"><i class="ti ti-loader"></i>Loading research data (gamelogs, DVP, injuries)…</div>';
   var ps = gamePlayers(key, g);
   var list = ps.length ? ps.map(function(p){
@@ -9936,13 +9952,13 @@ function focusPage(){
       + '<span class="gp-tm">'+esc(abbrOf(key,p.team))+'</span>'
       + '<span class="gp-n">'+n+' market'+(n===1?'':'s')+'</span></div>';
   }).join('') : '<div class="empty" style="padding:16px">No player markets posted for this game.</div>';
-  return head + t3
-    + '<div class="dayband"><span>Match markets</span></div>' + moBlock(key, g)
-    // Team-level reading comes first: season averages head to head, then the last meeting.
-    // Everything below this point is about individual players.
-    + conditionsSection(key, g)
-    + h2hSection(key, g)
-    + h2hHistory(key, g)
+  /* The markets belong to the header, not to a section of their own. They were a dayband and a
+     block directly under the hero, saying "Match markets" above the only match markets on the
+     page - a heading that separated the fixture from its own prices for no reason. */
+  return head + moBlock(key, g) + t3
+    // What kind of game is this: season averages head to head, the previous meetings, the
+    // conditions. One card now; everything below is about individual players.
+    + (S.t3==='ready' && !state.view.nerd ? cardSection('match', key, g) : '')
     /* Three cards, in the order a reader asks the questions: the two CLUBS, then the MEN, then
        how points get on the board. Compare, Context, the team radar, First Read and the standalone
        Availability fold are all inside them now - nineteen reads that used to be spread across
