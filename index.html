@@ -10,6 +10,10 @@
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@2.44.0/tabler-icons.min.css">
 <style>
   :root{
+    /* The VISIBLE viewport, kept in step with visualViewport by cmbViewport(). Declared here so
+       the stylesheet stands on its own before any script runs - and so the CSS-variable check in
+       nba_test.js, which is there to catch misspelt names, is not asked to make an exception. */
+    --vvh:100%; --vvtop:0px;
     --bg:#0a0c0f; --surface:#11151a; --surface-2:#161b22; --surface-3:#1d242e;
     /* THE BORDER CARRIES THE ACCENT, so every bordered surface on the page inherits it.
        There are 145 of them across eighty-odd classes - sub-cards, cells, modals, pickers - and
@@ -935,7 +939,13 @@
     display:inline-flex;align-items:center;justify-content:center;}
   @media(max-width:480px){ .cmb-fab{padding:8px 14px 8px 8px;font-size:12px;gap:7px;}
     .cmb-fab .cmb-ic{width:24px;height:24px;} }
-  .cmb-overlay{position:fixed;inset:0;z-index:200;background:rgba(0,0,0,.6);display:flex;align-items:flex-end;
+  /* The overlay is sized to the VISIBLE viewport, not the layout one. dvh follows Safari's
+     toolbars but NOT the on-screen keyboard, so on an iPhone with the keyboard up a modal capped
+     at 88dvh is still nearly a full screen tall while barely half the screen is showing - the
+     box and everything under it end up behind the keyboard. --vvh/--vvtop are kept in step with
+     visualViewport (see cmbViewport), and fall back to the old behaviour where it is missing. */
+  .cmb-overlay{position:fixed;left:0;right:0;top:var(--vvtop,0px);height:var(--vvh,100%);
+    z-index:200;background:rgba(0,0,0,.6);display:flex;align-items:flex-end;
     justify-content:center;overscroll-behavior:contain;}
   @media(min-width:600px){ .cmb-overlay{align-items:center;} }
   /* on a phone the modal must never exceed the visible viewport: dvh follows the keyboard,
@@ -943,6 +953,9 @@
   .cmb-modal{background:var(--surface);border:1px solid var(--border);border-radius:14px 14px 0 0;
     width:100%;max-width:min(560px,100vw);max-height:min(88dvh,100%);display:flex;flex-direction:column;
     overflow:hidden;padding-bottom:env(safe-area-inset-bottom,0px);}
+  /* the scrolling region has to be allowed to shrink, or a long answer pushes the modal past
+     its own cap instead of scrolling inside it */
+  .cmb-modal > .cmb-body{flex:1 1 auto;min-height:0;}
   .cmb-body{max-width:100%;overflow-x:hidden;}
   .cmb-body .st-wrap,.cmb-body table{max-width:100%;}
   .cmb-overlay{padding-top:env(safe-area-inset-top,0px);}
@@ -9993,7 +10006,7 @@ function cardSection(kind, key, g){
     + '<span><span class="sig-ttl">' + esc(def.title) + '</span>'
     + '<span class="sig-desc">' + def.desc(key, g) + '</span>'
     + cardChips(have, function(sc){
-        return 'LAB.cardOpen(\'' + kind + '\',\'' + sc + '\')'; })
+        return 'LAB.cardSecOpen(\'' + kind + '\',\'' + sc + '\')'; })
     + '</span>'
     + '<span class="sig-n bld-n">' + have.length + '</span></summary>'
     + '<div class="bld-body">' + tabs + cardPane(kind, key, g, src) + '</div></details></div>';
@@ -22106,7 +22119,7 @@ window.LAB = {
   /* From a chip in the closed header: choose the tool AND open the card. cardToggle on the
      summary would otherwise fight this - the chip's own handler stops the event before it gets
      there, so the card is opened here explicitly rather than toggled. */
-  cardOpen: function(kind, src){
+  cardSecOpen: function(kind, src){
     (state.view.cardSrc = state.view.cardSrc || {})[kind] = src;
     var def = CARD_DEFS[kind];
     if (def){ state.view.cardFold = state.view.cardFold || {}; state.view.cardFold[def.fold] = true; }
@@ -23484,6 +23497,27 @@ function _sha256(t){
     return Array.from(new Uint8Array(b)).map(function(x){ return x.toString(16).padStart(2, '0'); }).join('');
   });
 }
+/* KEEP THE OVERLAYS INSIDE WHAT THE PHONE IS ACTUALLY SHOWING.
+   iOS reports dvh against the layout viewport, which does NOT shrink when the keyboard comes
+   up - so a panel capped at 88dvh stayed a near-full-screen 690px tall while only about 400px
+   of the screen was visible, putting the search box and everything below it behind the
+   keyboard. visualViewport is the only thing that reports the truth here. Writing it to two
+   custom properties lets the CSS stay declarative, and anything without visualViewport (older
+   desktop browsers) falls through to the 100% it used before. */
+function cmbViewport(){
+  var vv = window.visualViewport;
+  var el = document.documentElement;
+  if (!vv){ el.style.removeProperty('--vvh'); el.style.removeProperty('--vvtop'); return; }
+  el.style.setProperty('--vvh', Math.round(vv.height) + 'px');
+  el.style.setProperty('--vvtop', Math.round(vv.offsetTop || 0) + 'px');
+}
+if (window.visualViewport){
+  window.visualViewport.addEventListener('resize', cmbViewport);
+  window.visualViewport.addEventListener('scroll', cmbViewport);
+}
+window.addEventListener('resize', cmbViewport);
+window.addEventListener('orientationchange', function(){ setTimeout(cmbViewport, 250); });
+cmbViewport();
 function _appBoot(){
   if (state.booted) return;
   state.booted = true;
