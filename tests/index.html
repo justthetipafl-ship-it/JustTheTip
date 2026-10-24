@@ -1659,6 +1659,26 @@
   .lg-card{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:10px 12px;}
   .lg-hd{display:flex;align-items:baseline;gap:8px;margin-bottom:6px;}
   .lg-hd b{font-size:14px;} .lg-hd span{font-size:10px;color:var(--text-3);font-family:var(--font-mono);}
+  /* ---- match report ---- */
+  .mr-hero{display:flex;align-items:center;gap:10px;padding:12px 12px 13px;margin-bottom:10px;
+    border:1px solid var(--border);border-radius:12px;
+    background:linear-gradient(180deg,color-mix(in srgb,var(--accent) 8%,var(--surface-2)),
+      var(--surface-2) 70%);}
+  .mr-side{flex:1 1 0;min-width:0;display:flex;flex-direction:column;align-items:center;gap:3px;
+    text-align:center;}
+  .mr-side img{width:30px;height:30px;object-fit:contain;}
+  .mr-side b{font-family:var(--font-display);font-size:14px;letter-spacing:.02em;}
+  .mr-side.h b{color:var(--accent);}
+  .mr-side.a b{color:#60a5fa;}
+  .mr-side span{font-family:var(--font-mono);font-size:8px;letter-spacing:.09em;
+    text-transform:uppercase;color:var(--text-3);}
+  .mr-mid{flex:0 0 auto;display:flex;flex-direction:column;align-items:center;gap:2px;
+    text-align:center;min-width:92px;}
+  .mr-mid b{font-family:var(--font-mono);font-size:11px;color:var(--text);}
+  .mr-mid span{font-size:8.5px;color:var(--text-3);line-height:1.3;}
+  .mr-lg{font-family:var(--font-display);font-size:8px;letter-spacing:.09em;text-transform:uppercase;
+    color:var(--accent);background:color-mix(in srgb,var(--accent) 14%,transparent);
+    border-radius:999px;padding:2px 8px;}
   .lg-t{width:100%;border-collapse:collapse;font-family:var(--font-mono);font-size:11px;}
   .lg-t th{font-size:8px;letter-spacing:.06em;text-transform:uppercase;color:var(--text-3);text-align:right;padding:2px 4px;}
   .lg-t td{padding:3px 4px;text-align:right;border-top:1px solid var(--border);}
@@ -21158,6 +21178,49 @@ function mrPanel(){
     + '<button class="cmb-close" onclick="LAB.mrClose()">&times;</button></div>'
     + '<div class="cmb-body">'+body+'</div></div></div>';
 }
+/* ONE COMPARISON ROW, shared with Head to Head. The match report drew its numbers as plain
+   two-column tables, which means a reader does the comparison in their own head - and the page
+   already has a component that does it for them, on the same screen, three cards down. Same
+   markup and therefore the same CSS: the report stops looking like a different application.
+     dec       decimal places
+     lowerWins conceded, turnovers, fouls - where the smaller number is the better one */
+function cmpRow(lab, hv, av, dec, lowerWins, mode){
+  if (hv == null && av == null) return '';
+  var h = +hv || 0, a = +av || 0, mx = Math.max(h, a) || 1;
+  var hp = Math.round(h / mx * 100), ap = Math.round(a / mx * 100);
+  var hw = hv != null && av != null && (lowerWins ? h < a : h > a);
+  var aw = hv != null && av != null && (lowerWins ? a < h : a > h);
+  /* mode 'left': only the left column can be marked the better number.
+     Two clubs compared is a contest and either side can win it. FOR against CONCEDED is not -
+     the highlight marked whichever number was bigger, so a side that shipped 125 while scoring
+     94 had the 125 lit up in green as though conceding were the thing it had won. */
+  if (mode === 'left') aw = false;
+  var fmt = function(v){ return v == null ? '\u2014' : (+v).toFixed(dec == null ? 1 : dec); };
+  return '<div class="h2h-row">'
+    + '<div class="h2h-v l' + (hw ? ' win' : '') + '">' + fmt(hv) + '</div>'
+    + '<div class="h2h-mid"><div class="h2h-k">' + esc(lab)
+      + (lowerWins ? '<i class="h2h-inv" title="lower is better">\u25be</i>' : '') + '</div>'
+      + '<div class="h2h-bar"><i class="home" style="width:' + hp + '%"></i>'
+      + '<i class="away" style="width:' + ap + '%"></i></div></div>'
+    + '<div class="h2h-v r' + (aw ? ' win' : '') + '">' + fmt(av) + '</div></div>';
+}
+/* The report opened on a line of mono text - "BOS at DET" - under a modal heading that said only
+   "Match report". Which match, who is home, when: all of it was either absent or in 10px grey. */
+function mrHero(key, g){
+  var st = gameStart(g);
+  /* Home on the LEFT, away on the right. Every comparison bar in the report below puts the home
+     side left on the green half and the away side right on the blue, so a hero ordered the other
+     way (the way a scoreline reads, "BOS at DET") silently inverts all of them. The club names
+     carry their own bar's colour so the mapping needs no caption. */
+  return '<div class="mr-hero">'
+    + '<div class="mr-side h">' + teamLogo(key, g.home)
+      + '<b>' + esc(abbrOf(key, g.home)) + '</b><span>home</span></div>'
+    + '<div class="mr-mid"><span class="mr-lg">' + esc(SPORTS[key].name) + '</span>'
+      + (st.ms != null ? '<b>' + esc(localDate(st.ms)) + '</b>' : '<b>TBC</b>')
+      + '<span>' + esc(g.venue || '') + '</span></div>'
+    + '<div class="mr-side a">' + teamLogo(key, g.away)
+      + '<b>' + esc(abbrOf(key, g.away)) + '</b><span>away</span></div></div>';
+}
 function matchReport(key, g){
   var S = state.sports[key];
   var cols = (((S.config || {}).teamCols) || []).slice(0, 6);
@@ -21171,16 +21234,16 @@ function matchReport(key, g){
       + '<i class="'+(good ? 'good' : 'bad')+'">'+esc(r.label)+' \u00b7 his avg '
       + (r.avg % 1 ? r.avg.toFixed(1) : r.avg)+'</i></div>';
   };
-  var formTable = (form[0] || form[1]) ? '<table class="lg-t"><tr><th></th><th>'
-      + esc(abbrOf(key, g.home))+'</th><th>'+esc(abbrOf(key, g.away))+'</th></tr>'
-      + cols.map(function(c){
-          var a = form[0] && form[0].avg[c[0]], b = form[1] && form[1].avg[c[0]];
-          if (a == null && b == null) return '';
-          return '<tr><td>'+esc(c[1])+'</td><td>'+(a == null ? '\u2014' : a.toFixed(1))
-            + '</td><td>'+(b == null ? '\u2014' : b.toFixed(1))+'</td></tr>';
-        }).join('')+'</table>'
-      + '<div class="deg-note">Per game over each side\u2019s last '
-      + ((form[0] && form[0].n) || (form[1] && form[1].n) || 5)+' games.</div>' : '';
+  var formRows = cols.map(function(c){
+      var a = form[0] && form[0].avg[c[0]], b = form[1] && form[1].avg[c[0]];
+      return cmpRow(c[1], a == null ? null : a, b == null ? null : b, 1, false);
+    }).join('');
+  var formTable = (form[0] || form[1]) && formRows ? '<div class="h2h-wrap">'
+      + '<div class="h2h-head"><span>'+esc(abbrOf(key, g.home))+'</span>'
+      + '<span class="h2h-gp">per game</span><span>'+esc(abbrOf(key, g.away))+'</span></div>'
+      + formRows
+      + '<div class="deg-note" style="padding:6px 2px 0">Over each side\u2019s last '
+      + ((form[0] && form[0].n) || (form[1] && form[1].n) || 5)+' games.</div></div>' : '';
   var squad = sides.map(function(t, i){
     var m = mv[i];
     if (!m.up.length && !m.down.length) return '';
@@ -21190,7 +21253,7 @@ function matchReport(key, g){
       + '</div>';
   }).join('');
   return '<div class="mr">'
-    + '<div class="wr-top">'+esc(abbrOf(key, g.away))+' at '+esc(abbrOf(key, g.home))+'</div>'
+    + mrHero(key, g)
     + (formTable ? '<div class="dayband"><span>Recent form</span></div>'+formTable : '')
     + lastGameSection(key, g)
     + (function(){
@@ -21305,7 +21368,15 @@ function lastGameCard(key, team, cols){
     }
     score = normTeam(h) === normTeam(team) ? { mine:hs, theirs:as } : { mine:as, theirs:hs };
   });
-  if (score) tot.unshift({ label:'Score', mine:score.mine, theirs:score.theirs });
+  if (score){
+    /* ...unless the columns already carry it. NBA's gamelogs have points, so the card opened
+       "Score 100 / 109" and then "Pts 100 / 109" - the same line twice under two names. */
+    var dupe = tot.some(function(x){
+      return /^(pts|points|score)$/i.test(String(x.label))
+        && x.mine === score.mine && x.theirs === score.theirs;
+    });
+    if (!dupe) tot.unshift({ label:'Score', mine:score.mine, theirs:score.theirs });
+  }
   // who hurt them, and who they stopped - opposition players against their own form
   var judged = [], pcols = playerCols(key, cols);
   g0.theirs.forEach(function(r){
@@ -21341,11 +21412,14 @@ function lastGameCard(key, team, cols){
   var when = /^\d{4}-\d{2}-\d{2}$/.test(g0.when) ? g0.when : ('round ' + String(g0.when).split('-').pop().replace(/^0+/, ''));
   return '<div class="lg-card"><div class="lg-hd"><b>'+esc(abbrOf(key, team))+'</b>'
     + '<span>&nbsp;v '+esc(abbrOf(key, g0.opp))+' \u00b7 '+esc(when)+'</span></div>'
-    + '<table class="lg-t"><tr><th></th><th>For</th><th>Conceded</th></tr>'
+    /* For and Conceded as the same bar rows the rest of the page uses, rather than a third
+       near-identical table. A scoreline of 94 against 125 should be visible before it is read. */
+    + '<div class="h2h-head"><span>for</span><span class="h2h-gp">last game</span>'
+      + '<span>conceded</span></div>'
     + tot.map(function(x){
-        return '<tr><td>'+esc(x.label)+'</td><td>'+(x.mine == null ? '\u2014' : (x.mine % 1 ? x.mine.toFixed(1) : x.mine))
-          + '</td><td>'+(x.theirs == null ? '\u2014' : (x.theirs % 1 ? x.theirs.toFixed(1) : x.theirs))+'</td></tr>';
-      }).join('')+'</table>'
+        var dec = ((x.mine != null && x.mine % 1) || (x.theirs != null && x.theirs % 1)) ? 1 : 0;
+        return cmpRow(x.label, x.mine, x.theirs, dec, false, 'left');
+      }).join('')
     + (hurt.length ? '<div class="lg-h bad">Hurt them</div>'+hurt.map(pr).join('') : '')
     + (held.length ? '<div class="lg-h good">Held</div>'+held.map(pr).join('') : '')
     + (!hurt.length && !held.length ? '<div class="deg-note">No opposition player was far off his own form.</div>' : '')
