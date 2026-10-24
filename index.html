@@ -11563,6 +11563,44 @@ function cmbSugRefresh(){
   if (!host) return;
   host.innerHTML = cmbSugInner(state.view.cmbQ, host.getAttribute('data-mode') || 'single');
 }
+/* EVERYTHING BELOW THE SEARCH BOX, ON ITS OWN, so it can be swapped without touching the box.
+   cmbRun() used to call render(), which rebuilds the whole of #app - and the input the user is
+   typing into goes with it. That alone loses the caret and, on a phone, the keyboard. Worse,
+   while a sport's history was still loading cmbRun re-ran ITSELF every 600ms, so the box was
+   destroyed, recreated, and its contents reset to the old query three times over before anyone
+   could finish a word, and a tap on a suggestion landed on an element that no longer existed. */
+function cmbResBody(){
+  var v = state.view, res = v.cmbResult, ex = cmbExamples();
+  return (res ? (res.err ? '<div class="empty" style="padding:18px">'+esc(res.err)+'</div>'
+         : (res.loading ? '<div class="empty" style="padding:18px">Loading history\u2026</div>'
+         : cmbAnalysis(res.leg)
+           + '<div class="cmb-acts">'
+           + '<button class="cmb-go" onclick="LAB.cmbAdd()"><i class="ti ti-plus"></i> Add to multi</button>'
+           + '<button class="sl-chip" onclick="LAB.cmbDeep()"><i class="ti ti-telescope"></i> Deep dive</button>'
+           + '<button class="sl-chip" onclick="LAB.cmbDna()"><i class="ti ti-fingerprint"></i> Bet DNA</button>'
+           + '<button class="sl-chip" onclick="LAB.cmbToCard()"><i class="ti ti-receipt"></i> Add to card</button>'
+           + '<button class="sl-chip" onclick="LAB.cmbShare()"><i class="ti ti-share"></i> Share</button>'
+           + '</div>')) : '')
+    + (v.cmbRecent && v.cmbRecent.length ? '<div class="cmb-recent">'+v.cmbRecent.map(function(r){
+        return '<button class="sl-chip" onclick="LAB.cmbRun(\''+jsq(r)+'\')">'
+          + esc(r)+'</button>'; }).join('')+'</div>' : '')
+    + (!res && ex.length ? '<div class="cmb-ex"><span class="cmb-ex-h">Live right now \u2014 tap one</span>'
+        + ex.map(function(q){
+            return '<button class="cmb-ex-b" onclick="LAB.cmbRun(\''+jsq(q)+'\')">'
+              + '<i class="ti ti-bolt"></i>'+esc(q)+'</button>'; }).join('')
+        + '</div>' : '')
+    + '<div class="cmb-hint">'
+    + (ex.length ? 'A surname, a line and a market. '
+                 : 'A player, a line and a market \u2014 <b>Cripps 28+ disposals</b>, '
+                   + '<b>Nacua 60+ rec yds</b>. ')
+    + 'Add <b>under</b> for the other side.</div>';
+}
+function cmbResRefresh(){
+  var host = $('cmbRes');
+  if (!host) return false;
+  host.innerHTML = cmbResBody();
+  return true;
+}
 
 /* MULTI BUILDER ----------------------------------------------------------------
    Benchmarked on the production builder: the same five ways of generating a leg pool
@@ -12088,29 +12126,7 @@ function cmbPanel(){
       + '<button class="cmb-go" onclick="LAB.cmbRun((document.getElementById(\'cmbInput\')||{}).value||\'\')">'
       + '<i class="ti ti-search"></i> Check</button></div>'
       + cmbSugList(v.cmbQ, 'single')
-      + (res ? (res.err ? '<div class="empty" style="padding:18px">'+esc(res.err)+'</div>'
-             : (res.loading ? '<div class="empty" style="padding:18px">Loading history\u2026</div>'
-             : cmbAnalysis(res.leg)
-               + '<div class="cmb-acts">'
-               + '<button class="cmb-go" onclick="LAB.cmbAdd()"><i class="ti ti-plus"></i> Add to multi</button>'
-               + '<button class="sl-chip" onclick="LAB.cmbDeep()"><i class="ti ti-telescope"></i> Deep dive</button>'
-               + '<button class="sl-chip" onclick="LAB.cmbDna()"><i class="ti ti-fingerprint"></i> Bet DNA</button>'
-               + '<button class="sl-chip" onclick="LAB.cmbToCard()"><i class="ti ti-receipt"></i> Add to card</button>'
-               + '<button class="sl-chip" onclick="LAB.cmbShare()"><i class="ti ti-share"></i> Share</button>'
-               + '</div>')) : '')
-      + (v.cmbRecent && v.cmbRecent.length ? '<div class="cmb-recent">'+v.cmbRecent.map(function(r){
-          return '<button class="sl-chip" onclick="LAB.cmbRun(\''+jsq(r)+'\')">'
-            + esc(r)+'</button>'; }).join('')+'</div>' : '')
-      + (!res && ex.length ? '<div class="cmb-ex"><span class="cmb-ex-h">Live right now \u2014 tap one</span>'
-          + ex.map(function(q){
-              return '<button class="cmb-ex-b" onclick="LAB.cmbRun(\''+jsq(q)+'\')">'
-                + '<i class="ti ti-bolt"></i>'+esc(q)+'</button>'; }).join('')
-          + '</div>' : '')
-      + '<div class="cmb-hint">'
-      + (ex.length ? 'A surname, a line and a market. '
-                   : 'A player, a line and a market \u2014 <b>Cripps 28+ disposals</b>, '
-                     + '<b>Nacua 60+ rec yds</b>. ')
-      + 'Add <b>under</b> for the other side.</div>';
+      + '<div id="cmbRes">' + cmbResBody() + '</div>';
   } else {
     // A leg with no model must not be quietly floored to 1% inside the simulation: if we can't
     // price one leg we can't price the multi, and saying so is better than inventing a number.
@@ -13054,7 +13070,7 @@ function teamsView(key){
         return '<div class="cmb-corr" style="margin:2px 0 6px">Per-game averages over '
           + esc(what) + ' \u2014 ' + span + ' per team.</div>';
       })()
-    + '<div class="st-wrap"><table class="st-t"><thead><tr><th>Team</th><th>GP</th>'
+    + '<div class="st-wrap" id="stTeamTbl"><table class="st-t"><thead><tr><th>Team</th><th>GP</th>'
     + cols.map(function(c){
         return '<th class="'+(sortKey===c.id?'on':'')+'" onclick="LAB.stTeamSort(\''+c.id+'\')"'
           + (c.t ? ' title="'+esc(c.t)+(c.season ? ' \u00b7 season to date' : '')+'"'
@@ -22270,9 +22286,14 @@ window.LAB = {
     var i = $('cmbInput'); if (i) i.focus();
   },
   cmbType: function(q){
+    var had = !!state.view.cmbResult;
     state.view.cmbQ = q;
     state.view.cmbSugOff = false;
+    /* A new query means the answer on screen is about someone else - including a "Loading
+       history..." left behind by a run the user has now typed past. */
+    if (had) state.view.cmbResult = null;
     cmbSugRefresh();          // patch the list only: the input keeps focus, caret and keyboard
+    if (had) cmbResRefresh();
   },
   cmbUse: function(name, mode){
     // keep whatever line/market the user already typed, swap in the full name
@@ -22291,9 +22312,21 @@ window.LAB = {
       if (mode === 'multi') LAB.cmbAddLeg(state.view.cmbQ); else LAB.cmbRun(state.view.cmbQ);
       return;
     }
-    render();
+    /* Set the box's value in place instead of repainting. Replacing the <input> takes the
+       phone's keyboard down with it, and the focus() below cannot bring it back - a browser
+       only opens the keyboard on a real user gesture, so tapping a name left the user looking
+       at a dead box they had to tap again. */
     var i = $('cmbInput');
-    if (i){ i.focus(); i.setSelectionRange(i.value.length, i.value.length); }
+    if (i && cmbResRefresh()){
+      i.value = state.view.cmbQ;
+      cmbSugRefresh();
+      i.focus();
+      try { i.setSelectionRange(i.value.length, i.value.length); } catch(e){}
+      return;
+    }
+    render();
+    var j = $('cmbInput');
+    if (j){ j.focus(); j.setSelectionRange(j.value.length, j.value.length); }
   },
   cmbClose: function(){ state.view.cmbOpen = false; render(); },
   cmbMode: function(m){ state.view.cmbMode = m; render(); },
@@ -22305,8 +22338,20 @@ window.LAB = {
       var r = (state.view.cmbRecent || []).filter(function(x){ return x !== q; });
       r.unshift(q); state.view.cmbRecent = r.slice(0, 5);
     }
-    render();
-    if (state.view.cmbResult.loading) setTimeout(function(){ LAB.cmbRun(q); }, 600);
+    /* Swap in the answer where the panel is already up, rather than repainting #app and taking
+       the search box - and the caret, and the phone's keyboard - down with it. Only fall back to
+       a full render when there is no panel to patch. */
+    var single = state.view.cmbOpen && (state.view.cmbMode || 'single') === 'single';
+    if (single && cmbResRefresh()) cmbSugRefresh();
+    else render();
+    if (state.view.cmbResult.loading) setTimeout(function(){
+      /* Do not fight the user for the box: if they have closed the panel, moved to the multi
+         tab or typed anything else, this answer is no longer the one they are waiting for. */
+      if (!state.view.cmbOpen) return;
+      if ((state.view.cmbMode || 'single') !== 'single') return;
+      if (state.view.cmbQ !== q) return;
+      LAB.cmbRun(q);
+    }, 600);
   },
   cmbAdd: function(){
     var r = state.view.cmbResult;
@@ -22411,7 +22456,21 @@ window.LAB = {
     if (v.stSort === k) v.stDir = (v.stDir === 1 ? -1 : 1); else { v.stSort = k; v.stDir = -1; }
     render();
   },
-  stTeamQ: function(q){ state.view.stTeamQ = q; render(); },
+  stTeamQ: function(q){
+    /* Same rule as the bet search and the Scanner: patch the table, never the focused input.
+       This one still called render(), which rebuilds the whole of #app - so every letter typed
+       into "Find a team" destroyed the box it was being typed into, losing the caret and, on a
+       phone, the keyboard. */
+    state.view.stTeamQ = q;
+    var host = $('stTeamTbl');
+    var keys = Object.keys(SPORTS).filter(function(k){ return state.view.active[k]; });
+    var key = keys.indexOf(state.view.stSport) >= 0 ? state.view.stSport : keys[0];
+    if (!host || !key){ render(); return; }
+    var frag = document.createElement('div');
+    frag.innerHTML = teamsView(key);
+    var fresh = frag.querySelector('#stTeamTbl');
+    host.innerHTML = fresh ? fresh.innerHTML : '';
+  },
   stTeamWin: function(w){ state.view.stTeamWin = w; state.view.stTeamSort = null; render(); },
   stTeamSort: function(k){ state.view.stTeamSort = k; render(); },
   stDvpSort: function(k){ state.view.stDvpSort = k; render(); },
