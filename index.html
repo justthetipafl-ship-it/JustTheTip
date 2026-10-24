@@ -11,7 +11,13 @@
 <style>
   :root{
     --bg:#0a0c0f; --surface:#11151a; --surface-2:#161b22; --surface-3:#1d242e;
-    --border:#242c37; --text:#e8eaed; --text-2:#aab3bf; --text-3:#6b7684;
+    /* THE BORDER CARRIES THE ACCENT, so every bordered surface on the page inherits it.
+       There are 145 of them across eighty-odd classes - sub-cards, cells, modals, pickers - and
+       giving each its own accent rule would be both unmaintainable and far too loud, because
+       cards sit inside cards here. Tinting the shared variable does it once: a cool grey-green
+       that reads as part of the same family up close and still as a quiet divider at a distance.
+       The strong treatment stays where it belongs, on .bld-card. */
+    --border:#26362e; --text:#e8eaed; --text-2:#aab3bf; --text-3:#6b7684;
     --accent:#22c55e;
     --font-display:'Archivo Black',system-ui,sans-serif;
     --font-mono:ui-monospace,'SF Mono',Menlo,monospace;
@@ -469,7 +475,11 @@
     font-size:16px;color:var(--accent);
     background:color-mix(in srgb,var(--accent) 15%,transparent);
     box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--accent) 20%,transparent);}
-  .sig-ttl{font-family:var(--font-display);font-size:12.5px;letter-spacing:.05em;line-height:1.15;}
+  /* WHITE, NOT GREEN, and a size up. With the icon, the count pill and the border all carrying
+     the accent, a green title was the fourth green thing in one row and the name - the thing you
+     are actually scanning for - had the least contrast of anything in it. */
+  .sig-ttl{font-family:var(--font-display);font-size:14px;letter-spacing:.02em;line-height:1.2;
+    color:var(--text);}
   .sig-desc{font-size:10px;color:var(--text-3);letter-spacing:.01em;line-height:1.35;}
   .sig-n{margin-left:auto;font-family:var(--font-mono);font-size:9.5px;font-weight:700;
     color:var(--text-3);border:1px solid var(--border);border-radius:999px;padding:3px 0;
@@ -528,9 +538,12 @@
   .bld-card:hover{border-color:color-mix(in srgb,var(--accent) 55%,var(--border));}
   .bld-card .sig-ico{background:var(--accent);color:#06240f;
     box-shadow:inset 0 0 0 1px color-mix(in srgb,#000 18%,transparent);}
-  .bld-card .sig-ttl{color:var(--accent);}
+  /* .bld-card no longer recolours the title - see .sig-ttl */
   .bld-n{border-color:color-mix(in srgb,var(--accent) 45%,var(--border));color:var(--accent);}
   .bld-chips{display:flex;gap:5px;flex-wrap:wrap;margin-top:6px;}
+  /* open, the tabs inside say the same thing in the same words - so the chips are the shut-card
+     view only, switched by the selector rather than by a re-render */
+  .sig-tile[open] > .sig-head .bld-chips{display:none;}
   .bld-chip{font-family:var(--font-mono);font-size:9.5px;font-weight:700;padding:3px 8px;
     border-radius:999px;cursor:pointer;
     border:1px solid color-mix(in srgb,var(--accent) 32%,var(--border));
@@ -1646,6 +1659,26 @@
   .lg-card{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:10px 12px;}
   .lg-hd{display:flex;align-items:baseline;gap:8px;margin-bottom:6px;}
   .lg-hd b{font-size:14px;} .lg-hd span{font-size:10px;color:var(--text-3);font-family:var(--font-mono);}
+  /* ---- match report ---- */
+  .mr-hero{display:flex;align-items:center;gap:10px;padding:12px 12px 13px;margin-bottom:10px;
+    border:1px solid var(--border);border-radius:12px;
+    background:linear-gradient(180deg,color-mix(in srgb,var(--accent) 8%,var(--surface-2)),
+      var(--surface-2) 70%);}
+  .mr-side{flex:1 1 0;min-width:0;display:flex;flex-direction:column;align-items:center;gap:3px;
+    text-align:center;}
+  .mr-side img{width:30px;height:30px;object-fit:contain;}
+  .mr-side b{font-family:var(--font-display);font-size:14px;letter-spacing:.02em;}
+  .mr-side.h b{color:var(--accent);}
+  .mr-side.a b{color:#60a5fa;}
+  .mr-side span{font-family:var(--font-mono);font-size:8px;letter-spacing:.09em;
+    text-transform:uppercase;color:var(--text-3);}
+  .mr-mid{flex:0 0 auto;display:flex;flex-direction:column;align-items:center;gap:2px;
+    text-align:center;min-width:92px;}
+  .mr-mid b{font-family:var(--font-mono);font-size:11px;color:var(--text);}
+  .mr-mid span{font-size:8.5px;color:var(--text-3);line-height:1.3;}
+  .mr-lg{font-family:var(--font-display);font-size:8px;letter-spacing:.09em;text-transform:uppercase;
+    color:var(--accent);background:color-mix(in srgb,var(--accent) 14%,transparent);
+    border-radius:999px;padding:2px 8px;}
   .lg-t{width:100%;border-collapse:collapse;font-family:var(--font-mono);font-size:11px;}
   .lg-t th{font-size:8px;letter-spacing:.06em;text-transform:uppercase;color:var(--text-3);text-align:right;padding:2px 4px;}
   .lg-t td{padding:3px 4px;text-align:right;border-top:1px solid var(--border);}
@@ -3292,13 +3325,13 @@ function h2hSection(key, g){
   });
 
   if (!any) return mode === 'allowed'
-    ? '<div class="dayband"><span>Head to Head</span></div><div class="empty" style="padding:16px">No conceded stats for this sport.</div>'
+    ? paneBand('Head to Head') + '<div class="empty" style="padding:16px">No conceded stats for this sport.</div>'
     : '';
 
   var tab = function(m, lab){
     return '<button class="h2h-tb'+(mode===m?' on':'')+'" onclick="LAB.h2hMode(\''+m+'\')">'+lab+'</button>';
   };
-  return '<div class="dayband"><span>Head to Head \u00b7 season averages</span></div>'
+  return paneBand('Head to Head \u00b7 season averages')
     + '<div class="h2h-wrap">'
     + '<div class="h2h-tabs">'+tab('for','For')+tab('allowed','Allowed')
       + '<span class="h2h-note">'+(mode==='allowed'?'conceded per game':'own output per game')+' \u00b7 % vs league</span></div>'
@@ -3377,7 +3410,7 @@ function h2hHistory(key, g){
       ? '<details class="lm-det"><summary>'+head+'</summary><div class="ml-wrap">'+lead+'</div></details>'
       : head;
   }).join('');
-  return '<div class="dayband"><span>Last time they met \u00b7 '+n+' meeting'+(n===1?'':'s')+'</span></div>'
+  return paneBand('Last time they met \u00b7 '+n+' meeting'+(n===1?'':'s'))
     + '<div class="lm-wrap">'+summary+'<div class="lm-list">'+list+'</div></div>';
 }
 
@@ -4410,7 +4443,8 @@ function sigTile(icon, title, desc, rows, emptyWhy){
     + '<span><span class="sig-ttl">'+esc(title)+'</span><span class="sig-desc">'+esc(desc)+'</span></span>'
     + rec
     + '<span class="sig-n">'+rows.length+'</span></summary>';
-  return '<details class="sig-tile" open>'+head+rows.join('')+'</details>';
+  // same treatment as the cards: every section on the page is one family now
+  return '<details class="sig-tile bld-card" open>'+head+rows.join('')+'</details>';
 }
 function sigQuietNote(){
   if (SIG_CAPTURE) return '';
@@ -6776,7 +6810,7 @@ function conditionsSection(key, g){
     lines.push([g.park.hrFactor > 1 ? 'up' : 'down',
       esc(g.park.name || 'This park')+' plays '+(g.park.hrFactor > 1 ? '+' : '')
       + Math.round((g.park.hrFactor - 1)*100)+'% for home runs']);
-  return '<div class="dayband"><span>Conditions</span></div>'
+  return paneBand('Conditions')
     + '<div class="ca-block"><div class="ca-bt">'+esc(w.venue || g.venue || 'Venue')+'</div>'
     + '<div class="ca-bv" style="color:'+(cls === 'bad' ? '#f97316' : (cls === 'good' ? 'var(--accent)' : 'var(--text)'))+'">'
       + esc(verdict)+'</div>'
@@ -9610,7 +9644,7 @@ function paneBand(txt){
    chrome; this is that, once. */
 function readCard(icon, title, desc, count, body, note){
   if (CTX_PANE) return body + (note || '');
-  return '<details class="sig-tile" open><summary class="sig-head">'
+  return '<details class="sig-tile bld-card" open><summary class="sig-head">'
     + '<span class="sig-ico"><i class="ti ' + esc(icon) + '"></i></span>'
     + '<span><span class="sig-ttl">' + esc(title) + '</span>'
     + '<span class="sig-desc">' + esc(desc) + '</span></span>'
@@ -9693,10 +9727,8 @@ function buildSection(key, g){
      lands on it. And the four tool names are no longer a dot-separated sentence nobody reads:
      they are buttons, each opening the card straight onto that tool. A closed card that names
      four things you cannot click is a worse advertisement than no card at all. */
-  var toolChips = '<span class="bld-chips">' + srcs.map(function(x){
-      return '<button class="bld-chip" onclick="event.stopPropagation();LAB.buildOpen(\''
-        + x[0] + '\')">' + esc(x[1]) + '</button>';
-    }).join('') + '</span>';
+  var toolChips = cardChips(srcs, function(sc){
+      return 'LAB.buildOpen(\'' + sc + '\')'; });
   return '<div id="build-panel"><details class="sig-tile bld-card"' + cardAttr('build') + '>'
     + '<summary class="sig-head"' + cardTog('build') + '><span class="sig-ico"><i class="ti ti-layers-subtract"></i></span>'
     + '<span><span class="sig-ttl">Multi Builder</span>'
@@ -9776,6 +9808,12 @@ var TEAM_NOW = null, PLAYER_NOW = null, SCORE_NOW = null;
 function cardPane(kind, key, g, src){
   CTX_PANE = true;                            // the "you are a pane, skip your own heading" flag
   try {
+    if (kind === 'match'){
+      if (src === 'h2h')     return h2hSection(key, g) || '';
+      if (src === 'history') return h2hHistory(key, g) || '';
+      if (src === 'cond')    return conditionsSection(key, g) || '';
+      return '';
+    }
     if (kind === 'team'){
       if (src === 'web')     return matchRadar(key, g) || '';
       if (src === 'dvp')     return dvpSection(key, g) || '';
@@ -9816,7 +9854,15 @@ function cardPane(kind, key, g, src){
    and which "currently showing" variable the self-redraw reads, so they are arguments rather than
    three near-identical functions - the Compare and Context pair had already drifted apart in small
    ways that meant nothing. */
+/* The match-level reads. These were three stacked sections with three headings - the season
+   averages head to head, the previous meetings, and the conditions - all answering the same
+   question from different angles: what kind of game is this likely to be. Same treatment as the
+   other three cards, and for the same reason. */
+var MATCH_SOURCES = [['h2h','Head to head'], ['history','Last meetings'], ['cond','Conditions']];
 var CARD_DEFS = {
+  match:  { srcs:function(){ return MATCH_SOURCES; }, icon:'ti-swords',
+            title:'The Match', id:'match-panel', fold:'match',
+            desc:function(key, g){ return 'Season averages, previous meetings and conditions'; } },
   team:   { srcs:function(){ return TEAM_SOURCES; },   icon:'ti-shield-half',
             title:'Team', id:'team-panel', fold:'team',
             desc:function(key, g){ return esc(abbrOf(key, g.away)) + ' against ' + esc(abbrOf(key, g.home)); } },
@@ -9827,6 +9873,23 @@ var CARD_DEFS = {
             title:'Scoring', id:'score-panel', fold:'score',
             desc:function(){ return 'How the points actually get on the board'; } }
 };
+/* THE HEADER CHIPS, shared by every card that has sources behind it.
+   Shown only while the card is SHUT. Open, the tabs inside say the same thing in the same words,
+   and printing both is just the list twice. Shut, they are the only clue to what is in there -
+   which was the whole complaint about the Multi Builder: a closed card naming four things you
+   could not click advertised nothing. */
+function cardChips(srcs, click){
+  /* ALWAYS EMITTED, hidden by CSS while the card is open. The obvious version took the open state
+     as an argument and returned nothing - but <details> toggles natively, so collapsing a card
+     never rebuilds its header and the chips would simply never appear. Forcing a re-render on
+     every collapse would undo the work that made this page responsive. A selector costs nothing
+     and tracks the real state exactly. */
+  if (!srcs || srcs.length < 2) return '';
+  return '<span class="bld-chips">' + srcs.map(function(x){
+      return '<button class="bld-chip" onclick="event.stopPropagation();' + click(x[0]) + '">'
+        + esc(x[1]) + '</button>';
+    }).join('') + '</span>';
+}
 function cardSection(kind, key, g){
   var def = CARD_DEFS[kind];
   if (!def) return '';
@@ -9842,12 +9905,15 @@ function cardSection(kind, key, g){
       return '<button class="bld-tab' + (x[0] === src ? ' on' : '') + '" onclick="LAB.cardSrc(\''
         + kind + '\',\'' + x[0] + '\')">' + esc(x[1]) + '</button>';
     }).join('') + '</div>';
-  return '<div id="' + def.id + '"><details class="sig-tile"' + cardAttr(def.fold) + '>'
+  return '<div id="' + def.id + '"><details class="sig-tile bld-card"' + cardAttr(def.fold) + '>'
     + '<summary class="sig-head"' + cardTog(def.fold) + '><span class="sig-ico"><i class="ti '
     + def.icon + '"></i></span>'
     + '<span><span class="sig-ttl">' + esc(def.title) + '</span>'
-    + '<span class="sig-desc">' + def.desc(key, g) + '</span></span>'
-    + '<span class="sig-n">' + have.length + '</span></summary>'
+    + '<span class="sig-desc">' + def.desc(key, g) + '</span>'
+    + cardChips(have, function(sc){
+        return 'LAB.cardOpen(\'' + kind + '\',\'' + sc + '\')'; })
+    + '</span>'
+    + '<span class="sig-n bld-n">' + have.length + '</span></summary>'
     + '<div class="bld-body">' + tabs + cardPane(kind, key, g, src) + '</div></details></div>';
 }
 function cardRender(kind){
@@ -9892,9 +9958,11 @@ function focusPage(){
   if (S.noOdds) head += secNote('Odds', 'No prices for '+SPORTS[key].name+' \u2014 '+S.noOdds
     + '. Form, matchups, stats and player cards all work; the signals, value bets, D\u00e9j\u00e0 Vu and '
     + 'Jupiter need a posted price and stay empty until odds arrive.');
-  var t3 = S.t3 === 'ready'
-    ? '<div class="t3-ok"><i class="ti ti-database-check"></i>'+esc(SPORTS[key].name)+' research data ready \u00b7 '
-      + ((S.idx.logsByName ? Object.keys(S.idx.logsByName).length : 0))+' players indexed</div>'
+  /* The "research data ready - 727 players indexed" line is gone. It reported that a background
+     fetch had finished, which is the page's business rather than the reader's, and it sat in the
+     most valuable strip on the screen. The LOADING line stays: that one explains why parts of the
+     page are missing, which is worth saying. */
+  var t3 = S.t3 === 'ready' ? ''
     : '<div class="t3-load"><i class="ti ti-loader"></i>Loading research data (gamelogs, DVP, injuries)…</div>';
   var ps = gamePlayers(key, g);
   var list = ps.length ? ps.map(function(p){
@@ -9904,13 +9972,13 @@ function focusPage(){
       + '<span class="gp-tm">'+esc(abbrOf(key,p.team))+'</span>'
       + '<span class="gp-n">'+n+' market'+(n===1?'':'s')+'</span></div>';
   }).join('') : '<div class="empty" style="padding:16px">No player markets posted for this game.</div>';
-  return head + t3
-    + '<div class="dayband"><span>Match markets</span></div>' + moBlock(key, g)
-    // Team-level reading comes first: season averages head to head, then the last meeting.
-    // Everything below this point is about individual players.
-    + conditionsSection(key, g)
-    + h2hSection(key, g)
-    + h2hHistory(key, g)
+  /* The markets belong to the header, not to a section of their own. They were a dayband and a
+     block directly under the hero, saying "Match markets" above the only match markets on the
+     page - a heading that separated the fixture from its own prices for no reason. */
+  return head + moBlock(key, g) + t3
+    // What kind of game is this: season averages head to head, the previous meetings, the
+    // conditions. One card now; everything below is about individual players.
+    + (S.t3==='ready' && !state.view.nerd ? cardSection('match', key, g) : '')
     /* Three cards, in the order a reader asks the questions: the two CLUBS, then the MEN, then
        how points get on the board. Compare, Context, the team radar, First Read and the standalone
        Availability fold are all inside them now - nineteen reads that used to be spread across
@@ -21110,6 +21178,49 @@ function mrPanel(){
     + '<button class="cmb-close" onclick="LAB.mrClose()">&times;</button></div>'
     + '<div class="cmb-body">'+body+'</div></div></div>';
 }
+/* ONE COMPARISON ROW, shared with Head to Head. The match report drew its numbers as plain
+   two-column tables, which means a reader does the comparison in their own head - and the page
+   already has a component that does it for them, on the same screen, three cards down. Same
+   markup and therefore the same CSS: the report stops looking like a different application.
+     dec       decimal places
+     lowerWins conceded, turnovers, fouls - where the smaller number is the better one */
+function cmpRow(lab, hv, av, dec, lowerWins, mode){
+  if (hv == null && av == null) return '';
+  var h = +hv || 0, a = +av || 0, mx = Math.max(h, a) || 1;
+  var hp = Math.round(h / mx * 100), ap = Math.round(a / mx * 100);
+  var hw = hv != null && av != null && (lowerWins ? h < a : h > a);
+  var aw = hv != null && av != null && (lowerWins ? a < h : a > h);
+  /* mode 'left': only the left column can be marked the better number.
+     Two clubs compared is a contest and either side can win it. FOR against CONCEDED is not -
+     the highlight marked whichever number was bigger, so a side that shipped 125 while scoring
+     94 had the 125 lit up in green as though conceding were the thing it had won. */
+  if (mode === 'left') aw = false;
+  var fmt = function(v){ return v == null ? '\u2014' : (+v).toFixed(dec == null ? 1 : dec); };
+  return '<div class="h2h-row">'
+    + '<div class="h2h-v l' + (hw ? ' win' : '') + '">' + fmt(hv) + '</div>'
+    + '<div class="h2h-mid"><div class="h2h-k">' + esc(lab)
+      + (lowerWins ? '<i class="h2h-inv" title="lower is better">\u25be</i>' : '') + '</div>'
+      + '<div class="h2h-bar"><i class="home" style="width:' + hp + '%"></i>'
+      + '<i class="away" style="width:' + ap + '%"></i></div></div>'
+    + '<div class="h2h-v r' + (aw ? ' win' : '') + '">' + fmt(av) + '</div></div>';
+}
+/* The report opened on a line of mono text - "BOS at DET" - under a modal heading that said only
+   "Match report". Which match, who is home, when: all of it was either absent or in 10px grey. */
+function mrHero(key, g){
+  var st = gameStart(g);
+  /* Home on the LEFT, away on the right. Every comparison bar in the report below puts the home
+     side left on the green half and the away side right on the blue, so a hero ordered the other
+     way (the way a scoreline reads, "BOS at DET") silently inverts all of them. The club names
+     carry their own bar's colour so the mapping needs no caption. */
+  return '<div class="mr-hero">'
+    + '<div class="mr-side h">' + teamLogo(key, g.home)
+      + '<b>' + esc(abbrOf(key, g.home)) + '</b><span>home</span></div>'
+    + '<div class="mr-mid"><span class="mr-lg">' + esc(SPORTS[key].name) + '</span>'
+      + (st.ms != null ? '<b>' + esc(localDate(st.ms)) + '</b>' : '<b>TBC</b>')
+      + '<span>' + esc(g.venue || '') + '</span></div>'
+    + '<div class="mr-side a">' + teamLogo(key, g.away)
+      + '<b>' + esc(abbrOf(key, g.away)) + '</b><span>away</span></div></div>';
+}
 function matchReport(key, g){
   var S = state.sports[key];
   var cols = (((S.config || {}).teamCols) || []).slice(0, 6);
@@ -21123,16 +21234,16 @@ function matchReport(key, g){
       + '<i class="'+(good ? 'good' : 'bad')+'">'+esc(r.label)+' \u00b7 his avg '
       + (r.avg % 1 ? r.avg.toFixed(1) : r.avg)+'</i></div>';
   };
-  var formTable = (form[0] || form[1]) ? '<table class="lg-t"><tr><th></th><th>'
-      + esc(abbrOf(key, g.home))+'</th><th>'+esc(abbrOf(key, g.away))+'</th></tr>'
-      + cols.map(function(c){
-          var a = form[0] && form[0].avg[c[0]], b = form[1] && form[1].avg[c[0]];
-          if (a == null && b == null) return '';
-          return '<tr><td>'+esc(c[1])+'</td><td>'+(a == null ? '\u2014' : a.toFixed(1))
-            + '</td><td>'+(b == null ? '\u2014' : b.toFixed(1))+'</td></tr>';
-        }).join('')+'</table>'
-      + '<div class="deg-note">Per game over each side\u2019s last '
-      + ((form[0] && form[0].n) || (form[1] && form[1].n) || 5)+' games.</div>' : '';
+  var formRows = cols.map(function(c){
+      var a = form[0] && form[0].avg[c[0]], b = form[1] && form[1].avg[c[0]];
+      return cmpRow(c[1], a == null ? null : a, b == null ? null : b, 1, false);
+    }).join('');
+  var formTable = (form[0] || form[1]) && formRows ? '<div class="h2h-wrap">'
+      + '<div class="h2h-head"><span>'+esc(abbrOf(key, g.home))+'</span>'
+      + '<span class="h2h-gp">per game</span><span>'+esc(abbrOf(key, g.away))+'</span></div>'
+      + formRows
+      + '<div class="deg-note" style="padding:6px 2px 0">Over each side\u2019s last '
+      + ((form[0] && form[0].n) || (form[1] && form[1].n) || 5)+' games.</div></div>' : '';
   var squad = sides.map(function(t, i){
     var m = mv[i];
     if (!m.up.length && !m.down.length) return '';
@@ -21142,7 +21253,7 @@ function matchReport(key, g){
       + '</div>';
   }).join('');
   return '<div class="mr">'
-    + '<div class="wr-top">'+esc(abbrOf(key, g.away))+' at '+esc(abbrOf(key, g.home))+'</div>'
+    + mrHero(key, g)
     + (formTable ? '<div class="dayband"><span>Recent form</span></div>'+formTable : '')
     + lastGameSection(key, g)
     + (function(){
@@ -21257,7 +21368,15 @@ function lastGameCard(key, team, cols){
     }
     score = normTeam(h) === normTeam(team) ? { mine:hs, theirs:as } : { mine:as, theirs:hs };
   });
-  if (score) tot.unshift({ label:'Score', mine:score.mine, theirs:score.theirs });
+  if (score){
+    /* ...unless the columns already carry it. NBA's gamelogs have points, so the card opened
+       "Score 100 / 109" and then "Pts 100 / 109" - the same line twice under two names. */
+    var dupe = tot.some(function(x){
+      return /^(pts|points|score)$/i.test(String(x.label))
+        && x.mine === score.mine && x.theirs === score.theirs;
+    });
+    if (!dupe) tot.unshift({ label:'Score', mine:score.mine, theirs:score.theirs });
+  }
   // who hurt them, and who they stopped - opposition players against their own form
   var judged = [], pcols = playerCols(key, cols);
   g0.theirs.forEach(function(r){
@@ -21293,11 +21412,14 @@ function lastGameCard(key, team, cols){
   var when = /^\d{4}-\d{2}-\d{2}$/.test(g0.when) ? g0.when : ('round ' + String(g0.when).split('-').pop().replace(/^0+/, ''));
   return '<div class="lg-card"><div class="lg-hd"><b>'+esc(abbrOf(key, team))+'</b>'
     + '<span>&nbsp;v '+esc(abbrOf(key, g0.opp))+' \u00b7 '+esc(when)+'</span></div>'
-    + '<table class="lg-t"><tr><th></th><th>For</th><th>Conceded</th></tr>'
+    /* For and Conceded as the same bar rows the rest of the page uses, rather than a third
+       near-identical table. A scoreline of 94 against 125 should be visible before it is read. */
+    + '<div class="h2h-head"><span>for</span><span class="h2h-gp">last game</span>'
+      + '<span>conceded</span></div>'
     + tot.map(function(x){
-        return '<tr><td>'+esc(x.label)+'</td><td>'+(x.mine == null ? '\u2014' : (x.mine % 1 ? x.mine.toFixed(1) : x.mine))
-          + '</td><td>'+(x.theirs == null ? '\u2014' : (x.theirs % 1 ? x.theirs.toFixed(1) : x.theirs))+'</td></tr>';
-      }).join('')+'</table>'
+        var dec = ((x.mine != null && x.mine % 1) || (x.theirs != null && x.theirs % 1)) ? 1 : 0;
+        return cmpRow(x.label, x.mine, x.theirs, dec, false, 'left');
+      }).join('')
     + (hurt.length ? '<div class="lg-h bad">Hurt them</div>'+hurt.map(pr).join('') : '')
     + (held.length ? '<div class="lg-h good">Held</div>'+held.map(pr).join('') : '')
     + (!hurt.length && !held.length ? '<div class="deg-note">No opposition player was far off his own form.</div>' : '')
@@ -21779,6 +21901,12 @@ window.LAB = {
   /* From a chip in the closed header: choose the tool AND open the card. cardToggle on the
      summary would otherwise fight this - the chip's own handler stops the event before it gets
      there, so the card is opened here explicitly rather than toggled. */
+  cardOpen: function(kind, src){
+    (state.view.cardSrc = state.view.cardSrc || {})[kind] = src;
+    var def = CARD_DEFS[kind];
+    if (def){ state.view.cardFold = state.view.cardFold || {}; state.view.cardFold[def.fold] = true; }
+    render();
+  },
   buildOpen: function(src){
     state.view.buildSrc = src;
     state.view.cardFold = state.view.cardFold || {};
