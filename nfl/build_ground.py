@@ -53,6 +53,7 @@ import argparse, datetime, json, os, re, sys
 
 MIN_ATT_DEFAULT = 40
 MIN_TGT_DEFAULT = 25     # a receiver's rates settle sooner than a back's; 25 targets is the bar
+MIN_DB_DEFAULT = 60      # a starting quarterback passes this inside two games; a backup does not
 # Short yardage: 3rd or 4th down needing 2 or less. That is the down the "will he be stopped"
 # question is actually asked on, rather than every carry inside 2 yards of a first.
 SHORT_YDS = 2
@@ -121,7 +122,7 @@ def rank_of(value, pool, softest_first=True):
     return vals.index(value) + 1, len(vals)
 
 
-def build(season, out_dir, min_att, min_tgt):
+def build(season, out_dir, min_att, min_tgt, min_db):
     import nflreadpy as nfl
     import polars as pl
 
@@ -318,6 +319,88 @@ def build(season, out_dir, min_att, min_tgt):
             x.setdefault("pct", {})
             x["pct"][keym] = pct_rank(x.get(keym), vals, higher) if x["qualified"] else None
 
+    # ---- PASSERS -----------------------------------------------------------------------------
+    # A dropback is the unit, not an attempt: a sack is a dropback that went wrong, and counting
+    # only attempts hides the thing that decides whether a passing prop lands.
+    db = pbp.filter(pl.col("passer_player_id").is_not_null() & (pl.col("qb_dropback") == 1))
+    by_qb = db.group_by(["passer_player_id", "passer_player_name"]).agg([
+        pl.len().alias("db"),
+        pl.col("sack").mean().alias("sackRate"),
+        pl.col("qb_hit").mean().alias("hitRate"),
+        pl.col("interception").mean().alias("intRate"),
+        pl.col("pass_touchdown").mean().alias("tdRate"),
+        pl.col("cpoe").mean().alias("cpoePbp"),
+        pl.col("air_yards").mean().alias("adot"),
+        (pl.col("air_yards") >= 20).mean().alias("deepRate"),
+        pl.col("shotgun").mean().alias("shotgun"),
+        pl.col("posteam").last().alias("team"),
+    ])
+    pfr_pass = nfl.load_pfr_advstats(seasons=[season], stat_type="pass", summary_level="week")
+    pp = pfr_pass.group_by("pfr_player_name").agg([
+        pl.col("times_pressured").sum().alias("pressed"),
+        pl.col("times_blitzed").sum().alias("blitzed"),
+        pl.col("times_hurried").sum().alias("hurried"),
+        pl.col("passing_bad_throws").sum().alias("bad"),
+        pl.col("passing_drops").sum().alias("drops")])
+    pfrpass_by_name = {norm_name(r["pfr_player_name"]): r for r in pp.iter_rows(named=True)}
+
+    ngs_pass = nfl.load_nextgen_stats(seasons=[season], stat_type="passing").filter(pl.col("week") == 0)
+    ngsp_by_id, = ({},)
+    for row in ngs_pass.iter_rows(named=True):
+        if row.get("player_gsis_id"):
+            ngsp_by_id[row["player_gsis_id"]] = row
+
+    passers = {}
+    for row in by_qb.iter_rows(named=True):
+        pid = row["passer_player_id"]
+        ng = ngsp_by_id.get(pid) or {}
+        full = ng.get("player_display_name")
+        pfrrec = pfrpass_by_name.get(norm_name(full)) if full else None
+        dbn = int(row["db"])
+        zones = {}
+        sub = db.filter((pl.col("passer_player_id") == pid) & pl.col("air_yards").is_not_null())
+        zc = sub.with_columns(
+            pl.struct(["pass_location", "air_yards"]).map_elements(
+                lambda d: zone_of(d["pass_location"], d["air_yards"]), return_dtype=pl.Utf8).alias("z")
+        ).group_by("z").len()
+        for a, b in zip(zc["z"], zc["len"]):
+            if a is not None:
+                zones[str(a)] = int(b)
+        passers[pid] = {
+            "name": full or row["passer_player_name"], "short": row["passer_player_name"],
+            "team": row["team"], "db": dbn,
+            "sackRate": row["sackRate"], "hitRate": row["hitRate"],
+            "intRate": row["intRate"], "tdRate": row["tdRate"],
+            "adot": row["adot"], "deepRate": row["deepRate"], "shotgun": row["shotgun"],
+            # NGS carries the tracking-derived half: how long he holds it, how tight the windows
+            # he throws into, and completion against what the throw deserved
+            "ttt": ng.get("avg_time_to_throw"),
+            "aggr": ng.get("aggressiveness"),
+            "toSticks": ng.get("avg_air_yards_to_sticks"),
+            "cpoe": ng.get("completion_percentage_above_expectation"),
+            "xcmp": ng.get("expected_completion_percentage"),
+            "rating": ng.get("passer_rating"),
+            # PFR counts the pressure. Rates are against DROPBACKS from play-by-play rather than
+            # an average of weekly percentages, which would weight a four-dropback game the same
+            # as a forty-dropback one.
+            "pressRate": ((pfrrec or {}).get("pressed") / dbn) if (pfrrec and dbn) else None,
+            "blitzRate": ((pfrrec or {}).get("blitzed") / dbn) if (pfrrec and dbn) else None,
+            "badThrow": ((pfrrec or {}).get("bad") / dbn) if (pfrrec and dbn) else None,
+            "zones": zones, "mapped": sum(zones.values()),
+            "qualified": dbn >= min_db,
+        }
+    qpool = [x for x in passers.values() if x["qualified"]]
+    print(f"  {len(passers)} passers, {len(qpool)} with {min_db}+ dropbacks")
+    QMETRICS = [("cpoe", True), ("rating", True), ("adot", True), ("deepRate", True),
+                ("toSticks", True), ("aggr", True), ("ttt", True), ("tdRate", True),
+                ("intRate", False), ("sackRate", False), ("pressRate", False),
+                ("blitzRate", False), ("badThrow", False)]
+    for keym, higher in QMETRICS:
+        vals = [x[keym] for x in qpool if x.get(keym) is not None]
+        for x in passers.values():
+            x.setdefault("pct", {})
+            x["pct"][keym] = pct_rank(x.get(keym), vals, higher) if x["qualified"] else None
+
     # ---- per defence -------------------------------------------------------------------------
     by_def = runs.group_by("defteam").agg([
         pl.len().alias("att"),
@@ -400,13 +483,45 @@ def build(season, out_dir, min_att, min_tgt):
             if a is not None:
                 zones[str(a)] = {"n": int(n), "ypt": y, "cmp": c}
         d["zones"] = zones
+    # the pass rush, from the defence's side of the same dropbacks
+    by_rush = db.group_by("defteam").agg([
+        pl.len().alias("dbFaced"),
+        pl.col("sack").mean().alias("sackRateD"),
+        pl.col("qb_hit").mean().alias("hitRateD"),
+    ])
+    # PFR ships def_times_blitzed, def_times_hurried and def_times_hitqb, and in this season
+    # every one of those is null on all 213 rows - the columns exist and carry nothing. Summing
+    # nulls gave 0, which then RANKED as "softest in the league", so a defence we know nothing
+    # about was being presented as one that never blitzes. The same facts are on the offensive
+    # side of the very same table: times_blitzed is what that quarterback faced, and `opponent`
+    # is the defence that did it. 
+    # PFR ships def_times_blitzed, def_times_hurried and def_times_hitqb, and this season every
+    # one of those is null on all 213 rows - the columns exist and carry nothing. Summing nulls
+    # gave 0, which then RANKED as "softest in the league", so a defence we know nothing about was
+    # being presented as one that never blitzes. The same facts sit on the offensive side of the
+    # very same table: times_blitzed is what that quarterback faced, and `opponent` is the defence
+    # that did it to him.
+    pfr_rush_d = pfr_pass.group_by("opponent").agg([
+        pl.col("times_blitzed").sum().alias("blitz"),
+        pl.col("times_hurried").sum().alias("hurry")])
+    prd = {r["opponent"]: r for r in pfr_rush_d.iter_rows(named=True)}
+    for row in by_rush.iter_rows(named=True):
+        t = row["defteam"]
+        d = defence.setdefault(t, {})
+        n = int(row["dbFaced"])
+        d.update({"dbFaced": n, "sackRateD": row["sackRateD"], "hitRateD": row["hitRateD"],
+                  "blitzRateD": ((prd.get(t) or {}).get("blitz") / n) if (prd.get(t) and n) else None,
+                  "hurryRateD": ((prd.get(t) or {}).get("hurry") / n) if (prd.get(t) and n) else None})
 
     # ranks: 1 = softest, which is the direction the reader cares about for an over
     DEF_SOFTEST_HIGH = ["succAllowed", "r10Allowed", "ypcAllowed", "tdAllowed",
                         "yacAllowed", "brkAllowed",
                         "cmpAllowed", "yptAllowed", "passTdAllowed", "yacAllowedRec"]
     # a defence that intercepts more is a HARDER one to throw at, so rank 1 (softest) is the lowest
-    DEF_SOFTEST_LOW = ["stuffCreated", "shortStop", "intRate"]
+    # a defence that sacks, hits, blitzes and hurries more is a HARDER one to throw from, so the
+    # softest (rank 1) is the one that does least of it
+    DEF_SOFTEST_LOW = ["stuffCreated", "shortStop", "intRate",
+                       "sackRateD", "hitRateD", "blitzRateD", "hurryRateD"]
     for key in DEF_SOFTEST_HIGH + DEF_SOFTEST_LOW:
         vals = [d[key] for d in defence.values() if d.get(key) is not None]
         for d in defence.values():
@@ -442,18 +557,20 @@ def build(season, out_dir, min_att, min_tgt):
     payload = {
         "updated": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "season": season, "throughWeek": through, "minAtt": min_att, "minTgt": min_tgt,
+        "minDb": min_db,
         "lanes": LANES, "zones": ZONES, "sides": SIDES,
         "depths": [d[0] for d in DEPTHS],
         "source": ("nflverse play-by-play (charting CC-BY-SA 4.0, credit FTN Data via nflverse); "
                    "Pro Football Reference advanced rushing; NFL Next Gen Stats"),
-        "runners": runners, "receivers": receivers, "defence": defence,
+        "runners": runners, "receivers": receivers, "passers": passers, "defence": defence,
     }
     os.makedirs(out_dir, exist_ok=True)
     path = os.path.join(out_dir, "ground.json")
     with open(path, "w") as f:
         json.dump(payload, f, separators=(",", ":"))
     print(f"  wrote {path} ({os.path.getsize(path)/1024:.0f} KB) - "
-          f"{len(runners)} runners, {len(receivers)} receivers, {len(defence)} defences")
+          f"{len(runners)} runners, {len(receivers)} receivers, {len(passers)} passers, "
+          f"{len(defence)} defences")
     return payload
 
 
@@ -510,8 +627,9 @@ if __name__ == "__main__":
     ap.add_argument("--out", default="nfl/data")
     ap.add_argument("--min-att", type=int, default=MIN_ATT_DEFAULT)
     ap.add_argument("--min-tgt", type=int, default=MIN_TGT_DEFAULT)
+    ap.add_argument("--min-db", type=int, default=MIN_DB_DEFAULT)
     ap.add_argument("--selftest", action="store_true")
     a = ap.parse_args()
     if a.selftest:
         sys.exit(selftest())
-    build(a.season, a.out, a.min_att, a.min_tgt)
+    build(a.season, a.out, a.min_att, a.min_tgt, a.min_db)
