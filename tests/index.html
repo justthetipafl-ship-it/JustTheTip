@@ -152,6 +152,27 @@
   .gg-lane.none{opacity:.45;}
   .gg-los{height:3px;border-radius:2px;background:color-mix(in srgb,var(--text-3) 55%,transparent);
     margin-bottom:8px;font-size:0;}
+  /* The target map: three sides by four depths, deep at the top because that is the way the
+     reader is looking down the field. */
+  .gg-map{margin:8px 0 2px;}
+  .gg-mrow{display:flex;align-items:center;gap:7px;margin-bottom:4px;}
+  .gg-dep{width:92px;flex:none;font-size:9px;color:var(--text-3);text-align:right;}
+  .gg-sqs{flex:1;display:flex;gap:4px;min-width:0;}
+  .gg-sq{flex:1;min-width:0;display:flex;flex-direction:column;align-items:center;gap:1px;
+    padding:7px 2px;border-radius:7px;border:1px solid var(--border);background:var(--surface-2);}
+  .gg-sq b{font-family:var(--font-display);font-size:12px;font-weight:800;
+    font-variant-numeric:tabular-nums;line-height:1;}
+  .gg-sq i{font-style:normal;font-family:var(--font-mono);font-size:7.5px;color:var(--text-3);
+    min-height:9px;}
+  .gg-sq.soft{border-color:color-mix(in srgb,var(--accent) 50%,var(--border));
+    background:color-mix(in srgb,var(--accent) 11%,var(--surface-2));}
+  .gg-sq.soft i{color:var(--accent);}
+  .gg-sq.tough{border-color:color-mix(in srgb,#f97316 45%,var(--border));
+    background:color-mix(in srgb,#f97316 9%,var(--surface-2));}
+  .gg-sq.tough i{color:#f97316;}
+  .gg-sq.none{opacity:.4;}
+  .gg-head .gg-side{flex:1;text-align:center;font-family:var(--font-mono);font-size:8px;
+    letter-spacing:.06em;text-transform:uppercase;color:var(--text-3);}
   .pf-cell{background:var(--surface-2);border:1px solid var(--border);border-radius:8px;padding:8px 9px;}
   .pf-cell b{display:block;font-family:var(--font-mono);font-size:15px;}
   .pf-cell span{display:block;font-size:9px;letter-spacing:.05em;text-transform:uppercase;color:var(--text-3);margin-top:2px;}
@@ -13438,6 +13459,7 @@ function playerPanel(){
         || tuddyProfile(key, { name:name, opp:ppOpponent(key, name) })
         || '<div class="empty" style="padding:20px">No usage profile for this player.</div>')
     : tab === 'ground' ? groundTab(key, name)
+    : tab === 'air' ? airTab(key, name)
     : tab === 'radar' ? ppRadar(key, name)
     : tab === 'cover' ? ppCoverage(key, name)
     : tab === 'logs' ? ppLogs(key, name)
@@ -13471,7 +13493,7 @@ function playerPanel(){
     + '<button class="pp-x" onclick="LAB.player(null)">&times;</button></div>'
     + '<div class="pp-tabs">'
       + [['form','Form'],['logs','Game log'],['calc','Calculator'],['dvp','Matchup'],['profile','Scoring'],
-         ['ground','Ground'],['radar','Radar'],['cover','Coverage'],['mkts','All markets']]
+         ['ground','Ground'],['air','Air'],['radar','Radar'],['cover','Coverage'],['mkts','All markets']]
         .filter(function(t){
           // profile/radar/coverage only exist where the sport has the data behind them
           // NBA has its own scoring profile - shooting line, zones, quarters, shot diet - so the
@@ -13479,6 +13501,9 @@ function playerPanel(){
           // Ground is NFL and only for a man who has actually carried the ball - it is built on
           // ground.json, which no other sport has, and a receiver has nothing in it.
           if (t[0] === 'ground') return key === 'nfl' && !!groundRunner(key, name);
+          // Air is the same deal for a man who is thrown at. A back who catches passes gets both,
+          // which is correct - that is two different jobs and they are scouted separately.
+          if (t[0] === 'air') return key === 'nfl' && !!groundReceiver(key, name);
           if (t[0] === 'profile') return key === 'nfl' || key === 'nba';
           if (t[0] === 'radar') return key === 'nfl';
           if (t[0] === 'cover') return key === 'nfl' && !!((state.sports[key].idx.byName || {})[name] || {}).cov;
@@ -19246,6 +19271,120 @@ function groundLanes(key, name, opp){
          + '1 being the softest in the league' : '') + '.</div>'
     + '<div class="gg-lanes">' + cells + '</div>'
     + '<div class="gg-los">line of scrimmage</div>';
+}
+/* THE AIR GAME - the same three questions asked of a receiver.
+   A TARGET is the unit, not a catch: a man thrown at six times who holds one has still been used
+   six times, and counting only catches hides the thing worth knowing. The map is where the ball
+   is thrown rather than where he lines up - side of the field by depth - which is the receiving
+   equivalent of the rushing lanes and comes from the same play-by-play. */
+function groundReceiver(key, name){
+  var g = groundData(key);
+  if (!g || !g.receivers) return null;
+  var want = groundKey(name), ids = Object.keys(g.receivers);
+  for (var i = 0; i < ids.length; i++){
+    if (groundKey(g.receivers[ids[i]].name) === want) return g.receivers[ids[i]];
+  }
+  var hits = [];
+  for (var j = 0; j < ids.length; j++){
+    var r2 = g.receivers[ids[j]], m = String(r2.short || '').match(/^([A-Za-z])\.(.+)$/);
+    if (!m) continue;
+    var sur = groundKey(m[2]);
+    if (sur && want.indexOf(sur) >= 0 && want.charAt(0) === m[1].toLowerCase()) hits.push(r2);
+  }
+  return hits.length === 1 ? hits[0] : null;      // two men answering to "J.Smith" means neither
+}
+function airPanel(key, name){
+  var g = groundData(key), r = groundReceiver(key, name);
+  if (!g || !r || !r.tgt) return '';
+  var pc = function(v){ return v == null ? '\u2014' : (v * 100).toFixed(1) + '%'; };
+  var n2 = function(v){ return v == null ? '\u2014' : v.toFixed(2); };
+  var P = r.pct || {};
+  return paneBand('Receiver evidence')
+    + '<div class="dd-note">' + r.tgt + ' targets, ' + r.rec + ' caught, ' + g.season
+    + ' season to week ' + g.throughWeek
+    + (r.qualified ? '. Percentile is against every receiver with ' + g.minTgt + '+ targets.'
+                   : '. Under ' + g.minTgt + ' targets, so no percentile - the rates have not '
+                     + 'settled yet and ranking him would invent a precision that is not there.')
+    + '</div>'
+    + gRow('Separation', n2(r.sep), P.sep, 'yards at the catch', 'Next Gen')
+    + gRow('Cushion', n2(r.cush), P.cush, 'yards of room at the snap \u2014 more is easier underneath', 'Next Gen')
+    + gRow('Target depth', n2(r.adot), P.adot, 'yards downfield', 'pbp')
+    + gRow('Deep targets', pc(r.deepRate), P.deepRate, '20+ yards', 'pbp')
+    + gRow('Catch rate', pc(r.catchRate), P.catchRate, 'of targets held', 'pbp')
+    + gRow('Yards a target', n2(r.ypt), P.ypt, '', 'pbp')
+    + gRow('YAC a catch', n2(r.yacRec), P.yacRec, '', 'pbp')
+    + gRow('YAC over expected', n2(r.yacOE), P.yacOE, 'against what the tracking expected', 'Next Gen')
+    + gRow('Broken tackles', n2(r.brkRec), P.brkRec, 'a catch', 'PFR')
+    + gRow('Drops', pc(r.dropPct), P.dropPct, 'of targets \u2014 fewer is better', 'PFR')
+    + gRow('Target share', pc(r.tgtShare), P.tgtShare, 'of his side\u2019s targets', 'pbp')
+    + gRow('Air yards share', pc(r.airShare), P.airShare, 'of his side\u2019s air yards', 'pbp');
+}
+/* WHERE THE BALL GOES. Twelve squares: three sides by four depths, drawn deep at the top because
+   that is the way the reader is looking down the field. The small figure is how soft that defence
+   has been in that square; a square neither of them has used enough is left blank rather than
+   ranked off three throws. */
+function airMap(key, name, opp){
+  var g = groundData(key), r = groundReceiver(key, name);
+  if (!g || !r || !r.mapped) return '';
+  var d = g.defence ? (g.defence[opp] || g.defence[normTeam(opp)]) : null;
+  var sides = g.sides || ['left','middle','right'];
+  var depths = (g.depths || ['screen','short','mid','deep']).slice().reverse();
+  var LBL = { screen:'Behind the line', short:'Short (0\u201310)', mid:'Middle (10\u201320)', deep:'Deep (20+)' };
+  var rows = depths.map(function(dep){
+    var cells = sides.map(function(side){
+      var z = side.charAt(0).toUpperCase() + '-' + dep;
+      var n = r.zones[z] || 0, share = n / r.mapped;
+      var cell = d && d.zones ? d.zones[z] : null;
+      var rk = cell && cell.rank != null ? cell.rank : null;
+      var of = (cell && cell.of) || 32;
+      var tone = rk == null ? '' : (rk <= Math.round(of / 3) ? ' soft'
+               : (rk > of - Math.round(of / 3) ? ' tough' : ''));
+      return '<div class="gg-sq' + tone + (n ? '' : ' none') + '">'
+        + '<b>' + (n ? Math.round(share * 100) + '%' : '\u2013') + '</b>'
+        + '<i>' + (rk == null ? '' : ordinalish(rk)) + '</i></div>';
+    }).join('');
+    return '<div class="gg-mrow"><span class="gg-dep">' + esc(LBL[dep] || dep) + '</span>'
+      + '<div class="gg-sqs">' + cells + '</div></div>';
+  }).join('');
+  return paneBand('Target map')
+    + '<div class="dd-note">' + r.mapped + ' of ' + r.tgt + ' targets have a side and a depth '
+    + 'recorded' + (d ? '. The small figure is how soft ' + esc(abbrOf(key, opp)) + ' has been in '
+      + 'that square, 1 being the softest in the league; a square with fewer than five throws '
+      + 'against them is left unranked' : '') + '.</div>'
+    + '<div class="gg-map">' + rows
+    + '<div class="gg-mrow gg-head"><span class="gg-dep"></span><div class="gg-sqs">'
+    + sides.map(function(x){ return '<div class="gg-side">' + esc(x) + '</div>'; }).join('')
+    + '</div></div></div>';
+}
+function airDefPanel(key, opp){
+  var g = groundData(key);
+  var d = g && g.defence ? (g.defence[opp] || g.defence[normTeam(opp)]) : null;
+  if (!d || !d.tgtFaced) return '';
+  var of = d.of || 32;
+  var pc = function(v){ return v == null ? '\u2014' : (v * 100).toFixed(1) + '%'; };
+  var n2 = function(v){ return v == null ? '\u2014' : v.toFixed(2); };
+  var R = d.rank || {};
+  var toPct = function(rk){ return rk == null ? null : Math.round((of - rk) / Math.max(1, of - 1) * 100); };
+  return paneBand('Coverage matchup')
+    + '<div class="dd-note">' + esc(abbrOf(key, opp)) + ' against the pass, ' + g.season
+    + ' to week ' + g.throughWeek + ', over ' + d.tgtFaced + ' targets faced. Green is softer.</div>'
+    + gRow('Completions', pc(d.cmpAllowed), toPct(R.cmpAllowed), nth(R.cmpAllowed, of), 'pbp')
+    + gRow('Yards a target', n2(d.yptAllowed), toPct(R.yptAllowed), nth(R.yptAllowed, of), 'pbp')
+    + gRow('YAC a catch', n2(d.yacAllowedRec), toPct(R.yacAllowedRec), nth(R.yacAllowedRec, of), 'pbp')
+    + gRow('Pass TDs allowed', pc(d.passTdAllowed), toPct(R.passTdAllowed), nth(R.passTdAllowed, of), 'pbp')
+    + gRow('Interceptions', pc(d.intRate), toPct(R.intRate), nth(R.intRate, of), 'pbp')
+    /* How deep they get attacked is descriptive, not soft or tough - a defence can be thrown deep
+       at because it is leaky or because it is winning and everyone is chasing. No rank on it. */
+    + gRow('Thrown at, depth', n2(d.adotFaced), null, 'yards downfield on average', 'pbp');
+}
+function airTab(key, name){
+  var opp = ppOpponent(key, name);
+  var body = airPanel(key, name) + airMap(key, name, opp) + (opp ? airDefPanel(key, opp) : '');
+  if (!body) return '<div class="empty" style="padding:20px">No targets on file for this player.</div>';
+  return body + '<div class="dd-note" style="margin-top:10px">Play-by-play and its charting come '
+    + 'from nflverse, CC-BY-SA 4.0, credit FTN Data via nflverse. Drops and broken tackles are '
+    + 'Pro Football Reference\u2019s advanced receiving table; separation, cushion and yards after '
+    + 'catch over expectation are NFL Next Gen Stats.</div>';
 }
 function groundTab(key, name){
   var opp = ppOpponent(key, name);
