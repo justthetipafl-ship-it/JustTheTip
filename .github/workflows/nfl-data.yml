@@ -68,6 +68,16 @@ jobs:
               --pbp-seasons 2024,2025,2026
           fi
 
+      # The ground game: what a back does with a carry, and what a defence allows. Its own step
+      # because it pulls two frames build_nfl_data.py does not (PFR advanced RUSHING, which the
+      # main build only asks for on defence, and the Next Gen rushing table). A failure here must
+      # not take the whole refresh down with it - the rest of the data is still good.
+      - name: Check the ground-game maths
+        run: python3 nfl/build_ground.py --selftest
+
+      - name: Build ground game
+        run: python3 nfl/build_ground.py --season 2026 --out nfl/data || echo "::warning::ground game build failed - keeping the last good ground.json"
+
       # Refuse to publish a dataset that has fallen apart. Runs BEFORE git add, so a bad build
       # leaves the last good data published rather than replacing it with something broken.
       # MLB went from thirty teams to two and nothing anywhere said a word.
