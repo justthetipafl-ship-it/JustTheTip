@@ -154,6 +154,8 @@
     margin-bottom:8px;font-size:0;}
   /* The target map: three sides by four depths, deep at the top because that is the way the
      reader is looking down the field. */
+  .gg-h{margin-top:14px;}
+  .gg-h:first-child{margin-top:2px;}
   .gg-map{margin:8px 0 2px;}
   .gg-mrow{display:flex;align-items:center;gap:7px;margin-bottom:4px;}
   .gg-dep{width:92px;flex:none;font-size:9px;color:var(--text-3);text-align:right;}
@@ -10106,6 +10108,9 @@ function cardPane(kind, key, g, src){
       if (src === 'acts')  return nbaActionSection(key, g) || '';
       if (src === 'first') return firstLastSection(key, g) || '';
       if (src === 'rz')    return redZoneSection(key, g) || '';
+    }
+    if (kind === 'skill'){
+      return ggFixturePane(key, g, src) || '';
       return '';
     }
     return '';
@@ -10138,7 +10143,17 @@ var CARD_DEFS = {
             } },
   score:  { srcs:function(){ return SCORE_SOURCES; },  icon:'ti-target-arrow',
             title:'Scoring', id:'score-panel', fold:'score',
-            desc:function(){ return 'How the points actually get on the board'; } }
+            desc:function(){ return 'How the points actually get on the board'; } },
+  /* NFL only, and only where ground.json has landed. Every other sport produces nothing from
+     both sources, so cardSection finds no live source and the card never appears. */
+  skill:  { srcs:function(){ return SKILL_SOURCES; }, icon:'ti-run',
+            title:'Ground & Air', id:'skill-panel', fold:'skill',
+            desc:function(key, g){
+              var nr = ggFixtureList(key, g, 'ground').length;
+              var nw = ggFixtureList(key, g, 'air').length;
+              if (!nr && !nw) return 'Carriers and receivers, man by man';
+              return nr + ' carrying \u00b7 ' + nw + ' being thrown at';
+            } }
 };
 /* THE HEADER CHIPS, shared by every card that has sources behind it.
    Shown only while the card is SHUT. Open, the tabs inside say the same thing in the same words,
@@ -10245,6 +10260,7 @@ function focusPage(){
     + (S.t3==='ready' && !state.view.nerd ? cardSection('team', key, g) : '')
     + (S.t3==='ready' && !state.view.nerd ? cardSection('player', key, g) : '')
     + (S.t3==='ready' && !state.view.nerd ? cardSection('score', key, g) : '')
+    + (S.t3==='ready' && !state.view.nerd ? cardSection('skill', key, g) : '')
 
     // Nerd Mode replaces the signals rather than adding to them: it is a different read of the
     // same fixture (the market against itself), and stacking both made the page enormous.
@@ -19146,6 +19162,10 @@ function pfCell(label, value, note, good){
    from, because a yards-after-contact number is a charting judgement and two chartists draw the
    contact point differently - blending them would produce a figure belonging to nobody.          */
 function groundData(key){ return (state.sports[key].data || {}).ground || null; }
+/* These panels stack three reads in one pane, so they carry their own headings rather than a
+   paneBand - a band goes quiet inside a card, which is right for a pane that IS one read and
+   wrong for one that holds three. */
+function ggHead(txt){ return '<div class="dd-h gg-h">' + esc(txt) + '</div>'; }
 function groundKey(s){
   return String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '')
     .toLowerCase().replace(/[^a-z]/g, '').replace(/(jr|sr|ii|iii|iv)$/, '');
@@ -19195,7 +19215,7 @@ function groundRunnerPanel(key, name){
   var pc = function(v){ return v == null ? '\u2014' : (v * 100).toFixed(1) + '%'; };
   var n2 = function(v){ return v == null ? '\u2014' : v.toFixed(2); };
   var P = r.pct || {};
-  var head = paneBand('Runner evidence')
+  var head = ggHead('Runner evidence')
     + '<div class="dd-note">' + r.att + ' carries, ' + g.season + ' season to week ' + g.throughWeek
     + (r.qualified ? '. Percentile is against every back with ' + g.minAtt + '+ carries.'
                    : '. Under ' + g.minAtt + ' carries, so no percentile - at this sample the rates '
@@ -19227,7 +19247,7 @@ function groundDefPanel(key, opp){
   /* Rank 1 is the SOFTEST, so it converts to a percentile the same way round as the runner rows:
      a soft defence shows green, the way a strong runner does. */
   var toPct = function(rk){ return rk == null ? null : Math.round((of - rk) / Math.max(1, of - 1) * 100); };
-  return paneBand('Defence matchup')
+  return ggHead('Defence matchup')
     + '<div class="dd-note">' + esc(abbrOf(key, opp)) + ' against the run, ' + g.season
     + ' to week ' + g.throughWeek + ', over ' + d.att + ' carries faced. Green is softer.</div>'
     + gRow('Success allowed', pc(d.succAllowed), toPct(R.succAllowed), nth(R.succAllowed, of), 'pbp')
@@ -19258,14 +19278,14 @@ function groundLanes(key, name, opp){
     var cell = d && d.lanes ? d.lanes[l] : null;
     var rk = cell && cell.rank != null ? cell.rank : null;
     var of = cell && cell.of ? cell.of : 32;
-    var tone = rk == null ? '' : (rk <= Math.round(of / 3) ? ' soft'
+    var tone = (!n || rk == null) ? '' : (rk <= Math.round(of / 3) ? ' soft'
              : (rk > of - Math.round(of / 3) ? ' tough' : ''));
     return '<div class="gg-lane' + tone + (n ? '' : ' none') + '">'
       + '<b>' + Math.round(share * 100) + '%</b>'
       + '<span class="gg-ln">' + esc(l) + '</span>'
       + '<i>' + (rk == null ? (n ? '\u2014' : '') : ordinalish(rk)) + '</i></div>';
   }).join('');
-  return paneBand('Rush path')
+  return ggHead('Rush path')
     + '<div class="dd-note">' + r.mapped + ' of ' + r.att + ' carries have a lane recorded'
     + (d ? '. The small figure is how soft ' + esc(abbrOf(key, opp)) + ' has been down that lane, '
          + '1 being the softest in the league' : '') + '.</div>'
@@ -19299,7 +19319,7 @@ function airPanel(key, name){
   var pc = function(v){ return v == null ? '\u2014' : (v * 100).toFixed(1) + '%'; };
   var n2 = function(v){ return v == null ? '\u2014' : v.toFixed(2); };
   var P = r.pct || {};
-  return paneBand('Receiver evidence')
+  return ggHead('Receiver evidence')
     + '<div class="dd-note">' + r.tgt + ' targets, ' + r.rec + ' caught, ' + g.season
     + ' season to week ' + g.throughWeek
     + (r.qualified ? '. Percentile is against every receiver with ' + g.minTgt + '+ targets.'
@@ -19337,16 +19357,16 @@ function airMap(key, name, opp){
       var cell = d && d.zones ? d.zones[z] : null;
       var rk = cell && cell.rank != null ? cell.rank : null;
       var of = (cell && cell.of) || 32;
-      var tone = rk == null ? '' : (rk <= Math.round(of / 3) ? ' soft'
+      var tone = (!n || rk == null) ? '' : (rk <= Math.round(of / 3) ? ' soft'
                : (rk > of - Math.round(of / 3) ? ' tough' : ''));
       return '<div class="gg-sq' + tone + (n ? '' : ' none') + '">'
         + '<b>' + (n ? Math.round(share * 100) + '%' : '\u2013') + '</b>'
-        + '<i>' + (rk == null ? '' : ordinalish(rk)) + '</i></div>';
+        + '<i>' + (n && rk != null ? ordinalish(rk) : '') + '</i></div>';
     }).join('');
     return '<div class="gg-mrow"><span class="gg-dep">' + esc(LBL[dep] || dep) + '</span>'
       + '<div class="gg-sqs">' + cells + '</div></div>';
   }).join('');
-  return paneBand('Target map')
+  return ggHead('Target map')
     + '<div class="dd-note">' + r.mapped + ' of ' + r.tgt + ' targets have a side and a depth '
     + 'recorded' + (d ? '. The small figure is how soft ' + esc(abbrOf(key, opp)) + ' has been in '
       + 'that square, 1 being the softest in the league; a square with fewer than five throws '
@@ -19365,7 +19385,7 @@ function airDefPanel(key, opp){
   var n2 = function(v){ return v == null ? '\u2014' : v.toFixed(2); };
   var R = d.rank || {};
   var toPct = function(rk){ return rk == null ? null : Math.round((of - rk) / Math.max(1, of - 1) * 100); };
-  return paneBand('Coverage matchup')
+  return ggHead('Coverage matchup')
     + '<div class="dd-note">' + esc(abbrOf(key, opp)) + ' against the pass, ' + g.season
     + ' to week ' + g.throughWeek + ', over ' + d.tgtFaced + ' targets faced. Green is softer.</div>'
     + gRow('Completions', pc(d.cmpAllowed), toPct(R.cmpAllowed), nth(R.cmpAllowed, of), 'pbp')
@@ -19385,6 +19405,57 @@ function airTab(key, name){
     + 'from nflverse, CC-BY-SA 4.0, credit FTN Data via nflverse. Drops and broken tackles are '
     + 'Pro Football Reference\u2019s advanced receiving table; separation, cushion and yards after '
     + 'catch over expectation are NFL Next Gen Stats.</div>';
+}
+/* THE SAME TWO READS, ON THE FIXTURE ------------------------------------------------------------
+   The player page answers "tell me about this man". A focused fixture asks the question the other
+   way round: these are the two sides, now who in them is worth a look. So the same panels appear
+   as a card on the fixture with a selector across the men in THIS match, Ground and Air as the two
+   sources, and the opponent taken from the fixture rather than from whoever the player happens to
+   face next - on a fixture you are looking at, those can differ.                                 */
+var SKILL_SOURCES = [['ground','Ground'], ['air','Air']];
+function ggFixtureList(key, g, kind){
+  var G = groundData(key);
+  if (key !== 'nfl' || !G || !g) return [];
+  var src = (kind === 'air' ? G.receivers : G.runners) || {};
+  var out = [];
+  Object.keys(src).forEach(function(id){
+    var r = src[id];
+    if (!r || (r.team !== g.home && r.team !== g.away)) return;
+    var vol = kind === 'air' ? r.tgt : r.att;
+    if (!vol) return;
+    out.push({ r:r, vol:vol });
+  });
+  out.sort(function(a, b){ return b.vol - a.vol; });
+  return out;
+}
+function ggPicked(key, g, kind){
+  var list = ggFixtureList(key, g, kind);
+  if (!list.length) return null;
+  var want = (state.view.ggPick || {})[kind];
+  for (var i = 0; i < list.length; i++) if (list[i].r.name === want) return list[i].r;
+  return list[0].r;        // whoever was picked on another fixture is not in this one
+}
+function ggSelector(key, g, kind, cur){
+  var list = ggFixtureList(key, g, kind);
+  if (list.length < 2) return '';
+  return '<select class="mb-fixsel gg-sel" onchange="LAB.ggPick(\''+kind+'\',this.value)">'
+    + list.map(function(x){
+        return '<option value="' + esc(x.r.name) + '"'
+          + (x.r.name === cur.name ? ' selected' : '') + '>'
+          + esc(x.r.name) + ' \u00b7 ' + esc(abbrOf(key, x.r.team)) + ' \u00b7 '
+          + x.vol + (kind === 'air' ? ' targets' : ' carries') + '</option>';
+      }).join('') + '</select>';
+}
+function ggFixturePane(key, g, kind){
+  var r = ggPicked(key, g, kind);
+  if (!r) return '';
+  var opp = (r.team === g.home) ? g.away : g.home;
+  var sel = ggSelector(key, g, kind, r);
+  var body = kind === 'air'
+    ? airPanel(key, r.name) + airMap(key, r.name, opp) + airDefPanel(key, opp)
+    : groundRunnerPanel(key, r.name) + groundLanes(key, r.name, opp) + groundDefPanel(key, opp);
+  if (!body) return '';
+  return sel + body;
 }
 function groundTab(key, name){
   var opp = ppOpponent(key, name);
@@ -22555,6 +22626,11 @@ window.LAB = {
   /* From a chip in the closed header: choose the tool AND open the card. cardToggle on the
      summary would otherwise fight this - the chip's own handler stops the event before it gets
      there, so the card is opened here explicitly rather than toggled. */
+  ggPick: function(kind, name){
+    state.view.ggPick = state.view.ggPick || {};
+    state.view.ggPick[kind] = name;
+    render();
+  },
   cardSecOpen: function(kind, src){
     (state.view.cardSrc = state.view.cardSrc || {})[kind] = src;
     var def = CARD_DEFS[kind];
