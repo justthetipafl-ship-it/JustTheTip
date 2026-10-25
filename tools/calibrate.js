@@ -19,7 +19,11 @@ const WRITE = process.env.CALIB_WRITE !== '0';      // set CALIB_WRITE=0 to repo
 // never appears. tests/odds_wiring_test.js checks this list against the shipped sports.
 const SPORTS = [['afl','AFL'], ['nfl','nfl'], ['epl','EPL'], ['mlb','mlb'], ['nbl','nbl'],
                 ['nhl','nhl'], ['nba','nba']];
-const TEST_DAYS = 8, MAX_MARKETS = 5, MIN_PREDS = 1000;
+/* Every market the sport posts, not the first five of them. The cap was silently deciding which
+   markets the model would ever be held to: EPL lists shots, shotsOn, goals, assists, tackles,
+   foulsCommitted, saves, cards - so fouls, saves and cards were never once tested, while the
+   signals priced all three and printed an edge on them. Fitting them costs only runtime. */
+const TEST_DAYS = 8, MAX_MARKETS = 99, MIN_PREDS = 1000;
 
 const COVER = { epl: 'passes' };
 function statOf(key, row, mkt){
@@ -195,11 +199,29 @@ function run(key, dir){
   const byMkt = {};
   preds.forEach(x => { (byMkt[x.k] = byMkt[x.k] || []).push(x); });
   console.log('  per market:  pred   actual   n     mean line   mean actual');
+  /* This table only ever went to the console. It is the thing that says whether the model has
+     EVER been held to a given market, which is exactly what the page needs before it prints an
+     edge on one - so it goes into calib.json now as well. */
+  const marketFit = {};
   Object.keys(byMkt).forEach(k2 => {
     const g = byMkt[k2], mp = g.reduce((a,x)=>a+x.prob,0)/g.length, ac = g.reduce((a,x)=>a+x.hit,0)/g.length;
     const ml = g.reduce((a,x)=>a+x.line,0)/g.length, ma = g.reduce((a,x)=>a+x.actual,0)/g.length;
+    /* Brier against this market's own base rate: a market can have plenty of rows and still tell
+       you nothing, which is the whole lesson of the NBA fit. */
+    const mb = g.reduce((a,x)=>a+Math.pow(x.prob-x.hit,2),0)/g.length;
+    const base = g.reduce((a,x)=>a+Math.pow(ac-x.hit,2),0)/g.length;
+    marketFit[k2] = { n:g.length, pred:+(mp).toFixed(3), actual:+(ac).toFixed(3),
+                      brier:+mb.toFixed(4), brierBaseRate:+base.toFixed(4) };
     console.log(`   ${k2.padEnd(14)} ${(mp*100).toFixed(0).padStart(4)}%  ${(ac*100).toFixed(0).padStart(5)}%  ${String(g.length).padStart(5)}   ${ml.toFixed(2).padStart(8)}   ${ma.toFixed(2).padStart(10)}`);
   });
+  /* And name the markets the sport posts that produced NO predictions at all - the silent case,
+     and the one that was doing the damage. A market missing from the table is invisible; a
+     market listed with n:0 is a finding. */
+  (cfg.oddsMkts || cfg.dvpStats || []).forEach(m => {
+    if (!marketFit[m[0]]) marketFit[m[0]] = { n:0, pred:null, actual:null, brier:null, brierBaseRate:null };
+  });
+  const untested = Object.keys(marketFit).filter(k2 => !marketFit[k2].n);
+  if (untested.length) console.log(`  NO PREDICTIONS AT ALL for: ${untested.join(', ')} - the model has never been tested on these`);
 
   const hi = preds.filter(x => x.prob >= 0.775);
   if (hi.length) console.log(`  at the Green Light threshold (prob >= 77.5%): ${hi.length} picks, landed ${(hi.reduce((a,x)=>a+x.hit,0)/hi.length*100).toFixed(1)}%`);
@@ -207,6 +229,7 @@ function run(key, dir){
   if (lo.length) console.log(`  at the Death Rider threshold (prob <= 32.5%): ${lo.length} picks, landed ${(lo.reduce((a,x)=>a+x.hit,0)/lo.length*100).toFixed(1)}% (want LOW)`);
 
   writeCalib(dir, key, {
+    markets: marketFit,
     a: +a.toFixed(3), b: +b.toFixed(3), spread: +(th - bh).toFixed(3), n,
     bias: +(meanP - actual).toFixed(3), brier: +brier.toFixed(4), brierCalibrated: +brierCal.toFixed(4),
     brierBaseRate: +base.toFixed(4), days: testDays.length,
