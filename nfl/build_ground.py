@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""The ground game: what a back actually does with a carry, and what a defence allows.
+"""The ground and air game: what a skill player does with the ball, and what a defence allows.
 
     python nfl/build_ground.py [--season 2026] [--out nfl/data] [--min-att 40]
     python nfl/build_ground.py --selftest        # no download; checks the maths
@@ -11,14 +11,25 @@ NFL pipeline already pulls:
   RUNNER EVIDENCE   what he does with the ball - yards after contact, broken tackles, rush yards
                     over expected, success rate, how often he breaks 10 and 15, how often he is
                     stopped at or behind the line - each against every other qualified back.
-  DEFENCE MATCHUP   the same questions asked of the defence he is about to face.
-  RUSH PATH         where his carries actually go, lane by lane, against how that defence holds
-                    up in each lane.
+  RECEIVER EVIDENCE what he does with a target - the separation he wins, the cushion he is given,
+                    how far downfield he works, yards after the catch against what was expected of
+                    it, drops, broken tackles - each against every other qualified receiver.
+  DEFENCE MATCHUP   the same questions asked of the defence he is about to face, run and pass.
+  RUSH PATH         where his carries go, lane by lane, against how that defence holds each lane.
+  TARGET MAP        where he is thrown the ball - side of the field by depth - against how that
+                    defence holds up in each of those nine squares.
+
+WHY ONE FILE AND NOT TWO
+The file is still called ground.json, which is a rushing phrase for a payload that now carries the
+passing game too. Renaming it would cost a new fetch, a config edit and a workflow edit for no
+gain the reader can see, so the name stayed and this paragraph exists instead.
 
 WHERE EACH NUMBER COMES FROM, AND WHY IT MATTERS THAT THEY DIFFER
-  play-by-play (nflverse)   success, 10+, 15+, stuff avoidance, rush TDs, lanes, short yardage
-  PFR advanced rushing      yards after contact, broken tackles  (and the same, allowed)
-  Next Gen Stats rushing    rush yards over expected per attempt, share of carries into 8+ box
+  play-by-play (nflverse)   success, 10+, 15+, stuff avoidance, rush TDs, lanes, short yardage;
+                            targets, catch rate, air yards, yards after catch, the target map
+  PFR advanced rush/rec     yards after contact, broken tackles, drops  (and the same, allowed)
+  Next Gen Stats            rush yards over expected, 8+ box share; separation, cushion, intended
+                            air yards, yards after catch above expectation
 
 The three sources do not agree, and should not be expected to. Yards after contact is a charting
 judgement: PFR's number for a back can sit a yard below a tracking-based one because the two draw
@@ -41,6 +52,7 @@ credited to FTN Data via nflverse wherever these numbers are shown.
 import argparse, datetime, json, os, re, sys
 
 MIN_ATT_DEFAULT = 40
+MIN_TGT_DEFAULT = 25     # a receiver's rates settle sooner than a back's; 25 targets is the bar
 # Short yardage: 3rd or 4th down needing 2 or less. That is the down the "will he be stopped"
 # question is actually asked on, rather than every carry inside 2 yards of a first.
 SHORT_YDS = 2
@@ -74,6 +86,22 @@ def lane_of(loc, gap):
 
 LANES = ["LE", "LT", "LG", "MID", "RG", "RT", "RE"]
 
+# The target map. Depth bands are the ones the sport itself talks in: behind or at the line, the
+# short stuff, the intermediate throw, and the shot downfield.
+DEPTHS = [("screen", -99, 0), ("short", 0, 10), ("mid", 10, 20), ("deep", 20, 999)]
+SIDES = ["left", "middle", "right"]
+ZONES = [s[0].upper() + "-" + d[0] for s in SIDES for d in DEPTHS]
+
+
+def zone_of(loc, air):
+    """pass_location x air_yards -> one of twelve squares, or None when either is missing."""
+    if loc not in SIDES or air is None:
+        return None
+    for name, lo, hi in DEPTHS:
+        if lo <= air < hi:
+            return loc[0].upper() + "-" + name
+    return None
+
 
 def pct_rank(value, pool, higher_is_better=True):
     """Where this value sits among the pool, 0-100. None when there is nothing to compare against."""
@@ -93,7 +121,7 @@ def rank_of(value, pool, softest_first=True):
     return vals.index(value) + 1, len(vals)
 
 
-def build(season, out_dir, min_att):
+def build(season, out_dir, min_att, min_tgt):
     import nflreadpy as nfl
     import polars as pl
 
@@ -202,6 +230,94 @@ def build(season, out_dir, min_att):
             r.setdefault("pct", {})
             r["pct"][key] = pct_rank(r.get(key), vals, higher) if r["qualified"] else None
 
+    # ---- RECEIVERS ---------------------------------------------------------------------------
+    # A target is the unit here, not a catch: a man thrown at six times and catching one has been
+    # used six times, and a catch-only view would hide exactly the thing worth knowing.
+    tg = pbp.filter(pl.col("receiver_player_id").is_not_null()).with_columns([
+        pl.struct(["pass_location", "air_yards"]).map_elements(
+            lambda d: zone_of(d["pass_location"], d["air_yards"]), return_dtype=pl.Utf8).alias("zone"),
+    ])
+    team_tg = {a: b for a, b in zip(*[tg.group_by("posteam").len()[c] for c in ("posteam", "len")])}
+    team_air = {a: b for a, b in zip(*[tg.group_by("posteam").agg(
+        pl.col("air_yards").sum().alias("ay"))[c] for c in ("posteam", "ay")])}
+
+    by_rec = tg.group_by(["receiver_player_id", "receiver_player_name"]).agg([
+        pl.len().alias("tgt"),
+        pl.col("complete_pass").mean().alias("catchRate"),
+        pl.col("air_yards").mean().alias("adot"),
+        pl.col("air_yards").sum().alias("airYds"),
+        pl.col("yards_gained").sum().alias("yds"),
+        pl.col("yards_after_catch").sum().alias("yacSum"),
+        pl.col("complete_pass").sum().alias("rec"),
+        pl.col("pass_touchdown").sum().alias("tds"),
+        (pl.col("air_yards") >= 20).mean().alias("deepRate"),
+        pl.col("posteam").last().alias("team"),
+    ])
+
+    pfr_rec = nfl.load_pfr_advstats(seasons=[season], stat_type="rec", summary_level="week")
+    pr = pfr_rec.group_by("pfr_player_name").agg([
+        pl.col("receiving_broken_tackles").sum().alias("brk"),
+        pl.col("receiving_drop").sum().alias("drops"),
+        pl.col("receiving_drop_pct").mean().alias("dropPct")])
+    pfrrec_by_name = {norm_name(r["pfr_player_name"]): r for r in pr.iter_rows(named=True)}
+
+    ngs_rec = nfl.load_nextgen_stats(seasons=[season], stat_type="receiving").filter(pl.col("week") == 0)
+    ngsrec_by_id, ngsrec_name = {}, {}
+    for row in ngs_rec.iter_rows(named=True):
+        rec = {"sep": row.get("avg_separation"), "cush": row.get("avg_cushion"),
+               "iay": row.get("avg_intended_air_yards"),
+               "airShare": row.get("percent_share_of_intended_air_yards"),
+               "yacOE": row.get("avg_yac_above_expectation"),
+               "name": row.get("player_display_name")}
+        if row.get("player_gsis_id"):
+            ngsrec_by_id[row["player_gsis_id"]] = rec
+        ngsrec_name[norm_name(row.get("player_display_name"))] = rec
+
+    receivers = {}
+    for row in by_rec.iter_rows(named=True):
+        pid = row["receiver_player_id"]
+        ng = ngsrec_by_id.get(pid)
+        full = (ng or {}).get("name")
+        pfrrec = pfrrec_by_name.get(norm_name(full)) if full else None
+        rec_n = int(row["rec"] or 0)
+        zones = {}
+        sub = tg.filter(pl.col("receiver_player_id") == pid)
+        zc = sub.group_by("zone").len()
+        for a, b in zip(zc["zone"], zc["len"]):
+            if a is not None:
+                zones[str(a)] = int(b)
+        tm = row["team"]
+        receivers[pid] = {
+            "name": full or row["receiver_player_name"], "short": row["receiver_player_name"],
+            "team": tm, "tgt": int(row["tgt"]), "rec": rec_n, "tds": int(row["tds"] or 0),
+            "catchRate": row["catchRate"], "adot": row["adot"],
+            "ypt": (row["yds"] or 0) / max(1, row["tgt"]),
+            "yacRec": (row["yacSum"] or 0) / rec_n if rec_n else None,
+            "deepRate": row["deepRate"],
+            # share of his own side's targets and air yards - the usage half of the question
+            "tgtShare": row["tgt"] / team_tg[tm] if team_tg.get(tm) else None,
+            "airShare": ((row["airYds"] or 0) / team_air[tm]) if team_air.get(tm) else None,
+            "sep": (ng or {}).get("sep"), "cush": (ng or {}).get("cush"),
+            "yacOE": (ng or {}).get("yacOE"),
+            "brkRec": ((pfrrec or {}).get("brk") / rec_n) if (pfrrec and rec_n) else None,
+            "dropPct": ((pfrrec or {}).get("drops") / max(1, row["tgt"])) if pfrrec else None,
+            "zones": zones, "mapped": sum(zones.values()),
+            "qualified": int(row["tgt"]) >= min_tgt,
+        }
+    rpool = [x for x in receivers.values() if x["qualified"]]
+    print(f"  {len(receivers)} receivers, {len(rpool)} with {min_tgt}+ targets")
+    # Cushion is how much room the corner gives him at the snap. More room is an EASIER job
+    # underneath, so it ranks upward - the first version had it the other way, which marked a man
+    # being pressed as the one in the good spot.
+    RMETRICS = [("sep", True), ("cush", True), ("adot", True), ("catchRate", True),
+                ("ypt", True), ("yacRec", True), ("yacOE", True), ("brkRec", True),
+                ("dropPct", False), ("tgtShare", True), ("airShare", True), ("deepRate", True)]
+    for keym, higher in RMETRICS:
+        vals = [x[keym] for x in rpool if x.get(keym) is not None]
+        for x in receivers.values():
+            x.setdefault("pct", {})
+            x["pct"][keym] = pct_rank(x.get(keym), vals, higher) if x["qualified"] else None
+
     # ---- per defence -------------------------------------------------------------------------
     by_def = runs.group_by("defteam").agg([
         pl.len().alias("att"),
@@ -249,11 +365,48 @@ def build(season, out_dir, min_att):
             "brkAllowed": (pdef.get(t) or {}).get("brkAllowed"),
             "lanes": lanes,
         }
+    # the same defence, asked about the pass
+    by_pd = tg.group_by("defteam").agg([
+        pl.len().alias("tgtFaced"),
+        pl.col("complete_pass").mean().alias("cmpAllowed"),
+        pl.col("yards_gained").mean().alias("yptAllowed"),
+        pl.col("air_yards").mean().alias("adotFaced"),
+        pl.col("pass_touchdown").mean().alias("passTdAllowed"),
+        pl.col("interception").mean().alias("intRate"),
+    ])
+    pfr_pd = pfr_rec.group_by("opponent").agg([
+        pl.col("receiving_broken_tackles").sum().alias("brk"),
+        pl.col("receiving_drop").sum().alias("drops")])
+    pd_map = {r["opponent"]: r for r in pfr_pd.iter_rows(named=True)}
+    yac_pd = tg.filter(pl.col("complete_pass") == 1).group_by("defteam").agg(
+        pl.col("yards_after_catch").mean().alias("yacAllowedRec"))
+    yac_map = {a: b for a, b in zip(yac_pd["defteam"], yac_pd["yacAllowedRec"])}
+    for row in by_pd.iter_rows(named=True):
+        t = row["defteam"]
+        d = defence.setdefault(t, {})
+        d.update({
+            "tgtFaced": int(row["tgtFaced"]),
+            "cmpAllowed": row["cmpAllowed"], "yptAllowed": row["yptAllowed"],
+            "adotFaced": row["adotFaced"], "passTdAllowed": row["passTdAllowed"],
+            "intRate": row["intRate"], "yacAllowedRec": yac_map.get(t),
+            "recBrkAllowed": ((pd_map.get(t) or {}).get("brk")),
+        })
+        zones = {}
+        sub = tg.filter(pl.col("defteam") == t)
+        zc = sub.group_by("zone").agg([pl.len().alias("n"),
+                                       pl.col("yards_gained").mean().alias("ypt"),
+                                       pl.col("complete_pass").mean().alias("cmp")])
+        for a, n, y, c in zip(zc["zone"], zc["n"], zc["ypt"], zc["cmp"]):
+            if a is not None:
+                zones[str(a)] = {"n": int(n), "ypt": y, "cmp": c}
+        d["zones"] = zones
 
     # ranks: 1 = softest, which is the direction the reader cares about for an over
     DEF_SOFTEST_HIGH = ["succAllowed", "r10Allowed", "ypcAllowed", "tdAllowed",
-                        "yacAllowed", "brkAllowed"]
-    DEF_SOFTEST_LOW = ["stuffCreated", "shortStop"]
+                        "yacAllowed", "brkAllowed",
+                        "cmpAllowed", "yptAllowed", "passTdAllowed", "yacAllowedRec"]
+    # a defence that intercepts more is a HARDER one to throw at, so rank 1 (softest) is the lowest
+    DEF_SOFTEST_LOW = ["stuffCreated", "shortStop", "intRate"]
     for key in DEF_SOFTEST_HIGH + DEF_SOFTEST_LOW:
         vals = [d[key] for d in defence.values() if d.get(key) is not None]
         for d in defence.values():
@@ -261,6 +414,18 @@ def build(season, out_dir, min_att):
             r, n = rank_of(d.get(key), vals, softest_first=(key in DEF_SOFTEST_HIGH))
             d["rank"][key] = r
             d["of"] = n
+    # and a square-by-square rank, so "he works the deep left and they are soft there" is answerable
+    for z in ZONES:
+        vals = [d["zones"][z]["ypt"] for d in defence.values()
+                if d.get("zones", {}).get(z) and d["zones"][z]["n"] >= 5]
+        for d in defence.values():
+            cell = d.get("zones", {}).get(z)
+            if not cell:
+                continue
+            if cell["n"] < 5:
+                cell["rank"] = None
+            else:
+                cell["rank"], cell["of"] = rank_of(cell["ypt"], vals, softest_first=True)
     # and a lane-by-lane rank, so "he runs right and they are soft right" is answerable
     for lane in LANES:
         vals = [d["lanes"][lane]["ypc"] for d in defence.values()
@@ -276,18 +441,19 @@ def build(season, out_dir, min_att):
 
     payload = {
         "updated": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-        "season": season, "throughWeek": through, "minAtt": min_att,
-        "lanes": LANES,
+        "season": season, "throughWeek": through, "minAtt": min_att, "minTgt": min_tgt,
+        "lanes": LANES, "zones": ZONES, "sides": SIDES,
+        "depths": [d[0] for d in DEPTHS],
         "source": ("nflverse play-by-play (charting CC-BY-SA 4.0, credit FTN Data via nflverse); "
                    "Pro Football Reference advanced rushing; NFL Next Gen Stats"),
-        "runners": runners, "defence": defence,
+        "runners": runners, "receivers": receivers, "defence": defence,
     }
     os.makedirs(out_dir, exist_ok=True)
     path = os.path.join(out_dir, "ground.json")
     with open(path, "w") as f:
         json.dump(payload, f, separators=(",", ":"))
     print(f"  wrote {path} ({os.path.getsize(path)/1024:.0f} KB) - "
-          f"{len(runners)} runners, {len(defence)} defences")
+          f"{len(runners)} runners, {len(receivers)} receivers, {len(defence)} defences")
     return payload
 
 
@@ -304,6 +470,15 @@ def selftest():
     check("right end maps to RE", lane_of("right", "end") == "RE")
     check("an unlocated run maps to nothing", lane_of(None, None) is None)
     check("a left run with no gap maps to nothing", lane_of("left", None) is None)
+
+    check("a screen behind the line maps to the screen band", zone_of("left", -3) == "L-screen")
+    check("a 5-yard target is short", zone_of("middle", 5) == "M-short")
+    check("a 15-yard target is intermediate", zone_of("right", 15) == "R-mid")
+    check("a 20-yard target is deep", zone_of("right", 20) == "R-deep")
+    check("the band boundary belongs to the band above", zone_of("left", 10) == "L-mid")
+    check("no air yards means no square", zone_of("left", None) is None)
+    check("no side means no square", zone_of(None, 5) is None)
+    check("twelve squares in all", len(ZONES) == 12)
 
     check("suffix stripped for the PFR join", norm_name("Brian Robinson Jr.") == "brianrobinson")
     check("punctuation stripped", norm_name("Ja'Marr Chase") == "jamarrchase")
@@ -334,8 +509,9 @@ if __name__ == "__main__":
     ap.add_argument("--season", type=int, default=datetime.date.today().year)
     ap.add_argument("--out", default="nfl/data")
     ap.add_argument("--min-att", type=int, default=MIN_ATT_DEFAULT)
+    ap.add_argument("--min-tgt", type=int, default=MIN_TGT_DEFAULT)
     ap.add_argument("--selftest", action="store_true")
     a = ap.parse_args()
     if a.selftest:
         sys.exit(selftest())
-    build(a.season, a.out, a.min_att)
+    build(a.season, a.out, a.min_att, a.min_tgt)
