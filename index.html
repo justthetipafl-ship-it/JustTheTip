@@ -5339,13 +5339,28 @@ var GL_SCORE = 5.5, DR_SCORE = -3.5, GL_MIN_GAMES = 3, GL_RUNGS = 6;
 //   NBL  9,697 -> 13,277 predictions | spread 30.4 -> 34.5pt
 // AFL's 0.358 slope was the cause of its tail problem: a fit made on one market type compressed
 // everything toward the middle, which inflated every low-count market underneath it.
+/* The last known-good fit, standing in when a sport's calib.json is missing or too thin - and
+   now carrying the PER-MARKET record as well, because an existing calib.json written before this
+   change has no markets block at all. Without this the per-market gate would quietly do nothing
+   on every sport until the weekly calibration had run again, which is the worst kind of fix: one
+   that looks applied and is not. `gain` is Brier against that market's own base rate; at or below
+   zero the model did not beat guessing on it. NBA is in the table for the first time - it was
+   never there, so it fell through to no fit at all. */
 var CALIB = {
-  afl: { a:0.491, b: 0.147, spread: 0.188, n:24340 },
-  nfl: { a:0.589, b:-0.139, spread: 0.328, n:2651 },
-  epl: { a:0.722, b:-0.345, spread: 0.368, n:2090 },
-  mlb: { a:0.668, b:-0.389, spread: 0.272, n:20885 },
-  nbl: { a:0.630, b:-0.116, spread: 0.345, n:13277 },
-  nhl: { a:0.557, b:-0.186, spread: 0.435, n:12865 }
+  afl: { a:0.615, b:0.048, spread:0.302, n:36103,
+    markets:{ disposals:{n:4604,gain:0.0024}, kicks:{n:4604,gain:0.0042}, handballs:{n:4604,gain:0.0005}, marks:{n:4604,gain:-0.0005}, tackles:{n:4604,gain:0.0011}, dreamteam:{n:4604,gain:-0.0019}, clearances:{n:4548,gain:0.0226}, goals:{n:3931,gain:0.033} } },
+  nfl: { a:0.567, b:-0.089, spread:0.324, n:4520,
+    markets:{ tackles:{n:942,gain:0.0013}, rushRecYds:{n:709,gain:-0.0031}, receptions:{n:701,gain:0.0175}, recYds:{n:536,gain:0.0076}, rushYds:{n:258,gain:-0.0103}, rushAtt:{n:244,gain:-0.0149}, sacks:{n:170,gain:0.0149}, passAtt:{n:155,gain:0.0059}, passTds:{n:153,gain:0.0217}, passYds:{n:150,gain:0.025}, kickingPts:{n:145,gain:0.0041}, fgMade:{n:145,gain:0.033}, passInt:{n:120,gain:0.0256}, anytimeTd:{n:92,gain:0.0159} } },
+  epl: { a:0.827, b:-0.198, spread:0.435, n:2743,
+    markets:{ tackles:{n:1555,gain:0.0207}, foulsCommitted:{n:493,gain:-0.0049}, shots:{n:365,gain:0.0101}, saves:{n:170,gain:0.0393}, shotsOn:{n:147,gain:0.0019}, goals:{n:10,gain:-0.1559}, cards:{n:2,gain:-0.2694}, assists:{n:1,gain:-0.1074} } },
+  mlb: { a:0.671, b:-0.37, spread:0.267, n:27294,
+    markets:{ BB:{n:4583,gain:0.0075}, H:{n:4535,gain:0.0032}, TB:{n:4535,gain:0.0014}, HR:{n:4535,gain:0.0006}, RBI:{n:4535,gain:-0.0006}, R:{n:4535,gain:0.0029}, K:{n:36,gain:-0.0116} } },
+  nbl: { a:0.588, b:-0.164, spread:0.358, n:25337,
+    markets:{ pra:{n:2712,gain:-0.0003}, ra:{n:2711,gain:0.0063}, pr:{n:2703,gain:-0.0037}, pa:{n:2700,gain:0.0032}, points:{n:2683,gain:-0.0023}, rebounds:{n:2538,gain:0.0093}, assists:{n:2465,gain:0.0237}, steals:{n:2392,gain:0.0078}, threes:{n:2265,gain:0.0309}, blocks:{n:2168,gain:0.0233} } },
+  nhl: { a:0.593, b:-0.134, spread:0.411, n:19582,
+    markets:{ shots:{n:3899,gain:0.0}, points:{n:3861,gain:0.0071}, assists:{n:3824,gain:-0.0001}, goals:{n:3347,gain:-0.0025}, ppPoints:{n:2082,gain:-0.0004}, hits:{n:1171,gain:0.0081}, blocks:{n:1169,gain:0.0011}, saves:{n:229,gain:-0.0072} } },
+  nba: { a:0.119, b:-0.196, spread:0.091, n:26649,
+    markets:{ points:{n:3409,gain:-0.0365}, pra:{n:3409,gain:-0.0506}, pr:{n:3409,gain:-0.0473}, pa:{n:3409,gain:-0.0415}, ra:{n:3409,gain:-0.044}, rebounds:{n:3373,gain:-0.0349}, assists:{n:2854,gain:-0.0199}, threes:{n:2091,gain:-0.0052}, steals:{n:976,gain:0.0059}, blocks:{n:310,gain:-0.0014} } },
 };
 var EV_MIN_SPREAD = 0.05;          // below this the model can't rank, so EV is not a ranking key
 function calibFor(key){
@@ -5371,6 +5386,62 @@ function calibrate(key, prob){
    A gain floor of 0.003 sits in the wide gap between NBA's 0.0007 and AFL's 0.0056, so it isolates
    the one fit that is indistinguishable from the base rate without second-guessing the others. */
 var EV_MIN_BRIER_GAIN = 0.003;
+/* THE RECORD IS PER MARKET, NOT PER SPORT - and that gap is what put a $41 centre-back at the top
+   of First Goal with a "+50% EDGE" beside him.
+
+   evTrusted() asks whether the SPORT's fit beats guessing. EPL passes it comfortably. But the fit
+   is 2,743 walk-forward predictions of which 1,555 are tackles, and until now the calibrator only
+   ever tested the first five markets in a sport's config - so EPL's fouls, saves and cards were
+   never tested at all, and first goalscorer is not in that list in the first place. The sport
+   passed on its tackles record, and that pass was then spent printing hard edges on markets the
+   model had never once been held to.
+
+   calib.json now carries a per-market record, so the question can be asked properly: has the model
+   beaten the base rate ON THIS MARKET, over enough games to tell? Under 100 predictions nothing is
+   distinguishable from noise. A gain at or below zero means it did not beat guessing - and a
+   market that cannot beat guessing does not get to print a hard number. Nothing is hidden by this;
+   the read still shows, the edge still shows. It is the CLAIM that softens, exactly as it already
+   does for a sport the model cannot rank. */
+var EV_MIN_MKT_N = 100;
+function mktFitFor(key, mkt){
+  var c = calibFor(key) || {};
+  // a live calib.json written before per-market records existed has none, so fall back to the
+  // baked-in table rather than silently trusting everything
+  var m = c.markets || (CALIB[key] || {}).markets;
+  if (!m || !mkt) return null;
+  return m[mkt] || { n:0 };
+}
+function evTitle(key, mkt){
+  /* Neutral wording: not every tile labels this corner "EDGE" - Fouled Again calls it PROJ FOULS -
+     so the tooltip states the caveat rather than explaining a label that may not be there. */
+  var n = mktFitNote(key, mkt);
+  return n ? ' title="' + esc(n.charAt(0).toUpperCase() + n.slice(1) + '.') + '"' : '';
+}
+function evTrustedMkt(key, mkt){
+  if (!evTrusted(key)) return false;        // the sport-level gate still has to pass first
+  var e = mktFitFor(key, mkt);
+  if (!e) return true;                      // nothing recorded either way: behave as before
+  if (!e.n || e.n < EV_MIN_MKT_N) return false;
+  // calib.json records brier against the market's own base rate; the baked-in table stores the
+  // difference directly. Accept either shape.
+  var gain = (e.gain != null) ? e.gain
+           : (e.brier != null && e.brierBaseRate != null) ? (e.brierBaseRate - e.brier) : null;
+  if (gain == null) return true;
+  return gain >= 0;
+}
+/* Why a market is not trusted, in words, for the reader who wants to know. */
+function mktFitNote(key, mkt){
+  if (!evTrusted(key)) return 'the model cannot rank this sport';
+  var e = mktFitFor(key, mkt);
+  if (!e) return null;
+  if (!e.n) return 'the model has never been tested on this market';
+  if (e.n < EV_MIN_MKT_N) return 'only ' + e.n + ' graded ' + (e.n === 1 ? 'bet' : 'bets')
+    + ' on this market - too few to tell';
+  var gain = (e.gain != null) ? e.gain
+           : (e.brier != null && e.brierBaseRate != null) ? (e.brierBaseRate - e.brier) : null;
+  if (gain != null && gain < 0) return 'on this market the model has not beaten guessing';
+  return null;
+}
 function evTrusted(key){
   var c = calibFor(key) || {};
   if (!(c.spread >= EV_MIN_SPREAD)) return false;
@@ -5690,7 +5761,7 @@ function ouRow(key, r){
     + '</div>'
     + '<div class="gl-right"><div class="gl-ev '+(r.ev >= 0 ? 'pos' : 'neg')+'">'
       + (r.ev > 0 ? '+' : '')+Math.round(r.ev*100)+'%</div>'
-      + '<div class="gl-evl">'+(evTrusted(key) ? 'EDGE' : 'EDGE?')+'</div>'
+      + '<div class="gl-evl"'+evTitle(key, r.mkt)+'>'+(evTrustedMkt(key, r.mkt) ? 'EDGE' : 'EDGE?')+'</div>'
       + '<div class="gl-odds">$'+r.price.toFixed(2)+(r.book ? '<i>'+esc(r.book)+'</i>' : '')+'</div>'
       + '<span class="gl-book">'+esc(r.book||'')+'</span></div></div>';
 }
@@ -6320,7 +6391,7 @@ function dueRow(key, r){
     + '</div></div>'
     + '<div class="gl-right"><div class="gl-ev '+(b.ev >= 0 ? 'pos' : 'neg')+'">'
       + (b.ev > 0 ? '+' : '')+Math.round(b.ev*100)+'%</div>'
-      + '<div class="gl-evl">'+(evTrusted(key) ? 'EDGE' : 'EDGE?')+'</div>'
+      + '<div class="gl-evl"'+evTitle(key, 'goals')+'>'+(evTrustedMkt(key, 'goals') ? 'EDGE' : 'EDGE?')+'</div>'
       + '<div class="gl-odds">$'+b.price.toFixed(2)+(b.book ? '<i>'+esc(b.book)+'</i>' : '')+'</div>'
       + '<span class="gl-book">'+esc(b.book||'')+'</span></div></div>';
 }
@@ -6408,7 +6479,7 @@ function ppMerchantRow(key, r){
     + '</div></div>'
     + '<div class="gl-right"><div class="gl-ev '+(b.ev >= 0 ? 'pos' : 'neg')+'">'
       + (b.ev > 0 ? '+' : '')+Math.round(b.ev*100)+'%</div>'
-      + '<div class="gl-evl">'+(evTrusted(key) ? 'EDGE' : 'EDGE?')+'</div>'
+      + '<div class="gl-evl"'+evTitle(key, b.mkt)+'>'+(evTrustedMkt(key, b.mkt) ? 'EDGE' : 'EDGE?')+'</div>'
       + '<div class="gl-odds">$'+b.price.toFixed(2)+(b.book ? '<i>'+esc(b.book)+'</i>' : '')+'</div>'
       + '<span class="gl-book">'+esc(b.book||'')+'</span></div></div>';
 }
@@ -6490,7 +6561,7 @@ function shotMachineRow(key, r){
     + '</div></div>'
     + '<div class="gl-right"><div class="gl-ev '+(r.ev >= 0 ? 'pos' : 'neg')+'">'
       + (r.ev > 0 ? '+' : '')+Math.round(r.ev*100)+'%</div>'
-      + '<div class="gl-evl">'+(evTrusted(key) ? 'EDGE' : 'EDGE?')+'</div>'
+      + '<div class="gl-evl"'+evTitle(key, 'shots')+'>'+(evTrustedMkt(key, 'shots') ? 'EDGE' : 'EDGE?')+'</div>'
       + '<div class="gl-odds">$'+r.price.toFixed(2)+(r.book ? '<i>'+esc(r.book)+'</i>' : '')+'</div>'
       + '<span class="gl-book">'+esc(r.book||'')+'</span></div></div>';
 }
@@ -6680,7 +6751,7 @@ function nflDueRow(key, r){
     + '</div>' + nflRzBox(key, r) + '</div>'
     + '<div class="gl-right"><div class="gl-ev '+(b.ev >= 0 ? 'pos' : 'neg')+'">'
       + (b.ev > 0 ? '+' : '')+Math.round(b.ev*100)+'%</div>'
-      + '<div class="gl-evl">'+(evTrusted(key) ? 'EDGE' : 'EDGE?')+'</div>'
+      + '<div class="gl-evl"'+evTitle(key, 'anytimeTd')+'>'+(evTrustedMkt(key, 'anytimeTd') ? 'EDGE' : 'EDGE?')+'</div>'
       + '<div class="gl-odds">$'+b.price.toFixed(2)+(b.book ? '<i>'+esc(b.book)+'</i>' : '')+'</div>'
       + '<span class="gl-book">'+esc(b.book||'')+'</span></div></div>';
 }
@@ -8210,8 +8281,23 @@ function eplRow(key, r, bet, chips, big, bigL, good, cardLbl, betOd){
     + '<div class="gl-left"><div class="gl-nm"><b>'+esc(r.name)+'</b><span class="gl-tag">'
     + esc((posShortP(r.p) ? posShortP(r.p)+' \u00b7 ' : '')+abbrOf(key, r.p.team)+' v '+abbrOf(key, r.opp))+'</span></div>'
     + '<div class="gl-bet">'+bet+'</div>'
-    + '<div class="gl-why">'+chips.map(function(c){ return '<span class="gl-chip'+(c[1] ? ' good' : '')+'">'+c[0]+'</span>'; }).join('')+ moveChip(key, r.name, (betOd && betOd.market) || (r.b && r.b.mkt) || r.mkt, (betOd && betOd.line) != null ? betOd.line : ((r.b && r.b.od) ? r.b.od.line : r.line), (betOd && betOd.book) || ((r.b && r.b.od) ? r.b.od.book : r.book), (betOd && (betOd.price != null ? betOd.price : betOd.over)) || ((r.b && r.b.od) ? (r.b.od.price != null ? r.b.od.price : r.b.od.over) : r.price)) +'</div></div>'
-    + '<div class="gl-right"><div class="gl-ev '+(good === false ? 'neg' : 'pos')+'">'+big+'</div><div class="gl-evl">'+bigL+'</div></div></div>';
+    /* Say it on the row where the claim is made. These tiles print a model percentage against an
+       implied one, which reads as a measured edge - so where the model has no record on that
+       market, or a losing one, the row has to say so rather than leave the number standing alone. */
+    + '<div class="gl-why">'+chips.map(function(c){ return '<span class="gl-chip'+(c[1] ? ' good' : '')+'">'+c[0]+'</span>'; }).join('')
+    + (function(){ var nt = mktFitNote(key, mktOfRow(key, r, cardLbl));
+        return nt ? '<span class="gl-chip warnish">'+esc(nt)+'</span>' : ''; })()
+    + moveChip(key, r.name, (betOd && betOd.market) || (r.b && r.b.mkt) || r.mkt, (betOd && betOd.line) != null ? betOd.line : ((r.b && r.b.od) ? r.b.od.line : r.line), (betOd && betOd.book) || ((r.b && r.b.od) ? r.b.od.book : r.book), (betOd && (betOd.price != null ? betOd.price : betOd.over)) || ((r.b && r.b.od) ? (r.b.od.price != null ? r.b.od.price : r.b.od.over) : r.price)) +'</div></div>'
+    /* These tiles pass their own right-hand label, and six of the seven pass the literal string
+       "EDGE" - so none of them softened when the market behind them had no record. An EDGE label
+       here now answers to the same test as everywhere else. */
+    + (function(){
+        var mk = mktOfRow(key, r, cardLbl);
+        var lbl = (bigL === 'EDGE' && !evTrustedMkt(key, mk)) ? 'EDGE?' : bigL;
+        return '<div class="gl-right"><div class="gl-ev '+(good === false ? 'neg' : 'pos')+'">'+big+'</div>'
+          + '<div class="gl-evl"'+evTitle(key, mk)+'>'+lbl+'</div></div>';
+      })()
+    + '</div>';
 }
 var fmtP = function(od){ return '$'+od.price.toFixed(2)+' '+esc(od.book || ''); };
 var edgeOf = function(pr, price){ return pr * price - 1; };
@@ -8262,7 +8348,7 @@ function eplFirstGoal(key, g){
     // the one priced tile without a walk-forward (events.json only holds season aggregates),
     // and first-scorer books carry big margins - so it needs a clear 10% before it fires
     if (ev < 0.10 || rd.prob > Math.min(0.97, (1/od.over) * 4)) return;
-    out.push({ name:p.name, p:p, opp:opp, rd:rd, od:od, ev:ev });
+    out.push({ name:p.name, p:p, opp:opp, rd:rd, od:od, ev:ev, mkt:'firstScorer' });
   });
   out.sort(function(a,b){ return b.ev - a.ev; });
   return { rows:out.slice(0, 6).map(function(r){
@@ -8295,7 +8381,7 @@ function eplTapIns(key, g){
     var pr = modelProbAt(key, p, 'shotsOn', od.line, opp);
     if (pr == null || edgeOf(pr, od.price) < 0) return;
     var oT = eplTeam(key, opp), lgSA = eplLeagueMean(key, 'shotsOn_a');
-    out.push({ name:p.name, p:p, opp:opp, sh:sh, sot:sot, acc:acc, od:od, ask:ask, pr:pr,
+    out.push({ name:p.name, p:p, opp:opp, mkt:'shotsOn', sh:sh, sot:sot, acc:acc, od:od, ask:ask, pr:pr,
                oppSA:(oT ? +oT.shotsOn_a : null), lgSA:lgSA });
   });
   out.sort(function(a,b){ return (b.acc*b.sot) - (a.acc*a.sot); });
@@ -8319,7 +8405,7 @@ function eplPenKings(key, g){
     var pr = modelProbAt(key, p, 'goals', 0.5, opp);
     if (pr == null || edgeOf(pr, od.price) < 0) return;
     var l10 = statVals(key, p.name, 'goals', eplLogs(key, p.name, 45).slice(0, 10));
-    out.push({ name:p.name, p:p, opp:opp, od:od, pr:pr, g10:l10.reduce(function(a,b){ return a+b; }, 0), n10:l10.length });
+    out.push({ name:p.name, p:p, opp:opp, mkt:'goals', od:od, pr:pr, g10:l10.reduce(function(a,b){ return a+b; }, 0), n10:l10.length });
   });
   out.sort(function(a,b){ return edgeOf(b.pr, b.od.price) - edgeOf(a.pr, a.od.price); });
   return { rows:out.map(function(r){
@@ -8337,6 +8423,9 @@ function eplPenKings(key, g){
 /* 6. BRICK WALL - saves come from shots on target, so project them: the opponent's shots on
    target blended with what this side concedes, times the keeper's own save rate, against the
    saves ladder.                                                                                */
+/* A keeper can beat his projection - that is the whole point of a line - but not by this much.
+   1.6x the projected saves is the furthest the tile will reach. */
+var BW_PROJ_CAP = 1.6;
 function eplBrickWall(key, g){
   var out = [];
   eachSkater(key, g, function(p, team, opp){
@@ -8347,7 +8436,12 @@ function eplBrickWall(key, g){
     var l10 = eplLogs(key, p.name, 60).slice(0, 10);
     var sv = mean(statVals(key, p.name, 'saves', l10));
     var faced = mT.shotsOn_a ? +mT.shotsOn_a : null;
-    var saveRate = (faced && sv != null) ? Math.max(0.5, Math.min(0.9, sv / faced)) : 0.7;
+    /* The clamp is a guard on the PROJECTION - it stops a freak sample running away with the
+       number. It is not a measurement, and it was being printed as one: two keepers both showing
+       "90% save rate" were two keepers whose raw figure was above 0.9, not two keepers who save
+       nine of ten. Keep the raw rate for the chip and the clamped one for the maths. */
+    var rawRate = (faced && sv != null) ? (sv / faced) : null;
+    var saveRate = rawRate != null ? Math.max(0.5, Math.min(0.9, rawRate)) : 0.7;
     var proj = sotFaced * saveRate;
     // The projection is shown, but the PRICE comes from the EPL scoring model: that has a
     // walk-forward behind it (35.8pt quartile spread); this projection doesn't - historical team
@@ -8356,22 +8450,32 @@ function eplBrickWall(key, g){
     var pick = null;
     rungs.forEach(function(c){
       if (pick) return;
+      /* Rungs are tried hardest-first, so without a ceiling this tile walks all the way up the
+         ladder and stops at the longest price that clears 5% - which is how a keeper projected
+         for 2.7 saves ended up fronting a 10+ bet at $126. The tile's own projection is the
+         ceiling: it can back a rung above the projection, because that is what a line is for,
+         but not one in a different conversation from it. PROJ_CAP is deliberately generous -
+         the point is to catch the absurd, not to second-guess the read. */
+      if (proj > 0 && c.line > proj * BW_PROJ_CAP) return;
       var pr = modelProbAt(key, p, 'saves', c.line, opp);
       if (pr == null || pr > Math.min(0.97, (1/c.price) * 4)) return;
       if (edgeOf(pr, c.price) >= 0.05) pick = { c:c, pr:pr };
     });
     if (!pick) return;
-    out.push({ name:p.name, p:p, opp:opp, proj:proj, sotFaced:sotFaced, saveRate:saveRate, pick:pick });
+    out.push({ name:p.name, p:p, opp:opp, mkt:'saves', proj:proj, sotFaced:sotFaced,
+               saveRate:saveRate, rawRate:rawRate, pick:pick });
   });
   out.sort(function(a,b){ return edgeOf(b.pick.pr, b.pick.c.price) - edgeOf(a.pick.pr, a.pick.c.price); });
   return { rows:out.map(function(r){
       return eplRow(key, r, '<b>'+Math.ceil(r.pick.c.line)+'+ Saves</b> \u00b7 '+fmtP(r.pick.c),
         [[r.sotFaced.toFixed(1)+' shots on target expected', r.sotFaced > 4.5],
-         [Math.round(r.saveRate*100)+'% save rate', r.saveRate > 0.7],
+         [(r.rawRate != null ? Math.round(r.rawRate*100)+'% save rate'
+                             : 'save rate unknown \u2014 using 70%'), (r.rawRate || 0) > 0.7],
          ['model '+Math.round(r.pick.pr*100)+'% v '+Math.round(100/r.pick.c.price)+'% implied', true]],
         r.proj.toFixed(1), 'PROJ SAVES');
     }),
-    why:'No keeper on this fixture has a saves rung the shots-on-target projection beats by 5%.' };
+    why:'No keeper on this fixture has a saves rung within reach of the shots-on-target '
+      + 'projection that the model beats by 5%.' };
 }
 /* 7. FOULED AGAIN - production aimed at fouls DRAWN, but the market books post is fouls
    COMMITTED, so that's what gets priced: his rate, scaled by the referee's whistle and by how
@@ -8398,7 +8502,7 @@ function eplFouls(key, g){
       if (edgeOf(pr, c.price) >= 0.05) pick = { c:c, pr:pr };
     });
     if (!pick) return;
-    out.push({ name:p.name, p:p, opp:opp, fc:fc, proj:proj, ref:ref, refMult:refMult, oppMult:oppMult, pick:pick });
+    out.push({ name:p.name, p:p, opp:opp, mkt:'foulsCommitted', fc:fc, proj:proj, ref:ref, refMult:refMult, oppMult:oppMult, pick:pick });
   });
   out.sort(function(a,b){ return edgeOf(b.pick.pr, b.pick.c.price) - edgeOf(a.pick.pr, a.pick.c.price); });
   return { rows:out.slice(0, SIG_MAX_ROWS).map(function(r){
@@ -8426,7 +8530,7 @@ function eplMismatch(key, g){
     if (!od) return;
     var pr = modelProbAt(key, p, 'shots', od.line, opp);
     if (pr == null || edgeOf(pr, od.price) < 0) return;
-    out.push({ name:p.name, p:p, opp:opp, dr:dr, sh:sh, od:od, ask:ask, pr:pr });
+    out.push({ name:p.name, p:p, opp:opp, mkt:'shots', dr:dr, sh:sh, od:od, ask:ask, pr:pr });
   });
   out.sort(function(a,b){ return b.dr.pct - a.dr.pct; });
   return { rows:out.slice(0, SIG_MAX_ROWS).map(function(r){
