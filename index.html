@@ -1053,6 +1053,11 @@
     color:var(--text-3);font-family:var(--font-display);font-weight:800;font-size:10px;
     letter-spacing:.06em;text-transform:uppercase;}
   .bld-tab.on{background:var(--surface-2);color:var(--text);}
+  /* The pick'em view switch sits INSIDE a source pane, one level below the card's own tab strip.
+     Two identical strips stacked read as one confusing row of five, so this one is smaller and
+     only as wide as its two buttons need. */
+  .pk-tabs{margin:0 0 8px;width:-moz-fit-content;width:fit-content;max-width:100%;}
+  .pk-tabs .bld-tab{flex:0 0 auto;font-size:9px;padding:5px 10px;}
   .bld-body{padding:0 12px 12px;}
   .bld-body>.dayband:first-child{margin-top:0;}
   .cmb-tab{flex:1;background:transparent;border:0;color:var(--text-3);font-family:var(--font-display);font-weight:800;
@@ -9936,7 +9941,7 @@ function readCard(icon, title, desc, count, body, note){
    each source's old visibility rather than imposing one: in Nerd Mode the two reads stay and the
    two multi-makers go, exactly as before. */
 var BUILD_SOURCES_ALL = [['search','Search'], ['history','D\u00e9j\u00e0 Vu'],
-                         ['sim','Simulator'], ['radar','Jupiter']];
+                         ['sim','Simulator'], ['pickem','Pick\u2019em'], ['radar','Jupiter']];
 var BUILD_NERD_OK = { history:1, radar:1 };
 /* IS THIS FIXTURE STILL WORTH BUILDING ON?
    Search is gated on the game being upcoming - not a user pin, a staleness guard, so the builder
@@ -9966,6 +9971,14 @@ function buildSources(key, g){
     return true;
   });
 }
+var NUM_WORD = ['No', 'One', 'Two', 'Three', 'Four', 'Five', 'Six', 'Seven'];
+function buildDesc(srcs){
+  var ways = srcs.filter(function(x){ return x[0] !== 'pickem'; }).length;
+  var pk = srcs.length !== ways;
+  var lead = (NUM_WORD[ways] || ways) + ' way' + (ways === 1 ? '' : 's') + ' to put a multi together';
+  if (!ways) return 'The pick’em lines against the book’s';
+  return lead + (pk ? ', and the pick’em lines' : '');
+}
 var BUILD_NOW = null;             // the fixture the card last drew, for its own handlers
 function buildSrc(key, g){
   var s = state.view.buildSrc, list = buildSources(key, g);
@@ -9978,6 +9991,7 @@ function buildPane(key, g, src){
     if (src === 'radar')   return jupiterSection(key, g) || '';
     if (src === 'history') return dejaVuSection(key, g) || '';
     if (src === 'sim')     return simSection(key, g) || '';
+    if (src === 'pickem')  return pickemPane(key, g) || '';
     return mbPanel({ key:key, g:g }) || '';
   } catch(e){ return ''; }
   finally { BUILD_PANE = false; }
@@ -9986,7 +10000,8 @@ var BUILD_EMPTY = {
   radar:   'No priced players on this fixture to plot yet.',
   history: 'These two clubs have no meetings on file with a run long enough to read.',
   sim:     'Not enough game history for these two sides yet.',
-  search:  'No priced legs on this fixture yet.'
+  search:  'No priced legs on this fixture yet.',
+  pickem:  'No pick’em lines posted for this fixture yet.'
 };
 function buildSection(key, g){
   var src = buildSrc(key, g);
@@ -10013,7 +10028,14 @@ function buildSection(key, g){
   return '<div id="build-panel"><details class="sig-tile bld-card"' + cardAttr('build') + '>'
     + '<summary class="sig-head"' + cardTog('build') + '><span class="sig-ico"><i class="ti ti-layers-subtract"></i></span>'
     + '<span><span class="sig-ttl">Multi Builder</span>'
-    + '<span class="sig-desc">Four ways to put a multi together</span>'
+    /* The count used to be the word "Four", typed in. It was already wrong the moment a source
+       was filtered out for a finished fixture, and adding a fifth made it wrong the rest of the
+       time. It counts what is actually on the card now.
+       Pick'em is named separately rather than folded into the total, because it is NOT a way to
+       put a multi together: those lines carry no price, so they cannot be legs in a ticket at a
+       sportsbook. They are lines to read next to the book's. Counting them in would promise
+       something the card cannot do. */
+    + '<span class="sig-desc">' + buildDesc(srcs) + '</span>'
     + toolChips + '</span>'
     + '<span class="sig-n bld-n">' + srcs.length + '</span></summary>'
     + '<div class="bld-body">' + tabs
@@ -10128,9 +10150,6 @@ function cardPane(kind, key, g, src){
       if (src === 'rz')    return redZoneSection(key, g) || '';
       if (src === 'profile') return scoreProfilePane(key, g) || '';
     }
-    if (kind === 'pickem'){
-      return pickemSection(key, g, src) || '';
-    }
     if (kind === 'skill'){
       return ggFixturePane(key, g, src) || '';
       return '';
@@ -10170,27 +10189,6 @@ var CARD_DEFS = {
      both sources, so cardSection finds no live source and the card never appears. */
   /* Its own card rather than a source on another: a pick'em line is a different product from a
      priced market, and burying it inside one would suggest the tool's edge reads apply to it. */
-  /* Two sources, not a filter. The card is about the disagreement, so a line sitting exactly on
-     the book's has nothing to say here and leads the default view. But a row removed from a
-     research tool is a row nobody knows was removed - so the level ones and the ones with no
-     posted price to compare against keep a tab of their own, and the first view says in words
-     how many went there. Nothing is dropped, it is just not first. */
-  pickem: { srcs:function(){ return [['out','Out of line'], ['all','Every line']]; },
-            icon:'ti-crosshair',
-            title:'Pick\u2019em', id:'pickem-panel', fold:'pickem',
-            desc:function(key, g){
-              var rows = pickemRows(key, g);
-              if (!rows.length) return 'Lines with no price, against the book\u2019s';
-              /* The headline counts what the default view actually shows, so the number on the
-                 closed card and the number of rows inside it agree. They did not while the
-                 header counted every line and the view had started hiding the level ones. */
-              var out = rows.filter(function(r){ return r.diff != null && r.diff !== 0; });
-              if (!out.length) return rows.length + ' line' + (rows.length === 1 ? '' : 's')
-                + ' \u00b7 none out of line with the book';
-              var wide = out.filter(function(r){ return Math.abs(r.diff) >= 0.5; });
-              return out.length + ' out of line \u00b7 ' + wide.length
-                + ' by half a point or more \u00b7 ' + rows.length + ' in all';
-            } },
   skill:  { srcs:function(){ return SKILL_SOURCES; }, icon:'ti-run',
             title:'Ground & Air', id:'skill-panel', fold:'skill',
             desc:function(key, g){
@@ -10307,7 +10305,8 @@ function focusPage(){
     + (S.t3==='ready' && !state.view.nerd ? cardSection('player', key, g) : '')
     + (S.t3==='ready' && !state.view.nerd ? cardSection('score', key, g) : '')
     + (S.t3==='ready' && !state.view.nerd ? cardSection('skill', key, g) : '')
-    + (S.t3==='ready' && !state.view.nerd ? cardSection('pickem', key, g) : '')
+    /* Pick'em was a card of its own here. It is a source on the Build card now - the lines and
+       the thing you build out of them in one place, before Jupiter. */
 
     // Nerd Mode replaces the signals rather than adding to them: it is a different read of the
     // same fixture (the market against itself), and stacking both made the page enormous.
@@ -19683,6 +19682,25 @@ function pickemSkew(key){
     + ', so some of these gaps will have closed since. Treat the wide ones as worth checking at '
     + 'the source rather than as live.';
 }
+/* Pick'em is a source on the Build card rather than a card of its own. That costs it the source
+   tabs a card gets for free, and the two views still have to be reachable - so the pane carries
+   its own switch. Same two views, one level further in: the disagreements first, everything
+   behind them. The toggle only appears when there is actually something hidden behind it. */
+function pickemPane(key, g){
+  var all = pickemRows(key, g);
+  if (!all.length) return '';
+  var out = all.filter(function(r){ return r.diff != null && r.diff !== 0; });
+  var src = (state.view.pkSrc === 'all' || !out.length) ? 'all' : 'out';
+  var body = pickemSection(key, g, src);
+  if (!body) return '';
+  var toggle = (!out.length || out.length === all.length) ? ''
+    : '<div class="bld-tabs pk-tabs">'
+      + [['out', 'Out of line'], ['all', 'Every line']].map(function(x){
+          return '<button class="bld-tab' + (x[0] === src ? ' on' : '')
+            + '" onclick="LAB.pkSrc(\'' + x[0] + '\')">' + esc(x[1]) + '</button>';
+        }).join('') + '</div>';
+  return toggle + body;
+}
 function pickemSection(key, g, src){
   var all = pickemRows(key, g);
   if (!all.length) return '';
@@ -23006,6 +23024,8 @@ window.LAB = {
   resPeriod: function(p){ state.view.resPeriod = p; render(); },
   /* Switches the Build card's source and redraws that card only - see buildRender. */
   buildSrc: function(src){ state.view.buildSrc = src; buildRender(); },
+  /* Same fast path: the pick'em view switch redraws the Build card, not the fixture. */
+  pkSrc: function(src){ state.view.pkSrc = src; buildRender(); },
   /* From a chip in the closed header: choose the tool AND open the card. cardToggle on the
      summary would otherwise fight this - the chip's own handler stops the event before it gets
      there, so the card is opened here explicitly rather than toggled. */
@@ -23283,6 +23303,14 @@ window.LAB = {
   pickemProbe: function(key, g){ return pickemRows(key, g); },
   pickemSkewProbe: function(key){ return pickemSkew(key); },
   cardPaneProbe: function(kind, key, g, src){ return cardPane(kind, key, g, src); },
+  buildPaneProbe: function(key, g, src){ return buildPane(key, g, src); },
+  buildSrcsProbe: function(key, g){ return buildSources(key, g); },
+  buildDescProbe: function(srcs){ return buildDesc(srcs); },
+  pickemPaneProbe: function(key, g, src){
+    var keep = state.view.pkSrc;
+    try { state.view.pkSrc = src; return pickemPane(key, g); }
+    finally { state.view.pkSrc = keep; }
+  },
   cardDefsProbe: function(){ return CARD_DEFS; },
   teamNameProbe: function(key, t){ return teamName(key, t); },
   /* What the Green Lights / Death Riders pool actually contains, before any rendering. Added to
