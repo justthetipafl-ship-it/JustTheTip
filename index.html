@@ -10065,8 +10065,8 @@ var TEAM_SOURCES = [['web','Attack v Def'], ['dvp','DvP'], ['form','Last 5'], ['
 var PLAYER_SOURCES = [['radar','Radar'], ['leaders','Leaders'], ['formal','Form Alerts'],
                       ['coverage','Coverage'], ['usage','Usage'], ['firstread','First Read'],
                       ['avail','Available'], ['goalie','In Goal'], ['all','Everyone']];
-var SCORE_SOURCES = [['court','The Floor'], ['acts','How He Scores'], ['q1','Q1'],
-                    ['first','First Score'], ['rz','Red Zone']];
+var SCORE_SOURCES = [['profile','Player'], ['court','The Floor'], ['acts','How He Scores'],
+                    ['q1','Q1'], ['first','First Score'], ['rz','Red Zone']];
 var TEAM_NOW = null, PLAYER_NOW = null, SCORE_NOW = null;
 function cardPane(kind, key, g, src){
   CTX_PANE = true;                            // the "you are a pane, skip your own heading" flag
@@ -10108,6 +10108,7 @@ function cardPane(kind, key, g, src){
       if (src === 'acts')  return nbaActionSection(key, g) || '';
       if (src === 'first') return firstLastSection(key, g) || '';
       if (src === 'rz')    return redZoneSection(key, g) || '';
+      if (src === 'profile') return scoreProfilePane(key, g) || '';
     }
     if (kind === 'skill'){
       return ggFixturePane(key, g, src) || '';
@@ -19026,8 +19027,8 @@ function nbaActionSection(key, g){
       + '<div class="pt-n"><b>' + (v.share * 100).toFixed(1) + '%</b>of his shots'
         + '<i>' + v.att + ' att</i></div>'
       + '<div class="pt-n"><b>' + (v.efg * 100).toFixed(1) + '%</b>his eFG'
-        + (vsLg != null ? '<i class="' + (vsLg >= 0 ? 'up' : 'dn') + '">'
-           + (vsLg >= 0 ? '+' : '−') + Math.abs(vsLg).toFixed(0) + ' v league</i>' : '')
+        + (vsLg != null ? '<i class="' + (Math.round(vsLg) >= 0 ? 'up' : 'dn') + '">'
+           + signedInt(vsLg) + ' v league</i>' : '')
         + '</div>'
       + '<div class="pt-d">' + right + '</div></div>';
   }).join('');
@@ -19118,7 +19119,7 @@ function ddNbaZones(key, p, opp){
               + '%, ' + ordinalish(dz.rank) + ' of ' + dz.of : '') + '</span>'
       + '<b>' + Math.round((mine || 0) * 100) + '%</b>'
       + (edge != null ? '<i class="' + (edge >= 0 ? 'qt-up' : 'qt-dn') + '">'
-          + (edge >= 0 ? '+' : '') + edge.toFixed(0) + '</i>' : '') + '</div>';
+          + signedInt(edge) + '</i>' : '') + '</div>';
   }).join('');
   return '<div class="dd-sec"><div class="dd-h">Where he shoots from</div>'
     + '<div class="dd-note">' + z.shots + ' field-goal attempts. The number on the right is how he '
@@ -19149,6 +19150,16 @@ function nflProfile(key, name){
   }
   var k = cmbNameKey(name), ix2 = S.idx.prIdx;
   return { rec:ix2.rec[k], rush:ix2.rush[k], pass:ix2.pass[k], teams:pr.teams || {} };
+}
+/* A signed whole number that never reads "-0". A value between -0.5 and 0 rounds to zero, and
+   both of the zone readouts were then gluing a minus sign onto it - so a shooter level with the
+   league was shown as "-0", which looks like a bug to anyone reading it and is not even wrong in
+   an interesting way. Zero has no sign. */
+function signedInt(v){
+  if (v == null || !isFinite(v)) return '\u2014';
+  var n = Math.round(v);
+  if (n === 0) return '0';
+  return (n > 0 ? '+' : '\u2212') + Math.abs(n);
 }
 function pfCell(label, value, note, good){
   return '<div class="pf-cell"><b' + (good === true ? ' class="pf-good"' : good === false ? ' class="pf-bad"' : '')
@@ -19495,6 +19506,62 @@ function qbTab(key, name){
    as a card on the fixture with a selector across the men in THIS match, Ground and Air as the two
    sources, and the opponent taken from the fixture rather than from whoever the player happens to
    face next - on a fixture you are looking at, those can differ.                                 */
+/* THE SCORING PROFILE, ON THE FIXTURE -------------------------------------------------------
+   The player page has carried this for a while behind its Scoring tab - the NBA shooting line,
+   zones, quarters and minutes; the NFL usage split and the touchdown read. It answers "how does
+   this man score", which is a question you ask while looking at a fixture, not one you go to a
+   player page for. So it becomes a source on the Scoring card with a filter across the men in
+   this match, the same shape the Ground & Air card uses.
+
+   The pool is the fixture's PRICED players, already sorted by how many markets they carry. A man
+   with no posted line has nothing to research here, and listing a whole roster would bury the
+   handful of names worth looking at. */
+function scoreProfileHas(key, name){
+  if (key === 'nfl'){
+    var pr = nflProfile(key, name);
+    return !!(pr && (pr.rec || pr.rush || pr.pass));
+  }
+  if (key === 'nba'){
+    /* Cheap test, deliberately: nbaScoringProfile builds every section before it can tell you it
+       had nothing, and running that for every man in the fixture on every render to decide who
+       goes in a dropdown would cost more than drawing the card. */
+    var S = state.sports[key];
+    if (nbaZones(key, name) || nbaQuarters(key, name)) return true;
+    return (((S.idx.logsByName || {})[name] || []).length > 0);
+  }
+  return false;
+}
+function scoreProfileBody(key, name, opp){
+  if (key === 'nba') return nbaScoringProfile(key, name) || '';
+  if (key !== 'nfl') return '';
+  var usage = nflUsageProfile(key, name, opp) || '';
+  var tud = tuddyProfile(key, { name:name, opp:opp }) || '';
+  return usage + tud;
+}
+function scoreProfileList(key, g){
+  if (key !== 'nfl' && key !== 'nba') return [];
+  return (gamePlayers(key, g) || []).filter(function(p){ return scoreProfileHas(key, p.name); });
+}
+function scoreProfilePane(key, g){
+  var list = scoreProfileList(key, g);
+  if (!list.length) return '';
+  var want = state.view.spPick;
+  var cur = null;
+  for (var i = 0; i < list.length; i++) if (list[i].name === want) cur = list[i];
+  if (!cur) cur = list[0];                 // a man picked on another fixture is not in this one
+  var opp = (normTeam(cur.team) === normTeam(g.home)) ? g.away : g.home;
+  var body = scoreProfileBody(key, cur.name, opp);
+  if (!body) return '';
+  var sel = list.length < 2 ? '' :
+    '<select class="mb-fixsel gg-sel" onchange="LAB.spPick(this.value)">'
+    + list.map(function(p){
+        var n = Object.keys(p.mkts || {}).length;
+        return '<option value="' + esc(p.name) + '"' + (p.name === cur.name ? ' selected' : '') + '>'
+          + esc(p.name) + ' \u00b7 ' + esc(abbrOf(key, p.team))
+          + (n ? ' \u00b7 ' + n + ' market' + (n === 1 ? '' : 's') : '') + '</option>';
+      }).join('') + '</select>';
+  return sel + body;
+}
 var SKILL_SOURCES = [['ground','Ground'], ['air','Air'], ['arm','Arm']];
 function ggFixtureList(key, g, kind){
   var G = groundData(key);
@@ -21352,7 +21419,7 @@ function teamProfile(key, team){
               + ' \u00b7 ' + d[z].att + ' faced</span>'
               + '<b>' + Math.round(d[z].pct * 100) + '%</b>'
               + (edge != null ? '<i class="' + (edge <= 0 ? 'qt-up' : 'qt-dn') + '">'
-                  + (edge >= 0 ? '+' : '') + edge.toFixed(0) + '</i>' : '') + '</div>';
+                  + signedInt(edge) + '</i>' : '') + '</div>';
           }).join('')
         + '<div class="dd-note">A low rank means they concede least there. The small figure is '
         + 'against the league from the same zone.</div></div>';
@@ -22719,6 +22786,7 @@ window.LAB = {
   /* From a chip in the closed header: choose the tool AND open the card. cardToggle on the
      summary would otherwise fight this - the chip's own handler stops the event before it gets
      there, so the card is opened here explicitly rather than toggled. */
+  spPick: function(name){ state.view.spPick = name; render(); },
   ggPick: function(kind, name){
     state.view.ggPick = state.view.ggPick || {};
     state.view.ggPick[kind] = name;
