@@ -2853,7 +2853,14 @@ var TEAM_FULL = {
     CAR:'Carolina Panthers', CHI:'Chicago Bears', CIN:'Cincinnati Bengals', CLE:'Cleveland Browns',
     DAL:'Dallas Cowboys', DEN:'Denver Broncos', DET:'Detroit Lions', GB:'Green Bay Packers',
     HOU:'Houston Texans', IND:'Indianapolis Colts', JAX:'Jacksonville Jaguars', KC:'Kansas City Chiefs',
-    LAC:'Los Angeles Chargers', LAR:'Los Angeles Rams', LV:'Las Vegas Raiders', MIA:'Miami Dolphins',
+    /* The Rams are keyed LA in this feed's data, not LAR - so the LAR line below had never once
+       matched and teamFullName fell through to the code. The club has been reading "LA" on every
+       NFL profile and header since. Found by the pick'em matcher, which compares the feed's
+       "Los Angeles Rams" against this table and was silently dropping every Rams line as a
+       fixture it could not place. Both keys are kept: LAR costs a line and covers a feed that
+       uses it. */
+    LA:'Los Angeles Rams', LAR:'Los Angeles Rams',
+    LAC:'Los Angeles Chargers', LV:'Las Vegas Raiders', MIA:'Miami Dolphins',
     MIN:'Minnesota Vikings', NE:'New England Patriots', NO:'New Orleans Saints', NYG:'New York Giants',
     NYJ:'New York Jets', PHI:'Philadelphia Eagles', PIT:'Pittsburgh Steelers', SEA:'Seattle Seahawks',
     SF:'San Francisco 49ers', TB:'Tampa Bay Buccaneers', TEN:'Tennessee Titans',
@@ -10122,7 +10129,7 @@ function cardPane(kind, key, g, src){
       if (src === 'profile') return scoreProfilePane(key, g) || '';
     }
     if (kind === 'pickem'){
-      return pickemSection(key, g) || '';
+      return pickemSection(key, g, src) || '';
     }
     if (kind === 'skill'){
       return ggFixturePane(key, g, src) || '';
@@ -10163,14 +10170,26 @@ var CARD_DEFS = {
      both sources, so cardSection finds no live source and the card never appears. */
   /* Its own card rather than a source on another: a pick'em line is a different product from a
      priced market, and burying it inside one would suggest the tool's edge reads apply to it. */
-  pickem: { srcs:function(){ return [['lines','Lines']]; }, icon:'ti-crosshair',
+  /* Two sources, not a filter. The card is about the disagreement, so a line sitting exactly on
+     the book's has nothing to say here and leads the default view. But a row removed from a
+     research tool is a row nobody knows was removed - so the level ones and the ones with no
+     posted price to compare against keep a tab of their own, and the first view says in words
+     how many went there. Nothing is dropped, it is just not first. */
+  pickem: { srcs:function(){ return [['out','Out of line'], ['all','Every line']]; },
+            icon:'ti-crosshair',
             title:'Pick\u2019em', id:'pickem-panel', fold:'pickem',
             desc:function(key, g){
               var rows = pickemRows(key, g);
               if (!rows.length) return 'Lines with no price, against the book\u2019s';
-              var out = rows.filter(function(r){ return r.diff != null && Math.abs(r.diff) >= 0.5; });
-              return rows.length + ' line' + (rows.length === 1 ? '' : 's') + ' \u00b7 '
-                + out.length + ' out by half a point or more';
+              /* The headline counts what the default view actually shows, so the number on the
+                 closed card and the number of rows inside it agree. They did not while the
+                 header counted every line and the view had started hiding the level ones. */
+              var out = rows.filter(function(r){ return r.diff != null && r.diff !== 0; });
+              if (!out.length) return rows.length + ' line' + (rows.length === 1 ? '' : 's')
+                + ' \u00b7 none out of line with the book';
+              var wide = out.filter(function(r){ return Math.abs(r.diff) >= 0.5; });
+              return out.length + ' out of line \u00b7 ' + wide.length
+                + ' by half a point or more \u00b7 ' + rows.length + ' in all';
             } },
   skill:  { srcs:function(){ return SKILL_SOURCES; }, icon:'ti-run',
             title:'Ground & Air', id:'skill-panel', fold:'skill',
@@ -19664,19 +19683,49 @@ function pickemSkew(key){
     + ', so some of these gaps will have closed since. Treat the wide ones as worth checking at '
     + 'the source rather than as live.';
 }
-function pickemSection(key, g){
-  var rows = pickemRows(key, g);
-  if (!rows.length) return '';
+function pickemSection(key, g, src){
+  var all = pickemRows(key, g);
+  if (!all.length) return '';
   var pk = pickemData(key);
   var skew = pickemSkew(key);
-  var outOfLine = rows.filter(function(r){ return r.diff != null && Math.abs(r.diff) >= 0.5; });
-  return '<div class="dd-note">' + esc(pk.book || 'Pick\u2019em') + ' posts a line and no price, so '
-    + 'there is no edge to compute here and none is shown. The number on the right is how far the '
-    + 'pick\u2019em line sits from the book\u2019s, and it is not shaded for or against: a line '
-    + '<b>below</b> the book asks less of him than the market does, a line <b>above</b> it asks '
-    + 'less of the other side, and you can take either. The gap is the thing to look at \u2014 '
-    + outOfLine.length + ' of ' + rows.length + ' differ by half a point or more. Where a man has '
-    + 'no posted price at the books there is nothing to compare and the column reads \u2014.</div>'
+  /* Three states, and only the first belongs on the default view:
+       OUT    - a book line exists and the two disagree. The reason this card is here.
+       LEVEL  - a book line exists and they agree. Nothing to say; the comparison already ran
+                and came back zero, which is an answer, just not an interesting one.
+       UNSEEN - no posted price at the books at all, so the comparison never ran. NOT the same
+                as level, and lumping the two together would quietly turn "we could not check
+                this" into "we checked and it was fine". */
+  var out   = all.filter(function(r){ return r.diff != null && r.diff !== 0; });
+  var level = all.filter(function(r){ return r.diff === 0; });
+  var unseen = all.length - out.length - level.length;
+  var rows = (src === 'all') ? all : out;
+  if (!rows.length) return '';
+  var wide = out.filter(function(r){ return Math.abs(r.diff) >= 0.5; });
+
+  var lead = esc(pk.book || 'Pick\u2019em') + ' posts a line and no price, so there is no edge to '
+    + 'compute here and none is shown. The number on the right is how far the pick\u2019em line '
+    + 'sits from the book\u2019s, and it is not shaded for or against: a line <b>below</b> the '
+    + 'book asks less of him than the market does, a line <b>above</b> it asks less of the other '
+    + 'side, and you can take either. ';
+  var tail;
+  if (src === 'all'){
+    tail = 'Every line in this match, including the ' + level.length + ' sitting exactly on the '
+      + 'book\u2019s and the ' + unseen + ' with no posted price to compare against.';
+  } else {
+    /* Say what is not here. A research tool that drops rows without a word is a tool whose
+       numbers you cannot take at face value, and the counts cost one sentence. */
+    tail = 'Showing the ' + out.length + ' of ' + all.length + ' that disagree with the book, '
+      + wide.length + ' of them by half a point or more.'
+      + (level.length || unseen
+          ? ' Not shown: ' + [level.length ? level.length + ' level with the book' : '',
+                              unseen ? unseen + ' with no posted price to compare against' : '']
+                             .filter(Boolean).join(' and ')
+            /* "both" only reads correctly when two groups were actually listed, and most
+               fixtures list one. Neutral wording instead of counting the clauses. */
+            + ' \u2014 see Every line.'
+          : '');
+  }
+  return '<div class="dd-note">' + lead + tail + '</div>'
     + (skew ? '<div class="dd-note pk-skew">' + esc(skew) + '</div>' : '')
     + rows.map(function(r){ return pickemRow(key, r); }).join('');
 }
@@ -23233,6 +23282,8 @@ window.LAB = {
   jsqProbe: function(v){ return jsq(v); },
   pickemProbe: function(key, g){ return pickemRows(key, g); },
   pickemSkewProbe: function(key){ return pickemSkew(key); },
+  cardPaneProbe: function(kind, key, g, src){ return cardPane(kind, key, g, src); },
+  cardDefsProbe: function(){ return CARD_DEFS; },
   teamNameProbe: function(key, t){ return teamName(key, t); },
   /* What the Green Lights / Death Riders pool actually contains, before any rendering. Added to
      answer one question with numbers rather than impressions: how many rows sit at a negative
