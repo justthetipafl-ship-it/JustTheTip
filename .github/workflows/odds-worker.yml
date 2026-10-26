@@ -97,6 +97,29 @@ jobs:
             fi
           done
 
+      # Dabble Pick'Em posts a line and no price. It rides along here rather than in a workflow of
+      # its own for one reason: these lines are ONLY ever read next to a book line, so the two
+      # files have to be pulled together or the difference between them is partly fiction. A
+      # pick'em file six hours behind prices refreshed every fifteen minutes shows gaps that
+      # closed hours ago. Same step, same cadence, and the page says so when they drift anyway.
+      #
+      # One request per market: 10 for NBA, 17 for NFL. On a sweep that is 27 credits; on refresh
+      # the --every gate holds it to one pull an hour per sport, so a five-hour slate costs about
+      # 50. Markets Dabble does not carry answer 404, are skipped, and are printed in the log -
+      # so the first live run says which of these are worth asking for and the list can be cut.
+      - name: Pull pick'em lines
+        env:
+          ROA_API_KEY: ${{ secrets.ROA_API_KEY }}
+          ONLY: ${{ github.event.inputs.sport }}
+        run: |
+          set -u
+          for ID in NBA NFL; do
+            if [ -n "${ONLY:-}" ] && [ "$ONLY" != "$ID" ]; then continue; fi
+            DIR=$(echo "$ID" | tr 'A-Z' 'a-z')/data
+            python3 scripts/fetch_pickem.py --sport "$ID" --out "$DIR" --every 60 \
+              || echo "::warning::pick'em $ID failed - continuing without it"
+          done
+
       # Snapshot straight after the pull, so the stored history holds the freshest prices we ever
       # held. It merges into the day's file keeping each bet's LAST seen price, and skips when no
       # new pull happened - so the 15-minute cadence costs nothing extra on a quiet run.
@@ -113,6 +136,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add */data/odds.json 2>/dev/null || true
+          git add */data/pickem.json 2>/dev/null || true
           git add */odds-history 2>/dev/null || true
           if git diff --staged --quiet; then echo "no odds changed"; else
             git commit -m "chore(odds): $(date -u +%Y-%m-%dT%H:%MZ)"
