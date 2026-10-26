@@ -154,6 +154,17 @@
     margin-bottom:8px;font-size:0;}
   /* The target map: three sides by four depths, deep at the top because that is the way the
      reader is looking down the field. */
+  .pk-side{font-style:normal;font-family:var(--font-mono);font-size:9px;color:var(--text-3);}
+  /* The gap against the book carries no verdict, so it takes no win/lose colour - just the
+     ordinary reading weight, with the wide ones given a little more presence so the eye finds
+     them without being told which way to bet. */
+  /* and NOT the accent for the wide ones either. Accent is the tool's green, and green means
+     "this is the good one" on every other card, so borrowing it to mean "this gap is large"
+     puts the verdict straight back in by another door. Size is carried by weight and contrast
+     instead, which the eye still finds and nobody reads as a tip. */
+  .pk-skew{border-left:2px solid #f97316;}
+  .gl-ev.pk-gap{color:var(--text-2);font-weight:600;}
+  .gl-ev.pk-gap.pk-wide{color:var(--text);font-weight:800;}
   .gg-h{margin-top:14px;}
   .gg-h:first-child{margin-top:2px;}
   .gg-map{margin:8px 0 2px;}
@@ -10110,6 +10121,9 @@ function cardPane(kind, key, g, src){
       if (src === 'rz')    return redZoneSection(key, g) || '';
       if (src === 'profile') return scoreProfilePane(key, g) || '';
     }
+    if (kind === 'pickem'){
+      return pickemSection(key, g) || '';
+    }
     if (kind === 'skill'){
       return ggFixturePane(key, g, src) || '';
       return '';
@@ -10147,6 +10161,17 @@ var CARD_DEFS = {
             desc:function(){ return 'How the points actually get on the board'; } },
   /* NFL only, and only where ground.json has landed. Every other sport produces nothing from
      both sources, so cardSection finds no live source and the card never appears. */
+  /* Its own card rather than a source on another: a pick'em line is a different product from a
+     priced market, and burying it inside one would suggest the tool's edge reads apply to it. */
+  pickem: { srcs:function(){ return [['lines','Lines']]; }, icon:'ti-crosshair',
+            title:'Pick\u2019em', id:'pickem-panel', fold:'pickem',
+            desc:function(key, g){
+              var rows = pickemRows(key, g);
+              if (!rows.length) return 'Lines with no price, against the book\u2019s';
+              var out = rows.filter(function(r){ return r.diff != null && Math.abs(r.diff) >= 0.5; });
+              return rows.length + ' line' + (rows.length === 1 ? '' : 's') + ' \u00b7 '
+                + out.length + ' out by half a point or more';
+            } },
   skill:  { srcs:function(){ return SKILL_SOURCES; }, icon:'ti-run',
             title:'Ground & Air', id:'skill-panel', fold:'skill',
             desc:function(key, g){
@@ -10263,6 +10288,7 @@ function focusPage(){
     + (S.t3==='ready' && !state.view.nerd ? cardSection('player', key, g) : '')
     + (S.t3==='ready' && !state.view.nerd ? cardSection('score', key, g) : '')
     + (S.t3==='ready' && !state.view.nerd ? cardSection('skill', key, g) : '')
+    + (S.t3==='ready' && !state.view.nerd ? cardSection('pickem', key, g) : '')
 
     // Nerd Mode replaces the signals rather than adding to them: it is a different read of the
     // same fixture (the market against itself), and stacking both made the page enormous.
@@ -19506,6 +19532,154 @@ function qbTab(key, name){
    as a card on the fixture with a selector across the men in THIS match, Ground and Air as the two
    sources, and the opponent taken from the fixture rather than from whoever the player happens to
    face next - on a fixture you are looking at, those can differ.                                 */
+/* PICK'EM ------------------------------------------------------------------------------------
+   A pick'em product posts a number and asks which side of it you want. There is no price, so
+   there is no implied probability, nothing to de-vig, and none of the tool's edge machinery
+   applies - an "edge" here would be a number with nothing behind it.
+
+   What these ARE good for is the comparison. The same man has a line at the sportsbooks, and
+   where the two disagree the disagreement is the whole story: a pick'em line sitting under the
+   book's number asks less of him than the market does, and over it asks more. So the row leads
+   with the gap, sorts by it, and carries the matchup underneath so the gap can be judged rather
+   than just noticed.
+
+   Players are matched to the fixture through the tool's own roster, not through the feed's club
+   names - the feed writes "Cleveland Cavaliers" where the page carries "CLE", and a mapping
+   between them is one more thing to get wrong for no gain. */
+function pickemData(key){ return (state.sports[key].data || {}).pickem || null; }
+function pickemFold(s){ return String(s || '').toLowerCase().replace(/[^a-z]/g, ''); }
+/* The fixture's three-letter code as the feed spells the club. teamName gives the full name for
+   every sport that has one; where it gives nothing back the code itself is folded, so a sport
+   with no name table still compares like with like rather than silently matching nothing. */
+function pickemClub(key, code){
+  var full = '';
+  try { full = teamName(key, code) || ''; } catch(e){}
+  return pickemFold(full || code);
+}
+function pickemRows(key, g){
+  var pk = pickemData(key);
+  if (!pk || !pk.rows || !g) return [];
+  var S = state.sports[key], pt = S.idx.playerTeam || {}, by = S.idx.byName || {};
+  var out = [];
+  /* MATCH THE GAME, NOT JUST THE MAN. Matching on his club alone looked right and was not: a
+     pick'em line is for one fixture, and the first version put Tatum's line against Chicago onto
+     his game against Detroit - then compared it to Detroit's book line and read Detroit's defence
+     underneath it. Three wrong numbers from one shortcut. The feed names clubs in full, so the
+     fixture's codes are expanded to compare. */
+  var hf = pickemClub(key, g.home), af = pickemClub(key, g.away);
+  pk.rows.forEach(function(r){
+    var rh = pickemFold(r.home), ra = pickemFold(r.away);
+    if (!rh || !ra || !hf || !af) return;
+    if (!((rh === hf && ra === af) || (rh === af && ra === hf))) return;
+    var nm = cmbFindName(key, r.player);
+    var team = nm ? pt[nm] : null;
+    if (!team || (normTeam(team) !== normTeam(g.home) && normTeam(team) !== normTeam(g.away))) return;
+    var opp = normTeam(team) === normTeam(g.home) ? g.away : g.home;
+    var od = oddsForP(key, nm, r.market);
+    var book = od && od.line != null ? +od.line : null;
+    out.push({ name:nm, raw:r.player, p:by[nm] || { name:nm, team:team }, team:team, opp:opp,
+               mkt:r.market, line:+r.line, book:book,
+               diff:(book == null ? null : +r.line - book), bookName:(od || {}).book || '' });
+  });
+  /* Biggest disagreement first. A row with no book line to compare against is not a bigger
+     disagreement than one with a two-point gap - it is an unknown, so it sits at the bottom. */
+  out.sort(function(a, b){
+    var av = a.diff == null ? -1 : Math.abs(a.diff), bv = b.diff == null ? -1 : Math.abs(b.diff);
+    return bv - av;
+  });
+  return out;
+}
+/* The roster spelling of a name the feed wrote its own way. Exact first, then the same
+   punctuation-and-accent fold the bet search uses, and it refuses a surname that answers to two
+   men rather than guessing between them. */
+function cmbFindName(key, raw){
+  var S = state.sports[key], by = S.idx.byName || {};
+  if (by[raw]) return raw;
+  var want = cmbNameKey(raw), pool = cmbPool(key), hit = null, n = 0;
+  for (var i = 0; i < pool.length; i++){
+    if (cmbNameKey(pool[i].name) === want){ hit = pool[i].name; n++; }
+  }
+  return n === 1 ? hit : null;
+}
+function pickemRow(key, r){
+  var S = state.sports[key];
+  var logs = sortLogsDesc(((S.idx.logsByName || {})[r.name] || []).slice());
+  var vals = [];
+  logs.forEach(function(x){ var v = statOf(key, x, r.mkt); if (v != null) vals.push(v); });
+  var l10 = vals.slice(0, 10);
+  var hit = l10.filter(function(v){ return v > r.line; }).length;
+  var avg = vals.length ? vals.reduce(function(a, b){ return a + b; }, 0) / vals.length : null;
+  var dr = dvpRankFor(key, r.opp, (r.p || {}).position || (r.p || {}).pos, r.mkt);
+  var lab = mktLabel(key, r.mkt);
+  var side = r.diff == null ? '' : (r.diff < 0 ? 'under the book' : (r.diff > 0 ? 'over the book' : 'level'));
+  var chips = [];
+  if (r.book != null)
+    chips.push(['book ' + r.book + (r.bookName ? ' \u00b7 ' + r.bookName : ''), false]);
+  /* No green on the hit rate either. Everywhere else in the tool a hit rate is measured against
+     a side that has a price on it, so beating the line more often than not is good news for that
+     side. Here no side has been chosen, so "7 of 10 beat it" is good news for the over and the
+     same news, inverted, for the under. It is stated, not scored. */
+  if (l10.length) chips.push([hit + ' of his last ' + l10.length + ' beat ' + r.line, false]);
+  if (avg != null) chips.push([avg.toFixed(1) + ' a game', false]);
+  if (dr && dr.rank != null)
+    chips.push([esc(abbrOf(key, r.opp)) + ' #' + dr.rank + '/' + dr.total + ' softest', null]);
+  var big = r.diff == null ? '\u2014' : (r.diff > 0 ? '+' : '') + (+r.diff).toFixed(1);
+  /* Deliberately NOT coloured by direction. A pick'em asks which side of the line you want, and
+     both are available, so a line BELOW the book softens the over by exactly as much as a line
+     ABOVE it softens the under. Painting one green and the other red was a verdict on which side
+     to take - and the wrong verdict half the time. What is worth the eye is how FAR apart the two
+     books are, whichever way it falls, so the emphasis goes on size. */
+  var gap = r.diff == null ? 0 : Math.abs(r.diff);
+  return '<div class="gl-row sig-extra" onclick="LAB.player(\''+key+'\',\''+jsq(r.name)+'\')">'
+    + rowBtns(key, { name:r.name, mkt:r.mkt, line:r.line, side:'over', odds:null,
+                     book:'', opp:r.opp, team:r.team, label:lab })
+    + playerImgP(key, r.name, 28)
+    + '<div class="gl-left"><div class="gl-nm"><b>'+esc(r.name)+'</b><span class="gl-tag">'
+    + esc((posShortP(r.p) ? posShortP(r.p)+' \u00b7 ' : '')+abbrOf(key, r.team)+' v '+abbrOf(key, r.opp))
+    + '</span></div>'
+    + '<div class="gl-bet">'+esc(lab)+' <b>'+r.line+'</b>'
+    + (side ? ' <i class="pk-side">'+side+'</i>' : '')+'</div>'
+    + '<div class="gl-why">'+chips.map(function(c){
+        return '<span class="gl-chip'+(c[1] === true ? ' good' : (c[1] === false ? '' : ' warnish'))+'">'
+          + c[0]+'</span>'; }).join('')+'</div></div>'
+    + '<div class="gl-right"><div class="gl-ev pk-gap'+(gap >= 1.5 ? ' pk-wide' : '')+'">'
+    + big+'</div><div class="gl-evl">V BOOK</div></div></div>';
+}
+/* HOW FAR APART THE TWO PULLS ARE.
+   Every number in this section is a subtraction between two files, so it is only as good as the
+   OLDER of them. The prices refresh every fifteen minutes through a slate; if the pick'em file
+   is hours behind, a line the book has since moved shows up here as a gap that nobody can take.
+   That is the section inventing an opportunity, which is worse than showing nothing - so when
+   the two pulls are more than an hour apart it says so, in the note, unprompted. */
+function pickemSkew(key){
+  var pk = pickemData(key) || {}, od = (state.sports[key].data || {}).odds || {};
+  var a = Date.parse(pk.updated || ''), b = Date.parse(od.updated || '');
+  if (!a || !b) return null;
+  var mins = Math.round(Math.abs(b - a) / 60000);
+  if (mins < 60) return null;
+  var txt = mins < 1440 ? (Math.round(mins / 60) + ' hours')
+          : (Math.round(mins / 1440) + ' days');
+  return (a < b ? 'The pick’em lines were pulled ' + txt + ' before the prices'
+                : 'The prices were pulled ' + txt + ' before the pick’em lines')
+    + ', so some of these gaps will have closed since. Treat the wide ones as worth checking at '
+    + 'the source rather than as live.';
+}
+function pickemSection(key, g){
+  var rows = pickemRows(key, g);
+  if (!rows.length) return '';
+  var pk = pickemData(key);
+  var skew = pickemSkew(key);
+  var outOfLine = rows.filter(function(r){ return r.diff != null && Math.abs(r.diff) >= 0.5; });
+  return '<div class="dd-note">' + esc(pk.book || 'Pick\u2019em') + ' posts a line and no price, so '
+    + 'there is no edge to compute here and none is shown. The number on the right is how far the '
+    + 'pick\u2019em line sits from the book\u2019s, and it is not shaded for or against: a line '
+    + '<b>below</b> the book asks less of him than the market does, a line <b>above</b> it asks '
+    + 'less of the other side, and you can take either. The gap is the thing to look at \u2014 '
+    + outOfLine.length + ' of ' + rows.length + ' differ by half a point or more. Where a man has '
+    + 'no posted price at the books there is nothing to compare and the column reads \u2014.</div>'
+    + (skew ? '<div class="dd-note pk-skew">' + esc(skew) + '</div>' : '')
+    + rows.map(function(r){ return pickemRow(key, r); }).join('');
+}
 /* THE SCORING PROFILE, ON THE FIXTURE -------------------------------------------------------
    The player page has carried this for a while behind its Scoring tab - the NBA shooting line,
    zones, quarters and minutes; the NFL usage split and the touchdown read. It answers "how does
@@ -23057,6 +23231,9 @@ window.LAB = {
   // test hook: the shell's own statOf, so tests check the real function rather than a copy
   statProbe: function(key, row, mkt){ return statOf(key, row, mkt); },
   jsqProbe: function(v){ return jsq(v); },
+  pickemProbe: function(key, g){ return pickemRows(key, g); },
+  pickemSkewProbe: function(key){ return pickemSkew(key); },
+  teamNameProbe: function(key, t){ return teamName(key, t); },
   /* What the Green Lights / Death Riders pool actually contains, before any rendering. Added to
      answer one question with numbers rather than impressions: how many rows sit at a negative
      edge, and whether that tracks the model being untrusted for the sport. */
