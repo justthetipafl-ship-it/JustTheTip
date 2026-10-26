@@ -124,6 +124,21 @@ def fetch(sport, markets, key):
 
 def write(out_dir, sport, rows):
     os.makedirs(out_dir, exist_ok=True)
+    # NEVER let a bad run blank a good file. Every market failing looks identical to every market
+    # being empty, and the second is rare while the first is just the API having a moment - so a
+    # run that produced nothing keeps whatever was already there. The card then shows yesterday's
+    # lines, which the staleness note on the page already flags, instead of disappearing with no
+    # explanation. An empty first run still writes, because there is nothing to protect.
+    path = os.path.join(out_dir, "pickem.json")
+    if not rows and os.path.exists(path):
+        try:
+            held = len((json.load(open(path)) or {}).get("rows") or [])
+        except Exception:
+            held = 0
+        if held:
+            print("  pulled 0 lines - keeping the %d already in %s rather than blanking it"
+                  % (held, path))
+            return
     payload = {
         "updated": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%MZ"),
         "source": "rapidoddsapi pick'em (Dabble Pick'Em)",
@@ -131,7 +146,6 @@ def write(out_dir, sport, rows):
         "book": "Dabble Pick'Em",
         "rows": rows,
     }
-    path = os.path.join(out_dir, "pickem.json")
     with open(path, "w") as f:
         json.dump(payload, f, separators=(",", ":"))
     print("  wrote %s (%.0f KB) - %d lines, %d players, %d markets" % (
@@ -179,6 +193,22 @@ def selftest():
 
     check("the market map came from the odds fetcher",
           market_map("NBA").get("player_points") == "points")
+
+    # A run that pulls nothing must not blank a file that holds something. Every market erroring
+    # and every market being empty look the same from here, and the first is far more likely.
+    import tempfile
+    d = tempfile.mkdtemp()
+    p = os.path.join(d, "pickem.json")
+    write(d, "NBA", [{"player": "A", "market": "points", "line": 1.5,
+                      "home": "H", "away": "W", "start": None, "updated": None}])
+    check("a good run writes", json.load(open(p))["rows"])
+    write(d, "NBA", [])
+    check("a run with no lines keeps what was there",
+          len(json.load(open(p))["rows"]) == 1)
+    d2 = tempfile.mkdtemp()
+    write(d2, "NBA", [])
+    check("but an empty FIRST run still writes a file",
+          os.path.exists(os.path.join(d2, "pickem.json")))
     print("SELFTEST", "PASSED" if ok else "FAILED")
     return 0 if ok else 1
 
@@ -212,6 +242,19 @@ if __name__ == "__main__":
     key = os.environ.get("ROA_API_KEY", "")
     if not key:
         sys.exit("ROA_API_KEY not set")
-    markets = [m for m in a.markets.split(",") if m] or sorted(market_map(sport))
+    mm = market_map(sport)
+    markets = [m for m in a.markets.split(",") if m] or sorted(mm)
+    # A market this tool does not price is not a market this script can write: normalise() has no
+    # JTT key to map it to and drops every row of it. Dropping is right - a row keyed to nothing
+    # joins to no gamelog and no book line - but doing it SILENTLY after spending a credit on the
+    # request is not. Asked for one explicitly, say so and say what would make it work.
+    unknown = [m for m in markets if m not in mm]
+    if unknown:
+        print("  not requested, %s carries no such market in fetch_odds.SPORTS: %s"
+              % (sport, ", ".join(unknown)))
+        print("  (add it there first - the two share one map so pick'em and odds cannot drift)")
+        markets = [m for m in markets if m in mm]
+    if not markets:
+        sys.exit("no known markets left to request")
     print("pick'em %s: %d markets" % (sport, len(markets)))
     write(out_dir, sport, fetch(sport, markets, key))
