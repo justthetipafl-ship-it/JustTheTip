@@ -162,6 +162,59 @@
      "this is the good one" on every other card, so borrowing it to mean "this gap is large"
      puts the verdict straight back in by another door. Size is carried by weight and contrast
      instead, which the eye still finds and nobody reads as a tip. */
+  /* WHO PLAYED WHEN. One grid: a name column, the track, and the figures. Every bar and every
+     quarter line is positioned as a PERCENTAGE of the track, so the whole chart is one shared
+     time axis and the gridlines land in the same place on every row without measuring anything. */
+  .rot-wrap{display:flex;flex-direction:column;gap:14px;}
+  .rot{border:1px solid var(--border);border-radius:12px;background:var(--surface);padding:10px 12px 8px;}
+  .rot-hd{font-size:12px;color:var(--text-2);margin:0 0 8px;display:flex;align-items:baseline;gap:6px;}
+  .rot-hd b{color:var(--text);}
+  .rot-d{margin-left:auto;font-family:var(--font-mono);font-size:10px;color:var(--text-3);}
+  .rot-chart{position:relative;}
+  /* The rows sit in their own box so the gridlines can span exactly them, and so the zebra
+     striping counts from the first PLAYER - with the margin strip in the same parent it was
+     counted as a child and every other row was shaded wrong. */
+  .rot-rows{position:relative;}
+  .rot-grid{position:absolute;top:0;bottom:0;left:96px;right:100px;pointer-events:none;}
+  .rot-row{display:grid;grid-template-columns:88px 1fr 92px;align-items:center;gap:8px;
+    height:19px;cursor:pointer;border-radius:4px;position:relative;}
+  .rot-row:nth-child(even){background:rgba(255,255,255,.022);}
+  .rot-row:hover{background:rgba(255,255,255,.06);}
+  .rot-nm{font-size:11px;color:var(--text-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .rot-row.st .rot-nm{color:var(--text);font-weight:700;}
+  .rot-track{position:relative;height:11px;}
+  .rot-b{position:absolute;top:0;height:11px;border-radius:2px;background:var(--accent);opacity:.85;}
+  .rot-row.st .rot-b{opacity:1;}
+  .rot-fig{font-family:var(--font-mono);font-size:10px;color:var(--text-3);text-align:right;white-space:nowrap;}
+  /* A row the feed could not fully account for. Dimmed and dashed rather than hidden: the man
+     did play those minutes, the drawing just cannot show all of them. */
+  .rot-row.shaky .rot-b{opacity:.45;outline:1px dashed rgba(255,255,255,.25);outline-offset:-1px;}
+  .rot-q{font-style:normal;color:#f97316;}
+  .rot-foot{margin-top:7px;font-size:10px;line-height:1.45;color:var(--text-3);
+    border-top:1px solid var(--border);padding-top:6px;}
+  /* The margin strip shares the track's left offset so its time axis lines up with the bars. */
+  /* The strip's margins match the track exactly (name column + gap, figures column), so its
+     time axis is the same axis as the bars below it. A faint centre line makes "above" and
+     "below" readable without a legend. */
+  .rot-marg{position:relative;height:34px;margin:0 100px 7px 96px;
+    border-bottom:0;background:linear-gradient(var(--border),var(--border)) 0 50%/100% 1px no-repeat;}
+  .rot-mb{position:absolute;background:var(--accent);opacity:.8;}
+  .rot-mb.down{background:#f97316;}
+  .rot-axis{position:relative;height:14px;margin:3px 100px 0 96px;}
+  .rot-tick{position:absolute;top:0;bottom:0;width:1px;background:var(--border);opacity:.55;}
+  .rot-qn{position:absolute;top:1px;transform:translateX(-50%);
+    font-family:var(--font-mono);font-size:9px;color:var(--text-3);}
+  /* Phone columns are MEASURED, not guessed: at 390px the row is 334 wide, the longest name
+     ("C. Cunningham") wants 75 and the longest figure ("20:58 · 37 · 13") wants 81. The first
+     pass gave them 66 and 78 and both ellipsised - a name clipped to "C. Cunning…" on the one
+     screen most people read this on. The track keeps the remaining ~158px, which is still three
+     pixels a minute. */
+  @media (max-width:430px){
+    .rot-row{grid-template-columns:78px 1fr 82px;}
+    .rot-grid{left:86px;right:90px;}
+    .rot-marg,.rot-axis{margin-left:86px;margin-right:90px;}
+    .rot-nm{font-size:10px;} .rot-fig{font-size:9px;}
+  }
   .pk-skew{border-left:2px solid #f97316;}
   .gl-ev.pk-gap{color:var(--text-2);font-weight:600;}
   .gl-ev.pk-gap.pk-wide{color:var(--text);font-weight:800;}
@@ -22382,6 +22435,7 @@ function matchReport(key, g){
     + mrHero(key, g)
     + (formTable ? '<div class="dayband"><span>Recent form</span></div>'+formTable : '')
     + lastGameSection(key, g)
+    + rotationSection(key, g)
     + (function(){
         var u = sides.map(function(t){ return usageLeaders(key, t, 4); }).filter(Boolean).join('');
         return u ? '<div class="dayband"><span>Usage leaders</span></div>' + u
@@ -22550,6 +22604,156 @@ function lastGameCard(key, team, cols){
     + (held.length ? '<div class="lg-h good">Held</div>'+held.map(pr).join('') : '')
     + (!hurt.length && !held.length ? '<div class="deg-note">No opposition player was far off his own form.</div>' : '')
     + '</div>';
+}
+/* WHO PLAYED WHEN ---------------------------------------------------------------------------
+   A box score says a man played 33 minutes. It does not say he sat the last six, or that the
+   starting centre never came back after half time, or that the two the reader cares about were
+   never on the floor together. Rotation is the shape behind every minutes-driven prop, and the
+   question people actually ask - "does he close?" - has no answer in a season average.
+
+   The intervals come from nba/data/stints.json, rebuilt from ESPN play-by-play and keyed by the
+   same MatchId the gamelogs use. The MINUTES AND POINTS printed on the right are NOT taken from
+   that reconstruction: they are the gamelog's own, so the figures a reader checks against a box
+   score are the box score's. The bars are the only thing derived here. */
+function stintsFor(key, matchId){
+  var d = (state.sports[key].data || {}).stints;
+  if (!d || !d.games || matchId == null) return null;
+  return d.games[String(matchId)] || null;
+}
+function rotPid(r){ return String(r.PlayerId == null ? '' : r.PlayerId).replace(/\.0$/, ''); }
+function rotClock(sec){
+  if (sec == null || !isFinite(sec)) return '—';
+  var m = Math.floor(sec / 60), s = Math.round(sec % 60);
+  if (s === 60){ m += 1; s = 0; }
+  return m + ':' + (s < 10 ? '0' : '') + s;
+}
+function rotShortName(n){
+  var p = String(n || '').trim().split(/\s+/);
+  return p.length < 2 ? (n || '') : (p[0].charAt(0) + '. ' + p.slice(1).join(' '));
+}
+/* The margin strip. Each point runs until the next one, so the bars are laid out on GAME TIME
+   rather than spaced evenly - a five minute drought and a flurry of three scores look different,
+   which is the whole point of drawing it. */
+function rotMargin(st, flip){
+  var pts = st.m || [];
+  if (pts.length < 2) return '';
+  var end = st.end || 1, top = 0;
+  pts.forEach(function(p){ top = Math.max(top, Math.abs(p[1])); });
+  if (!top) return '';
+  var bars = pts.map(function(p, i){
+    var t0 = p[0], t1 = (i + 1 < pts.length) ? pts[i + 1][0] : end;
+    var v = flip ? -p[1] : p[1];
+    var h = Math.abs(v) / top * 50;
+    var left = t0 / end * 100, w = Math.max(0.3, (t1 - t0) / end * 100);
+    return '<i class="rot-mb' + (v < 0 ? ' down' : '') + '" style="left:' + left.toFixed(2)
+      + '%;width:' + w.toFixed(2) + '%;height:' + h.toFixed(1) + '%;'
+      + (v < 0 ? 'top:50%' : 'bottom:50%') + '"></i>';
+  }).join('');
+  return '<div class="rot-marg">' + bars + '</div>';
+}
+function rotDrawn(spans){
+  var t = 0;
+  (spans || []).forEach(function(s){ t += s[1] - s[0]; });
+  return t;
+}
+/* True when the bars cannot account for the man's box-score minutes. One minute of slack is the
+   box score storing minutes as whole numbers; past that the feed has dropped or contradicted a
+   substitution and the row is drawn short. */
+function rotShaky(r, st){
+  var spans = (st.pl || {})[rotPid(r)] || [];
+  var mins = +r.minutes;
+  if (!spans.length || !isFinite(mins)) return false;
+  return Math.abs(rotDrawn(spans) / 60 - mins) > 1;
+}
+function rotRow(key, r, st, team){
+  var spans = (st.pl || {})[rotPid(r)] || [];
+  var end = st.end || 1;
+  var bars = spans.map(function(s){
+    var left = s[0] / end * 100, w = (s[1] - s[0]) / end * 100;
+    return '<i class="rot-b" style="left:' + left.toFixed(2) + '%;width:' + Math.max(0.4, w).toFixed(2) + '%"></i>';
+  }).join('');
+  // first-half minutes, clipped out of the same intervals rather than taken on trust
+  var half = (st.per && st.per.length > 1) ? st.per[1] : 1440;
+  var h1 = 0;
+  spans.forEach(function(s){ h1 += Math.max(0, Math.min(s[1], half) - Math.min(s[0], half)); });
+  var mins = +r.minutes, pts = +r.points;
+  /* DOES THE DRAWING AGREE WITH THE BOX SCORE?
+     The bars are rebuilt from substitutions; the minutes beside them are the box score's. They
+     should be the same number, and for 99.7% of players they are to within the box score's own
+     rounding. The rest are games where the feed itself is wrong - a substitution missing, so a
+     man's last stint never reopens, or two players contradicting each other across a few seconds.
+     A wrong bar looks exactly like a right one, so where the two disagree by more than a minute
+     the row says so instead of drawing it with the same confidence as the others. The MIN and PTS
+     printed stay the box score's, because those are the numbers that are not in doubt. */
+  var drawn = rotDrawn(spans);
+  var shaky = rotShaky(r, st);
+  return '<div class="rot-row' + (r.starter ? ' st' : '') + (shaky ? ' shaky' : '') + '"'
+    + (shaky ? ' title="The play-by-play accounts for ' + rotClock(drawn) + ' of his '
+        + Math.round(mins) + ' minutes — a substitution is missing from the feed, so the bars '
+        + 'on this row are incomplete."' : '')
+    + ' onclick="LAB.player(\'' + key + '\',\'' + jsq(r.Player) + '\')">'
+    + '<span class="rot-nm">' + esc(rotShortName(r.Player)) + '</span>'
+    + '<span class="rot-track">' + bars + '</span>'
+    + '<span class="rot-fig">' + (spans.length ? rotClock(h1) : '—') + ' · '
+    + (shaky ? '<i class="rot-q">~</i>' : '')
+    + (isFinite(mins) ? Math.round(mins) : '—') + ' · '
+    + (isFinite(pts) ? Math.round(pts) : '—') + '</span></div>';
+}
+function rotationCard(key, team){
+  var lg = lastGameFor(key, team);
+  if (!lg || !lg.mine || !lg.mine.length) return '';
+  var st = stintsFor(key, lg.mine[0].MatchId);
+  if (!st) return '';
+  var rows = lg.mine.filter(function(r){ return ((st.pl || {})[rotPid(r)] || []).length; });
+  if (rows.length < 5) return '';
+  rows.sort(function(a, b){
+    if (!!a.starter !== !!b.starter) return a.starter ? -1 : 1;
+    return (+b.minutes || 0) - (+a.minutes || 0);
+  });
+  /* Which way is up. The file stores the margin as home minus away; a club reading its own
+     rotation wants its own lead above the line, so an away side flips it. Getting this wrong
+     would draw a win as a collapse, with nothing on screen to say so. */
+  var isHome = normTeam(st.home) === normTeam(team);
+  var usScore = isHome ? st.hs : st.as, themScore = isHome ? st.as : st.hs;
+  var verb = usScore > themScore ? 'beat' : 'lost to';
+  /* The quarter lines are drawn ONCE, full height, behind every row - not per row. Each is at
+     the END of its period, with the label sitting back at the period's midpoint so it reads as
+     "this stretch is Q2" rather than labelling the line itself. */
+  var per = (st.per || []).slice(0, 4), endT = st.end || 1;
+  var grid = per.map(function(t){
+    return '<i class="rot-tick" style="left:' + (t / endT * 100).toFixed(2) + '%"></i>';
+  }).join('');
+  var qnames = per.map(function(t, i){
+    var mid = t - (t - (i ? per[i - 1] : 0)) / 2;
+    return '<span class="rot-qn" style="left:' + (mid / endT * 100).toFixed(2) + '%">Q'
+      + (i + 1) + '</span>';
+  }).join('');
+  var shakyN = rows.filter(function(r){ return rotShaky(r, st); }).length;
+  return '<div class="rot">'
+    + '<div class="rot-hd"><b>' + esc(abbrOf(key, team)) + '</b> ' + esc(verb) + ' '
+    + esc(abbrOf(key, lg.opp)) + ' <b>' + usScore + '–' + themScore + '</b>'
+    + (st.d ? '<span class="rot-d">' + esc(st.d) + '</span>' : '') + '</div>'
+    + '<div class="rot-chart">' + rotMargin(st, !isHome)
+    + '<div class="rot-rows"><div class="rot-grid">' + grid + '</div>'
+    + rows.map(function(r){ return rotRow(key, r, st, team); }).join('') + '</div>'
+    + '<div class="rot-axis">' + qnames + '</div></div>'
+    /* Said out loud, not left to the marker. A reader who notices one row is dimmer deserves to
+       know it is the feed and not the player. */
+    + (shakyN ? '<div class="rot-foot">' + shakyN + ' row' + (shakyN === 1 ? '' : 's')
+        + ' marked <i class="rot-q">~</i>: the play-by-play is missing a substitution, so the bars '
+        + 'do not add up to the minutes beside them. The minutes and points are the box score’s '
+        + 'and are right.</div>' : '')
+    + '</div>';
+}
+function rotationSection(key, g){
+  var a = rotationCard(key, g.home), b = rotationCard(key, g.away);
+  if (!a && !b) return '';
+  return '<div class="dayband"><span>Who played when</span></div>'
+    + '<div class="rot-wrap">' + a + b + '</div>'
+    + '<div class="deg-note" style="padding:2px 2px 8px">Each side’s most recent game, from the '
+    + 'play-by-play. Bars are time on the floor; the strip above is the margin, this club’s lead '
+    + 'above the line. <b>1H · MIN · PTS</b> on the right — first-half minutes from the '
+    + 'same intervals, total minutes and points from the box score.</div>';
 }
 function lastGameSection(key, g){
   var S = state.sports[key];
@@ -23306,6 +23510,10 @@ window.LAB = {
   buildPaneProbe: function(key, g, src){ return buildPane(key, g, src); },
   buildSrcsProbe: function(key, g){ return buildSources(key, g); },
   buildDescProbe: function(srcs){ return buildDesc(srcs); },
+  stintsProbe: function(key, mid){ return stintsFor(key, mid); },
+  rotShakyProbe: function(r, st){ return rotShaky(r, st); },
+  lastGameProbe: function(key, team){ return lastGameFor(key, team); },
+  rotCardProbe: function(key, team){ return rotationCard(key, team); },
   pickemPaneProbe: function(key, g, src){
     var keep = state.view.pkSrc;
     try { state.view.pkSrc = src; return pickemPane(key, g); }
