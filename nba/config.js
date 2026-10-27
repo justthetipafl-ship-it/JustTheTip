@@ -86,7 +86,7 @@ window.SPORT_CONFIG = {
   // NBL already used - same groups, same stat keys - so it needed nothing there but its own path.
   liveWorker: "https://jtt-live.justthetipafl.workers.dev/nba",
   viewDefaults: { sortKey:"points", statsStat:"points", teamsSort:"points" },
-  dataFiles: { pickem:'data/pickem.json' },   // shell defaults + meta.gamelogFiles drive the rest
+  dataFiles: { pickem:'data/pickem.json', stints:'data/stints.json' },   // shell defaults + meta.gamelogFiles drive the rest
 
   // ---- Degen Crew (basketball engines; ported into nbl/signals.js) ----
   crew: [
