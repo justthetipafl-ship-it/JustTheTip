@@ -92,19 +92,41 @@ jobs:
         if: ${{ inputs.per_season }}
         continue-on-error: true
         run: python3 nba/build_nba_zones.py --out nba/data --persist
+      # WHO PLAYED WHEN: on/off intervals rebuilt from the same play-by-play, for the rotation
+      # chart in the match report. It runs here rather than in a workflow of its own because it
+      # reads that feed and, critically, because it takes its SEASON from nba/data/meta.json,
+      # which the main NBA build writes at 12:00 - forty minutes before this.
+      #
+      # Daily is the right cadence: the file holds each club's LAST game, so it changes once a
+      # night at most, and the upstream release lags about a day regardless.
+      #
+      # The selftest is offline and instant. It pins the clock arithmetic (time REMAINING in a
+      # period becoming time ELAPSED in a game, overtime included) and the feed quirk that
+      # matters: ESPN writes some substitutions twice, once with a blank side, and replaying both
+      # desynchronises the floor WITHOUT moving anyone's minutes - so nothing downstream looks
+      # wrong while the lineup is quietly incorrect.
+      - name: Rotation selftest
+        run: python3 nba/build_nba_stints.py --selftest
+      - name: Build rotations
+        run: |
+          ARGS="--out nba/data"
+          if [ -n "${{ inputs.seasons }}" ]; then ARGS="$ARGS --seasons ${{ inputs.seasons }}"; fi
+          python3 nba/build_nba_stints.py $ARGS \
+            || echo "::warning::rotation build failed - keeping the stints.json already in the repo"
+
       - name: Commit
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           for f in nba/data/quarters.json nba/data/zones.json \
                    nba/data/zones_by_season.json nba/data/zone_persistence.json \
-                   nba/data/playtypes.json; do
+                   nba/data/playtypes.json nba/data/stints.json; do
             [ -f "$f" ] && git add "$f" && echo "staged $f"
           done
           if git diff --cached --quiet; then
             echo "nothing new"
           else
-            git commit -m "NBA quarters, shot zones and shot actions"
+            git commit -m "NBA quarters, shot zones, shot actions and rotations"
             for i in 1 2 3; do
               git pull --rebase --autostash origin main && git push && break
               sleep 5
