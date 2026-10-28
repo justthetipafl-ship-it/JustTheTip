@@ -18684,7 +18684,10 @@ var SZ_PTS = { rim:2, paint:2, midRange:2, cornerThree:3, armsThree:3 };
    the page cannot drift away from the last run of the test. */
 var SZ_KEEP_DEFAULT = { rim:0.60, paint:0.55, midRange:0.26, cornerThree:0, armsThree:0.09 };
 var SZ_MIN_SHOTS = 150;
-var SZ_SHOW = 8;
+/* The all-zones list: every man in the fixture with a shot profile, not the eight with the
+   biggest swing. Same reasoning as the per-zone columns - a cap ranked by movement drops the
+   steady main players, who are the ones most likely to be looked up. ~21 rows a fixture. */
+var SZ_SHOW = 999;
 function nbaZoneKeep(key){
   var zp = (state.sports[key].data || {}).zonePersist;
   return (zp && zp.keep) ? zp.keep : SZ_KEEP_DEFAULT;
@@ -18776,7 +18779,19 @@ function courtZoneRows(key, team, opp, zone){
                pos:me && me.position, priced:hasAnyOddsFor(key, pz.name) });
   });
   out.sort(function(a, b){ return b.att - a.att; });
-  return out.slice(0, 5);
+  /* A SAMPLE FLOOR, NOT A HEAD COUNT. This used to keep the busiest five, which is the wrong
+     five: at the rim it showed Detroit's two bigs and their starting forwards and cut Harris on
+     193 attempts, Jenkins on 166, Huerter on 157 - rotation players, all of them, missing from a
+     list of who shoots from there. A count cap cannot tell a main player from a fringe one, only
+     a BUSIER one, so it removes exactly the men a reader came to look up.
+     The tail is still noise: somebody with two rim attempts all season is not a rim shooter and
+     a row saying so is worse than no row. So the gate is the sample, relative to the man leading
+     that zone so it holds whether the file covers five games or a full season, with a small
+     absolute floor underneath for the opening weeks. */
+  var top = out.length ? out[0].att : 0;
+  var min = Math.max(8, top * 0.02);
+  var keep = out.filter(function(r){ return r.att >= min; });
+  return keep.length ? keep : out;        // never empty a column that had something in it
 }
 function courtSide(key, team, opp, zone){
   var zf = state.sports[key].data.zones;
@@ -18964,12 +18979,13 @@ function shotCourtSection(key, g){
     + 'where a man shoots and what he meets there \u2014 measured against results, shot zone carried '
     + '0.47 points of predictive value, so it is a read and not a signal.</div>';
 }
-function nbaShotMatchup(key, g){
-  if (key !== 'nba') return '';
-  if (!g || !g.home || !g.away) return '';
-  var zf = state.sports[key].data.zones;
-  if (!zf || !zf.defence || !zf.league) return '';
+/* Everyone in this fixture with a shot profile, biggest mover first. Split out from the section
+   so the full list can be counted and tested, rather than only the part that fits. */
+function nbaShotRows(key, g){
   var rows = [];
+  if (key !== 'nba' || !g || !g.home || !g.away) return rows;
+  var zf = state.sports[key].data.zones;
+  if (!zf || !zf.defence || !zf.league) return rows;
   [[g.away, g.home], [g.home, g.away]].forEach(function(pair){
     playersOnTeam(key, pair[0]).forEach(function(p){
       if (!isPlayingP(key, p.name, p.team)) return;
@@ -18978,9 +18994,17 @@ function nbaShotMatchup(key, g){
       rows.push({ p:p, team:pair[0], opp:pair[1], sw:sw, priced:hasAnyOddsFor(key, p.name) });
     });
   });
-  if (rows.length < 3) return '';
   // biggest mover first, either way - a matchup that hurts him is the same finding as one that helps
   rows.sort(function(a, b){ return Math.abs(b.sw.swing) - Math.abs(a.sw.swing); });
+  return rows;
+}
+function nbaShotMatchup(key, g){
+  if (key !== 'nba') return '';
+  if (!g || !g.home || !g.away) return '';
+  var zf = state.sports[key].data.zones;
+  if (!zf || !zf.defence || !zf.league) return '';
+  var rows = nbaShotRows(key, g);
+  if (rows.length < 3) return '';
   var keep = nbaZoneKeep(key);
   // same shared row components as every other list on the page; see the note in nbaQ1Section
   var body = rows.slice(0, SZ_SHOW).map(function(x){
@@ -19068,7 +19092,11 @@ function ptCandidates(key, g){
     });
   });
   out.sort(function(a, b){ return b.rec.shots - a.rec.shots; });
-  return out.slice(0, 10);
+  /* Everyone, not the busiest ten. The cap existed because this picker was a row of chips and
+     thirty of them is a wall - so the control changed rather than the list being cut. A roster is
+     26 to 35 men and nearly all of them have a shot profile; ten chips reached about a third of a
+     fixture, which for a tool whose point is showing every strand is the wrong third. */
+  return out;
 }
 function ptPick(key, g){
   var cands = ptCandidates(key, g);
@@ -19085,11 +19113,17 @@ function nbaActionSection(key, g){
   if (!me) return '';
   var dRec = (pf.defence || {})[normTeam(me.opp)] || (pf.defence || {})[me.opp] || null;
   var floor = pf.rankFloor != null ? pf.rankFloor : 0.5;
-  var chips = cands.map(function(c){
-    return '<button class="pt-chip' + (c.name === me.name ? ' on' : '') + '" onclick="LAB.ptName(\'' 
-      + jsq(c.name) + '\')">' + esc(c.name)
-      + '<i>' + esc(abbrOf(key, c.team)) + '</i></button>';
-  }).join('');
+  /* One control, shared with the Player source on this same card, because a list this long does
+     not fit in chips and because two pickers side by side in one card should not be two different
+     things. Busiest first, with the club beside each name. */
+  var chips = cands.length < 2 ? '' :
+    '<select class="mb-fixsel gg-sel" onchange="LAB.ptName(this.value)">'
+    + cands.map(function(c){
+        return '<option value="' + esc(c.name) + '"' + (c.name === me.name ? ' selected' : '') + '>'
+          + esc(c.name) + ' \u00b7 ' + esc(abbrOf(key, c.team))
+          + (c.rec && c.rec.shots ? ' \u00b7 ' + c.rec.shots + ' shots' : '')
+          + (c.priced ? ' \u00b7 priced' : '') + '</option>';
+      }).join('') + '</select>';
 
   // his actions, busiest first - this half is always real, it is only his own shot diet
   var acts = (pf.actions || []).filter(function(a){ return me.rec[a]; });
@@ -19133,7 +19167,7 @@ function nbaActionSection(key, g){
   var nReal = (pf.actions || []).filter(function(a){
     var sp = (pf.spread || {})[a]; return sp && sp.real >= floor; }).length;
   return paneBand('How he scores')
-    + '<div class="pt-chips">' + chips + '</div>'
+    + chips
     + '<div class="pt-head"><b>' + esc(me.name) + '</b> v ' + esc(abbrOf(key, me.opp))
       + ' · ' + me.rec.shots + ' shots'
       + (me.priced ? '' : ' · no market') + '</div>'
@@ -23511,6 +23545,20 @@ window.LAB = {
   buildSrcsProbe: function(key, g){ return buildSources(key, g); },
   buildDescProbe: function(srcs){ return buildDesc(srcs); },
   stintsProbe: function(key, mid){ return stintsFor(key, mid); },
+  courtRowsProbe: function(key, t, o, z){ return courtZoneRows(key, t, o, z); },
+  shotRowsProbe: function(key, g){ return nbaShotRows(key, g); },
+  ptCandsProbe: function(key, g){ return ptCandidates(key, g); },
+  rosterProbe: function(key, g){
+    var out = [];
+    [g.away, g.home].forEach(function(t){
+      playersOnTeam(key, t).forEach(function(p){
+        if (!isPlayingP(key, p.name, p.team)) return;
+        out.push({ name:p.name, team:t, priced:hasAnyOddsFor(key, p.name),
+                   zones: !!nbaZones(key, p.name), pt: !!ptPlayer(key, p.name) });
+      });
+    });
+    return out;
+  },
   rotShakyProbe: function(r, st){ return rotShaky(r, st); },
   lastGameProbe: function(key, team){ return lastGameFor(key, team); },
   rotCardProbe: function(key, team){ return rotationCard(key, team); },
