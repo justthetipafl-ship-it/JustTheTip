@@ -16943,12 +16943,30 @@ function liveAllGames(){
   });
   return out;
 }
+/* The width of that shared window. Ten seconds against a thirty-second poll: short enough that
+   nobody sees older numbers than they already would, wide enough that everyone watching at the
+   same moment lands on one url. */
+var LIVE_BUCKET_MS = 10000;
+function liveBucket(){ return Math.floor(Date.now() / LIVE_BUCKET_MS) * LIVE_BUCKET_MS; }
 function liveFetch(){
   var keys = liveAllGames();
   if (!keys.length) return;
   LIVE.loading = true;
   Promise.all(keys.map(function(k){
-    return fetch(liveWorkerFor(k) + '/live?t=' + Date.now(), { cache:'no-store' })
+    /* ONE URL PER WINDOW, NOT ONE PER REQUEST.
+       This asked for '?t=' + Date.now() with cache:'no-store', which makes every single poll a
+       URL nobody has ever requested before. Nothing can be reused - not the browser's cache, not
+       Cloudflare's edge, not the Worker's own - so the live Worker runs its full parse-and-
+       transform once per viewer per thirty seconds per sport, and the CPU it burns scales with
+       how many people have the tracker open. On the free plan that is 10ms of CPU per request to
+       stay inside, which is what the limit emails are about.
+       Rounding the stamp to a window means every viewer polling in the same few seconds asks for
+       the SAME url, so the work can be done once and handed to all of them. Freshness is
+       unchanged in any way a reader would notice: the poll is already every 30s, and this adds at
+       most LIVE_BUCKET_MS on top.
+       This is the client half. It only pays off if the Worker's response is cacheable - a Worker
+       answering with Cache-Control: no-store will still do the work every time. */
+    return fetch(liveWorkerFor(k) + '/live?t=' + liveBucket(), {})
       .then(function(r){ return r.ok ? r.json() : null; })
       .then(function(j){ if (j) { LIVE.data[k] = j; LIVE.at[k] = Date.now(); } })
       .catch(function(){ LIVE.err = 'Live feed unavailable'; });
@@ -23545,6 +23563,7 @@ window.LAB = {
   buildSrcsProbe: function(key, g){ return buildSources(key, g); },
   buildDescProbe: function(srcs){ return buildDesc(srcs); },
   stintsProbe: function(key, mid){ return stintsFor(key, mid); },
+  liveUrlProbe: function(key){ return liveWorkerFor(key) + '/live?t=' + liveBucket(); },
   courtRowsProbe: function(key, t, o, z){ return courtZoneRows(key, t, o, z); },
   shotRowsProbe: function(key, g){ return nbaShotRows(key, g); },
   ptCandsProbe: function(key, g){ return ptCandidates(key, g); },
