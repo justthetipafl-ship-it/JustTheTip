@@ -215,6 +215,10 @@
     .rot-marg,.rot-axis{margin-left:86px;margin-right:90px;}
     .rot-nm{font-size:10px;} .rot-fig{font-size:9px;}
   }
+  /* Why there are no picks. Stated, not hidden; muted, because it is an absence. */
+  .sig-held{border:1px dashed var(--border);border-radius:10px;padding:9px 11px;margin:0 0 10px;
+    font-size:11px;line-height:1.5;color:var(--text-3);}
+  .sig-held b{color:var(--text-2);}
   .pk-skew{border-left:2px solid #f97316;}
   .gl-ev.pk-gap{color:var(--text-2);font-weight:600;}
   .gl-ev.pk-gap.pk-wide{color:var(--text);font-weight:800;}
@@ -4686,6 +4690,22 @@ function sigTile(icon, title, desc, rows, emptyWhy){
   // same treatment as the cards: every section on the page is one family now
   return '<details class="sig-tile bld-card" open>'+head+rows.join('')+'</details>';
 }
+/* Said once, under the picks, when Green Lights and Death Riders were both silenced because the
+   model cannot predict those markets. Not a tile - there is nothing to list - and not the old
+   quiet list either, which was longer than the signals. One sentence on why there are fewer
+   picks than a reader expects. */
+function glQuietNote(key){
+  var held = GL_QUIET[key];
+  if (!held || !held.length) return '';
+  GL_QUIET[key] = null;
+  var lbl = held.map(function(m){ return mktLabel(key, m); });
+  var shown = lbl.slice(0, 5).join(', ') + (lbl.length > 5 ? ' and ' + (lbl.length - 5) + ' more' : '');
+  return '<div class="sig-held"><b>No green lights or death riders for ' + esc(SPORTS[key].name)
+    + '.</b> Measured against its own backtest the model does not beat the base rate on '
+    + esc(shown) + ', so it raises nothing on them. A read drawn from a model that cannot predict '
+    + 'a market is worse than no read. Everything else on this page \u2014 form, matchups, the '
+    + 'record against this opponent, the player pages \u2014 is unaffected.</div>';
+}
 function sigQuietNote(){
   if (SIG_CAPTURE) return '';
   if (!SIG_QUIET.length) return '';
@@ -5442,6 +5462,8 @@ function vacatedNote(key, team){
      3. where a two-way market exists the vig is stripped from the pair, giving the
         book's own fair probability to price the model against.                     */
 var GL_SCORE = 5.5, DR_SCORE = -3.5, GL_MIN_GAMES = 3, GL_RUNGS = 6;
+/* Markets the trust gate held back on this render, per sport, so the band can say so once. */
+var GL_QUIET = {};
 // Platt scaling fitted by walk-forward backtest (tools/calibrate.js, 20 Sep 2026). The model is
 // configured with games BEFORE each match-day, then scored against what happened. Where the
 // current season is too short the window reaches back into the previous one, so these are fitted
@@ -5649,7 +5671,7 @@ function ouSignals(key, g, kind){
   var S = state.sports[key], sc = S.scoring;
   if (!sc || !sc.scoreCMP) return null;                // caller reports the missing module
   var mkts = (S.config || {}).oddsMkts || (S.config || {}).multiMkts || [];
-  var over = kind === 'over', out = [];
+  var over = kind === 'over', out = [], blocked = {};
   [g.away, g.home].forEach(function(team){
     var opp = (team === g.home) ? g.away : g.home;
     var vac = vacatedNote(key, team);
@@ -5665,6 +5687,22 @@ function ouSignals(key, g, kind){
           if (p.role === 'pitch' && BAT_ONLY[k]) return;
           if (p.role !== 'pitch' && ARM_ONLY[k]) return;
         }
+        /* ONLY WHERE THE MODEL HAS BEEN SHOWN TO PREDICT.
+           This tile fired on scoreCMP alone, with no reference to whether the model that produced
+           the score can predict that market at all. The trust gate existed - it is the same one
+           that decides whether EV is used - but it only ever governed what was PRINTED, never
+           whether a signal fired. So the sport whose fit is worst produced the most signals.
+           What that cost, from the graded log: 641 Green Lights and Death Riders, 50.7% hit,
+           -24.80 units at -3.9%. NBA alone was 250 of the 289 Green Lights, and its own
+           calibration says why - it predicted 0.587 on points where the truth was 0.373, and is
+           below the base rate on nine markets of ten. The tile was not unlucky, it was reading a
+           broken instrument.
+           With this gate the same 641 become 256 at 58.6% and +26.99 units. The 385 it removes
+           returned -51.79. The gate is fitted on calib.json - tens of thousands of separate
+           walk-forward predictions - and not on these signals, so that is an out-of-sample
+           result rather than the rows choosing their own threshold. Stricter settings were
+           tested and are worse; this is the one the tool already computes. */
+        if (!evTrustedMkt(key, k)){ blocked[k] = 1; return; }
         var lg = leagueAvg(key, k)[p.name];
         if (!lg || lg.games < GL_MIN_GAMES) return;    // production's 3-game floor
         var minAvg = (sc.MIN_AVG || {})[k];
@@ -5720,7 +5758,12 @@ function ouSignals(key, g, kind){
     if (seenP[nm]) return;
     seenP[nm] = 1; one.push(r);
   });
-  return one.slice(0, SIG_MAX_ROWS);
+  var res = one.slice(0, SIG_MAX_ROWS);
+  /* Which markets were held back, so an empty tile can say why it is empty. A tile that simply
+     vanishes reads as "nothing qualified today"; the truth is usually "the model has not earned
+     the right to speak about these markets", and that is worth a sentence. */
+  res.blocked = Object.keys(blocked).sort();
+  return res;
 }
 /* NHL's scoring module supplies no context signals, so its rows carried no reasoning at all - just
    a price and a hit rate. Ice time and how the opponent handles shots are the two things that
@@ -5877,7 +5920,17 @@ function ouRow(key, r){
         + (r.dvpPct > 0 ? '+' : '')+r.dvpPct.toFixed(0)+'% DVP</span>' : '')
     + ctxChips(key, (state.sports[key].idx.byName||{})[r.name], r.mkt, r.line, r.opp)
     + '<span class="gl-chip">'+r.avg.toFixed(r.avg < 3 ? 2 : 1)+' avg \u00b7 '+r.games+' gm</span></div>';
-  return '<div class="gl-row" onclick="LAB.player(\''
+  /* The score and the sample go on the element itself. The ledger scrapes what the tile renders,
+     so anything not on screen is invisible to it - which is why the graded log carries price,
+     line and result but never the SCORE that decided the row existed. That made the one number
+     the tile is gated on, GL_SCORE, impossible to tune from the record: the thing being measured
+     was the only thing not written down. These cost nothing to carry and make the next pass at
+     this threshold an analysis rather than a guess. */
+  return '<div class="gl-row" data-score="'+(r.score != null ? (+r.score).toFixed(2) : '')
+    +'" data-games="'+(r.games != null ? r.games : '')
+    +'" data-avg="'+(r.avg != null ? (+r.avg).toFixed(2) : '')
+    +'" data-dvp="'+(r.dvpPct != null ? (+r.dvpPct).toFixed(1) : '')
+    +'" onclick="LAB.player(\''
     +key+'\',\''+jsq(r.name)+'\')">'
     + btns
     + playerImgP(key, r.name, 28)
@@ -5905,6 +5958,15 @@ function ouTile(key, g, kind){
     // The positive-edge filter is only applied where the model can rank (evTrusted), so the line
     // describing it has to be conditional too - NBA's fit beats the base rate by 0.0007 Brier, EV
     // neither filters nor ranks there, and claiming otherwise describes a gate that is not running.
+    /* An empty tile that says nothing reads as "nothing qualified today". Where the real reason is
+       that the model has not earned the right to speak about these markets, say that instead -
+       it is a different statement and the more useful one. */
+    var held = (rows && rows.blocked) || [];
+    /* An empty tile vanishes, and the quiet list that used to explain it was dropped for being
+       longer than the signals themselves. This reason is not like the others: "nothing cleared
+       the gate today" is about the fixture, while this is a standing fact about the sport, and a
+       reader who sees the tile simply gone will assume the former. Kept for the band to say once. */
+    if (held.length && !rows.length) GL_QUIET[key] = held;
     why = over
       ? 'No player scored '+GL_SCORE+'+ into a soft matchup'
         + (evTrusted(key)
@@ -9858,7 +9920,7 @@ function signalsSection(key, g){
      never signals - they are reads about the men in this game, which is the question that card
      answers - and leaving them at the foot of the signals meant the page asked the same question
      in two places. SIG_CAPTURE still skips them, because Degen Crew only wants tiles. */
-  return sigBand('Degen Signals \u00b7 Picks', picks)
+  return sigBand('Degen Signals \u00b7 Picks', picks + glQuietNote(key))
     + nfl
     + '';                                   // the quiet list is gone: it was longer than the signals
 }
@@ -23721,6 +23783,7 @@ window.LAB = {
   buildSrcsProbe: function(key, g){ return buildSources(key, g); },
   buildDescProbe: function(srcs){ return buildDesc(srcs); },
   stintsProbe: function(key, mid){ return stintsFor(key, mid); },
+  mktTrustProbe: function(key, mkt){ return evTrustedMkt(key, mkt); },
   simLikeProbe: function(key, name, n){ return nbaSimilarTo(key, name, n); },
   simIndexProbe: function(key){ var ix = nbaSimIndex(key); return ix ? { n:ix.rows.length, keys:ix.keys } : null; },
   simWhyProbe: function(key, name){ return simWhy(key, name); },
@@ -23804,6 +23867,7 @@ window.LAB = {
     var g = state.view.focus;
     var rows = ouSignals(key, g && g.g, over === false ? 'under' : 'over') || [];
     return { trusted: evTrusted(key), calib: calibFor(key) || null,
+             blocked: rows.blocked || [],
              rows: rows.map(function(r){
                return { name:r.name, mkt:r.mkt, line:r.line, price:r.price, prob:r.prob,
                         ev:r.ev, edge:r.edge, score:r.score }; }) };
