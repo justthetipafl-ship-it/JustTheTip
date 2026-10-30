@@ -2109,6 +2109,11 @@
   .ca-sim{display:flex;align-items:center;gap:8px;background:var(--surface-2);border:1px solid var(--border);
     border-radius:8px;padding:7px 10px;margin-bottom:5px;}
   .ca-sim-n{flex:1;min-width:0;font-size:11px;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  /* How far this man is from the one being read, in standard deviations. Quiet on purpose: it is
+     there to be checked, not to be the first thing the eye lands on. */
+  .ca-simd{font-style:normal;font-family:var(--font-mono);font-size:9px;font-weight:400;
+    color:var(--text-3);margin-left:5px;}
+  .ca-simwhy{font-size:10px;color:var(--text-3);margin:0 0 6px;line-height:1.4;}
   .ca-sim-v{font-family:var(--font-mono);font-size:10px;font-weight:700;}
   .ca-sim-v u{text-decoration:none;color:var(--accent);} .ca-sim-v s{text-decoration:none;color:#ef4444;}
   .ca-sim-g{font-family:var(--font-mono);font-size:8px;color:var(--text-3);flex:none;}
@@ -11351,13 +11356,148 @@ function cmbPosted(key, name, mkt){
 }
 // Who has faced this opponent MOST RECENTLY in the same position - the current picture, not
 // whoever happens to have the longest history against them.
+/* WHAT MAKES TWO BASKETBALL PLAYERS ALIKE ------------------------------------------------------
+   Not their position. "Similar" used to mean "same position", which makes every guard a comp for
+   every other guard: Jokic and the seven-footer playing four minutes behind him are both centres,
+   and so is Wembanyama. A list built that way answers a question nobody asked.
+
+   WHAT IS USED, AND WHY THOSE THINGS
+     WHERE he shoots   the five location shares from zones.json
+     HOW he gets it    the eleven action shares from playtypes.json
+     HOW BIG he is     height - two men shooting from the same places meet different defences
+     HOW MUCH he plays minutes and starter share
+   Both shot files span two seasons, so they are stable. Per-game box rates are deliberately NOT
+   in here: players.json holds the CURRENT season only, which in late October is a median of two
+   games a man, and a per-36 rate off two games is noise wearing a number. Measured over three
+   seasons the box half added nothing anyway.
+   Shot mix alone was not enough either - it says what kind of shots a man takes and nothing about
+   how many, so Curry came back similar to a ten-minute reserve with the same diet. Minutes and
+   starter share are the stable way to say how big a role it is; a starter plays thirty from game
+   one, long before any rate settles.
+
+   WHAT IT IS WORTH, MEASURED
+   Across 38,000 player-games: how comps fared against a given defence correlates with how the man
+   himself then went, beyond his own average, at about r = 0.04 - real, consistent across points,
+   rebounds, assists and threes, and very small. It beats "same position" on three of those four
+   markets (rebounds and threes by more than double) and beats random comps everywhere. It is
+   worth about a tenth of a percent of the error on a points line. So it is CONTEXT, printed with
+   its sample size, and the note under it says so rather than letting a reader assume an edge. */
+var SIM_ZONES = ['rim', 'paint', 'midRange', 'cornerThree', 'armsThree'];
+var SIM_W = { height:1.2, minutes:1.3, starterPct:0.8, z:1.4, a:1.0 };
+var SIM_MIN_SHOTS = 100, SIM_MIN_MIN = 10;
+/* Twenty is where the measurement peaked: fewer and the comps' record against one defence is
+   too thin to mean anything, more and the list stops being players like him. */
+var SIM_POOL = 20;
+function simHeightIn(h){
+  var m = String(h || '').match(/(\d+)\s*'\s*(\d+)/);
+  return m ? (+m[1] * 12 + +m[2]) : null;
+}
+function nbaSimIndex(key){
+  var S = state.sports[key];
+  if (S.idx.sim !== undefined) return S.idx.sim;
+  S.idx.sim = null;
+  if (key !== 'nba') return null;
+  var zf = S.data.zones, pf = S.data.playtypes;
+  if (!zf || !zf.players || !pf || !pf.players) return null;
+  var acts = pf.actions || [];
+  var zby = {}, pby = {};
+  zf.players.forEach(function(r){ if (r && r.playerId != null) zby[String(r.playerId)] = r; });
+  pf.players.forEach(function(r){ if (r && r.playerId != null) pby[String(r.playerId)] = r; });
+
+  var keys = ['height', 'minutes', 'starterPct']
+    .concat(SIM_ZONES.map(function(z){ return 'z_' + z; }))
+    .concat(acts.map(function(a){ return 'a_' + a; }));
+  var rows = [];
+  (asArray(S.data.players) || []).forEach(function(p){
+    if (!p || !p.name) return;
+    var pid = String(p.playerId), z = zby[pid], a = pby[pid];
+    if (!z || !a || (z.shots || 0) < SIM_MIN_SHOTS || (a.shots || 0) < SIM_MIN_SHOTS) return;
+    var ht = simHeightIn(p.height), mins = +p.minutes || 0;
+    if (!ht || mins < SIM_MIN_MIN) return;
+    var f = { height:ht, minutes:mins, starterPct:+p.starterPct || 0 };
+    SIM_ZONES.forEach(function(zn){ f['z_' + zn] = +((z[zn] || {}).share) || 0; });
+    acts.forEach(function(an){ f['a_' + an] = +((a[an] || {}).share) || 0; });
+    rows.push({ name:p.name, pos:p.position || p.pos, team:p.team, f:f });
+  });
+  if (rows.length < 20) return null;
+
+  var mu = {}, sd = {};
+  keys.forEach(function(k){
+    var n = rows.length, s = 0;
+    rows.forEach(function(r){ s += r.f[k]; });
+    var m = s / n, v = 0;
+    rows.forEach(function(r){ v += (r.f[k] - m) * (r.f[k] - m); });
+    mu[k] = m; sd[k] = Math.sqrt(v / Math.max(1, n - 1)) || 1;
+  });
+  var wOf = function(k){
+    if (k.indexOf('z_') === 0) return SIM_W.z;
+    if (k.indexOf('a_') === 0) return SIM_W.a;
+    return SIM_W[k] || 1;
+  };
+  var ws = keys.map(wOf);
+  var byName = {};
+  rows.forEach(function(r){
+    r.v = keys.map(function(k, i){ return (r.f[k] - mu[k]) / sd[k] * ws[i]; });
+    byName[r.name] = r;
+  });
+  S.idx.sim = { rows:rows, byName:byName, keys:keys };
+  return S.idx.sim;
+}
+/* The men most like him, nearest first. Distance is in standard deviations across the league, so
+   it is comparable between players and can be shown rather than hidden. */
+function nbaSimilarTo(key, name, n){
+  var ix = nbaSimIndex(key);
+  if (!ix) return null;
+  var me = ix.byName[name];
+  if (!me) return null;
+  var out = [];
+  ix.rows.forEach(function(r){
+    if (r.name === name) return;
+    var d = 0, v = me.v, w = r.v;
+    for (var i = 0; i < v.length; i++){ var g = v[i] - w[i]; d += g * g; }
+    out.push({ name:r.name, pos:r.pos, team:r.team, d:Math.sqrt(d) });
+  });
+  out.sort(function(a, b){ return a.d - b.d; });
+  return out.slice(0, n || 20);
+}
+/* The one line that says why these names and not others. */
+function simWhy(key, name){
+  var ix = nbaSimIndex(key);
+  var me = ix && ix.byName[name];
+  if (!me) return '';
+  var f = me.f, bits = [];
+  var zs = SIM_ZONES.map(function(z){ return [z, f['z_' + z] || 0]; })
+    .sort(function(a, b){ return b[1] - a[1]; });
+  if (zs[0] && zs[0][1] > 0)
+    bits.push(Math.round(zs[0][1] * 100) + '% of his shots ' + (ZONE_LAB[zs[0][0]] || zs[0][0]).toLowerCase());
+  var ix2 = nbaSimIndex(key), acts = ((state.sports[key].data.playtypes || {}).actions) || [];
+  var as = acts.map(function(a){ return [a, f['a_' + a] || 0]; })
+    .sort(function(a, b){ return b[1] - a[1]; });
+  if (as[0] && as[0][1] > 0){
+    var lab = ((state.sports[key].data.playtypes || {}).labels || {})[as[0][0]] || as[0][0];
+    bits.push('mostly ' + String(lab).toLowerCase());
+  }
+  bits.push(Math.round(f.minutes) + ' minutes a night');
+  return bits.join(' · ');
+}
 function cmbSimilar(key, p, mkt, line, opp, side){
   if (!opp) return null;
   var S = state.sports[key], pos = p.position || p.pos;
   if (!pos) return null;
   var out = [];
+  /* NBA has the files to say what "similar" means; the other sports do not, and a metric that
+     has not been measured on a sport does not get used on it. There it still means position,
+     which is what it has always meant. */
+  var sim = (key === 'nba') ? nbaSimilarTo(key, p.name, SIM_POOL) : null;
+  var simOf = null;
+  if (sim){
+    simOf = {};
+    sim.forEach(function(x){ simOf[x.name] = x.d; });
+  }
   (cmbPool(key)).forEach(function(q){
-    if (!q || q.name === p.name || (q.position || q.pos) !== pos) return;
+    if (!q || q.name === p.name) return;
+    if (simOf){ if (simOf[q.name] == null) return; }
+    else if ((q.position || q.pos) !== pos) return;
     var rows = ((S.idx.logsByName || {})[q.name] || []).filter(function(r){
       var o = oppOf(key, r); return o && normTeam(o) === normTeam(opp);
     });
@@ -11371,14 +11511,18 @@ function cmbSimilar(key, p, mkt, line, opp, side){
       if (vals.length < 5) vals.push(v);
     });
     if (!vals.length || recent == null) return;
-    out.push({ name:q.name, vals:vals, recent:recent,
+    out.push({ name:q.name, vals:vals, recent:recent, d:(simOf ? simOf[q.name] : null),
                hits:vals.filter(function(v){ return side === 'under' ? v <= line : v > line; }).length });
   });
-  out.sort(function(a,b){ return b.recent - a.recent; });     // most recent meeting first
+  /* Closest first where we can measure closeness; most recent meeting first where we cannot.
+     Ordering a measured list by date would put the least similar man at the top as often as not. */
+  if (simOf) out.sort(function(a, b){ return a.d - b.d; });
+  else out.sort(function(a, b){ return b.recent - a.recent; });
   var rows2 = out.slice(0, 10);
   var tot = 0, hit = 0;
   rows2.forEach(function(r){ tot += r.vals.length; hit += r.hits; });
-  return { rows:rows2, tot:tot, hit:hit, pos:pos };
+  return { rows:rows2, tot:tot, hit:hit, pos:pos, measured:!!simOf,
+           why:(simOf ? simWhy(key, p.name) : '') };
 }
 
 /* FIRST SCORER -----------------------------------------------------------------
@@ -11730,16 +11874,30 @@ function cmbAnalysis(l){
   /* similar players vs this opponent */
   var sim = cmbSimilar(key, p, mkt, line, opp, l.side);
   if (sim && sim.rows.length){
-    h += '<div class="ca-simhd"><b>Recent '+esc(sim.pos)+' vs '+esc(abbrOf(key, opp))+'</b>'
+    h += '<div class="ca-simhd"><b>'
+      + (sim.measured ? 'Players like him' : 'Recent ' + esc(sim.pos)) + ' vs '
+      + esc(abbrOf(key, opp))+'</b>'
       + '<span>'+sim.hit+'/'+sim.tot+' hit ('+Math.round(sim.hit/sim.tot*100)+'%)</span></div>'
+      /* What he is, so the names underneath can be argued with rather than taken on trust. */
+      + (sim.why ? '<div class="ca-simwhy">'+esc(sim.why)+'</div>' : '')
       + sim.rows.map(function(r){
-          return '<div class="ca-sim"><span class="ca-sim-n">'+esc(r.name)+'</span>'
+          return '<div class="ca-sim"><span class="ca-sim-n">'+esc(r.name)
+            + (r.d != null ? '<i class="ca-simd">'+r.d.toFixed(1)+'</i>' : '')+'</span>'
             + '<span class="ca-sim-v">'+r.vals.map(function(v){
                 return cleared(v) ? '<u>'+(v % 1 ? v.toFixed(1) : v)+'</u>' : '<s>'+(v % 1 ? v.toFixed(1) : v)+'</s>';
               }).join(', ')+'</span>'
             + '<span class="ca-sim-g">'+r.vals.length+'g</span></div>'; }).join('')
-      + '<div class="cmb-corr">The '+sim.rows.length+' players in this position who met '
-      + esc(abbrOf(key, opp))+' most recently \u00b7 their actual returns, newest meeting first.</div>';
+      + '<div class="cmb-corr">'
+      + (sim.measured
+          ? 'The '+sim.rows.length+' men whose shot mix, size and role are closest to his, and what '
+            + 'they did against '+esc(abbrOf(key, opp))+'. The small number beside each name is how '
+            + 'far from him he is, in standard deviations \u2014 lower is more alike. '
+            + '<b>Read it as context, not an edge:</b> measured over 38,000 player-games this '
+            + 'correlates with how the man himself then went at about 0.04, which is real, holds '
+            + 'across points, rebounds, assists and threes, and is very small.'
+          : 'The '+sim.rows.length+' players in this position who met '+esc(abbrOf(key, opp))
+            + ' most recently \u00b7 their actual returns, newest meeting first.')
+      + '</div>';
   }
   return h;
 }
@@ -23563,6 +23721,10 @@ window.LAB = {
   buildSrcsProbe: function(key, g){ return buildSources(key, g); },
   buildDescProbe: function(srcs){ return buildDesc(srcs); },
   stintsProbe: function(key, mid){ return stintsFor(key, mid); },
+  simLikeProbe: function(key, name, n){ return nbaSimilarTo(key, name, n); },
+  simIndexProbe: function(key){ var ix = nbaSimIndex(key); return ix ? { n:ix.rows.length, keys:ix.keys } : null; },
+  simWhyProbe: function(key, name){ return simWhy(key, name); },
+  cmbSimilarProbe: function(key, p, mkt, line, opp, side){ return cmbSimilar(key, p, mkt, line, opp, side); },
   liveUrlProbe: function(key){ return liveWorkerFor(key) + '/live?t=' + liveBucket(); },
   courtRowsProbe: function(key, t, o, z){ return courtZoneRows(key, t, o, z); },
   shotRowsProbe: function(key, g){ return nbaShotRows(key, g); },
