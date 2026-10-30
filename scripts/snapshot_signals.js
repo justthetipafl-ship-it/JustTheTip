@@ -256,6 +256,9 @@ const wait = ms => new Promise(r => setTimeout(r, ms));
             edge: isFinite(ev) ? ev / 100 : null,
             // what the row was gated on, so the threshold can be reviewed against the record
             score: numAttr('data-score'),
+            // Due To Score prices on a rate rather than a score; same idea, same reason to log it
+            rate: numAttr('data-rate'),
+            hits: numAttr('data-hits'),
             games: numAttr('data-games'),
             avg: numAttr('data-avg'),
             dvp: numAttr('data-dvp'),
