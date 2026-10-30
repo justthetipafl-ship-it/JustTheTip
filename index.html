@@ -6501,6 +6501,36 @@ var SM_MIN_PRICE = 1.35;     // below this the margin eats any edge a shot line 
    own level. So the shape is high shots per 60, a cold spell relative to HIS OWN rate, and a
    defence that concedes goals. It is a regression bet, and the row says so.                    */
 var DUE_MIN_SHOTS60 = 6, DUE_MIN_GAMES = 12, DUE_COLD = 0.65;
+/* TWO CORRECTIONS, BOTH MEASURED ON THREE SEASONS OF GAMELOGS (152,948 skater-games).
+   The tile went 7-69 on the ledger, -41.39 units at -54.5%. Replaying its own selection
+   walk-forward shows the COLD FILTER is not the fault: the men it picks score in 19.4% of their
+   next games and it would have priced them at 20.1%. The damage is in how the number is made.
+
+   1. THE LINE. It scored every posted rung and kept the best EV, so it drifted onto 2+ and 3+
+      goal markets at $41 and $101. Those went 0 from 25 live, and the replay says why: with
+      three past hits on file a raw frequency claims 2.37% of a 3+ goal game where the truth is
+      0.76%, so it will back anything longer than $42 on something that does not break even until
+      $132. No history of thirty games can estimate a 0.21% event. The tile reads the anytime
+      market and nothing else now.
+   2. THE RATE. A raw frequency is too extreme at both ends. Across the top fifth of its own
+      picks it claimed 35.1% and got 30.8%, and the EV filter fires precisely there - it selects
+      its own overestimates. Shrunk toward the league's rate with k=20 that gap closes to 1.0
+      point, and claimed sits on actual the whole way down (24.5 v 24.3, 21.8 v 22.0). k=40
+      overshoots the other way, k=10 leaves half the bias in place. */
+var DUE_MAX_LINE = 0.5;      // the anytime market; the tails are not estimable from a career
+var DUE_SHRINK = 20;         // games of league-average evidence mixed into every man's own rate
+/* The league's own rate of a skater scoring in a game, from the gamelogs rather than a constant,
+   so it follows the competition instead of a number typed in once. ~15% in this era. */
+function dueBaseRate(key){
+  var S = state.sports[key];
+  if (S.idx.dueBase != null) return S.idx.dueBase;
+  var n = 0, hit = 0;
+  (asArray(S.data.gamelogs) || []).forEach(function(r){
+    if (!r || r.goals == null || String(r.pos || '').toUpperCase() === 'G') return;
+    n++; if ((+r.goals || 0) > 0) hit++;
+  });
+  return (S.idx.dueBase = n >= 500 ? hit / n : 0.15);
+}
 function dueToScore(key, g){
   if (key !== 'nhl') return { rows:[], why:'' };
   var S = state.sports[key], out = [];
@@ -6537,14 +6567,17 @@ function dueToScore(key, g){
     var nowPct = shOf(recent), basePct = shOf(rest);
     if (nowPct == null || basePct == null || basePct <= 0) return;
     if (nowPct / basePct > DUE_COLD) return;                    // not actually cold
-    var best = null;
+    var best = null, base = dueBaseRate(key);
     lines.forEach(function(r){
-      // his own long-run rate says how often he clears this line, not the cold spell
+      // Only the anytime market. See DUE_MAX_LINE: the multi-goal rungs are a tail this estimator
+      // cannot see, and backing them is what took the tile 0 from 25.
+      if (+r.line > DUE_MAX_LINE) return;
+      // His own long-run rate says how often he clears this line, not the cold spell - but a raw
+      // frequency on thirty games is too extreme at both ends, and the EV filter below fires at
+      // the top end where it is too high. Mixing in DUE_SHRINK games of league-average evidence
+      // leaves the heavy scorers ahead of the league and stops a short record reading as one.
       var hits = logs.filter(function(x){ return (+x.goals) > r.line; }).length;
-      var rate = hits / logs.length;
-      // A long price on two lucky games is not an edge, it is a small sample. One hit in a
-      // 25-game history reads as 4% and turns a $19 line into "+51%", which is noise.
-      if (+r.over >= 5 && hits < 3) return;
+      var rate = (hits + DUE_SHRINK * base) / (logs.length + DUE_SHRINK);
       var ev = rate * (+r.over) - 1;
       if (!best || ev > best.ev) best = { line:r.line, price:+r.over, book:r.book, rate:rate, hits:hits, ev:ev };
     });
@@ -6565,7 +6598,13 @@ function dueRow(key, r){
   var b = r.bet;
   var btns = rowBtns(key, { name:r.name, mkt:'goals', line:b.line, side:'over',
                             odds:b.price, book:b.book, opp:r.opp, team:r.team, label:'Goals' });
-  return '<div class="gl-row" onclick="LAB.player(\'' + key + '\',\''
+  /* The number this row was priced on, carried on the element so the ledger can grade it. A
+     review of 76 of these could say the tile lost and could not say whether the rate behind it
+     was the reason, because the rate was the one thing never written down. */
+  return '<div class="gl-row" data-rate="' + (b.rate != null ? (+b.rate).toFixed(4) : '')
+      + '" data-hits="' + (b.hits != null ? b.hits : '')
+      + '" data-games="' + (r.games != null ? r.games : '')
+      + '" onclick="LAB.player(\'' + key + '\',\''
       + jsq(r.name) + '\')">'
     + btns + playerImgP(key, r.name, 28)
     + '<div class="gl-left"><div class="gl-nm"><b>' + esc(r.name) + '</b>'
@@ -6577,6 +6616,13 @@ function dueRow(key, r){
       + r.basePct.toFixed(1) + '%</span>'
       + '<span class="gl-chip good">' + r.per60.toFixed(1) + ' shots/60</span>'
       + '<span class="gl-chip">' + r.dry + ' of his last 10 with a goal</span>'
+      /* The number the edge is actually computed from, shown rather than implied - and shown as
+         what it is. It is NOT his raw record: a frequency over thirty games runs too hot at the
+         top, which is exactly the band this tile fires in, so it is eased toward the league's own
+         rate. Printing his raw hits beside a price derived from the eased one would be two
+         different numbers wearing one label. */
+      + '<span class="gl-chip">' + Math.round(b.rate * 100) + '% to score · '
+      + b.hits + ' in ' + r.games + ', eased toward the league</span>'
       + '<span class="gl-chip good">' + esc(abbrOf(key, r.opp)) + ' concede ' + r.oppGA.toFixed(2) + '</span>'
     + moveChip(key, r.name, 'goals', b.line, b.book, b.price)
     + '</div></div>'
@@ -23822,6 +23868,7 @@ window.LAB = {
   buildDescProbe: function(srcs){ return buildDesc(srcs); },
   stintsProbe: function(key, mid){ return stintsFor(key, mid); },
   mktTrustProbe: function(key, mkt){ return evTrustedMkt(key, mkt); },
+  dueRowProbe: function(key, r){ return dueRow(key, r); },
   simLikeProbe: function(key, name, n){ return nbaSimilarTo(key, name, n); },
   simIndexProbe: function(key){ var ix = nbaSimIndex(key); return ix ? { n:ix.rows.length, keys:ix.keys } : null; },
   simWhyProbe: function(key, name){ return simWhy(key, name); },
