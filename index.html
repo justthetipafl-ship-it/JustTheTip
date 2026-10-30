@@ -9346,29 +9346,71 @@ var NBA_DD_MIN = 0.40, NBA_TD_MIN = 0.15, NBA_MIN_G = 6;
    A back-to-back is a game the day after the last one. Three-in-four counts this game plus two in
    the previous three days; four-in-six the same idea one step out.                                */
 var NBA_REST_MAX = 4;        // more days than this reads as "rested" rather than a number
+/* THE SCHEDULE IS IN TWO FILES, AND THIS ONLY EVER READ ONE.
+   Rest was built from fixture.json alone. That file holds UPCOMING games only - the build prunes
+   played ones as they go - so on any given night a club's previous game is not in it, and the
+   earliest fixture in the file has nothing before it at all. Every team on it came back
+   first:true and the card said "season opener" in late October, with every other club's rest
+   count measured from the wrong game or from nothing.
+   The played half lives in results.json. Both are read now.
+
+   The two files do not date games the same way. fixture.json carries a true UTC instant, so a
+   game tipping on the evening of the 29th in the States is stamped the 30th; results.json
+   carries the American calendar date, the 29th. Differencing one against the other directly
+   turns a back-to-back into two days off. Measured across the fixture list, shifting UTC back
+   seven hours before taking the date lines the two up exactly - the earliest fixture then falls
+   on the 29th, continuous with the last result - and drops the number of clubs showing two games
+   on one day from 14 to 4. So everything is reduced to an American game-day index first, and the
+   arithmetic is whole days from there rather than rounded milliseconds. */
+var NBA_DAY_SHIFT_H = 7;
+function nbaGameDay(ms){ return Math.floor((ms - NBA_DAY_SHIFT_H * 36e5) / 864e5); }
+function nbaDayOf(v){
+  if (v == null) return null;
+  if (typeof v === 'number') return nbaGameDay(v);
+  var s = String(v);
+  // a bare calendar date is already the day we want; a timestamp has to be shifted onto it
+  var m = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (m) return Math.floor(Date.parse(s + 'T00:00:00Z') / 864e5);
+  var t = Date.parse(s);
+  return t ? nbaGameDay(t) : null;
+}
 function nbaRestFor(key, team, when){
   var S = state.sports[key];
   if (!S.idx.restIdx){
     var ix = {};
-    (asArray(S.data.fixture) || []).forEach(function(g){
-      var t = Date.parse(g.utc || g.gameTimeUTC || g.date || '');
-      if (!t) return;
-      [g.home, g.away].forEach(function(tm){ if (tm) (ix[normTeam(tm)] = ix[normTeam(tm)] || []).push(t); });
+    var add = function(tm, day){
+      if (!tm || day == null) return;
+      (ix[normTeam(tm)] = ix[normTeam(tm)] || []).push(day);
+    };
+    (asArray(S.data.results) || []).forEach(function(g){
+      var day = nbaDayOf(g.date || g.Date || g.utc);
+      add(g.home, day); add(g.away, day);
     });
-    Object.keys(ix).forEach(function(k){ ix[k].sort(function(a, b){ return a - b; }); });
+    (asArray(S.data.fixture) || []).forEach(function(g){
+      var day = nbaDayOf(g.utc || g.gameTimeUTC || g.date);
+      add(g.home, day); add(g.away, day);
+    });
+    Object.keys(ix).forEach(function(k){
+      // the same night can arrive from both files while a result is being written
+      var seen = {}, out = [];
+      ix[k].sort(function(a, b){ return a - b; }).forEach(function(d){
+        if (!seen[d]){ seen[d] = 1; out.push(d); }
+      });
+      ix[k] = out;
+    });
     S.idx.restIdx = ix;
   }
   var days = S.idx.restIdx[normTeam(team)];
   if (!days || !days.length) return null;
-  var now = typeof when === 'number' ? when : Date.parse(when || '');
-  if (!now) return null;
-  var before = days.filter(function(t){ return t < now - 36e5; });   // an hour's grace for tip time
+  var now = nbaDayOf(typeof when === 'number' ? when : (when || ''));
+  if (now == null) return null;
+  var before = days.filter(function(d){ return d < now; });
   if (!before.length) return { rest:null, b2b:false, in4:1, in6:1, first:true };
   var last = before[before.length - 1];
-  var rest = Math.round((now - last) / 864e5);
+  var rest = now - last;
   var within = function(d){
-    var cut = now - d * 864e5;
-    return before.filter(function(t){ return t >= cut; }).length + 1;   // + this game
+    var cut = now - d;
+    return before.filter(function(x){ return x >= cut; }).length + 1;   // + this game
   };
   return { rest:rest, b2b:rest <= 1, in4:within(3), in6:within(5), first:false };
 }
