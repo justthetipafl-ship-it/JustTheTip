@@ -227,6 +227,18 @@ const wait = ms => new Promise(r => setTimeout(r, ms));
           const price = specOdds != null ? specOdds : scraped;
           const evTxt = ((row.querySelector('.gl-ev') || {}).textContent || '');
           const ev = parseFloat(evTxt.replace('%', ''));
+          /* WHAT THE ROW WAS GATED ON. The ledger has always carried price, line and result and
+             never the score - so the one number Green Lights and Death Riders are thresholded on
+             could not be tuned from the record, because it was the only thing not written down.
+             A review of 641 graded rows could say the tile was losing and could not say whether
+             a higher bar would have fixed it. The row carries these as attributes now; a row type
+             that does not set them logs null, exactly as before. */
+          const numAttr = (a) => {
+            const v = row.getAttribute(a);
+            if (v == null || v === '') return null;
+            const n = parseFloat(v);
+            return isFinite(n) ? n : null;
+          };
           // the key is the BET, not the moment: one row per player-market-line-fixture
           const k = [key, fixture, title, name, (spec && spec.mkt) || '', (spec && spec.line) != null ? spec.line : ''].join('|');
           if (mine.has(k)) return;
@@ -242,6 +254,11 @@ const wait = ms => new Promise(r => setTimeout(r, ms));
             price: isFinite(price) ? price : null,
             book: (spec && spec.book) || null,
             edge: isFinite(ev) ? ev / 100 : null,
+            // what the row was gated on, so the threshold can be reviewed against the record
+            score: numAttr('data-score'),
+            games: numAttr('data-games'),
+            avg: numAttr('data-avg'),
+            dvp: numAttr('data-dvp'),
             result: null, actual: null            // filled in by the grader once the game is played
           });
         });
