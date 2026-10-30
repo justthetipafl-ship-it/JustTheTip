@@ -22319,6 +22319,44 @@ function deepPanel(){
           : 'A middling matchup: not a reason to take or leave the bet.')+'</div></div>';
   }
 
+  /* ---- players like him, against this opponent ----
+     Check My Bet has carried this for a while and Deep Dive never did, which is backwards: Deep
+     Dive is the panel that claims to put every read on one bet side by side, and this is a read
+     on the bet. Same function, same measured comps, same honesty about what it is worth - it is
+     printed here with its sample and with the correlation stated, not as a reason to bet. */
+  var simSec = '';
+  (function(){
+    var sim = null;
+    try { sim = cmbSimilar(key, p, mkt, line, d.opp, side); } catch(e){}
+    if (!sim || !sim.rows || !sim.rows.length) return;
+    var clears = function(v){ return side === 'under' ? v <= line : v > line; };
+    simSec = '<div class="dd-sec"><div class="dd-h">'
+      + (sim.measured ? 'Players like him' : 'Others in this position')
+      + ' v ' + esc(abbrOf(key, d.opp)) + '</div>'
+      + (sim.why ? '<div class="ca-simwhy">' + esc(sim.why) + '</div>' : '')
+      + '<div class="dd-kv"><span>Their record at this line</span><b class="'
+        + (sim.hit * 2 >= sim.tot ? 'good' : 'bad') + '">' + sim.hit + ' of ' + sim.tot
+        + ' (' + Math.round(sim.hit / Math.max(1, sim.tot) * 100) + '%)</b></div>'
+      + sim.rows.map(function(r){
+          return '<div class="ca-sim"><span class="ca-sim-n">' + esc(r.name)
+            + (r.d != null ? '<i class="ca-simd">' + r.d.toFixed(1) + '</i>' : '') + '</span>'
+            + '<span class="ca-sim-v">' + r.vals.map(function(v){
+                var t = (v % 1 ? v.toFixed(1) : v);
+                return clears(v) ? '<u>' + t + '</u>' : '<s>' + t + '</s>';
+              }).join(', ') + '</span>'
+            + '<span class="ca-sim-g">' + r.vals.length + 'g</span></div>';
+        }).join('')
+      + '<div class="dd-note">'
+      + (sim.measured
+          ? 'Closest first, by shot mix, size and role; the small number is how far from him each '
+            + 'man is, in standard deviations. Measured over 38,000 player-games this correlates '
+            + 'with how the player himself then went at about 0.04 — real, but small enough '
+            + 'that it is context and not a reason on its own.'
+          : 'Everyone in his position who has met them, newest meeting first. This sport has no '
+            + 'shot-profile data, so "similar" here means position and nothing more.')
+      + '</div></div>';
+  })();
+
   // ---- will he even be out there ----
   var rf = ROLE_FIELD[key], roleVal = rf ? +p[rf] : null;
   var inj = injStatus(key, name);
@@ -22359,7 +22397,7 @@ function deepPanel(){
     + cmbHead('ti-telescope', 'Deep Dive', 'Every read on this bet, side by side',
         '<button class="sl-chip" onclick="LAB.deepShare()"><i class="ti ti-share"></i> Share</button>',
         'LAB.deepClose()')
-    + '<div class="cmb-body">'+head+worm+rates+drivers+mlbAdv+teams+script+shape+matchup+role+market
+    + '<div class="cmb-body">'+head+worm+rates+drivers+mlbAdv+teams+script+shape+matchup+simSec+role+market
     + '<div class="dd-acts"><button class="pc-add" onclick="LAB.deepToCard()">Add to my card</button>'
     + '<button class="sl-chip" onclick="LAB.player(\''+key+'\',\''+jsq(name)+'\')">Full player page</button></div>'
     + '</div></div></div>';
