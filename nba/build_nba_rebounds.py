@@ -37,6 +37,12 @@ club, tested out of sample (last season's table against this season's games): r=
 of a rebound between the softest and toughest third, against 0.65 for assists, and the ranking
 is less stable season to season (+0.57 against +0.74). Real, but small, and printed as small.
 
+THE OPPONENT BLOCK carries pace as a second read, not decoration: it is worth 0.54 of a rebound
+out of sample against the concession's 0.43, and residualised it adds +0.035 on TOP of it, which
+is most of the concession's own signal again. The boards-and-share line below it is a breakdown
+only - the share adds +0.0008 once the concession is known, because the two correlate at +0.73.
+See defence().
+
 NO PLAY-BY-PLAY. Unlike the zones, actions and passing builds this reads the gamelogs already in
 the repo. The rebound-rate formula needs only minutes and the two clubs' totals, and nothing the
 play-by-play adds - it has no contested/uncontested flag and no rebound location - would change a
@@ -50,7 +56,9 @@ nba/data/rebounds.json
                           "fromMinutes": 0.51, "fromShare": 0.34, "control": 0.21,
                           "n": 188, "pairs": 3100, "mae": 0.84},
                 "oppSwing": 0.43},
-     "defence": {"BOS": {"perGame": 44.2, "rank": 7, "of": 30}},
+     "defence": {"BOS": {"perGame": 44.2, "rank": 7, "of": 30,
+                         "pace": 101.4, "paceRank": 12,
+                         "boards": 88.1, "oppShare": 0.5017, "misses": 86.3}},
      "players": [{"playerId": "...", "name": "...", "team": "DEN", "games": 71,
                   "minutes": 34.2, "reb": 12.7, "oreb": 2.8, "dreb": 9.9,
                   "trbPct": 19.4, "orebPct": 8.8, "drebPct": 29.1,
@@ -240,6 +248,65 @@ def fit_rivals(byp, appeared, club_of, rpg):
             'mae': round(mae, 3), 'fitted': True, 'bands': bands}
 
 
+def defence(rows):
+    """What each club concedes on the glass, and the two things that drive it.
+
+    A concession figure on its own says nothing about WHY, and the two reasons pull in different
+    directions: a club can give up boards because its games are fast and full of misses, or
+    because it loses the ones that come up. Both are measured and tested out of sample against
+    this season's games, and they do NOT carry the same weight:
+
+        rebounds conceded   r=+0.056, 0.43 of a rebound between the softest and toughest third
+        pace                r=+0.052, 0.54 - and it adds r=+0.035 ON TOP of the concession,
+                            which is most of the concession's own signal again, so it is a
+                            genuinely separate read rather than the same one restated
+        the opponent's
+        share of the glass  r=+0.041, 0.50 - but it adds only +0.0008 on top, because it
+                            correlates +0.73 with the concession. Explanatory, not extra.
+
+    So the card prints pace as a second strand and the share as a breakdown, and says which is
+    which. boards x oppShare = perGame exactly, by construction, so the breakdown always adds up.
+    """
+    tm = collections.defaultdict(lambda: collections.defaultdict(float))
+    for r in rows:
+        m, t = str(r.get('MatchId')), r.get('Team')
+        if not m or not t:
+            continue
+        for k in ('fga', 'fgm', 'fta', 'oreb', 'rebounds', 'turnovers'):
+            tm[m][t + '|' + k] += fnum(r.get(k))
+    acc = collections.defaultdict(lambda: collections.defaultdict(list))
+    for m, row in tm.items():
+        ts = sorted({k.split('|')[0] for k in row})
+        if len(ts) != 2:
+            continue
+        gv = lambda t, k: row.get(t + '|' + k, 0.0)                      # noqa: E731
+        for a, b in ((ts[0], ts[1]), (ts[1], ts[0])):
+            # possessions, the standard estimate, averaged over the two sides
+            pa = gv(a, 'fga') - gv(a, 'oreb') + gv(a, 'turnovers') + 0.44 * gv(a, 'fta')
+            pb = gv(b, 'fga') - gv(b, 'oreb') + gv(b, 'turnovers') + 0.44 * gv(b, 'fta')
+            boards = gv(a, 'rebounds') + gv(b, 'rebounds')
+            acc[a]['perGame'].append(gv(b, 'rebounds'))
+            acc[a]['pace'].append((pa + pb) / 2.0)
+            acc[a]['boards'].append(boards)
+            acc[a]['misses'].append((gv(a, 'fga') - gv(a, 'fgm')) + (gv(b, 'fga') - gv(b, 'fgm')))
+    clubs = {c: {k: statistics.mean(v) for k, v in kv.items()}
+             for c, kv in acc.items() if len(kv['perGame']) >= MIN_DEF_GAMES}
+    out = {}
+    for key, rev in (('perGame', True), ('pace', True)):
+        for n, c in enumerate(sorted(clubs, key=lambda x: -clubs[x][key] if rev else clubs[x][key])):
+            out.setdefault(c, {})[key] = round(clubs[c][key], 2)
+            out[c][key + 'Rank'] = n + 1
+    for c in out:
+        out[c]['of'] = len(clubs)
+        out[c]['boards'] = round(clubs[c]['boards'], 1)
+        out[c]['misses'] = round(clubs[c]['misses'], 1)
+        # derived so the breakdown is exact: boards x oppShare == perGame
+        out[c]['oppShare'] = round(clubs[c]['perGame'] / clubs[c]['boards'], 4) \
+            if clubs[c]['boards'] else None
+        out[c]['rank'] = out[c]['perGameRank']          # the headline rank, named as before
+    return out
+
+
 def build(rows):
     club_reb, club_min, appeared, byp = shape(rows)
     names, club_of, raw = {}, {}, {}
@@ -297,17 +364,7 @@ def build(rows):
     players.sort(key=lambda p: -p['reb'])
 
 
-    # what each club concedes, per game, most conceded first
-    conc = collections.defaultdict(list)
-    for m, t in club_reb.items():
-        ts = list(t)
-        if len(ts) == 2:
-            conc[ts[0]].append(t[ts[1]])
-            conc[ts[1]].append(t[ts[0]])
-    per = sorted(((statistics.mean(v), c) for c, v in conc.items() if len(v) >= MIN_DEF_GAMES),
-                 reverse=True)
-    dfc = {c: {'perGame': round(v, 2), 'rank': n + 1, 'of': len(per)}
-           for n, (v, c) in enumerate(per)}
+    dfc = defence(rows)
 
     fit = fit_rivals(byp, appeared, club_of, rpg)
     allr = [x for x in (rate(r, club_reb, club_min) for r in rows
@@ -322,7 +379,10 @@ def build(rows):
             # the measurements the card quotes; see the docstring for how each was taken
             'rival': dict(fit, top=0.86, fromMinutes=0.51, fromShare=0.34,
                           control=0.21, n=188, extraMinutes=2.05, upPct=73),
-            'oppSwing': 0.43, 'oppStability': 0.57},
+            # measured out of sample; paceSwing is worth more than the concession itself and
+            # is the only contributor that adds anything on top of it
+            'oppSwing': 0.43, 'oppStability': 0.57,
+            'paceSwing': 0.54, 'paceAdds': 0.035, 'shareAdds': 0.0008},
         'minGames': MIN_GAMES, 'rivalShrink': RIVAL_SHRINK, 'rivalPrior': round(prior, 2),
         'defence': dfc, 'players': players}
 
@@ -447,6 +507,19 @@ def selftest():
     check('and a settled man is barely moved by the easing',
           all(abs(r['reb'] - r['rebRaw']) < 1.0
               for r in star['rivals'] if r['games'] >= 40))
+
+    # THE BREAKDOWN MUST ADD UP. boards x oppShare has to equal the headline exactly, or the
+    # card prints a decomposition of a number it does not decompose.
+    for c, v in out['defence'].items():
+        check('%s: boards x the share they allow is the concession (%.1f x %.3f = %.2f v %.2f)'
+              % (c, v['boards'], v['oppShare'], v['boards'] * v['oppShare'], v['perGame']),
+              abs(v['boards'] * v['oppShare'] - v['perGame']) < 0.05)
+    check('pace is measured and ranked separately from the concession',
+          all('pace' in v and 'paceRank' in v for v in out['defence'].values()))
+    check('and both rankings run 1..n',
+          sorted(v['rank'] for v in out['defence'].values()) == list(range(1, len(out['defence']) + 1))
+          and sorted(v['paceRank'] for v in out['defence'].values())
+              == list(range(1, len(out['defence']) + 1)))
 
     check('the payload is valid JSON with no NaN in it', 'NaN' not in json.dumps(out))
 
