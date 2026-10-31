@@ -134,13 +134,35 @@ jobs:
           python3 nba/build_nba_assists.py $ARGS \
             || echo "::warning::assists build failed - keeping the assists.json already in the repo"
 
+      # THE GLASS. Unlike every other step here this one reads no play-by-play: the rebound-rate
+      # formula needs only minutes and the two clubs' totals, and the gamelogs in the repo carry
+      # both. Nothing the feed adds - it has no contested flag and no rebound location - would
+      # change a number, so it runs offline in a second. It sits last because it reads the
+      # gamelogs the 12:00 NBA build writes.
+      #
+      # The selftest pins the two things that were wrong in development. A rival's rebounding is
+      # eased toward the league before his absence is priced, because ranking on raw per-game put
+      # a man with 10.5 boards across TWO games above Aaron Gordon as Jokic's biggest rival - and
+      # the gain formula multiplies that figure, so his absence would have been priced at +0.7 off
+      # a two-game sample. And the same NaN guard as the passing build, for the same reason.
+      - name: Rebounding selftest
+        run: python3 nba/build_nba_rebounds.py --selftest
+      - name: Build rebounding
+        run: |
+          ARGS="--out nba/data"
+          if [ -n "${{ inputs.seasons }}" ]; then ARGS="$ARGS --seasons ${{ inputs.seasons }}"; fi
+          python3 nba/build_nba_rebounds.py $ARGS \
+            || echo "::warning::rebounding build failed - keeping the rebounds.json already in the repo"
+
       # LAST LINE OF DEFENCE on the file the page has to parse. The build refuses to write a NaN,
       # but anything that produces unreadable JSON here costs a silent, invisible card, so the
       # file is parsed before it is committed rather than after someone notices it is missing.
       - name: Check the written JSON parses
         run: |
-          python3 -c "import json,sys; json.load(open('nba/data/assists.json')); print('assists.json parses')" \
-            || { echo "::error::assists.json is not valid JSON - not committing it"; rm -f nba/data/assists.json; }
+          for f in assists rebounds; do
+            python3 -c "import json; json.load(open('nba/data/$f.json')); print('$f.json parses')" \
+              || { echo "::error::$f.json is not valid JSON - not committing it"; rm -f "nba/data/$f.json"; }
+          done
 
       - name: Commit
         run: |
@@ -149,13 +171,13 @@ jobs:
           for f in nba/data/quarters.json nba/data/zones.json \
                    nba/data/zones_by_season.json nba/data/zone_persistence.json \
                    nba/data/playtypes.json nba/data/stints.json \
-                   nba/data/assists.json; do
+                   nba/data/assists.json nba/data/rebounds.json; do
             [ -f "$f" ] && git add "$f" && echo "staged $f"
           done
           if git diff --cached --quiet; then
             echo "nothing new"
           else
-            git commit -m "NBA quarters, shot zones, shot actions, rotations and passing"
+            git commit -m "NBA quarters, shot zones, shot actions, rotations, passing and rebounding"
             for i in 1 2 3; do
               git pull --rebase --autostash origin main && git push && break
               sleep 5
