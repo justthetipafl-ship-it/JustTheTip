@@ -114,19 +114,48 @@ jobs:
           python3 nba/build_nba_stints.py $ARGS \
             || echo "::warning::rotation build failed - keeping the stints.json already in the repo"
 
+      # WHO HE FEEDS: passing networks from the same play-by-play, for the Playmaking tab. Here
+      # for the same reasons as the rotations - one feed, one rolling window, and the action
+      # taxonomy must agree with the shot-actions file built eight steps above. If the two ever
+      # drift, "what he creates" and "how he scores" describe the same shots in different words.
+      #
+      # The selftest is offline and instant, and it earns its place twice over. It READS
+      # build_nba_playtypes.py and fails if the two action tables have diverged by so much as a
+      # label, which no amount of care in review reliably catches. And it pins the NaN guard: a
+      # missing athlete name arrives from pandas as a NaN, json.dump writes it as a bare NaN,
+      # which is not JSON - so the page rejects the whole file in a .catch and the card silently
+      # never appears. That shipped once in development and nothing failed loudly.
+      - name: Passing network selftest
+        run: python3 nba/build_nba_assists.py --selftest
+      - name: Build passing networks
+        run: |
+          ARGS="--out nba/data"
+          if [ -n "${{ inputs.seasons }}" ]; then ARGS="$ARGS --seasons ${{ inputs.seasons }}"; fi
+          python3 nba/build_nba_assists.py $ARGS \
+            || echo "::warning::assists build failed - keeping the assists.json already in the repo"
+
+      # LAST LINE OF DEFENCE on the file the page has to parse. The build refuses to write a NaN,
+      # but anything that produces unreadable JSON here costs a silent, invisible card, so the
+      # file is parsed before it is committed rather than after someone notices it is missing.
+      - name: Check the written JSON parses
+        run: |
+          python3 -c "import json,sys; json.load(open('nba/data/assists.json')); print('assists.json parses')" \
+            || { echo "::error::assists.json is not valid JSON - not committing it"; rm -f nba/data/assists.json; }
+
       - name: Commit
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           for f in nba/data/quarters.json nba/data/zones.json \
                    nba/data/zones_by_season.json nba/data/zone_persistence.json \
-                   nba/data/playtypes.json nba/data/stints.json; do
+                   nba/data/playtypes.json nba/data/stints.json \
+                   nba/data/assists.json; do
             [ -f "$f" ] && git add "$f" && echo "staged $f"
           done
           if git diff --cached --quiet; then
             echo "nothing new"
           else
-            git commit -m "NBA quarters, shot zones, shot actions and rotations"
+            git commit -m "NBA quarters, shot zones, shot actions, rotations and passing"
             for i in 1 2 3; do
               git pull --rebase --autostash origin main && git push && break
               sleep 5
