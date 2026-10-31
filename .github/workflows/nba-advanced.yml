@@ -154,12 +154,30 @@ jobs:
           python3 nba/build_nba_rebounds.py $ARGS \
             || echo "::warning::rebounding build failed - keeping the rebounds.json already in the repo"
 
+      # FROM DEEP. Gamelogs for the volume and the concession, play-by-play for how much of a
+      # man's shooting is created for him. It sits after the rebounding build because both read
+      # the gamelogs the 12:00 NBA build writes.
+      #
+      # The selftest is worth its two seconds for one check in particular: it generates a league
+      # of synthetic shooters whose attempts are a fixed personal rate and whose makes are a coin
+      # flip at a common rate, and requires the split-half to come back saying attempts persist
+      # and percentage does not. That is the claim the whole card rests on, so a build that ever
+      # stopped measuring it should fail here rather than have the page assert it anyway.
+      - name: From Deep selftest
+        run: python3 nba/build_nba_threes.py --selftest
+      - name: Build threes
+        run: |
+          ARGS="--out nba/data"
+          if [ -n "${{ inputs.seasons }}" ]; then ARGS="$ARGS --seasons ${{ inputs.seasons }}"; fi
+          python3 nba/build_nba_threes.py $ARGS \
+            || echo "::warning::threes build failed - keeping the threes.json already in the repo"
+
       # LAST LINE OF DEFENCE on the file the page has to parse. The build refuses to write a NaN,
       # but anything that produces unreadable JSON here costs a silent, invisible card, so the
       # file is parsed before it is committed rather than after someone notices it is missing.
       - name: Check the written JSON parses
         run: |
-          for f in assists rebounds; do
+          for f in assists rebounds threes; do
             python3 -c "import json; json.load(open('nba/data/$f.json')); print('$f.json parses')" \
               || { echo "::error::$f.json is not valid JSON - not committing it"; rm -f "nba/data/$f.json"; }
           done
@@ -171,13 +189,13 @@ jobs:
           for f in nba/data/quarters.json nba/data/zones.json \
                    nba/data/zones_by_season.json nba/data/zone_persistence.json \
                    nba/data/playtypes.json nba/data/stints.json \
-                   nba/data/assists.json nba/data/rebounds.json; do
+                   nba/data/assists.json nba/data/rebounds.json nba/data/threes.json; do
             [ -f "$f" ] && git add "$f" && echo "staged $f"
           done
           if git diff --cached --quiet; then
             echo "nothing new"
           else
-            git commit -m "NBA quarters, shot zones, shot actions, rotations, passing and rebounding"
+            git commit -m "NBA quarters, shot zones, shot actions, rotations, passing, rebounding and threes"
             for i in 1 2 3; do
               git pull --rebase --autostash origin main && git push && break
               sleep 5
