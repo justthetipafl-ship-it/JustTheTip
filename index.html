@@ -1480,6 +1480,19 @@
      the rank ended up under the wrong number, which is a wrong reading rather than a scruffy
      one. */
   .pa-pair{display:inline-flex;align-items:center;gap:10px;}
+  /* FROM DEEP. The .t3- prefix was taken by the tier-3 loading chips, so these are .dp-. The
+     two weight labels matter: a figure that persists and one that does not must not be printed
+     in the same colour, because the whole card turns on the difference. */
+  .dp-firm,.dp-soft{font-family:var(--font-mono);font-size:8px;line-height:1.3;display:block;}
+  .dp-firm{color:var(--accent);}
+  .dp-soft{color:#f97316;}
+  .dp-norank{font-family:var(--font-mono);font-size:8px;color:var(--text-3);font-style:italic;
+    max-width:96px;line-height:1.25;}
+  .dp-rec{border:1px solid var(--border);border-radius:9px;padding:8px 10px;}
+  .dp-recrow{display:flex;align-items:center;gap:10px 14px;flex-wrap:wrap;}
+  .dp-verdict{font-size:9px;color:var(--text-2);line-height:1.45;margin-top:7px;
+    padding-top:7px;border-top:1px solid var(--border);}
+  .dp-verdict b{color:var(--text);}
   .pa-big{font-size:9px;color:var(--text-3);line-height:1.25;}
   .pa-big b{display:block;font-family:var(--font-mono);font-size:17px;color:var(--text);}
   /* REBOUNDING. What each rival's absence is worth sits under his availability in the same
@@ -2718,6 +2731,8 @@ var TIER3 = { gamelogs:'data/gamelogs.json', dvp:'data/dvp.json', teams_form:'da
               assists:'data/assists.json',
               // The glass, built by nba/build_nba_rebounds.py from the gamelogs. NBA only.
               rebounds:'data/rebounds.json',
+              // Threes, built by nba/build_nba_threes.py. NBA only.
+              threes:'data/threes.json',
               profiles:'data/profiles.json',
               specialTeams:'data/special_teams.json',
               ladder:'data/ladder.json',
@@ -10388,7 +10403,7 @@ var PLAYER_SOURCES = [['radar','Radar'], ['leaders','Leaders'], ['formal','Form 
                       ['coverage','Coverage'], ['usage','Usage'], ['firstread','First Read'],
                       ['avail','Available'], ['goalie','In Goal'], ['all','Everyone']];
 var SCORE_SOURCES = [['profile','Player'], ['court','The Floor'], ['acts','How He Scores'],
-                    ['play','Playmaking'], ['glass','Rebounding'],
+                    ['play','Playmaking'], ['glass','Rebounding'], ['deep','From Deep'],
                     ['q1','Q1'], ['first','First Score'], ['rz','Red Zone']];
 var TEAM_NOW = null, PLAYER_NOW = null, SCORE_NOW = null;
 function cardPane(kind, key, g, src){
@@ -10431,6 +10446,7 @@ function cardPane(kind, key, g, src){
       if (src === 'acts')  return nbaActionSection(key, g) || '';
       if (src === 'play')  return nbaPlaySection(key, g) || '';
       if (src === 'glass') return nbaGlassSection(key, g) || '';
+      if (src === 'deep')  return nbaThreeSection(key, g) || '';
       if (src === 'first') return firstLastSection(key, g) || '';
       if (src === 'rz')    return redZoneSection(key, g) || '';
       if (src === 'profile') return scoreProfilePane(key, g) || '';
@@ -20136,6 +20152,287 @@ function nbaGlassSection(key, g){
     + ((lg.shareAdds != null ? lg.shareAdds : 0.0008).toFixed(4)) + ', which is nothing. On the '
     + 'Playmaking card pace earns no place at all \u2014 it adds \u22120.002 there.</div>';
 }
+/* ---------------------------------------------------------------- FROM DEEP
+   Threes, from nba/data/threes.json (nba/build_nba_threes.py), with where he shoots them taken
+   from zones.json so this card and The Floor describe the same arc.
+
+   MOST OF THIS CARD IS ABOUT WHAT NOT TO TRUST, and that is the point of it.
+
+   A threes line looks like a bet on shooting and is nearly all a bet on volume. Split-half over
+   297 shooters - a man's first half-season against his second:
+
+       attempts per game   r=+0.855      threes made  r=+0.802
+       three-point PERCENT r=+0.306      minutes      r=+0.802
+
+   How many he lets go persists. How well he shoots barely does.
+
+   AND A HOT STREAK POINTS THE WRONG WAY. Over 15,048 player-games, his last five games against
+   his own season rate: recent 3P% predicts the next game's 3P% at r=-0.0275, and the hottest
+   fifth of those runs then shoot 1.9 points BELOW their own rate. Recent ATTEMPTS predict the
+   next game's attempts at r=+0.522. So "he is on fire from deep" - the commonest reason anyone
+   takes a threes over - is mean reversion, and "he has been shooting a lot" is the real one.
+   The recent block says so in those words rather than printing a streak and leaving the reader
+   to draw the usual conclusion.
+
+   WHAT KIND OF SHOOTER HE IS is real, and is not a read on absences. 85% of made threes are
+   created, and per shooter that runs 29% to 100%. But the obvious follow-up - a catch-and-shoot
+   specialist collapses without his creator - was tested and failed exactly as the passing
+   network did: top feeder out moved a shooter +0.006 threes against a +0.084 control, 52% went
+   down, and the >=90%-assisted group came out at +0.024, no worse than the self-creators.
+
+   THE OPPONENT IS THE WEAKEST OF THE THREE CARDS, and their percentage allowed is not ranked at
+   all: out of sample it is worth r=-0.016, the long-known result that a defence controls how
+   many threes you take far more than whether they drop. Ranking it beside the attempts would
+   put a number worth nothing in the same type as one worth something. ---------------------- */
+var T3_SHOW = 4;            // creators listed
+var T3_RECENT = 5;          // the window the hot-hand measurement was taken over
+var T3_HOT = 0.05;          // 5 points of 3P% above his own rate before a run is called hot
+function t3File(key){
+  var S = state.sports[key];
+  return (key === 'nba' && S && S.data && S.data.threes) || null;
+}
+function t3Player(key, name){
+  var tf = t3File(key); if (!tf || !tf.players) return null;
+  var S = state.sports[key];
+  if (!S.idx.t3Idx){
+    var ix = {};
+    tf.players.forEach(function(r){ if (r && r.name) ix[cmbNameKey(r.name)] = r; });
+    S.idx.t3Idx = ix;
+  }
+  return S.idx.t3Idx[cmbNameKey(name)] || null;
+}
+function t3Candidates(key, g){
+  var out = [];
+  [[g.away, g.home], [g.home, g.away]].forEach(function(pair){
+    playersOnTeam(key, pair[0]).forEach(function(p){
+      if (!isPlayingP(key, p.name, p.team)) return;
+      var r = t3Player(key, p.name);
+      if (r) out.push({ name:p.name, team:pair[0], opp:pair[1], rec:r,
+                        priced:hasAnyOddsFor(key, p.name) });
+    });
+  });
+  out.sort(function(a, b){ return b.rec.made - a.rec.made; });
+  return out;
+}
+function t3Pick(key, g){
+  var cands = t3Candidates(key, g);
+  if (!cands.length) return null;
+  var want = state.view.ptName;
+  for (var i = 0; i < cands.length; i++) if (cands[i].name === want) return cands[i];
+  return cands[0];
+}
+/* His last few games, from the logs the page already holds. Computed live rather than built into
+   the file because it changes every night and the file is rebuilt once a day. */
+function t3Recent(key, name, n){
+  var rows = ((state.sports[key].idx || {}).logsByName || {})[name] || [];
+  var r = sortLogsDesc(rows.slice()).filter(function(x){ return (+x.minutes || 0) > 0; })
+            .slice(0, n || T3_RECENT);
+  if (!r.length) return null;
+  var att = 0, made = 0;
+  r.forEach(function(x){ att += (+x.threesAtt || 0); made += (+x.threes || 0); });
+  return { games:r.length, att:att / r.length, made:made / r.length,
+           pct:att ? made / att : null, atts:att };
+}
+function nbaThreeSection(key, g){
+  if (key !== 'nba' || !g || !g.home || !g.away) return '';
+  var tf = t3File(key); if (!tf || !tf.players) return '';
+  var cands = t3Candidates(key, g);
+  var me = t3Pick(key, g);
+  if (!me) return '';
+  var rec = me.rec, lg = tf.league || {}, stab = lg.stability || {}, rc = lg.recent || {};
+  var chips = cands.length < 2 ? '' :
+    '<select class="mb-fixsel gg-sel" onchange="LAB.ptName(this.value)">'
+    + cands.map(function(c){
+        return '<option value="' + esc(c.name) + '"' + (c.name === me.name ? ' selected' : '') + '>'
+          + esc(c.name) + ' · ' + esc(abbrOf(key, c.team))
+          + ' · ' + c.rec.made.toFixed(1) + ' made'
+          + (c.priced ? ' · priced' : '') + '</option>';
+      }).join('') + '</select>';
+
+  /* HIS VOLUME, with the two halves labelled by how much they persist. */
+  var lgPct = lg.pct != null ? lg.pct : null;
+  var dPct = (lgPct != null && rec.pct != null) ? (rec.pct - lgPct) * 100 : null;
+  var vol = '<div class="pa-tbl">'
+    + '<div class="pa-row"><div class="pa-lab">Attempts</div>'
+      + '<div class="pa-bar"><i style="width:' + Math.min(100, Math.round(rec.att / 12 * 100))
+      + '%"></i></div>'
+      + '<div class="pa-n"><b>' + rec.att.toFixed(1) + '</b>a game'
+      + '<i>' + rec.minutes.toFixed(0) + ' min</i></div>'
+      + '<div class="pa-st"><span class="dp-firm">holds up '
+      + (stab.att != null ? 'r=+' + stab.att.toFixed(2) : '') + '</span></div></div>'
+    + '<div class="pa-row"><div class="pa-lab">Made</div>'
+      + '<div class="pa-bar"><i style="width:' + Math.min(100, Math.round(rec.made / 5 * 100))
+      + '%"></i></div>'
+      + '<div class="pa-n"><b>' + rec.made.toFixed(1) + '</b>a game'
+      + '<i>' + rec.games + ' games</i></div>'
+      + '<div class="pa-st"><span class="dp-firm">holds up '
+      + (stab.made != null ? 'r=+' + stab.made.toFixed(2) : '') + '</span></div></div>'
+    + '<div class="pa-row"><div class="pa-lab">Percentage</div>'
+      + '<div class="pa-bar"><i style="width:'
+      + Math.min(100, Math.round((rec.pct || 0) / 0.45 * 100)) + '%"></i></div>'
+      + '<div class="pa-n"><b>' + (rec.pct != null ? (rec.pct * 100).toFixed(1) + '%' : '—')
+      + '</b>from deep'
+      + (dPct != null ? '<i class="' + (dPct >= 0 ? 'up' : 'dn') + '">' + signedOne(dPct)
+         + ' v league</i>' : '') + '</div>'
+      + '<div class="pa-st"><span class="dp-soft">barely holds '
+      + (stab.pct != null ? 'r=+' + stab.pct.toFixed(2) : '') + '</span></div></div>'
+    + '</div>';
+
+  /* RECENT FORM, and what it is worth - which is the most useful line on the card. */
+  var rr = t3Recent(key, me.name, T3_RECENT), recentBody = '';
+  if (rr && rr.pct != null && rec.pct != null){
+    var dp = (rr.pct - rec.pct) * 100;
+    var da = rr.att - rec.att;
+    var hot = (rr.pct - rec.pct) >= T3_HOT, cold = (rec.pct - rr.pct) >= T3_HOT;
+    var verdict;
+    if (hot){
+      verdict = '<b>He is hot, and that is the wrong reason to take an over.</b> Measured over '
+        + (rc.n || 15048).toLocaleString() + ' player-games, a run like this predicts the next '
+        + 'game’s percentage at r=' + (rc.pctToPct != null ? rc.pctToPct.toFixed(3) : '-0.028')
+        + ' — and the hottest fifth then shoot '
+        + Math.abs(rc.hotFifthPts != null ? rc.hotFifthPts : 1.9).toFixed(1)
+        + ' points BELOW their own rate.';
+    } else if (cold){
+      verdict = '<b>He is cold, and that is not a reason either.</b> A slump predicts the next '
+        + 'game’s percentage no better than a hot run does — the coldest fifth come back '
+        + 'at about their own rate.';
+    } else {
+      verdict = 'He is shooting about his own rate, which is the usual case and the one worth '
+        + 'pricing off.';
+    }
+    recentBody = '<div class="dp-rec">'
+      + '<div class="dp-recrow">'
+        + '<span class="pa-big"><b>' + rr.att.toFixed(1) + '</b>attempts over his last '
+        + rr.games + '</span>'
+        + '<span class="pt-rank ' + (Math.abs(da) < 0.5 ? 'mid' : da > 0 ? 'soft' : 'tough') + '">'
+        + signedOne(da) + '<i>v his season</i></span>'
+        + '<span class="pa-big"><b>' + (rr.pct * 100).toFixed(1) + '%</b>over that run</span>'
+        + '<span class="pt-rank mid">' + signedOne(dp) + '<i>v his season</i></span>'
+      + '</div>'
+      + '<div class="dp-verdict">' + verdict + ' What does carry is the attempts: a man’s '
+      + 'recent volume predicts his next game’s at r=+'
+      + (rc.attToAtt != null ? rc.attToAtt.toFixed(2) : '0.52') + ', which is why the two sit '
+      + 'side by side here with different weight.</div></div>';
+  }
+
+  /* WHAT KIND OF SHOOTER, from the play-by-play and from zones.json. */
+  var z = nbaZones(key, me.name);
+  var kind = '';
+  if (rec.assistedShare != null || z){
+    var rows2 = '';
+    if (rec.assistedShare != null){
+      var lgSh = lg.assistedShare != null ? lg.assistedShare : 0.853;
+      rows2 += '<div class="pa-row"><div class="pa-lab">Created for him</div>'
+        + '<div class="pa-bar"><i style="width:' + Math.round(rec.assistedShare * 100)
+        + '%"></i></div>'
+        /* NEUTRAL, not up/dn. A low assisted share is not worse than a high one - it means
+           he makes his own rather than catching them. Colouring it red passed a verdict on a
+           figure that carries none, the same error the pick'em gap had. */
+        + '<div class="pa-n"><b>' + Math.round(rec.assistedShare * 100) + '%</b>of his makes'
+        + '<i>' + signedOne((rec.assistedShare - lgSh) * 100) + ' v league · '
+        + (rec.assistedShare >= lgSh ? 'more of a catch-and-shoot man' : 'makes more of his own')
+        + '</i></div>'
+        + '<div class="pa-st"></div></div>';
+    }
+    if (z && z.cornerThree && z.armsThree){
+      var ca = +z.cornerThree.att || 0, aa = +z.armsThree.att || 0, tt = ca + aa;
+      if (tt){
+        rows2 += '<div class="pa-row pa-act"><div class="pa-lab">From the corner</div>'
+          + '<div class="pa-bar"><i style="width:' + Math.round(ca / tt * 100) + '%"></i></div>'
+          + '<div class="pa-n"><b>' + Math.round(ca / tt * 100) + '%</b>of his threes'
+          + '<i>' + ((+z.cornerThree.pct || 0) * 100).toFixed(1) + '% from there</i></div>'
+          + '<div class="pa-st"></div></div>'
+          + '<div class="pa-row pa-act"><div class="pa-lab">Above the break</div>'
+          + '<div class="pa-bar"><i style="width:' + Math.round(aa / tt * 100) + '%"></i></div>'
+          + '<div class="pa-n"><b>' + Math.round(aa / tt * 100) + '%</b>of his threes'
+          + '<i>' + ((+z.armsThree.pct || 0) * 100).toFixed(1) + '% from there</i></div>'
+          + '<div class="pa-st"></div></div>';
+      }
+    }
+    (rec.creators || []).slice(0, T3_SHOW).forEach(function(c){
+      var st = paStatus(key, me, c);
+      rows2 += '<div class="pa-row"><div class="pa-lab">' + esc(c.name) + '</div>'
+        + '<div class="pa-bar"><i style="width:' + Math.max(3, Math.round(c.share * 300))
+        + '%"></i></div>'
+        + '<div class="pa-n"><b>' + Math.round(c.share * 100) + '%</b>of his threes'
+        + '<i>' + c.n + ' of them</i></div>'
+        + '<div class="pa-st"><span class="' + st.cls + '">' + esc(st.txt) + '</span></div></div>';
+    });
+    kind = rows2 ? '<div class="pa-tbl">' + rows2 + '</div>' : '';
+  }
+
+  var qr = paQuarters(key, me.name), qBody = '';
+  if (qr){
+    var qmax = Math.max.apply(null, qr.map(function(r){ return +r.threes || 0; })) || 1;
+    qBody = '<div class="pa-q">' + qr.map(function(r){
+        var h = Math.max(3, Math.round((+r.threes || 0) / qmax * PA_QH));
+        return '<div class="pa-qc"><b>' + (+r.threes).toFixed(1) + '</b>'
+          + '<u style="height:' + h + 'px"></u><span>Q' + r.period + '</span></div>';
+      }).join('') + '</div>';
+  }
+
+  /* THE OPPONENT. The percentage is shown and deliberately not ranked. */
+  var dRec = (tf.defence || {})[normTeam(me.opp)] || (tf.defence || {})[me.opp] || null;
+  var oppBody;
+  if (!dRec){
+    oppBody = '<div class="pa-opp"><span class="pt-na">no concession on file for '
+      + esc(abbrOf(key, me.opp)) + '</span></div>';
+  } else {
+    var of_ = dRec.of || 30;
+    var aSoft = dRec.attRank <= 10, aTough = dRec.attRank > of_ - 10;
+    oppBody = '<div class="pa-opp">'
+      + '<span class="pa-pair">'
+      + '<span class="pa-big"><b>' + dRec.att.toFixed(1) + '</b>three-point ATTEMPTS '
+      + 'allowed a game</span>'
+      + '<span class="pt-rank ' + (aSoft ? 'soft' : aTough ? 'tough' : 'mid') + '">'
+      + ordinalish(dRec.attRank) + ' of ' + of_
+      + '<i>' + (aSoft ? 'most allowed' : aTough ? 'fewest allowed' : 'middle')
+      + '</i></span></span>'
+      + '<span class="pa-pair"><span class="pa-big"><b>' + dRec.made.toFixed(1)
+      + '</b>of them go in</span>'
+      + '<span class="pt-rank ' + (dRec.madeRank <= 10 ? 'soft'
+          : dRec.madeRank > of_ - 10 ? 'tough' : 'mid') + '">'
+      + ordinalish(dRec.madeRank) + ' of ' + of_ + '<i>made allowed</i></span></span>'
+      + '<span class="pa-pair"><span class="pa-big"><b>'
+      + (dRec.pct != null ? (dRec.pct * 100).toFixed(1) + '%' : '—')
+      + '</b>the rate they drop at</span>'
+      + '<span class="dp-norank">not ranked — worth nothing</span></span>'
+      + '</div>';
+  }
+
+  return paneBand('From deep')
+    + chips
+    + '<div class="pt-head"><b>' + esc(me.name) + '</b> v ' + esc(abbrOf(key, me.opp))
+      + ' · ' + rec.made.toFixed(1) + ' of ' + rec.att.toFixed(1) + ' a game'
+      + (me.priced ? '' : ' · no market') + '</div>'
+    + '<div class="pa-sub">How much of this you can forecast</div>' + vol
+    + (recentBody ? '<div class="pa-sub">His last ' + T3_RECENT + '</div>' + recentBody : '')
+    + (kind ? '<div class="pa-sub">What kind of shooter he is</div>' + kind : '')
+    + (qBody ? '<div class="pa-sub">By quarter</div>' + qBody : '')
+    + '<div class="pa-sub">Allowed by ' + esc(abbrOf(key, me.opp)) + '</div>'
+    + oppBody
+    + '<div class="av-note"><b>A threes line is a volume bet wearing a shooting bet’s '
+    + 'clothes.</b> Split-half over ' + (stab.n || 297) + ' shooters, a man’s attempts carry '
+    + 'from one half of his season to the next at r=+'
+    + (stab.att != null ? stab.att.toFixed(2) : '0.86') + ' and his percentage at r=+'
+    + (stab.pct != null ? stab.pct.toFixed(2) : '0.31') + '. Minutes and attempts are what move '
+    + 'the number; how well he is shooting mostly is not. '
+    + '<b>The men who create his threes are context, not a read.</b> ' + Math.round(
+        (lg.assistedShare != null ? lg.assistedShare : 0.853) * 100)
+    + '% of made threes in the league are assisted and per shooter that runs from under a third '
+    + 'to all of them, which tells you what kind of player he is — but losing his busiest '
+    + 'creator moved a shooter by +'
+    + ((lg.creatorOut || {}).gain != null ? lg.creatorOut.gain.toFixed(3) : '0.006')
+    + ' threes against a +' + ((lg.creatorOut || {}).control != null
+        ? lg.creatorOut.control.toFixed(3) : '0.084') + ' control, with the catch-and-shoot '
+    + 'specialists no worse off than the men who make their own. Someone else creates. '
+    + '<b>And the opponent is the weakest block on any of these cards:</b> how many threes they '
+    + 'allow is worth about ' + ((lg.oppSwing || {}).att != null ? lg.oppSwing.att.toFixed(2)
+        : '0.21') + ' of a three out of sample, while the rate those threes go in at is worth '
+    + 'r=' + ((lg.oppSwing || {}).pct != null ? lg.oppSwing.pct.toFixed(3) : '-0.016')
+    + ' — nothing — so it is printed without a rank. A defence decides how many you '
+    + 'take far more than whether they drop.</div>';
+}
 function nbaZones(key, name){
   if (key !== 'nba') return null;
   var S = state.sports[key], z = S.data.zones;
@@ -24561,6 +24858,10 @@ window.LAB = {
   rbPlayerProbe: function(key, name){ return rbPlayer(key, name); },
   rbGainProbe: function(key, v){ return rbGain(key, v); },
   rbMinFracProbe: function(key, v){ return rbMinuteFrac(key, v); },
+  threeProbe: function(key, g){ return nbaThreeSection(key, g); },
+  t3CandsProbe: function(key, g){ return t3Candidates(key, g); },
+  t3PlayerProbe: function(key, name){ return t3Player(key, name); },
+  t3RecentProbe: function(key, name, n){ return t3Recent(key, name, n); },
   rosterProbe: function(key, g){
     var out = [];
     [g.away, g.home].forEach(function(t){
