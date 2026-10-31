@@ -1474,8 +1474,12 @@
   .pa-qc u{display:block;width:100%;flex:0 0 auto;border-radius:3px 3px 0 0;
     background:var(--accent);opacity:.6;text-decoration:none;}
   .pa-qc span{font-size:8.5px;color:var(--text-3);}
-  .pa-opp{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:8px 9px;
+  .pa-opp{display:flex;align-items:center;gap:10px 16px;flex-wrap:wrap;padding:8px 9px;
     border:1px solid var(--border);border-radius:9px;}
+  /* a figure and its rank wrap as one unit. Loose in the flex row they split across lines and
+     the rank ended up under the wrong number, which is a wrong reading rather than a scruffy
+     one. */
+  .pa-pair{display:inline-flex;align-items:center;gap:10px;}
   .pa-big{font-size:9px;color:var(--text-3);line-height:1.25;}
   .pa-big b{display:block;font-family:var(--font-mono);font-size:17px;color:var(--text);}
   /* REBOUNDING. What each rival's absence is worth sits under his availability in the same
@@ -19793,12 +19797,27 @@ function nbaPlaySection(key, g){
   } else {
     var of_ = dRec.of || 30;
     var soft = dRec.rank <= 10, tough = dRec.rank > of_ - 10;
+    /* WHY they concede it. An assist needs a made shot, so the figure factors exactly into the
+       baskets they give up and how many of those were created for the shooter - and a club can
+       be soft for either reason. Dallas give up the third-most makes in the league and rank
+       21st for the assisted share of them: they concede baskets, not created ones.
+       EXPLANATORY ONLY. Each half looks like its own edge (+0.093 and +0.084 out of sample
+       against the concession's +0.102) but they overlap it at +0.85 and +0.88, and
+       residualised they add +0.011 and -0.013. Nothing. The note says so. */
     oppBody = '<div class="pa-opp">'
       + '<span class="pa-big"><b>' + dRec.perGame.toFixed(1) + '</b>assists conceded a game</span>'
       + '<span class="pt-rank ' + (soft ? 'soft' : tough ? 'tough' : 'mid') + '">'
       + ordinalish(dRec.rank) + ' of ' + of_
       + '<i>' + (soft ? 'softest end' : tough ? 'toughest end' : 'middle') + '</i></span>'
-      + '</div>';
+      + '</div>'
+      + (dRec.fgmAllowed == null || dRec.astShare == null ? '' :
+          '<div class="pa-foot"><b>' + dRec.fgmAllowed.toFixed(1) + '</b> baskets allowed a game '
+          + '(' + ordinalish(dRec.fgmRank) + ') × <b>' + Math.round(dRec.astShare * 100)
+          + '%</b> of them created for the shooter (' + ordinalish(dRec.shareRank) + '). Those are '
+          + 'the two reasons a club is soft here and they multiply out to the figure above — a '
+          + 'club can give up a lot of baskets without giving up created ones. Measured, neither '
+          + 'half adds anything once the total is known, so they are the reason behind it and not '
+          + 'a second number to bet into.</div>');
   }
 
   var sampNote = rec.assistsCur
@@ -20050,12 +20069,31 @@ function nbaGlassSection(key, g){
   } else {
     var of_ = dRec.of || 30;
     var soft = dRec.rank <= 10, tough = dRec.rank > of_ - 10;
+    /* PACE SITS BESIDE THE CONCESSION, NOT UNDER IT. Out of sample it is worth more than the
+       concession is (0.54 of a rebound against 0.43) and, residualised, it adds +0.035 on top
+       of it - most of the concession's own signal again - so it is a second read rather than
+       the same one restated. The boards line below is a breakdown and adds nothing. */
+    var pSoft = dRec.paceRank != null && dRec.paceRank <= 10;
+    var pTough = dRec.paceRank != null && dRec.paceRank > of_ - 10;
     oppBody = '<div class="pa-opp">'
+      + '<span class="pa-pair">'
       + '<span class="pa-big"><b>' + dRec.perGame.toFixed(1) + '</b>rebounds conceded a game</span>'
       + '<span class="pt-rank ' + (soft ? 'soft' : tough ? 'tough' : 'mid') + '">'
       + ordinalish(dRec.rank) + ' of ' + of_
-      + '<i>' + (soft ? 'softest end' : tough ? 'toughest end' : 'middle') + '</i></span>'
-      + '</div>';
+      + '<i>' + (soft ? 'softest end' : tough ? 'toughest end' : 'middle') + '</i></span></span>'
+      + (dRec.pace == null ? '' :
+          '<span class="pa-pair">'
+          + '<span class="pa-big"><b>' + dRec.pace.toFixed(1) + '</b>possessions a game</span>'
+          + '<span class="pt-rank ' + (pSoft ? 'soft' : pTough ? 'tough' : 'mid') + '">'
+          + ordinalish(dRec.paceRank) + ' of ' + of_
+          + '<i>' + (pSoft ? 'fastest end' : pTough ? 'slowest end' : 'middle')
+          + '</i></span></span>')
+      + '</div>'
+      + (dRec.boards == null || dRec.oppShare == null ? '' :
+          '<div class="pa-foot">That is <b>' + dRec.boards.toFixed(1) + '</b> boards in their '
+          + 'games and they let the other side take <b>' + Math.round(dRec.oppShare * 100)
+          + '%</b> of them. The two multiply out to the figure above rather than adding to it — '
+          + 'the share on its own adds almost nothing once the concession is known.</div>');
   }
 
   return paneBand('Rebounding')
@@ -20088,7 +20126,15 @@ function nbaGlassSection(key, g){
     + 'sample it is worth about ' + ((lg.oppSwing != null ? lg.oppSwing : 0.43).toFixed(2))
     + ' of a rebound between the softest and toughest third, against 0.65 for assists, and the '
     + 'club ranking holds up less well season to season (+'
-    + ((lg.oppStability != null ? lg.oppStability : 0.57).toFixed(2)) + ' against +0.74).</div>';
+    + ((lg.oppStability != null ? lg.oppStability : 0.57).toFixed(2)) + ' against +0.74). '
+    + '<b>Pace is the better half of it</b> \u2014 worth '
+    + ((lg.paceSwing != null ? lg.paceSwing : 0.54).toFixed(2)) + ' on its own, and worth +'
+    + ((lg.paceAdds != null ? lg.paceAdds : 0.035).toFixed(3)) + ' ON TOP of the concession once '
+    + 'you already know it, which is most of the concession\u2019s own signal again. That makes '
+    + 'it a second read rather than the same one restated, and it is the only contributor here '
+    + 'that is: the share of the glass they allow adds +'
+    + ((lg.shareAdds != null ? lg.shareAdds : 0.0008).toFixed(4)) + ', which is nothing. On the '
+    + 'Playmaking card pace earns no place at all \u2014 it adds \u22120.002 there.</div>';
 }
 function nbaZones(key, name){
   if (key !== 'nba') return null;
