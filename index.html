@@ -1478,6 +1478,17 @@
     border:1px solid var(--border);border-radius:9px;}
   .pa-big{font-size:9px;color:var(--text-3);line-height:1.25;}
   .pa-big b{display:block;font-family:var(--font-mono);font-size:17px;color:var(--text);}
+  /* REBOUNDING. What each rival's absence is worth sits under his availability in the same
+     column, dimmed until it actually applies - the figure is worth seeing for a man who IS
+     playing (it says which absence would matter later) but it must not read as live. */
+  .rb-gain{display:block;font-family:var(--font-mono);font-size:8px;color:var(--text-3);
+    opacity:.55;margin-top:2px;}
+  .rb-gain.on{opacity:1;color:var(--accent);}
+  .rb-lift{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-top:7px;padding:8px 10px;
+    border:1px solid var(--accent);border-radius:9px;background:rgba(34,197,94,.06);}
+  .rb-split{font-size:9px;color:var(--text-2);line-height:1.4;}
+  .rb-split b{font-family:var(--font-mono);color:var(--text);}
+  .rb-split i{display:block;font-style:normal;font-size:8.5px;color:var(--text-3);margin-top:2px;}
   @media(max-width:620px){
     .pa-row{flex-wrap:wrap;gap:6px;}
     .pa-lab{flex:1 1 100%;}
@@ -2701,6 +2712,8 @@ var TIER3 = { gamelogs:'data/gamelogs.json', dvp:'data/dvp.json', teams_form:'da
               // Passing networks, built by nba/build_nba_assists.py. NBA only; the Playmaking
               // source renders nothing rather than an empty shell where it is absent.
               assists:'data/assists.json',
+              // The glass, built by nba/build_nba_rebounds.py from the gamelogs. NBA only.
+              rebounds:'data/rebounds.json',
               profiles:'data/profiles.json',
               specialTeams:'data/special_teams.json',
               ladder:'data/ladder.json',
@@ -3293,7 +3306,14 @@ function injStatus(key, name, team){
   }
   var e = S.idx.injIdx[foldName(name)];      // accents differ between feeds (ESPN v league)
   if (!e) return null;
-  if (team && e.team && normTeam(e.team) !== normTeam(team)) return null;   // a different player's club
+  /* teamCode, NOT normTeam. NBA's injury.json names clubs in full ("Atlanta Hawks") while the
+     fixtures, roster and odds all use codes ("ATL"), so this comparison failed on every NBA row
+     and injStatus returned null for all of them - which means isPlayingP, and every candidate
+     list gated on it, treated men who were ruled out as available. Measured before the change:
+     19 of 24 players listed Out still appeared as available. teamCode was built for exactly this
+     and derives the map from the feeds' own two spellings, but it had only ever been wired into
+     vacated usage. */
+  if (team && e.team && teamCode(key, e.team) !== teamCode(key, team)) return null;
   return e;
 }
 // MLB publishes lineups as {gamePk, home:[playerId...], away:[playerId...]} - ids, not names - so
@@ -10364,7 +10384,7 @@ var PLAYER_SOURCES = [['radar','Radar'], ['leaders','Leaders'], ['formal','Form 
                       ['coverage','Coverage'], ['usage','Usage'], ['firstread','First Read'],
                       ['avail','Available'], ['goalie','In Goal'], ['all','Everyone']];
 var SCORE_SOURCES = [['profile','Player'], ['court','The Floor'], ['acts','How He Scores'],
-                    ['play','Playmaking'],
+                    ['play','Playmaking'], ['glass','Rebounding'],
                     ['q1','Q1'], ['first','First Score'], ['rz','Red Zone']];
 var TEAM_NOW = null, PLAYER_NOW = null, SCORE_NOW = null;
 function cardPane(kind, key, g, src){
@@ -10406,6 +10426,7 @@ function cardPane(kind, key, g, src){
       if (src === 'q1')    return nbaQ1Section(key, g) || '';
       if (src === 'acts')  return nbaActionSection(key, g) || '';
       if (src === 'play')  return nbaPlaySection(key, g) || '';
+      if (src === 'glass') return nbaGlassSection(key, g) || '';
       if (src === 'first') return firstLastSection(key, g) || '';
       if (src === 'rz')    return redZoneSection(key, g) || '';
       if (src === 'profile') return scoreProfilePane(key, g) || '';
@@ -19810,7 +19831,9 @@ function nbaPlaySection(key, g){
            + ' v league</i>' : '') + '</div><div class="pa-st"></div></div>'
       + aRows + '</div>'
     + (qBody ? '<div class="pa-sub">By quarter</div>' + qBody : '')
-    + '<div class="pa-sub">' + esc(abbrOf(key, me.opp)) + ' concede</div>'
+    /* "<club> concede" uppercases to "NO CONCEDE" when the opponent is New Orleans, which
+       reads as a refusal rather than a heading. Leading with the verb cannot misread. */
+    + '<div class="pa-sub">Conceded by ' + esc(abbrOf(key, me.opp)) + '</div>'
     + oppBody
     + '<div class="av-note"><b>The network is context, not a reason on its own.</b> Across 189 '
     + 'passers, a man’s assists moved by +0.00 on average when his busiest target sat out, and '
@@ -19826,6 +19849,246 @@ function nbaPlaySection(key, g){
     + 'that would have been an assist had the shot dropped leaves no trace at all — which is '
     + 'the largest single source of noise in an assists line, and nothing here can see it. And the '
     + 'window is two seasons, because one season in October is five games.</div>';
+}
+/* ---------------------------------------------------------------- REBOUNDING
+   The glass, from nba/data/rebounds.json (nba/build_nba_rebounds.py).
+
+   WHY THIS CARD CLAIMS SOMETHING PLAYMAKING DOES NOT.
+   Playmaking had to print a null: when a passer's busiest target sits, his assists do not move,
+   because losing a target costs him buckets and hands him the ball in equal measure. Rebounds
+   are a contested pool, so the same test comes out the other way - a team-mate who is not on
+   the floor is not taking boards off him. Over the 2026 season:
+
+       top rebounding team-mate out   +0.86 rebounds (median +0.65)
+       a rank 6-9 team-mate out       +0.21           - the control
+       players who rebound MORE       137 of 188, 73% - against 46% for assists
+
+   and it separates into two different claims, which the card keeps separate:
+
+       +0.51   he plays more        (+2.05 minutes)
+       +0.34   he takes more of it  (TRB% up 0.72 points, 64% of players)
+
+   For a PARTICULAR man rather than the top one, fitted over 3,100 player/team-mate pairs:
+   gain ~= slope x (the absent man's rebounds per game) + intercept, which lands on its own
+   bands - a 10-to-12 board rival is worth +0.87, a 2-to-4 board one +0.09. Per-pair noise is
+   large (MAE 0.84 against 0.85 for a flat constant), so this is printed as a nudge with the
+   error beside it and never as a projection.
+
+   A RIVAL'S REBOUNDING IS THE EASED FIGURE, not his raw average. Ranking on raw put a man with
+   10.5 boards across TWO games above Aaron Gordon as Jokic's biggest rival, and since the gain
+   multiplies that figure his absence would have been priced at +0.7 off a two-game sample. The
+   file eases each rival toward the league's own median by ten games of evidence and writes the
+   raw figure beside it, so the row shows both.
+
+   THE OPPONENT IS THE WEAK STRAND HERE, the reverse of Playmaking. Out of sample, rebounds
+   conceded is worth 0.43 of a rebound between the softest and toughest third against 0.65 for
+   assists, and the club ranking is less stable year to year (+0.57 against +0.74). It is shown,
+   and it is shown as small. --------------------------------------------------------------- */
+var RB_SHOW = 6;            // rivals listed; the build already drops anyone under a board a game
+var RB_BAR_MAX = 25;        // a full share bar: roughly the best rebounding rate in the league
+function rbFile(key){
+  var S = state.sports[key];
+  return (key === 'nba' && S && S.data && S.data.rebounds) || null;
+}
+function rbPlayer(key, name){
+  var rf = rbFile(key); if (!rf || !rf.players) return null;
+  var S = state.sports[key];
+  if (!S.idx.rbIdx){
+    var ix = {};
+    rf.players.forEach(function(r){ if (r && r.name) ix[cmbNameKey(r.name)] = r; });
+    S.idx.rbIdx = ix;
+  }
+  return S.idx.rbIdx[cmbNameKey(name)] || null;
+}
+function rbCandidates(key, g){
+  var out = [];
+  [[g.away, g.home], [g.home, g.away]].forEach(function(pair){
+    playersOnTeam(key, pair[0]).forEach(function(p){
+      if (!isPlayingP(key, p.name, p.team)) return;
+      var r = rbPlayer(key, p.name);
+      if (r) out.push({ name:p.name, team:pair[0], opp:pair[1], rec:r,
+                        priced:hasAnyOddsFor(key, p.name) });
+    });
+  });
+  out.sort(function(a, b){ return b.rec.reb - a.rec.reb; });
+  return out;
+}
+/* Shares state.view.ptName with the other tabs on this card, same as Playmaking. */
+function rbPick(key, g){
+  var cands = rbCandidates(key, g);
+  if (!cands.length) return null;
+  var want = state.view.ptName;
+  for (var i = 0; i < cands.length; i++) if (cands[i].name === want) return cands[i];
+  return cands[0];
+}
+/* What one man's absence is worth, on the fit in the file. Never negative: the model's intercept
+   is slightly below zero, which for a rival who barely rebounds would otherwise print as his
+   being WORTH something to have off the floor, and the data does not say that. */
+function rbGain(key, rivalReb){
+  var rf = rbFile(key); if (!rf) return 0;
+  var f = (rf.league || {}).rival || {};
+  var s = f.slope != null ? f.slope : 0.0825, b = f.intercept != null ? f.intercept : -0.078;
+  return Math.max(0, s * (+rivalReb || 0) + b);
+}
+/* How much of one rival's gain is just the minutes his absence hands over. NOT one ratio for
+   everybody: measured by band, a man who barely rebounds contributes a gain that is almost all
+   minutes, while a double-figure rebounder splits roughly two-to-one. Using the top-rival ratio
+   for a bench man would inflate the share half - the more interesting of the two claims, and so
+   the one that must not be padded. */
+function rbMinuteFrac(key, rivalReb){
+  var rf = rbFile(key); if (!rf) return 0.6;
+  var f = (rf.league || {}).rival || {}, bands = f.bands || [];
+  for (var i = 0; i < bands.length; i++)
+    if (rivalReb < bands[i].upTo) return bands[i].minuteFrac;
+  // above every measured band - the biggest rebounders, where the share half is largest. Fall
+  // back to the lowest measured fraction rather than the overall one, which would overstate it.
+  if (bands.length) return bands[bands.length - 1].minuteFrac;
+  return (f.fromMinutes != null && f.top) ? f.fromMinutes / f.top : 0.6;
+}
+function nbaGlassSection(key, g){
+  if (key !== 'nba' || !g || !g.home || !g.away) return '';
+  var rf = rbFile(key); if (!rf || !rf.players) return '';
+  var cands = rbCandidates(key, g);
+  var me = rbPick(key, g);
+  if (!me) return '';
+  var rec = me.rec, lg = rf.league || {}, fit = lg.rival || {};
+  var chips = cands.length < 2 ? '' :
+    '<select class="mb-fixsel gg-sel" onchange="LAB.ptName(this.value)">'
+    + cands.map(function(c){
+        return '<option value="' + esc(c.name) + '"' + (c.name === me.name ? ' selected' : '') + '>'
+          + esc(c.name) + ' · ' + esc(abbrOf(key, c.team))
+          + ' · ' + c.rec.reb.toFixed(1) + ' reb'
+          + (c.priced ? ' · priced' : '') + '</option>';
+      }).join('') + '</select>';
+
+  /* HIS SHARE OF THE GLASS. The rate matters more than the count here and is the thing a reader
+     cannot get off the box score: a man on a fast team sees more misses, and a man beside a
+     dominant rebounder sees fewer, and per-game hides both. */
+  var lgRate = lg.trbPct != null ? lg.trbPct : null;
+  var dRate = (lgRate != null && rec.trbPct != null) ? rec.trbPct - lgRate : null;
+  var oShare = rec.reb > 0 ? rec.oreb / rec.reb : 0;
+  var mine = '<div class="pa-tbl">'
+    + '<div class="pa-row"><div class="pa-lab">His share</div>'
+      /* the bar runs to 25%, which is about where the league's best rebounder sits, so a full
+         bar means "as good as it gets" rather than an arbitrary maximum */
+      + '<div class="pa-bar"><i style="width:'
+      + Math.min(100, Math.round((rec.trbPct || 0) / RB_BAR_MAX * 100)) + '%"></i></div>'
+      + '<div class="pa-n"><b>' + (rec.trbPct != null ? rec.trbPct.toFixed(1) + '%' : '—')
+      + '</b>of the boards out there'
+      + (dRate != null ? '<i class="' + (dRate >= 0 ? 'up' : 'dn') + '">' + signedOne(dRate)
+         + ' v the league’s ' + lgRate.toFixed(1) + '%</i>' : '') + '</div>'
+      + '<div class="pa-st"><span class="pa-in">' + rec.minutes.toFixed(0) + ' min</span></div></div>'
+    + '<div class="pa-row pa-act"><div class="pa-lab">Defensive</div>'
+      + '<div class="pa-bar"><i style="width:' + Math.round((1 - oShare) * 100) + '%"></i></div>'
+      + '<div class="pa-n"><b>' + rec.dreb.toFixed(1) + '</b>a game</div>'
+      + '<div class="pa-st"></div></div>'
+    + '<div class="pa-row pa-act"><div class="pa-lab">Offensive</div>'
+      + '<div class="pa-bar"><i style="width:' + Math.round(oShare * 100) + '%"></i></div>'
+      + '<div class="pa-n"><b>' + rec.oreb.toFixed(1) + '</b>a game'
+      + '<i>' + Math.round(oShare * 100) + '% off the offensive glass</i></div>'
+      + '<div class="pa-st"></div></div>'
+    + '</div>';
+
+  /* WHO HE COMPETES WITH, and what each one being out is worth. Every rival carries its figure
+     whether or not he is playing - a reader checking a line wants to know which absence would
+     matter before the team sheet lands, not only after. */
+  var rivals = (rec.rivals || []).slice(0, RB_SHOW);
+  var topReb = rivals.length ? rivals[0].reb : 1;
+  var lift = 0, liftMin = 0, outNames = [];
+  var rRows = rivals.map(function(v){
+    var st = paStatus(key, me, v);
+    var gain = rbGain(key, v.reb);
+    if (st.cls === 'pa-out' && st.mate){
+      lift += gain;
+      liftMin += gain * rbMinuteFrac(key, v.reb);     // his own band, not one ratio for all
+      outNames.push(v.name);
+    }
+    var w = Math.max(3, Math.round(v.reb / (topReb || 1) * 100));
+    var eased = Math.abs(v.reb - (v.rebRaw != null ? v.rebRaw : v.reb)) >= 0.5;
+    return '<div class="pa-row">'
+      + '<div class="pa-lab">' + esc(v.name) + '</div>'
+      + '<div class="pa-bar"><i style="width:' + w + '%"></i></div>'
+      + '<div class="pa-n"><b>' + v.reb.toFixed(1) + '</b>boards a game'
+        + (eased ? '<i>eased from ' + v.rebRaw.toFixed(1) + ' on ' + v.games + ' games</i>'
+                 : '<i>' + v.games + ' games</i>') + '</div>'
+      + '<div class="pa-st"><span class="' + st.cls + '">' + esc(st.txt) + '</span>'
+        + '<span class="rb-gain' + (st.cls === 'pa-out' && st.mate ? ' on' : '') + '">'
+        + (gain > 0.02 ? '+' + gain.toFixed(2) + ' if out' : 'no effect') + '</span></div>'
+      + '</div>';
+  }).join('');
+
+  var liftBox = '';
+  if (lift > 0.02){
+    var shr = Math.max(0, lift - liftMin);
+    liftBox = '<div class="rb-lift"><span class="pa-big"><b>+' + lift.toFixed(2)
+      + '</b>rebounds on tonight’s absences</span>'
+      + '<span class="rb-split">'
+      + (shr < 0.02
+          ? 'essentially all of it the minutes he inherits — a team-mate this size frees '
+            + 'up time rather than boards'
+          : 'about <b>+' + liftMin.toFixed(2) + '</b> from the minutes he inherits and <b>+'
+            + shr.toFixed(2) + '</b> from a bigger share of the glass')
+      + '<i>' + esc(outNames.join(', ')) + ' out · give or take '
+      + ((fit.mae != null ? fit.mae : 0.84).toFixed(2)) + ' a game</i></span></div>';
+  }
+
+  var qr = paQuarters(key, me.name), qBody = '';
+  if (qr){
+    var qmax = Math.max.apply(null, qr.map(function(r){ return +r.rebounds || 0; })) || 1;
+    qBody = '<div class="pa-q">' + qr.map(function(r){
+        var h = Math.max(3, Math.round((+r.rebounds || 0) / qmax * PA_QH));
+        return '<div class="pa-qc"><b>' + (+r.rebounds).toFixed(1) + '</b>'
+          + '<u style="height:' + h + 'px"></u><span>Q' + r.period + '</span></div>';
+      }).join('') + '</div>';
+  }
+
+  var dRec = (rf.defence || {})[normTeam(me.opp)] || (rf.defence || {})[me.opp] || null;
+  var oppBody;
+  if (!dRec){
+    oppBody = '<div class="pa-opp"><span class="pt-na">no concession on file for '
+      + esc(abbrOf(key, me.opp)) + '</span></div>';
+  } else {
+    var of_ = dRec.of || 30;
+    var soft = dRec.rank <= 10, tough = dRec.rank > of_ - 10;
+    oppBody = '<div class="pa-opp">'
+      + '<span class="pa-big"><b>' + dRec.perGame.toFixed(1) + '</b>rebounds conceded a game</span>'
+      + '<span class="pt-rank ' + (soft ? 'soft' : tough ? 'tough' : 'mid') + '">'
+      + ordinalish(dRec.rank) + ' of ' + of_
+      + '<i>' + (soft ? 'softest end' : tough ? 'toughest end' : 'middle') + '</i></span>'
+      + '</div>';
+  }
+
+  return paneBand('Rebounding')
+    + chips
+    + '<div class="pt-head"><b>' + esc(me.name) + '</b> v ' + esc(abbrOf(key, me.opp))
+      + ' · ' + rec.reb.toFixed(1) + ' a game over ' + rec.games + ' games'
+      + (me.priced ? '' : ' · no market') + '</div>'
+    + '<div class="pa-sub">His share of the glass</div>' + mine
+    + '<div class="pa-sub">Who he competes with</div>'
+    + (rRows ? '<div class="pa-tbl">' + rRows + '</div>'
+             : '<div class="pt-na">nobody else on his club takes a board a game</div>')
+    + liftBox
+    + (qBody ? '<div class="pa-sub">By quarter</div>' + qBody : '')
+    + '<div class="pa-sub">Conceded by ' + esc(abbrOf(key, me.opp)) + '</div>'
+    + oppBody
+    + '<div class="av-note"><b>A team-mate sitting really does move this one</b> — unlike '
+    + 'assists, where the same test came out at nothing. A rebound is a contested pool, so a man '
+    + 'off the floor is not taking boards off him. Across 189 players, the top rebounder on his '
+    + 'club sitting was worth <b>+0.86 rebounds</b> against +0.21 for a fringe team-mate, and '
+    + '73% of players went up. About +0.51 of that is simply the extra minutes he inherits and '
+    + '+0.34 is a genuinely bigger share of the glass, which is why the two are shown apart '
+    + '\u2014 and the split above is taken from each absent man\u2019s own size rather than one '
+    + 'ratio for everybody, because a fringe team-mate sitting frees up time and almost no extra '
+    + 'boards. '
+    + 'The per-man figures come from a fit over 3,100 team-mate pairs and the typical miss is '
+    + ((fit.mae != null ? fit.mae : 0.84).toFixed(2)) + ' of a rebound a game, so treat them as a '
+    + 'nudge rather than a projection. A rival with a short record is eased toward the league '
+    + 'before any of this, because ten boards across two games is not a ten-board rebounder. '
+    + '<b>The opponent is the weak strand here, the reverse of Playmaking:</b> tested out of '
+    + 'sample it is worth about ' + ((lg.oppSwing != null ? lg.oppSwing : 0.43).toFixed(2))
+    + ' of a rebound between the softest and toughest third, against 0.65 for assists, and the '
+    + 'club ranking holds up less well season to season (+'
+    + ((lg.oppStability != null ? lg.oppStability : 0.57).toFixed(2)) + ' against +0.74).</div>';
 }
 function nbaZones(key, name){
   if (key !== 'nba') return null;
@@ -19932,6 +20195,13 @@ function signedInt(v){
   var n = Math.round(v);
   if (n === 0) return '0';
   return (n > 0 ? '+' : '\u2212') + Math.abs(n);
+}
+/* signedInt rounds, which is right for a whole-number gap and wrong for a rate: a man 0.4
+   points above the league would print as "0". */
+function signedOne(v){
+  if (v == null || !isFinite(v)) return '\u2014';
+  if (Math.abs(v) < 0.05) return '0.0';
+  return (v > 0 ? '+' : '\u2212') + Math.abs(v).toFixed(1);
 }
 function pfCell(label, value, note, good){
   return '<div class="pf-cell"><b' + (good === true ? ' class="pf-good"' : good === false ? ' class="pf-bad"' : '')
@@ -24240,6 +24510,11 @@ window.LAB = {
   paQProbe: function(key, name){ return paQuarters(key, name); },
   playProbe: function(key, g){ return nbaPlaySection(key, g); },
   actsProbe: function(key, g){ return nbaActionSection(key, g); },
+  glassProbe: function(key, g){ return nbaGlassSection(key, g); },
+  rbCandsProbe: function(key, g){ return rbCandidates(key, g); },
+  rbPlayerProbe: function(key, name){ return rbPlayer(key, name); },
+  rbGainProbe: function(key, v){ return rbGain(key, v); },
+  rbMinFracProbe: function(key, v){ return rbMinuteFrac(key, v); },
   rosterProbe: function(key, g){
     var out = [];
     [g.away, g.home].forEach(function(t){
