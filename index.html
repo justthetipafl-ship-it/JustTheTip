@@ -1438,6 +1438,53 @@
     .pt-d{flex:1 1 100%;justify-content:flex-start;}
     .pt-noise,.pt-na{text-align:left;max-width:none;}
   }
+  /* PLAYMAKING. Its own family rather than more .pt- rows: the right-hand column here is a
+     target's availability, a short word, where How He Scores puts a two-line rank block, so
+     sharing .pt-d would leave a 134px gutter beside every name. The bar is wider because a name
+     is longer than "Pull-up" and the share is the thing being compared down the column. */
+  .pa-sub{font-family:var(--font-display);font-size:9px;letter-spacing:.06em;
+    text-transform:uppercase;color:var(--text-3);margin:11px 0 6px;}
+  .pa-sub:first-of-type{margin-top:4px;}
+  .pa-tbl{display:flex;flex-direction:column;border:1px solid var(--border);border-radius:9px;
+    overflow:hidden;}
+  .pa-row{display:flex;align-items:center;gap:8px;padding:7px 9px;
+    border-bottom:1px solid var(--border);}
+  .pa-row:last-child{border-bottom:0;}
+  .pa-lab{flex:0 0 118px;font-size:11px;font-weight:700;color:var(--text);}
+  .pa-bar{flex:1 1 auto;min-width:40px;height:6px;border-radius:4px;background:var(--surface-2);
+    overflow:hidden;}
+  .pa-bar i{display:block;height:100%;background:var(--accent);opacity:.75;}
+  .pa-act .pa-bar i{opacity:.5;}
+  .pa-n{flex:0 0 104px;font-size:9px;color:var(--text-3);line-height:1.25;}
+  .pa-n b{display:block;font-family:var(--font-mono);font-size:12px;color:var(--text);}
+  .pa-n i{display:block;font-style:normal;font-size:8.5px;}
+  .pa-n i.up{color:var(--accent);} .pa-n i.dn{color:#ef4444;}
+  .pa-st{flex:0 0 92px;text-align:right;font-size:8.5px;line-height:1.25;}
+  .pa-st span{font-family:var(--font-mono);font-weight:700;}
+  .pa-in{color:var(--text-3);}
+  .pa-out{color:#ef4444;}
+  .pa-doubt{color:#f97316;}
+  .pa-gone,.pa-off{color:var(--text-3);font-style:italic;}
+  .pa-foot{font-size:9px;color:var(--text-3);line-height:1.4;margin:6px 0 0;}
+  .pa-q{display:flex;align-items:flex-end;gap:7px;padding:7px 9px;
+    border:1px solid var(--border);border-radius:9px;}
+  .pa-qc{flex:1 1 0;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;
+    gap:3px;}
+  .pa-qc b{font-family:var(--font-mono);font-size:11px;color:var(--text);}
+  .pa-qc u{display:block;width:100%;flex:0 0 auto;border-radius:3px 3px 0 0;
+    background:var(--accent);opacity:.6;text-decoration:none;}
+  .pa-qc span{font-size:8.5px;color:var(--text-3);}
+  .pa-opp{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:8px 9px;
+    border:1px solid var(--border);border-radius:9px;}
+  .pa-big{font-size:9px;color:var(--text-3);line-height:1.25;}
+  .pa-big b{display:block;font-family:var(--font-mono);font-size:17px;color:var(--text);}
+  @media(max-width:620px){
+    .pa-row{flex-wrap:wrap;gap:6px;}
+    .pa-lab{flex:1 1 100%;}
+    .pa-bar{flex:1 1 auto;}
+    .pa-n{flex:0 0 96px;}
+    .pa-st{flex:0 0 auto;text-align:left;}
+  }
   .rz-c i{display:block;font-style:normal;font-size:8.5px;color:var(--accent);}
   .rz-nm i{font-style:normal;font-size:9px;color:var(--text-3);margin-left:5px;}
   /* THE DEFENCE HE WALKS INTO, on its own line behind its own label. It used to be two more chips
@@ -2651,6 +2698,9 @@ var TIER3 = { gamelogs:'data/gamelogs.json', dvp:'data/dvp.json', teams_form:'da
               // ESPN shot actions, built by nba/build_nba_playtypes.py. Absent for every other
               // sport, and the section renders nothing rather than an empty shell when it is.
               playtypes:'data/playtypes.json',
+              // Passing networks, built by nba/build_nba_assists.py. NBA only; the Playmaking
+              // source renders nothing rather than an empty shell where it is absent.
+              assists:'data/assists.json',
               profiles:'data/profiles.json',
               specialTeams:'data/special_teams.json',
               ladder:'data/ladder.json',
@@ -10314,6 +10364,7 @@ var PLAYER_SOURCES = [['radar','Radar'], ['leaders','Leaders'], ['formal','Form 
                       ['coverage','Coverage'], ['usage','Usage'], ['firstread','First Read'],
                       ['avail','Available'], ['goalie','In Goal'], ['all','Everyone']];
 var SCORE_SOURCES = [['profile','Player'], ['court','The Floor'], ['acts','How He Scores'],
+                    ['play','Playmaking'],
                     ['q1','Q1'], ['first','First Score'], ['rz','Red Zone']];
 var TEAM_NOW = null, PLAYER_NOW = null, SCORE_NOW = null;
 function cardPane(kind, key, g, src){
@@ -10354,6 +10405,7 @@ function cardPane(kind, key, g, src){
       if (src === 'court') return shotCourtSection(key, g) || '';
       if (src === 'q1')    return nbaQ1Section(key, g) || '';
       if (src === 'acts')  return nbaActionSection(key, g) || '';
+      if (src === 'play')  return nbaPlaySection(key, g) || '';
       if (src === 'first') return firstLastSection(key, g) || '';
       if (src === 'rz')    return redZoneSection(key, g) || '';
       if (src === 'profile') return scoreProfilePane(key, g) || '';
@@ -19512,6 +19564,269 @@ function nbaActionSection(key, g){
     + 'built on luck. eFG counts a three as a basket and a half, because 35% from three and 52% '
     + 'from two are the same shot.</div>';
 }
+/* ---------------------------------------------------------------- PLAYMAKING
+   The mirror of How He Scores, for the man making the pass rather than the shot. Built from
+   nba/data/assists.json (nba/build_nba_assists.py), which reads ESPN's play-by-play: every made
+   field goal carries a scorer and, where there was one, an assister.
+
+   WHAT THIS SECTION DOES NOT CLAIM, because it was measured and it failed.
+   The read this was built for was the obvious one - a fifth of a man's passing goes to one
+   team-mate, so when that team-mate sits the assists line should come down. It does not. Across
+   189 passers in the 2026 season, splitting each man's games by whether his busiest target
+   (15% of his passing or more) played:
+
+       top target out    mean change in his assists   +0.00   (median +0.05)
+       a rank-4 target out                            +0.15
+       passers who assisted LESS without him          87 of 189, 46% - a coin flip
+
+   The reason is visible in the men who moved most: Aaron Gordon averages 1.96 MORE assists
+   without Jokic, Payton Pritchard 2.08 more without Jaylen Brown. Losing a target costs a passer
+   that target's buckets and hands him the ball and the minutes, and across the league the two
+   very nearly cancel. So the network below is context - it says who this man plays through, which
+   is worth knowing - and it is not a reason on its own. The availability beside each target is
+   printed because it is true, not because it moves the number, and the note says so.
+
+   WHAT DOES HOLD UP is the opponent column. Assists conceded per club, tested out of sample -
+   last season's table against this season's games, so it cannot fit itself - gives r=+0.102 over
+   8,188 player-games and 0.65 of an assist between the tightest and softest third of opponents.
+   It survives because the ranking is a real club property: season to season it correlates at
+   +0.74. In sample the same test reads 0.93 assists, so 0.65 is the honest figure and 0.65 is
+   what is printed.
+
+   TWO SEASONS, AND WHO IS STILL THERE. The window is the two seasons the zones and playtypes
+   files use, because one season in October is five games a club. That means a network can name a
+   man who has since been traded - and a target's current-season count is NOT the test for that,
+   because in October almost everyone's is low. Whether two men are still team-mates is a roster
+   question, so it is answered from players.json by club, and a departed target is marked and kept
+   rather than quietly dropped. ------------------------------------------------------------- */
+var PA_SWING = 0.65;        // assists between the softest and tightest third, out of sample
+var PA_SHOW = 8;            // targets listed; the build already cuts anyone under 3% of his passing
+var PA_QH = 44;             // the quarter chart's track, in px - see the comment where it is drawn
+function paFile(key){
+  var S = state.sports[key];
+  return (key === 'nba' && S && S.data && S.data.assists) || null;
+}
+function paPlayer(key, name){
+  var af = paFile(key); if (!af || !af.players) return null;
+  var S = state.sports[key];
+  if (!S.idx.paIdx){
+    var ix = {};
+    af.players.forEach(function(r){ if (r && r.name) ix[cmbNameKey(r.name)] = r; });
+    S.idx.paIdx = ix;
+  }
+  return S.idx.paIdx[cmbNameKey(name)] || null;
+}
+/* The roster, by id. The targets in assists.json are ids, and an id is the only join that does
+   not fall over on two men with the same name or on an accent spelled differently by two feeds. */
+function paRoster(key){
+  var S = state.sports[key];
+  if (!S.idx.paRost){
+    var ix = {};
+    (S.data.players || []).forEach(function(p){
+      if (p && p.playerId != null) ix[String(p.playerId).replace(/\.0+$/, '')] = p;
+    });
+    S.idx.paRost = ix;
+  }
+  return S.idx.paRost;
+}
+/* Who the picker offers: men named for this game with a passing record, busiest first. Same shape
+   as ptCandidates and deliberately so - the two tabs share one control. */
+function paCandidates(key, g){
+  var out = [];
+  [[g.away, g.home], [g.home, g.away]].forEach(function(pair){
+    playersOnTeam(key, pair[0]).forEach(function(p){
+      if (!isPlayingP(key, p.name, p.team)) return;
+      var r = paPlayer(key, p.name);
+      if (r) out.push({ name:p.name, team:pair[0], opp:pair[1], rec:r,
+                        priced:hasAnyOddsFor(key, p.name) });
+    });
+  });
+  out.sort(function(a, b){ return b.rec.assists - a.rec.assists; });
+  return out;
+}
+/* Shares state.view.ptName with How He Scores. Switching tabs inside one card should not change
+   who you are looking at, and two pickers in one card that disagree is the complaint that got the
+   chips replaced in the first place. */
+function paPick(key, g){
+  var cands = paCandidates(key, g);
+  if (!cands.length) return null;
+  var want = state.view.ptName;
+  for (var i = 0; i < cands.length; i++) if (cands[i].name === want) return cands[i];
+  return cands[0];
+}
+/* His assists by period, straight out of quarters.json - which has carried assistsTot per period
+   since it was built. */
+function paQuarters(key, name){
+  var S = state.sports[key], q = S.data.quarters;
+  if (!q || !q.players) return null;
+  if (!S.idx.paQ){
+    var ix = {};
+    q.players.forEach(function(r){
+      if (!r || !r.name) return;
+      var k = cmbNameKey(r.name);
+      (ix[k] = ix[k] || []).push(r);
+    });
+    S.idx.paQ = ix;
+  }
+  var rows = (S.idx.paQ[cmbNameKey(name)] || []).filter(function(r){ return +r.period <= 4; });
+  if (rows.length < 4) return null;
+  rows.sort(function(a, b){ return a.period - b.period; });
+  return rows;
+}
+/* A target's standing, by roster rather than by how many he has caught this season. */
+function paStatus(key, me, t){
+  var rost = paRoster(key), him = rost[String(t.id)];
+  if (!him || !him.team) return { cls:'pa-off', txt:'not on a roster', mate:false };
+  if (normTeam(him.team) !== normTeam(me.team))
+    return { cls:'pa-gone', txt:'now at ' + abbrOf(key, him.team), mate:false };
+  var inj = injStatus(key, him.name || t.name, him.team);
+  if (inj && inj.st === 'out')
+    return { cls:'pa-out', txt:'out' + (inj.injury ? ' · ' + String(inj.injury).toLowerCase() : ''),
+             mate:true };
+  if (inj && inj.st === 'doubt') return { cls:'pa-doubt', txt:'questionable', mate:true };
+  return { cls:'pa-in', txt:'available', mate:true };
+}
+function nbaPlaySection(key, g){
+  if (key !== 'nba' || !g || !g.home || !g.away) return '';
+  var af = paFile(key); if (!af || !af.players) return '';
+  var cands = paCandidates(key, g);
+  var me = paPick(key, g);
+  if (!me) return '';
+  var rec = me.rec;
+  var chips = cands.length < 2 ? '' :
+    '<select class="mb-fixsel gg-sel" onchange="LAB.ptName(this.value)">'
+    + cands.map(function(c){
+        return '<option value="' + esc(c.name) + '"' + (c.name === me.name ? ' selected' : '') + '>'
+          + esc(c.name) + ' · ' + esc(abbrOf(key, c.team))
+          + ' · ' + c.rec.assists + ' ast'
+          + (c.priced ? ' · priced' : '') + '</option>';
+      }).join('') + '</select>';
+
+  /* WHO HE FEEDS. Every target the build kept, none dropped for being stale. */
+  var tgs = (rec.targets || []).slice(0, PA_SHOW);
+  var topShare = tgs.length ? tgs[0].share : 1;
+  var mates = 0, outMates = 0, goneShare = 0;
+  var tRows = tgs.map(function(t){
+    var st = paStatus(key, me, t);
+    if (st.mate) mates++;
+    if (st.cls === 'pa-out') outMates++;
+    if (!st.mate) goneShare += t.share;
+    var w = Math.max(3, Math.round(t.share / (topShare || 1) * 100));
+    return '<div class="pa-row">'
+      + '<div class="pa-lab">' + esc(t.name) + '</div>'
+      + '<div class="pa-bar"><i style="width:' + w + '%"></i></div>'
+      + '<div class="pa-n"><b>' + Math.round(t.share * 100) + '%</b>of his passing'
+        + '<i>' + t.n + ' assist' + (t.n === 1 ? '' : 's')
+        + (t.nCur ? ' · ' + t.nCur + ' this season' : '') + '</i></div>'
+      + '<div class="pa-st"><span class="' + st.cls + '">' + esc(st.txt) + '</span></div>'
+      + '</div>';
+  }).join('');
+  var top3 = (rec.targets || []).slice(0, 3).reduce(function(a, t){ return a + t.share; }, 0);
+  /* AND THE SAME FIGURE FOR THE MEN HE STILL PLAYS WITH. For a passer who has moved clubs the
+     plain top-three is three men he no longer sees - true of the two seasons on file, and
+     misleading about tonight. Harden's reads 33% across Zubac, Mobley and Collins, two of whom
+     are at other clubs. Both figures are printed, the rows are never filtered, and the headline
+     says which set it is describing. */
+  var mateT = (rec.targets || []).filter(function(t){ return paStatus(key, me, t).mate; });
+  var mateTot = mateT.reduce(function(a, t){ return a + t.share; }, 0);
+  var top3Mate = mateTot > 0
+    ? mateT.slice(0, 3).reduce(function(a, t){ return a + t.share; }, 0) / mateTot : 0;
+
+  /* WHAT HE CREATES. His three-share against the league's, then the action mix in the same words
+     How He Scores uses, because they are the same taxonomy. */
+  var lg3 = ((af.league || {}).threeShare != null) ? af.league.threeShare : null;
+  var d3 = (lg3 != null) ? (rec.threeShare - lg3) * 100 : null;
+  var acts = Object.keys(rec.acts || {}).sort(function(a, b){ return rec.acts[b] - rec.acts[a]; });
+  var aTop = acts.length ? rec.acts[acts[0]] : 1;
+  var labs = af.labels || ((state.sports[key].data.playtypes || {}).labels) || {};
+  var aRows = acts.slice(0, 6).map(function(a){
+    var w = Math.max(3, Math.round(rec.acts[a] / (aTop || 1) * 100));
+    return '<div class="pa-row pa-act">'
+      + '<div class="pa-lab">' + esc(labs[a] || a) + '</div>'
+      + '<div class="pa-bar"><i style="width:' + w + '%"></i></div>'
+      + '<div class="pa-n"><b>' + Math.round(rec.acts[a] * 100) + '%</b>of what he creates</div>'
+      + '<div class="pa-st"></div></div>';
+  }).join('');
+
+  /* BY QUARTER. */
+  var qr = paQuarters(key, me.name), qBody = '';
+  if (qr){
+    var qmax = Math.max.apply(null, qr.map(function(r){ return +r.assists || 0; })) || 1;
+    /* In PIXELS against a known track height, not a percentage. A percentage height on a flex
+       item resolves against a box the label and the caption are already competing for, so four
+       quite different numbers drew four bars of the same size - a chart quietly wrong while
+       every figure printed above it was right. */
+    qBody = '<div class="pa-q">' + qr.map(function(r){
+        var h = Math.max(3, Math.round((+r.assists || 0) / qmax * PA_QH));
+        return '<div class="pa-qc"><b>' + (+r.assists).toFixed(1) + '</b>'
+          + '<u style="height:' + h + 'px"></u><span>Q' + r.period + '</span></div>';
+      }).join('') + '</div>';
+  }
+
+  /* THE OPPONENT. The one column here with a measured edge behind it. */
+  var dRec = (af.defence || {})[normTeam(me.opp)] || (af.defence || {})[me.opp] || null;
+  var oppBody;
+  if (!dRec){
+    oppBody = '<div class="pa-opp"><span class="pt-na">no concession on file for '
+      + esc(abbrOf(key, me.opp)) + '</span></div>';
+  } else {
+    var of_ = dRec.of || 30;
+    var soft = dRec.rank <= 10, tough = dRec.rank > of_ - 10;
+    oppBody = '<div class="pa-opp">'
+      + '<span class="pa-big"><b>' + dRec.perGame.toFixed(1) + '</b>assists conceded a game</span>'
+      + '<span class="pt-rank ' + (soft ? 'soft' : tough ? 'tough' : 'mid') + '">'
+      + ordinalish(dRec.rank) + ' of ' + of_
+      + '<i>' + (soft ? 'softest end' : tough ? 'toughest end' : 'middle') + '</i></span>'
+      + '</div>';
+  }
+
+  var sampNote = rec.assistsCur
+    ? rec.assists + ' assists on file, ' + rec.assistsCur + ' of them this season'
+    : rec.assists + ' assists on file, none yet this season';
+  return paneBand('Playmaking')
+    + chips
+    + '<div class="pt-head"><b>' + esc(me.name) + '</b> v ' + esc(abbrOf(key, me.opp))
+      + ' · ' + sampNote + (me.priced ? '' : ' · no market') + '</div>'
+    + '<div class="pa-sub">Who he feeds'
+      + (!tgs.length ? ''
+         : goneShare > 0.02
+           ? ' — of the men still alongside him, three take '
+             + Math.round(top3Mate * 100) + '%'
+           : ' — top three take ' + Math.round(top3 * 100) + '% of his passing')
+      + '</div>'
+    + (tRows ? '<div class="pa-tbl">' + tRows + '</div>'
+             : '<div class="pt-na">no target takes 3% of his passing</div>')
+    + (goneShare > 0.02
+        ? '<div class="pa-foot">' + Math.round(goneShare * 100) + '% of that passing went to men '
+          + 'no longer alongside him — kept here rather than dropped, so the shares '
+          + 'still read against his real total. Across all of it his top three took '
+          + Math.round(top3 * 100) + '%.</div>' : '')
+    + '<div class="pa-sub">What he creates</div>'
+    + '<div class="pa-tbl">'
+      + '<div class="pa-row pa-act"><div class="pa-lab">Threes</div>'
+        + '<div class="pa-bar"><i style="width:' + Math.round(rec.threeShare * 100) + '%"></i></div>'
+        + '<div class="pa-n"><b>' + Math.round(rec.threeShare * 100) + '%</b>of his assists'
+        + (d3 != null ? '<i class="' + (Math.round(d3) >= 0 ? 'up' : 'dn') + '">' + signedInt(d3)
+           + ' v league</i>' : '') + '</div><div class="pa-st"></div></div>'
+      + aRows + '</div>'
+    + (qBody ? '<div class="pa-sub">By quarter</div>' + qBody : '')
+    + '<div class="pa-sub">' + esc(abbrOf(key, me.opp)) + ' concede</div>'
+    + oppBody
+    + '<div class="av-note"><b>The network is context, not a reason on its own.</b> Across 189 '
+    + 'passers, a man’s assists moved by +0.00 on average when his busiest target sat out, and '
+    + 'only 46% of them went down — losing a target costs him those buckets and hands him the '
+    + 'ball, and the two about cancel. A rank-four target sitting moved it slightly more. So who '
+    + 'is out below is printed because it is true, not because it shifts the line. '
+    + '<b>The opponent column is the part that holds up:</b> tested out of sample, the gap between '
+    + 'the softest and toughest third of defences is worth about ' + PA_SWING.toFixed(2) + ' of an '
+    + 'assist TO ONE PASSER \u2014 not the 3.7 a game that separates those thirds at club level, '
+    + 'which is spread across everyone who passes. The ranking is stable enough season to season '
+    + '(+0.74) to survive the test. '
+    + 'Two limits worth knowing: ESPN records an assister only on a shot that WENT IN, so a pass '
+    + 'that would have been an assist had the shot dropped leaves no trace at all — which is '
+    + 'the largest single source of noise in an assists line, and nothing here can see it. And the '
+    + 'window is two seasons, because one season in October is five games.</div>';
+}
 function nbaZones(key, name){
   if (key !== 'nba') return null;
   var S = state.sports[key], z = S.data.zones;
@@ -23919,6 +24234,12 @@ window.LAB = {
   courtRowsProbe: function(key, t, o, z){ return courtZoneRows(key, t, o, z); },
   shotRowsProbe: function(key, g){ return nbaShotRows(key, g); },
   ptCandsProbe: function(key, g){ return ptCandidates(key, g); },
+  paCandsProbe: function(key, g){ return paCandidates(key, g); },
+  paPlayerProbe: function(key, name){ return paPlayer(key, name); },
+  paStatusProbe: function(key, me, t){ return paStatus(key, me, t); },
+  paQProbe: function(key, name){ return paQuarters(key, name); },
+  playProbe: function(key, g){ return nbaPlaySection(key, g); },
+  actsProbe: function(key, g){ return nbaActionSection(key, g); },
   rosterProbe: function(key, g){
     var out = [];
     [g.away, g.home].forEach(function(t){
