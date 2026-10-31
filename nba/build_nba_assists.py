@@ -46,12 +46,20 @@ nba/data/assists.json
 
     {"league": {"threeShare": 0.4247, "assists": 73821},
      "actions": ["putback", ...], "labels": {"jumper": "Catch jumper", ...},
-     "defence": {"BOS": {"perGame": 24.1, "rank": 7, "of": 30}},
+     "defence": {"BOS": {"perGame": 24.1, "rank": 7, "of": 30,
+                         "fgmAllowed": 41.2, "fgmRank": 8,
+                         "astShare": 0.6485, "shareRank": 9}},
      "players": [{"playerId":"3112335","name":"Nikola Jokic","team":"DEN",
                   "assists":790,"assistsCur":36,
                   "targets":[{"id":"...","name":"Jamal Murray","n":167,"share":0.21,"nCur":9}, ...],
                   "threeShare":0.37,
                   "acts":{"jumper":0.31,"cut":0.20, ...}}]}
+
+The defence block factors the concession: makes allowed x assisted share returns perGame
+exactly, by construction. Both halves are worth showing and neither is worth pricing - see
+defence_extras() for the residual test that settled that. Pace is deliberately NOT here: it
+reads r=+0.048 on its own but adds -0.002 once the concession is known, unlike on the rebounding
+card where it adds +0.035 and earns its place.
 
 The action keys are the ones build_nba_playtypes.py uses, deliberately: "what he creates" and
 "how he scores" then describe shots in the same words, and a reader moving between the two cards
@@ -189,6 +197,65 @@ def harvest(seasons):
     return rows, club_games, conceded
 
 
+def defence_extras(out_dir, seasons, dfc):
+    """Why a club concedes what it concedes.
+
+    An assist needs a MADE shot, so what a club gives up factors exactly:
+
+        assists conceded  =  makes allowed  x  the share of those makes that were assisted
+
+    and the two halves say different things. A club can give up assists because it gives up a lot
+    of baskets, or because the baskets it gives up are the created kind rather than the one-on-one
+    kind. Both are worth seeing.
+
+    They are NOT worth pricing, and the file says so. Tested out of sample against this season:
+    the assisted share reads r=+0.093 on its own and makes allowed +0.084, which looks like three
+    separate edges next to the concession's +0.102 - but the three overlap almost entirely
+    (+0.85 and +0.88 against the concession at club level), and residualised, the assisted share
+    adds r=+0.011 on top of the concession and makes allowed adds -0.013. Nothing. So these go on
+    the card as the reason behind the number and never as another number to bet into.
+
+    Read from the gamelogs rather than the play-by-play: the box has makes allowed, and the share
+    is derived from the concession already computed so the identity is exact by construction.
+    """
+    tm = collections.defaultdict(lambda: collections.defaultdict(float))
+    for s in seasons:
+        p = os.path.join(out_dir, 'gamelogs_%s.json' % s)
+        if not os.path.exists(p):
+            continue
+        for r in json.load(open(p)):
+            m, t = str(r.get('MatchId')), r.get('Team')
+            if not m or not t:
+                continue
+            try:
+                v = float(r.get('fgm') or 0)
+            except (TypeError, ValueError):
+                v = 0.0
+            tm[m][t] += 0.0 if v != v else v
+    allowed = collections.defaultdict(list)
+    for m, row in tm.items():
+        ts = sorted(row)
+        if len(ts) != 2:
+            continue
+        allowed[ts[0]].append(row[ts[1]])
+        allowed[ts[1]].append(row[ts[0]])
+    fg = {c: sum(v) / len(v) for c, v in allowed.items() if len(v) >= MIN_DEF_GAMES}
+    if not fg:
+        print('  no gamelogs for the concession breakdown - the card shows the total only')
+        return dfc
+    order = sorted(fg, key=lambda c: -fg[c])
+    for n, c in enumerate(order):
+        if c in dfc:
+            dfc[c]['fgmAllowed'] = round(fg[c], 2)
+            dfc[c]['fgmRank'] = n + 1
+            # derived, so makes x share == the concession exactly
+            dfc[c]['astShare'] = round(dfc[c]['perGame'] / fg[c], 4) if fg[c] else None
+    shares = [(dfc[c]['astShare'], c) for c in dfc if dfc[c].get('astShare') is not None]
+    for n, (_, c) in enumerate(sorted(shares, reverse=True)):
+        dfc[c]['shareRank'] = n + 1
+    return dfc
+
+
 def build(rows, club_games, conceded):
     """Per-passer networks.
 
@@ -276,7 +343,11 @@ def build(rows, club_games, conceded):
         dfc[club] = {'perGame': round(v, 2), 'rank': i + 1, 'of': len(per)}
 
     three = sum(r['three'] for r in rows) / len(rows) if rows else 0
-    return {'league': {'threeShare': round(three, 4), 'assists': len(rows)},
+    return {'league': {'threeShare': round(three, 4), 'assists': len(rows),
+                       # measured out of sample; the breakdown explains the total and adds
+                       # essentially nothing to it, which the card states
+                       'oppSwing': 0.65, 'oppStability': 0.74,
+                       'shareAdds': 0.011, 'fgmAdds': -0.013},
             'actions': ACTION_KEYS, 'labels': {a[0]: a[1] for a in ACTIONS},
             'minAssists': MIN_ASSISTS, 'minTargetShare': MIN_TARGET_SHARE,
             'defence': dfc, 'players': players}
@@ -337,6 +408,24 @@ def selftest():
     check('the action mix sums to about one', abs(sum(p['acts'].values()) - 1) < 0.01)
     check('a club\'s concession is per game', out['defence']['BOS']['perGame'] == 20.0)
     check('and ranked', out['defence']['BOS']['rank'] == 1)
+
+    # THE BREAKDOWN MUST BE AN IDENTITY. makes allowed x assisted share has to come back to the
+    # concession, or the card decomposes a number it does not decompose.
+    import tempfile
+    tmp = tempfile.mkdtemp()
+    with open(os.path.join(tmp, 'gamelogs_2026.json'), 'w') as f:
+        json.dump([{'MatchId': 'M%d' % k, 'Team': t, 'fgm': 40 if t == 'BOS' else 32}
+                   for k in range(30) for t in ('DEN', 'BOS')], f)
+    dd = defence_extras(tmp, ['2026'], {'BOS': {'perGame': 20.0, 'rank': 1, 'of': 2},
+                                        'DEN': {'perGame': 24.0, 'rank': 2, 'of': 2}})
+    check('makes allowed is what the OTHER club made (%s)' % dd['BOS']['fgmAllowed'],
+          dd['BOS']['fgmAllowed'] == 32.0 and dd['DEN']['fgmAllowed'] == 40.0)
+    check('and makes x the assisted share returns the concession exactly',
+          all(abs(v['fgmAllowed'] * v['astShare'] - v['perGame']) < 0.01 for v in dd.values()))
+    check('with the share ranked too', {v['shareRank'] for v in dd.values()} == {1, 2})
+    check('a window with no gamelogs leaves the totals alone rather than erroring',
+          defence_extras(tempfile.mkdtemp(), ['2026'],
+                         {'BOS': {'perGame': 20.0}})['BOS'] == {'perGame': 20.0})
 
     check('the labels travel with the data so the card need not guess them',
           out['labels']['jumper'] == 'Catch jumper' and len(out['actions']) == 11)
@@ -432,4 +521,6 @@ if __name__ == '__main__':
     print('assists: seasons %s' % ','.join(seasons))
     rows, club_games, conceded = harvest(seasons)
     print('  %d assisted field goals' % len(rows))
-    write(a.out, build(rows, club_games, conceded), seasons)
+    payload = build(rows, club_games, conceded)
+    payload['defence'] = defence_extras(a.out, seasons, payload['defence'])
+    write(a.out, payload, seasons)
