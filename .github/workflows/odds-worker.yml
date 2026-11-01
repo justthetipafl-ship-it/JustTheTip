@@ -40,11 +40,21 @@ on:
         description: "Force a full pull, ignoring the gate"
         required: false
         default: "true"
+  # NOTHING HERE FIRES ON :00, :15, :30 OR :45, AND THAT IS THE POINT.
+  # This job pushes to main and so does almost every other build in the repo, and a push to main
+  # triggers a Pages deployment. Thirty-odd workflows are scheduled on the hour; this one ran
+  # */15, so it landed on the same minute as every one of them. Two commits seconds apart means
+  # two deployments, and the second is rejected outright:
+  #   "Deployment request failed ... due to in progress deployment. Please cancel <sha> first."
+  # Harmless in itself - the next push redeploys - but it fails runs on a schedule and buries
+  # real failures in noise. Moving the FREQUENT job off the grid fixes every one of those
+  # collisions in one place, rather than re-timing thirty workflows one at a time.
+  # Still every fifteen minutes; just never on a minute anything else uses.
   schedule:
-    - cron: "0 20 * * *"     # 06:00 AEST - sweep
-    - cron: "0 2 * * *"      # 12:00 AEST - sweep
-    - cron: "0 8 * * *"      # 18:00 AEST - sweep
-    - cron: "*/15 * * * *"   # refresh; the gate decides whether anything is pulled
+    - cron: "5 20 * * *"      # 06:05 AEST - sweep
+    - cron: "5 2 * * *"       # 12:05 AEST - sweep
+    - cron: "5 8 * * *"       # 18:05 AEST - sweep
+    - cron: "3,18,33,48 * * * *"   # refresh; the gate decides whether anything is pulled
 
 permissions:
   contents: write
