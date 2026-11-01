@@ -136,6 +136,13 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add */data/odds.json 2>/dev/null || true
+          # THE OPENING PRICES. fetch_odds.py has written these next to odds.json since it was
+          # built - write_opening() keeps the first price seen for each line each day - and this
+          # step never staged them, so the file was created on the runner and thrown away with
+          # it every single run. Nothing downstream ever saw one: openPrice() and the movement
+          # chip on every signal row read a file that has never existed in the repo for any
+          # sport, and silently rendered nothing. One missing line, a feature that never ran.
+          git add */data/odds_open.json 2>/dev/null || true
           git add */data/pickem.json 2>/dev/null || true
           git add */odds-history 2>/dev/null || true
           if git diff --staged --quiet; then echo "no odds changed"; else
