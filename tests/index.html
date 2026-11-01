@@ -1521,6 +1521,12 @@
   .cs-r-d{grid-area:d;font-size:9px;color:var(--text-3);line-height:1.3;
     overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
   .cs-vs{margin-left:7px;font-family:var(--font-mono);color:var(--text-3);opacity:.8;}
+  .cs-tabs{padding:0 0 8px;}
+  .cs-tabs .pp-tab b{font-family:var(--font-mono);font-weight:700;opacity:.65;margin-left:2px;}
+  /* HELPS AND HURTS MUST NOT LOOK ALIKE. The number is the whole row, and a stiff defence read
+     in the same green as a soft one is the kind of false verdict this page exists to avoid. */
+  .cs-help .cs-r-c b{color:var(--accent);}
+  .cs-hurt .cs-r-c b{color:#f97316;}   /* the page's own 'against you' orange */
   .cs-tile-lab{font-family:var(--font-display);font-size:8px;letter-spacing:.07em;
     text-transform:uppercase;color:var(--text-3);background:var(--surface-2);
     padding:3px 9px;border-bottom:1px solid var(--border);}
@@ -2548,6 +2554,7 @@ var state = {
   view:   { active: {}, tab: 'fixture', mkt: {}, match: {}, odSort: {}, player: null, books: null, showDone: false, focus: null, h2hMode: 'for',
              settings: false, nerd: !!PREF.nerd,       // Nerd Mode is remembered between visits
              slMkt: {}, slWin: 'season', dvpMkt: {}, ppTab: 'form',
+             csK: null,                                // Cheat Sheet's sport tab; null = first with games
              cmbQ: '', cmbSel: null, cmbRecent: [],
              cmbOpen: false, cmbMode: 'single', cmbLegs: [], cmbResult: null, cmbSugOff: false,
              cmbLadOpen: false, mbFix: 0, mbMode: 'signals', pc: null, ttWin: 10, smDrop: {},
@@ -14592,6 +14599,7 @@ var CS_DVP_MIN_GAMES = 10;  // a club's concession needs a sample before it is r
    take three of the ten places - Indiana filled three on the first slate - and the list stops
    being a view of the day and becomes a view of Indiana. */
 var CS_PER_CLUB = 2;
+var CS_TEAM_MIN = 5;         // percent from the league average before a club is worth a row
 function csTopPerClub(rows, n){
   var seen = {}, out = [];
   rows.forEach(function(r){
@@ -14643,16 +14651,21 @@ function csTiles(caps){
   });
   return out;
 }
-function csSportChip(k){ return '<span class="cs-sp">' + esc(SPORTS[k].name) + '</span>'; }
-
 /* ---- the lists ---- */
 function csStreaks(caps){
+  /* The Streakers tile for the sport on screen, best first. The row keeps its own captured
+     markup, so the run and its label are read back out of that by csMetric rather than
+     recounted here - two counts of the same thing is two chances to disagree.
+     Ordered on the tile’s own edge, not on the length of the run: a four-game run at a
+     price the tile rates is ahead of a twelve-game one it does not. */
   var rows = [];
   csTiles(caps).forEach(function(t){
     if (t.title !== 'Streakers') return;
-    t.rows.forEach(function(r){ rows.push({ k:t.k, r:r }); });
+    crewRowsSorted(t.rows).forEach(function(r){
+      rows.push({ k:t.k, html:r.html, edge:r.edge, ms:r.ms });
+    });
   });
-  return crewRowsSorted(rows.map(function(x){ return x.r; })).slice(0, CS_TOP);
+  return crewRowsSorted(rows).slice(0, CS_TOP);
 }
 function csSignalTops(caps){
   /* One row from each tile - the best it has today. A tile with nothing to say is left out
@@ -14734,9 +14747,16 @@ function csDvp(sports){
   return csTopPerClub(out.sort(function(a, b){ return b.pct - a.pct; }));
 }
 function csTeams(sports, wantDef){
-  /* teams_form carries each club's figure FOR and AGAINST ("assists" / "assists_a"), so the
+  /* teams_form carries each club’s figure FOR and AGAINST ("assists" / "assists_a"), so the
      same table answers both questions: who produces most, and who allows most. Only clubs
-     playing inside the window, and only against the league's own average. */
+     playing inside the window, and only where the club is a real distance from the league.
+
+     BOTH TAILS, NOT JUST THE TOP. This used to throw away everything at or below the league
+     average, which meant the page could tell you a matchup was soft and never that one was
+     stiff - and the stiff one is the more useful warning, because it is the one you would
+     otherwise walk into. Each row therefore carries a direction: a defence conceding more
+     than the league HELPS the men it faces, one conceding less HURTS them; an offence
+     producing more HELPS its own men, less HURTS them. */
   var out = [];
   sports.forEach(function(k){
     var rows = asArray(state.sports[k].data.teams_form) || [];
@@ -14752,36 +14772,38 @@ function csTeams(sports, wantDef){
       if (have.length < 6) return;
       var avg = have.reduce(function(a, r){ return a + (+r[f]); }, 0) / have.length;
       if (!(avg > 0)) return;
+      /* WHERE THEY RANK, among the clubs that have a figure for this market. 1 is the most,
+         so for a defence 1st is the softest and last is the stiffest. The denominator is
+         printed with it - "2nd of 30" means something, "2nd" on its own does not. */
+      var order = have.slice().sort(function(a, b){ return (+b[f]) - (+a[f]); });
+      var rankOf = {};
+      order.forEach(function(r, n){ rankOf[normTeam(r.team || r.name || r.Team)] = n + 1; });
       have.forEach(function(r){
         var tm = r.team || r.name || r.Team;
         var pl = playing[normTeam(tm)];
         if (!pl) return;
         var pct = ((+r[f]) - avg) / avg * 100;
-        if (pct <= 0) return;                       // only the top end; the bottom is a separate read
+        if (Math.abs(pct) < CS_TEAM_MIN) return;    // a club a whisker off the league is not a read
         out.push({ k:k, team:tm, opp:pl.opp, mkt:m[0], label:m[1], val:+r[f], avg:avg,
-                   pct:pct, ms:pl.ms });
+                   pct:pct, dir:(pct > 0 ? 'help' : 'hurt'),
+                   rank:rankOf[normTeam(tm)] || null, of:have.length, ms:pl.ms });
       });
     });
   });
-  return csTopPerClub(out.sort(function(a, b){ return b.pct - a.pct; }));
-}
-function csNerd(sports){
-  /* The market against itself. An arb or a middle is worth more than any model read because it
-     does not depend on being right about the player - so those come first, then the best line
-     value. Needs tier 2 (per-book prices); a sport without it is skipped rather than guessed. */
-  var out = [];
-  sports.forEach(function(k){
-    if (state.sports[k].t2 !== 'ready') return;
-    crewGames(k, CS_HOURS).forEach(function(x){
-      var n = null;
-      try { n = nerdRows(k, x.g); } catch(e){ return; }
-      if (!n) return;
-      (n.arbs || []).forEach(function(r){ out.push({ k:k, kind:'Arb', r:r, score:1000 + r.profit, ms:x.ms }); });
-      (n.middles || []).forEach(function(r){ out.push({ k:k, kind:'Middle', r:r, score:500 + (r.gap || 0), ms:x.ms }); });
-      (n.value || []).forEach(function(r){ out.push({ k:k, kind:'Line value', r:r, score:(r.ev || 0) * 100, ms:x.ms }); });
-    });
-  });
-  return out.sort(function(a, b){ return b.score - a.score; }).slice(0, CS_TOP);
+  /* BOTH SIDES GET ROOM. Sorting the two tails into one list by distance alone gave a
+     Defences table of eight stiff clubs and two soft ones on this slate - truthful, but it
+     buries whichever side happens to be less extreme today, and the reader wants the openings
+     AND the walls. So each tail is ordered on its own and the two are interleaved, best
+     against best, before the per-club cap and the top ten. */
+  var byAbs = function(a, b){ return Math.abs(b.pct) - Math.abs(a.pct); };
+  var help = out.filter(function(r){ return r.dir === 'help'; }).sort(byAbs);
+  var hurt = out.filter(function(r){ return r.dir === 'hurt'; }).sort(byAbs);
+  var mix = [];
+  for (var i = 0; i < Math.max(help.length, hurt.length); i++){
+    if (help[i]) mix.push(help[i]);
+    if (hurt[i]) mix.push(hurt[i]);
+  }
+  return csTopPerClub(mix);
 }
 function csOuts(sports){
   /* Who has been ruled out of a game inside the window. Printed whether or not it touches a
@@ -14961,9 +14983,11 @@ function csImgT(k, t){
 /* The sheet's row. Everything on the page uses it, so the eye learns one shape. */
 function csR(o){
   var bet = o.bet || '';
-  return '<div class="cs-r' + (o.img ? '' : ' cs-r-noi') + '">'
+  return '<div class="cs-r' + (o.img ? '' : ' cs-r-noi') + (o.cls ? ' ' + o.cls : '') + '">'
     + (o.img ? '<div class="cs-r-i">' + o.img + '</div>' : '')
-    + '<div class="cs-r-a">' + (o.k ? csSportChip(o.k) : '') + '<b>' + esc(o.name || '') + '</b></div>'
+    /* no sport badge on the row any more: the page is one sport at a time and the tab above
+       already says which, so nine copies of "NBA" down the left was pure noise */
+    + '<div class="cs-r-a"><b>' + esc(o.name || '') + '</b></div>'
     + '<div class="cs-r-b">' + (bet ? '<span class="cs-bet">' + esc(bet) + '</span>' : '')
       + (o.price ? '<span class="cs-pr">$' + (+o.price).toFixed(2) + '</span>' : '') + '</div>'
     + '<div class="cs-r-c">' + (o.metric ? '<b>' + esc(o.metric) + '</b>' : '')
@@ -14991,7 +15015,7 @@ function csFromRow(k, r, extra){
   var nm = s.name || csName(r.html);
   // a row we cannot even name is not worth a line: it would print as a badge and a timestamp
   if (!nm) return '';
-  return csR({ k:k, name:nm, img:csImgP(k, nm),
+  return csR({ name:nm, img:csImgP(k, nm),
                bet:bet, price:s.odds, metric:m ? m.v : (r.edge != null ? r.edge + '%' : ''),
                metricLabel:(m && m.l) ? m.l : (extra || ''),
                why:csReason(r.html, s.opp ? abbrOf(k, s.opp) : ''),
@@ -15032,25 +15056,54 @@ function csSec(icon, title, sub, body, note, empty){
     + '<div class="bld-body">' + body + (note ? '<div class="av-note">' + note + '</div>' : '')
     + '</div></details>';
 }
-function csWhen(ms){
-  if (ms == null) return '';
-  var h = (ms - Date.now()) / 36e5;
-  if (h < 0) return '<i class="cs-when">live</i>';
-  return '<i class="cs-when">' + (h < 1 ? 'under an hour' : 'in ' + Math.round(h) + 'h') + '</i>';
+function csPickSport(sports){
+  /* ONE SPORT AT A TIME. Mixed, the sheet put an NBA streak next to an EPL one with nothing to
+     say about either comparison, and seven sports switched on made every list a list of
+     whichever sport had the most games. Per sport, every cap below is that sport’s own top ten.
+     The remembered choice is only honoured while that sport still has a game in the window. */
+  var want = state.view.csK;
+  if (want && sports.indexOf(want) >= 0) return want;
+  /* UNPICKED, IT OPENS ON WHATEVER IS ON NEXT. Falling back to the first key in SPORTS meant
+     the sheet opened on NBL and its one game while four NBA games tipped off sooner - on a
+     page whose whole claim is "the next 24 hours", the soonest game is the right default. */
+  var best = null, bestMs = Infinity;
+  sports.forEach(function(k){
+    crewGames(k, CS_HOURS).forEach(function(x){
+      if (x.ms != null && x.ms < bestMs){ bestMs = x.ms; best = k; }
+    });
+  });
+  return best || sports[0];
 }
-function csBar(pct, max){
-  var w = Math.max(3, Math.min(100, Math.round(pct / (max || 1) * 100)));
-  return '<div class="pa-bar"><i style="width:' + w + '%"></i></div>';
-}
-function csRowsHtml(rows){
-  /* The badge goes ABOVE the row, not beside it. A captured row is its own tile's markup and
-     several of them clip their text with an ellipsis at whatever width they are given - put a
-     40px badge in the same flex line and "Double-double - 14 of his last 20" becomes
-     "Double-double - 14 of his...". The row keeps the full width it was written for. */
-  return '<div class="cs-rows">' + rows.map(function(r){
-    return '<div class="cs-wrap"><div class="cs-badge">' + csSportChip(r.k) + '</div>'
-      + r.html + '</div>';
+function csTabs(sports, cur){
+  if (sports.length < 2) return '';
+  return '<div class="pp-tabs cs-tabs">' + sports.map(function(k){
+    var n = crewGames(k, CS_HOURS).length;
+    return '<button class="pp-tab' + (k === cur ? ' on' : '') + '" '
+      + 'onclick="LAB.csK(\'' + k + '\')">' + esc(SPORTS[k].name)
+      + ' <b>' + n + '</b></button>';
   }).join('') + '</div>';
+}
+/* A club-level row: what the club does, where that ranks, and who it lands on. */
+function csTeamRow(r, own){
+  var help = r.dir === 'help';
+  /* WHO IT LANDS ON. For a DEFENCE that is the opposition’s men; for an OFFENCE its own.
+     Naming the wrong side would be worse than naming nobody, so the caller says which. */
+  var who = csWho(r.k, own ? r.team : r.opp, null, 3);
+  /* the market belongs in the headline. Two rows both reading "ORL concede" with the market
+     off in a side column are two rows the eye cannot tell apart. */
+  return csR({ k:null,
+    name:abbrOf(r.k, r.team) + (own ? ' produce ' : ' concede ') + String(r.label).toLowerCase(),
+    img:csImgT(r.k, r.team),
+    /* THE OPPONENT GOES UP TOP, NOT ON THE END OF THE REASON. Naming three players pushed the
+       reason line past its width and the ellipsis ate "v ORL 10h" - the one part of the row
+       that says which game this is. The bet column is empty on a club row, so it takes it. */
+    bet:'v ' + abbrOf(r.k, r.opp) + ' \u00b7 ' + csAgo(r.ms),
+    metric:(r.pct > 0 ? '+' : '\u2212') + Math.abs(Math.round(r.pct)) + '%',
+    metricLabel:r.rank ? ordinalish(r.rank) + ' of ' + r.of : '',
+    cls:help ? 'cs-help' : 'cs-hurt',
+    why:(who ? (help ? 'lifts ' : 'holds down ') + who
+             : (help ? 'lifts' : 'holds down') + ' whoever is priced there')
+        + ' \u00b7 ' + r.val.toFixed(1) + ' v ' + r.avg.toFixed(1) + ' league' });
 }
 function sheetPage(){
   var active = Object.keys(SPORTS).filter(function(k){ return state.view.active[k]; });
@@ -15069,19 +15122,21 @@ function sheetPage(){
       + (waiting.length ? 'Loading ' + esc(waiting.join(', ')) + '\u2026'
          : 'No games in the next ' + CS_HOURS + ' hours for the sports switched on.') + '</div>';
 
-  var caps = csCaps(sports);
-  var nG = sports.reduce(function(a, k){ return a + crewGames(k, CS_HOURS).length; }, 0);
-  var sub = '<div class="crew-sub">' + nG + ' game' + (nG === 1 ? '' : 's') + ' \u00b7 '
-    + esc(sports.map(function(k){ return SPORTS[k].name; }).join(' \u00b7 '))
+  var cur = csPickSport(sports);
+  var only = [cur];
+  var caps = csCaps(only);
+  var nG = crewGames(cur, CS_HOURS).length;
+  var sub = '<div class="crew-sub">' + esc(SPORTS[cur].name) + ' \u00b7 ' + nG + ' game'
+    + (nG === 1 ? '' : 's') + ' in the window'
     + (waiting.length ? ' \u00b7 loading ' + esc(waiting.join(', ')) + '\u2026' : '') + '</div>';
 
-  var h = head + sub;
+  var h = head + sub + csTabs(sports, cur);
 
   /* No essay under each section. The caveat that matters rides in the subtitle in a few words,
      and the one paragraph worth keeping sits once at the foot of the page. */
   var stk = csStreaks(caps);
   h += csSec('ti-flame', 'Hottest streaks',
-    'Longest runs on today\u2019s slate \u00b7 the worst performer on the graded ledger',
+    'Longest runs in this window \u00b7 the worst performer on the graded ledger',
     stk.length ? '<div class="cs-tbl">' + stk.map(function(r){
       return csFromRow(r.k, r, 'straight'); }).join('') + '</div>' : '', '',
     'Nothing on a long enough run today.');
@@ -15090,7 +15145,7 @@ function sheetPage(){
   h += csSec('ti-stack-2', 'Where the reads agree',
     'Two or more tiles on the same bet \u00b7 agreement, not confirmation',
     con.length ? '<div class="cs-tbl">' + con.map(function(e){
-      return csR({ k:e.k, name:e.spec.name, img:csImgP(e.k, e.spec.name),
+      return csR({ k:null, name:e.spec.name, img:csImgP(e.k, e.spec.name),
         bet:mktLabel(e.k, e.spec.mkt) + ' ' + (e.spec.side === 'under' ? 'u' : 'o')
             + Object.keys(e.lines).sort(function(a, b){ return a - b; }).join('/'),
         price:e.spec.odds, metric:e.n, metricLabel:'tiles',
@@ -15105,50 +15160,52 @@ function sheetPage(){
       return '<div class="cs-tile-lab">' + esc(t.title) + '</div>' + csFromRow(t.k, t.row);
     }).join('') + '</div>' : '', '', 'No tile has fired for this window yet.');
 
-  var dv = csDvp(sports);
+  var dv = csDvp(only);
   h += csSec('ti-target-arrow', 'Softest matchups',
     'Positions these clubs concede to \u00b7 a reason to look, not a reason on its own',
     dv.length ? '<div class="cs-tbl">' + dv.map(function(r){
       var who = csWho(r.k, r.opp, r.pos, 3);
-      return csR({ k:r.k, name:abbrOf(r.k, r.team) + ' soft to ' + r.pos,
-        img:csImgT(r.k, r.team),
-        bet:esc(r.label).toLowerCase(), metric:'+' + Math.round(r.pct) + '%',
+      return csR({ k:null,
+        name:abbrOf(r.k, r.team) + ' soft to ' + r.pos + ' \u00b7 ' + String(r.label).toLowerCase(),
+        img:csImgT(r.k, r.team), cls:'cs-help',
+        bet:'v ' + abbrOf(r.k, r.opp) + ' \u00b7 ' + csAgo(r.ms),
+        metric:'+' + Math.round(r.pct) + '%',
         metricLabel:r.val.toFixed(1) + ' v ' + r.avg.toFixed(1),
-        why:who ? who : 'nobody priced at that position',
-        opp:abbrOf(r.k, r.opp), ms:r.ms });
+        why:who ? 'lifts ' + who : 'nobody priced at that position' });
     }).join('') + '</div>' : '', '', 'No club in the window concedes notably to any position.');
 
-  [[false, 'ti-sword', 'Hottest offences', 'Clubs producing most in the markets their sport prices'],
-   [true, 'ti-shield-half', 'Softest defences', 'Clubs conceding most in those same markets']
+  [[false, 'ti-sword', 'Offences',
+    'What these clubs produce, where it ranks, and who that lifts or holds down'],
+   [true, 'ti-shield-half', 'Defences',
+    'What these clubs concede, where it ranks, and who that lifts or holds down']
   ].forEach(function(cfg){
-    var rows = csTeams(sports, cfg[0]);
+    var rows = csTeams(only, cfg[0]);
+    /* "NOTHING FOUND" AND "NEVER CHECKED" ARE DIFFERENT SENTENCES. Four of the seven sports
+       ship no teams_form.json at all, and telling their readers that no club is far from the
+       league would be a claim about data nobody has. Say which it is. */
+    var has = (asArray(state.sports[cur].data.teams_form) || []).length > 0;
     h += csSec(cfg[1], cfg[2], cfg[3],
       rows.length ? '<div class="cs-tbl">' + rows.map(function(r){
-        /* for a soft DEFENCE the men who benefit are the opposition\u2019s; for a hot OFFENCE
-           they are its own. Naming the wrong side would be worse than naming nobody. */
-        var who = csWho(r.k, cfg[0] ? r.opp : r.team, null, 3);
-        return csR({ k:r.k, name:abbrOf(r.k, r.team) + (cfg[0] ? ' concede' : ' produce'),
-          img:csImgT(r.k, r.team),
-          bet:esc(r.label).toLowerCase(), metric:'+' + Math.round(r.pct) + '%',
-          metricLabel:r.val.toFixed(1) + ' v ' + r.avg.toFixed(1),
-          why:who, opp:abbrOf(r.k, r.opp), ms:r.ms });
-      }).join('') + '</div>' : '', '', 'Nothing stands out against the league in these markets.');
+        return csTeamRow(r, !cfg[0]); }).join('') + '</div>' : '', '',
+      has ? 'No club in the window is far enough from the league in these markets.'
+          : SPORTS[cur].name + ' has no club form file yet, so this is not a quiet day \u2014 it '
+            + 'is a table that has never been built for this sport.');
   });
 
-  var outs = csOuts(sports);
+  var outs = csOuts(only);
   h += csSec('ti-user-off', 'Ruled out', 'Busiest first \u00b7 their absence moves other men\u2019s lines',
     outs.length ? '<div class="cs-tbl">' + outs.map(function(r){
-      return csR({ k:r.k, name:r.name, img:csImgP(r.k, r.name), bet:abbrOf(r.k, r.team),
+      return csR({ k:null, name:r.name, img:csImgP(r.k, r.name), bet:abbrOf(r.k, r.team),
         metric:r.mins ? Math.round(r.mins) : '', metricLabel:r.mins ? 'a game' : '',
         why:r.why || 'out', opp:abbrOf(r.k, r.opp), ms:r.ms });
     }).join('') + '</div>' : '', '', 'Nobody is ruled out of a game in the window.');
 
-  var mv = csMoves(sports);
+  var mv = csMoves(only);
   h += csSec('ti-trending-down', 'Moved since it opened',
     'What the market did \u00b7 never who was right',
     mv.length ? '<div class="cs-tbl">' + mv.map(function(r){
       var sh = r.pct < 0;
-      return csR({ k:r.k, name:r.name, img:csImgP(r.k, r.name),
+      return csR({ k:null, name:r.name, img:csImgP(r.k, r.name),
         bet:mktLabel(r.k, r.mkt) + ' ' + r.line, price:r.now,
         metric:(sh ? '\u2193' : '\u2191') + Math.abs(Math.round(r.pct)) + '%',
         metricLabel:sh ? 'backed' : 'drifting',
@@ -15157,38 +15214,14 @@ function sheetPage(){
     }).join('') + '</div>' : '', '',
     'No opening prices on file yet \u2014 the odds run writes them each day.');
 
-  var rest = csRest(sports);
+  var rest = csRest(only);
   h += csSec('ti-bed', 'Short turnarounds', 'Back-to-backs and crowded weeks',
     rest.length ? '<div class="cs-tbl">' + rest.map(function(r){
-      return csR({ k:r.k, name:abbrOf(r.k, r.team), img:csImgT(r.k, r.team),
+      return csR({ k:null, name:abbrOf(r.k, r.team), img:csImgT(r.k, r.team),
         bet:r.days === 0 ? 'same-day turnaround' : r.days + ' day' + (r.days === 1 ? '' : 's') + ' rest',
         metric:r.in7, metricLabel:'games in 7',
         why:csWho(r.k, r.team, null, 3), opp:abbrOf(r.k, r.opp), ms:r.ms });
     }).join('') + '</div>' : '', '', 'Every club in the window has had a normal break.');
-
-  var nd = csNerd(sports);
-  h += csSec('ti-math-symbols', 'Market against itself',
-    'Arbs, middles and line value \u00b7 no model opinion in any of them',
-    nd.length ? '<div class="cs-tbl">' + nd.map(function(x){
-      var r = x.r;
-      var val = x.kind === 'Arb' ? '+' + (r.profit || 0).toFixed(1) + '%'
-              : x.kind === 'Middle' ? (r.gap || 0) + ' wide'
-              : '+' + Math.round((r.ev || 0) * 100) + '%';
-      /* A MIDDLE HAS TWO LINES, NOT ONE. It carries ov/un rather than the single `line` an arb
-         or a line-value row has, so reading r.line here printed "Points undefined" on every
-         middle on the page - and a row that says undefined is worse than no row. */
-      var bet = r.ov && r.un
-        ? (r.label || r.mkt) + ' o' + r.ov.line + ' / u' + r.un.line
-        : (r.label || r.mkt) + (r.line != null ? ' ' + r.line : '');
-      var pr = (r.bo && r.bo.over) || (r.ov && r.ov.over) || null;
-      var bk = (r.bo && r.bo.book) || (r.ov && r.un && r.ov.book && r.un.book
-                 ? r.ov.book + ' / ' + r.un.book : '') || '';
-      return csR({ k:x.k, name:(r.p && r.p.name) || '', img:csImgP(x.k, (r.p && r.p.name) || ''),
-        bet:bet, price:pr,
-        metric:val, metricLabel:x.kind,
-        why:bk + (r.books ? ' \u00b7 ' + r.books + ' books' : ''),
-        opp:r.opp ? abbrOf(x.k, r.opp) : '', ms:x.ms });
-    }).join('') + '</div>' : '', '', 'No arb, middle or out-of-step price on the board.');
 
   /* ONE note, at the foot of the page rather than under every section. */
   h += '<div class="av-note cs-foot"><b>A map of the day, not a list of bets.</b> Every number '
@@ -25400,6 +25433,7 @@ window.LAB = {
   slWin: function(w){ state.view.slWin = w; render(); },
   dvpMkt: function(k, m){ state.view.dvpMkt[k] = m; render(); },
   ppTab: function(t){ state.view.ppTab = t; render(); },
+  csK: function(k){ state.view.csK = k; render(); },
   ttWin: function(w){ state.view.ttWin = (w === 'all' ? 'all' : +w); render(); },
   pcMkt: function(m){
     var st = state.view.pc; if (!st) return;
@@ -25579,7 +25613,7 @@ window.LAB = {
   csDvpProbe: function(sp){ return csDvp(sp); },
   csTeamsProbe: function(sp, d){ return csTeams(sp, d); },
   csOutsProbe: function(sp){ return csOuts(sp); },
-  csNerdProbe: function(sp){ return csNerd(sp); },
+  csPickProbe: function(){ return csPickSport(csSports()); },
   csMovesProbe: function(sp){ return csMoves(sp); },
   csRestProbe: function(sp){ return csRest(sp); },
   csSpecProbe: function(h){ return csSpec(h); },
