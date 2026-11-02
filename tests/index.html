@@ -15042,18 +15042,37 @@ function csWho(k, team, pos, n){
   out.sort(function(a, b){ return (b.priced - a.priced) || (b.mins - a.mins); });
   return out.slice(0, n || 3).map(function(x){ return x.name; }).join(', ');
 }
+var CS_QUIET = [];
 function csSec(icon, title, sub, body, note, empty){
-  /* AN EMPTY SECTION STILL APPEARS, saying it found nothing. A sheet whose sections vanish when
-     they are quiet leaves the reader unable to tell "nothing today" from "this was never
-     checked", and the second is the dangerous one - it is how you stop noticing a feed has
-     broken. The reason is given where there is one. */
-  if (!body) body = '<div class="cs-none">' + esc(empty || 'Nothing on today\u2019s slate.') + '</div>';
+  /* A QUIET SECTION DROPS OUT OF THE PAGE, BUT NOT OUT OF THE RECORD. Nine headed cards each
+     saying "nothing today" was most of the sheet on a thin slate, so an empty one no longer
+     renders - it goes on the quiet list instead, and csQuietNote prints that as one collapsed
+     line at the foot.
+
+     The line is not decoration. A sheet whose sections simply vanish leaves the reader unable
+     to tell "nothing today" from "this was never checked", and the second is the dangerous
+     one: four of the seven sports ship no club form file at all, so their Offences and
+     Defences would disappear for ever with nothing anywhere to say why. One line, folded
+     shut, costs a reader nothing and keeps a dead feed visible. Same arrangement the signal
+     tiles already use (SIG_QUIET / sigQuietNote). */
+  if (!body){ CS_QUIET.push({ title:title, why:empty || 'Nothing on today\u2019s slate.' }); return ''; }
   return '<details class="sig-tile cs-sec" open><summary class="sig-head">'
     + '<span class="sig-ico"><i class="ti ' + icon + '"></i></span>'
     + '<span><span class="sig-ttl">' + esc(title) + '</span>'
     + '<span class="sig-desc">' + sub + '</span></span></summary>'
     + '<div class="bld-body">' + body + (note ? '<div class="av-note">' + note + '</div>' : '')
     + '</div></details>';
+}
+function csQuietNote(){
+  if (!CS_QUIET.length) return '';
+  var list = CS_QUIET.slice();
+  CS_QUIET = [];
+  return '<details class="sig-quiet cs-quiet"><summary>' + list.length + ' section'
+    + (list.length === 1 ? '' : 's') + ' with nothing in this window</summary>'
+    + list.map(function(q){
+        return '<div class="sig-quiet-row"><b>' + esc(q.title) + '</b><span>'
+          + esc(q.why) + '</span></div>';
+      }).join('') + '</details>';
 }
 function csPickSport(sports){
   /* ONE SPORT AT A TIME. Mixed, the sheet put an NBA streak next to an EPL one with nothing to
@@ -15126,6 +15145,7 @@ function sheetPage(){
     + (nG === 1 ? '' : 's') + ' in the next ' + CS_HOURS + ' hours'
     + (waiting.length ? ' \u00b7 loading ' + esc(waiting.join(', ')) + '\u2026' : '') + '</div>';
 
+  CS_QUIET = [];
   var h = head + sub;
 
   /* No essay under each section. The caveat that matters rides in the subtitle in a few words,
@@ -15219,7 +15239,8 @@ function sheetPage(){
         why:csWho(r.k, r.team, null, 3), opp:abbrOf(r.k, r.opp), ms:r.ms });
     }).join('') + '</div>' : '', '', 'Every club in the window has had a normal break.');
 
-  /* ONE note, at the foot of the page rather than under every section. */
+  /* What found nothing, in one folded line, then the one note worth keeping. */
+  h += csQuietNote();
   h += '<div class="av-note cs-foot"><b>A map of the day, not a list of bets.</b> Every number '
     + 'here belongs to a tile that already exists, cut to ' + CS_HOURS + ' hours \u2014 nothing '
     + 'on this page is a new read. The graded ledger has the signal suite at \u22126.1% over 436 '
