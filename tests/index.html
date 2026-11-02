@@ -2554,7 +2554,6 @@ var state = {
   view:   { active: {}, tab: 'fixture', mkt: {}, match: {}, odSort: {}, player: null, books: null, showDone: false, focus: null, h2hMode: 'for',
              settings: false, nerd: !!PREF.nerd,       // Nerd Mode is remembered between visits
              slMkt: {}, slWin: 'season', dvpMkt: {}, ppTab: 'form',
-             csK: null,                                // Cheat Sheet's sport tab; null = first with games
              cmbQ: '', cmbSel: null, cmbRecent: [],
              cmbOpen: false, cmbMode: 'single', cmbLegs: [], cmbResult: null, cmbSugOff: false,
              cmbLadOpen: false, mbFix: 0, mbMode: 'signals', pc: null, ttWin: 10, smDrop: {},
@@ -15059,10 +15058,14 @@ function csSec(icon, title, sub, body, note, empty){
 function csPickSport(sports){
   /* ONE SPORT AT A TIME. Mixed, the sheet put an NBA streak next to an EPL one with nothing to
      say about either comparison, and seven sports switched on made every list a list of
-     whichever sport had the most games. Per sport, every cap below is that sport’s own top ten.
-     The remembered choice is only honoured while that sport still has a game in the window. */
-  var want = state.view.csK;
-  if (want && sports.indexOf(want) >= 0) return want;
+     whichever sport had the most games. Per sport, every cap below is that sport’s own top ten. */
+  /* ONE SELECTOR. The sheet lives inside Degen Crew, whose own chips already say All or a
+     sport - the same reasoning the Degenerates builds follow two functions down. A second row
+     of sport tabs inside the sheet would only disagree with the chips above it. "All" has no
+     meaning here (the sheet is per sport by construction), so it falls through to the default
+     below rather than showing seven sports at once. */
+  var want = state.view.crewSport;
+  if (want && want !== 'all' && sports.indexOf(want) >= 0) return want;
   /* UNPICKED, IT OPENS ON WHATEVER IS ON NEXT. Falling back to the first key in SPORTS meant
      the sheet opened on NBL and its one game while four NBA games tipped off sooner - on a
      page whose whole claim is "the next 24 hours", the soonest game is the right default. */
@@ -15073,15 +15076,6 @@ function csPickSport(sports){
     });
   });
   return best || sports[0];
-}
-function csTabs(sports, cur){
-  if (sports.length < 2) return '';
-  return '<div class="pp-tabs cs-tabs">' + sports.map(function(k){
-    var n = crewGames(k, CS_HOURS).length;
-    return '<button class="pp-tab' + (k === cur ? ' on' : '') + '" '
-      + 'onclick="LAB.csK(\'' + k + '\')">' + esc(SPORTS[k].name)
-      + ' <b>' + n + '</b></button>';
-  }).join('') + '</div>';
 }
 /* A club-level row: what the club does, where that ranks, and who it lands on. */
 function csTeamRow(r, own){
@@ -15107,8 +15101,10 @@ function csTeamRow(r, own){
 }
 function sheetPage(){
   var active = Object.keys(SPORTS).filter(function(k){ return state.view.active[k]; });
-  var head = '<div class="crew-head"><div class="crew-ttl"><i class="ti ti-list-check"></i> Cheat Sheet</div>'
-    + '<div class="cs-win">the next ' + CS_HOURS + ' hours</div></div>';
+  /* Inside the crew the page already carries a header and a row of chips, so the sheet gets a
+     plain section title and folds its window into the one line underneath rather than stacking
+     a second header, a window chip and a subtitle on top of each other. */
+  var head = '<div class="crew-head"><div class="crew-ttl"><i class="ti ti-list-check"></i> Cheat Sheet</div></div>';
   if (!active.length) return head + '<div class="empty">Switch on a sport to build the sheet.</div>';
 
   var waiting = [];
@@ -15127,10 +15123,10 @@ function sheetPage(){
   var caps = csCaps(only);
   var nG = crewGames(cur, CS_HOURS).length;
   var sub = '<div class="crew-sub">' + esc(SPORTS[cur].name) + ' \u00b7 ' + nG + ' game'
-    + (nG === 1 ? '' : 's') + ' in the window'
+    + (nG === 1 ? '' : 's') + ' in the next ' + CS_HOURS + ' hours'
     + (waiting.length ? ' \u00b7 loading ' + esc(waiting.join(', ')) + '\u2026' : '') + '</div>';
 
-  var h = head + sub + csTabs(sports, cur);
+  var h = head + sub;
 
   /* No essay under each section. The caveat that matters rides in the subtitle in a few words,
      and the one paragraph worth keeping sits once at the foot of the page. */
@@ -15359,6 +15355,13 @@ function crewPage(){
   if (!active.length) return crewHead(f, active) + '<div class="empty">Switch on a sport to see its signals.</div>';
 
   var open = state.view.crewTile || null;
+  /* THE CHEAT SHEET IS A CREW TILE NOW, not a tab of its own. It is a digest of the tiles on
+     this very page cut to 24 hours, so a separate tab put it a navigation away from the thing
+     it summarises. It opens and closes exactly like a Degenerates card. */
+  if (open === 'sheet')
+    return crewHead(f, active)
+      + '<button class="fx-back" onclick="LAB.crewOpen(null)"><i class="ti ti-arrow-left"></i>'
+      + 'All tiles</button>' + sheetPage();
   // Degenerates run on their own scope (Mixed or one sport) and their own loader
   if (open && open.indexOf('deg:') === 0){
     var which = open.slice(4);
@@ -15435,6 +15438,10 @@ function crewPage(){
 
   // the grid
   var h = crewHead(f, active, sub);
+  h += '<div class="dayband"><span>Today</span></div><div class="ct-grid">'
+    + crewTileCard('sheet', 'ti-list-check', 'Cheat Sheet',
+        'Everything below, cut to the next ' + CS_HOURS + ' hours', null)
+    + '</div>';
   h += '<div class="dayband"><span>Degenerates</span></div><div class="ct-grid">'
     + DEG_TILES.map(function(d){ return crewTileCard('deg:'+d[0], d[2], d[1], d[3], null); }).join('')
     + '</div>';
@@ -25037,11 +25044,15 @@ function matchRadar(key, g){
     + 'attack, dashed teal is what the opponent concedes. Further out is better for the team named, on both.</div>';
 }
 
+/* The tab bar, hoisted out of the render so a test can read it. The Cheat Sheet used to sit
+   second in this list; it is a Degen Crew tile now. */
+var TABS = [['fixture','ti-calendar','Fixture'],['crew','ti-flame','Degen Crew'],['odds','ti-coin','Odds'],['stats','ti-chart-bar','Stats'],['tips','ti-antenna-bars-5','Live Tips'],['results','ti-trophy','Results']];
+
 function render(){
   var loading = Object.keys(SPORTS).filter(function(k){ return state.sports[k].status==='loading'; });
   $('status').textContent = loading.length ? ('loading '+loading.join(', ')+'…') : 'ready';
 
-  var tabs = [['fixture','ti-calendar','Fixture'],['sheet','ti-list-check','Cheat Sheet'],['crew','ti-flame','Degen Crew'],['odds','ti-coin','Odds'],['stats','ti-chart-bar','Stats'],['tips','ti-antenna-bars-5','Live Tips'],['results','ti-trophy','Results']];
+  var tabs = TABS;
   var h = '<div class="tabs">'+tabs.map(function(t){
     return '<button class="tab'+(state.view.tab===t[0]?' on':'')+'" onclick="LAB.tab(\''+t[0]+'\')">'
       +'<i class="ti '+t[1]+'"></i>'+t[2]+'</button>'; }).join('')+'</div>';
@@ -25056,8 +25067,6 @@ function render(){
     h += tipsPage();
   } else if (state.view.tab === 'results'){
     h += resultsPage();
-  } else if (state.view.tab === 'sheet'){
-    h += sheetPage();
   } else if (state.view.tab === 'crew'){
     h += crewPage();
   } else if (state.view.tab === 'stats'){
@@ -25089,7 +25098,14 @@ function render(){
 
 /* ---- public ------------------------------------------------------------- */
 window.LAB = {
-  crewSport: function(k){ state.view.crewSport = k; state.view.crewTile = null; render(); },
+  crewSport: function(k){
+    state.view.crewSport = k;
+    /* Changing sport while the Cheat Sheet is open should change the sheet, not throw you back
+       to the grid - the chips ARE its sport selector. Every other tile is scoped to the sport
+       it was opened from, so those still close. */
+    if (state.view.crewTile !== 'sheet') state.view.crewTile = null;
+    render();
+  },
   resSport: function(k){ state.view.resSport = k; render(); },
   deep: function(el){
     try { state.view.deep = JSON.parse(el.getAttribute('data-d')); render(); } catch(e){}
@@ -25433,7 +25449,6 @@ window.LAB = {
   slWin: function(w){ state.view.slWin = w; render(); },
   dvpMkt: function(k, m){ state.view.dvpMkt[k] = m; render(); },
   ppTab: function(t){ state.view.ppTab = t; render(); },
-  csK: function(k){ state.view.csK = k; render(); },
   ttWin: function(w){ state.view.ttWin = (w === 'all' ? 'all' : +w); render(); },
   pcMkt: function(m){
     var st = state.view.pc; if (!st) return;
@@ -25614,6 +25629,8 @@ window.LAB = {
   csTeamsProbe: function(sp, d){ return csTeams(sp, d); },
   csOutsProbe: function(sp){ return csOuts(sp); },
   csPickProbe: function(){ return csPickSport(csSports()); },
+  crewProbe: function(){ return crewPage(); },
+  tabsProbe: function(){ return TABS.map(function(t){ return t[0]; }); },
   csMovesProbe: function(sp){ return csMoves(sp); },
   csRestProbe: function(sp){ return csRest(sp); },
   csSpecProbe: function(h){ return csSpec(h); },
