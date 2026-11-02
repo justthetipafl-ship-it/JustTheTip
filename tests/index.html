@@ -1511,6 +1511,11 @@
   .cs-r-b{grid-area:b;font-family:var(--font-mono);font-size:10px;color:var(--text-2);
     white-space:nowrap;}
   .cs-bet{color:var(--text-2);}
+  /* who the leader meets, in the same stat. Soft and stiff must not read alike. */
+  .cs-meet{color:var(--text-2);}
+  .cs-meet.cs-soft{color:var(--accent);}
+  .cs-meet.cs-stiff{color:#f97316;}
+  .cs-r-b .cs-when{font-style:normal;color:var(--text-3);margin-left:7px;}
   .cs-pr{color:var(--text);margin-left:6px;}
   /* the number the tile is shouting, right-aligned in its own column so ten rows read as a
      column of numbers rather than ten sentences */
@@ -1518,8 +1523,11 @@
   .cs-r-c b{display:block;font-size:13px;color:var(--accent);font-weight:700;}
   .cs-r-c i{display:block;font-style:normal;font-size:7.5px;color:var(--text-3);
     text-transform:uppercase;letter-spacing:.03em;}
-  .cs-r-d{grid-area:d;font-size:9px;color:var(--text-3);line-height:1.3;
-    overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  /* THE REASON LINE WRAPS RATHER THAN TRUNCATES. It used to be one nowrap line with an
+     ellipsis, which quietly ate the end of the longest rows - and the end is where the player
+     names are. Two lines of nine-point grey costs less than hiding what the row is for. */
+  .cs-r-d{grid-area:d;font-size:9px;color:var(--text-3);line-height:1.35;
+    white-space:normal;overflow-wrap:anywhere;}
   .cs-vs{margin-left:7px;font-family:var(--font-mono);color:var(--text-3);opacity:.8;}
   .cs-tabs{padding:0 0 8px;}
   .cs-tabs .pp-tab b{font-family:var(--font-mono);font-weight:700;opacity:.65;margin-left:2px;}
@@ -7987,7 +7995,7 @@ function dejaVuSection(key, g){
   if (!res.legs.length)
     return paneBand('D\u00e9j\u00e0 Vu SGM')+ctrl
       + '<div class="sig-empty">No player with a posted price cleared a line in all '+meets
-      + ' straight meetings between these clubs. Lower the hit streak to widen the pool.</div>';
+      + ' straight meetings between these teams. Lower the hit streak to widen the pool.</div>';
   // one leg per player, best first
   var seen = {}, picked = [];
   var dropped = state.view.dvDrop || {};
@@ -8048,7 +8056,7 @@ function dejaVuSection(key, g){
       + '<div class="cmb-sum-row tot"><span>Estimated at '
       + esc(state.view.dvBook || 'best price') + '</span><b>$'+comb.toFixed(2)+'</b></div>'
       + '<div class="cmb-corr">Every leg cleared its line in all '+meets+' straight meetings between these '
-      + 'clubs, in this shirt \u2014 games played for a former club do not count. Lines are each '
+      + 'teams, in this shirt \u2014 games played for a former team do not count. Lines are each '
       + 'player\u2019s minimum across those games, so the record held every time.'
       + (state.view.dvBook ? ' Priced at '+esc(state.view.dvBook)+', so the whole multi is placeable there.'
          : ' Best price per leg \u2014 pick a book to make it placeable as one ticket.')+'</div>'
@@ -10195,7 +10203,7 @@ function redZoneSide(key, team, rows){
       if (!v) return '';
       var pct = c[2] != null && r[c[2]] != null ? (+r[c[2]]).toFixed(0) + '%' : null;
       return '<span class="rz-c"><b>' + v + '</b>' + esc(c[1])
-        + (pct ? '<i>' + pct + ' of club</i>' : '') + '</span>';
+        + (pct ? '<i>' + pct + ' of team</i>' : '') + '</span>';
     }).filter(Boolean).join('');
     if (!cells) return '';
     return '<div class="rz-row"><div class="rz-nm">' + esc(r.player)
@@ -10214,8 +10222,8 @@ function redZoneSection(key, g){
   if (!a && !h) return '';
   return paneBand('Inside the twenty')
     + '<div class="rz-wrap">' + a + h + '</div>'
-    + '<div class="av-note">Season to date. A share is of the club\u2019s own red-zone work, so '
-    + 'it says who the ball goes to down there rather than how often the club gets there.</div>';
+    + '<div class="av-note">Season to date. A share is of the team\u2019s own red-zone work, so '
+    + 'it says who the ball goes to down there rather than how often the team gets there.</div>';
 }
 function formAlertTile(key, g){
   if (SIG_CAPTURE) return '';
@@ -10363,7 +10371,7 @@ function buildPane(key, g, src){
 }
 var BUILD_EMPTY = {
   radar:   'No priced players on this fixture to plot yet.',
-  history: 'These two clubs have no meetings on file with a run long enough to read.',
+  history: 'These two teams have no meetings on file with a run long enough to read.',
   sim:     'Not enough game history for these two sides yet.',
   search:  'No priced legs on this fixture yet.',
   pickem:  'No pick’em lines posted for this fixture yet.'
@@ -10564,7 +10572,7 @@ var CARD_DEFS = {
               var nr = ggFixtureList(key, g, 'ground').length;
               var nw = ggFixtureList(key, g, 'air').length;
               var nq = ggFixtureList(key, g, 'arm').length;
-              if (!nr && !nw && !nq) return 'Carriers, receivers and passers, man by man';
+              if (!nr && !nw && !nq) return 'Carriers, receivers and passers, player by player';
               return nr + ' carrying \u00b7 ' + nw + ' being thrown at \u00b7 ' + nq + ' throwing';
             } }
 };
@@ -12200,11 +12208,11 @@ function cmbAnalysis(l){
             + '<span class="ca-sim-g">'+r.vals.length+'g</span></div>'; }).join('')
       + '<div class="cmb-corr">'
       + (sim.measured
-          ? 'The '+sim.rows.length+' men whose shot mix, size and role are closest to his, and what '
+          ? 'The '+sim.rows.length+' players whose shot mix, size and role are closest to his, and what '
             + 'they did against '+esc(abbrOf(key, opp))+'. The small number beside each name is how '
             + 'far from him he is, in standard deviations \u2014 lower is more alike. '
             + '<b>Read it as context, not an edge:</b> measured over 38,000 player-games this '
-            + 'correlates with how the man himself then went at about 0.04, which is real, holds '
+            + 'correlates with how the player himself then went at about 0.04, which is real, holds '
             + 'across points, rebounds, assists and threes, and is very small.'
           : 'The '+sim.rows.length+' players in this position who met '+esc(abbrOf(key, opp))
             + ' most recently \u00b7 their actual returns, newest meeting first.')
@@ -13916,7 +13924,7 @@ function dvpView(key){
     if (wMed < 0.75)
       carried = '<div class="dvp-carry">' + (wMed <= 0.02
           ? 'Nothing has been played yet, so every number here is last season\u2019s.'
-          : 'Mostly last season. ' + (gMed != null ? 'Clubs have played around ' + Math.round(gMed)
+          : 'Mostly last season. ' + (gMed != null ? 'Teams have played around ' + Math.round(gMed)
               + ' game' + (Math.round(gMed) === 1 ? '' : 's') + ' so far, so these are weighted '
               : 'These are weighted ') + Math.round(wMed * 100) + '% toward this season and the '
             + 'rest toward last.')
@@ -14746,63 +14754,75 @@ function csDvp(sports){
   return csTopPerClub(out.sort(function(a, b){ return b.pct - a.pct; }));
 }
 function csTeams(sports, wantDef){
-  /* teams_form carries each club’s figure FOR and AGAINST ("assists" / "assists_a"), so the
-     same table answers both questions: who produces most, and who allows most. Only clubs
-     playing inside the window, and only where the club is a real distance from the league.
+  /* ONE ROW PER STAT: THE LEADER, AND WHO HE MEETS.
+     teams_form carries each team’s figure FOR and AGAINST ("assists" / "assists_a"), so the
+     same table answers both questions — who produces most of a stat, and who allows most of it.
 
-     BOTH TAILS, NOT JUST THE TOP. This used to throw away everything at or below the league
-     average, which meant the page could tell you a matchup was soft and never that one was
-     stiff - and the stiff one is the more useful warning, because it is the one you would
-     otherwise walk into. Each row therefore carries a direction: a defence conceding more
-     than the league HELPS the men it faces, one conceding less HURTS them; an offence
-     producing more HELPS its own men, less HURTS them. */
+     This used to print ten rows mixing every team a few percent off the league, which read as
+     a wall of near-ties. It now prints ONE row per market: the team doing the most of that
+     stat among those playing in the window, paired with where the team they are facing ranks
+     in the OTHER half of it. That pairing is the read. "Best three-point offence in the
+     window, against the side that concedes the 28th-most" is a matchup; "BOS +28%" on its own
+     is a fact about Boston.
+
+     Rank 1 is always the MOST of a thing, so for a defence 1st is the softest and last the
+     stiffest, and the denominator rides with it — "2nd of 30" means something, "2nd" does not. */
   var out = [];
   sports.forEach(function(k){
     var rows = asArray(state.sports[k].data.teams_form) || [];
     if (!rows.length) return;
     var playing = {};
     crewGames(k, CS_HOURS).forEach(function(x){
-      playing[normTeam(x.g.home)] = { opp:x.g.away, ms:x.ms };
-      playing[normTeam(x.g.away)] = { opp:x.g.home, ms:x.ms };
+      /* carry the fixture's own spelling alongside the normalised key: normTeam is for
+         matching, but every helper that draws a team - abbrOf, teamLogo - wants the token the
+         rest of the page uses. */
+      playing[normTeam(x.g.home)] = { team:x.g.home, opp:x.g.away, ms:x.ms };
+      playing[normTeam(x.g.away)] = { team:x.g.away, opp:x.g.home, ms:x.ms };
     });
-    csKeyMkts(k).forEach(function(m){
-      var f = wantDef ? m[0] + '_a' : m[0];
+    /* ranks for one field, over every team that has a figure for it */
+    var table = function(f){
       var have = rows.filter(function(r){ return r && r[f] != null && isFinite(+r[f]); });
-      if (have.length < 6) return;
+      if (have.length < 6) return null;
       var avg = have.reduce(function(a, r){ return a + (+r[f]); }, 0) / have.length;
-      if (!(avg > 0)) return;
-      /* WHERE THEY RANK, among the clubs that have a figure for this market. 1 is the most,
-         so for a defence 1st is the softest and last is the stiffest. The denominator is
-         printed with it - "2nd of 30" means something, "2nd" on its own does not. */
+      if (!(avg > 0)) return null;
       var order = have.slice().sort(function(a, b){ return (+b[f]) - (+a[f]); });
-      var rankOf = {};
-      order.forEach(function(r, n){ rankOf[normTeam(r.team || r.name || r.Team)] = n + 1; });
-      have.forEach(function(r){
-        var tm = r.team || r.name || r.Team;
-        var pl = playing[normTeam(tm)];
-        if (!pl) return;
-        var pct = ((+r[f]) - avg) / avg * 100;
-        if (Math.abs(pct) < CS_TEAM_MIN) return;    // a club a whisker off the league is not a read
-        out.push({ k:k, team:tm, opp:pl.opp, mkt:m[0], label:m[1], val:+r[f], avg:avg,
-                   pct:pct, dir:(pct > 0 ? 'help' : 'hurt'),
-                   rank:rankOf[normTeam(tm)] || null, of:have.length, ms:pl.ms });
+      var rank = {}, val = {};
+      order.forEach(function(r, n){
+        var t = normTeam(r.team || r.name || r.Team);
+        rank[t] = n + 1; val[t] = +r[f];
       });
+      return { rank:rank, val:val, avg:avg, n:have.length };
+    };
+    csKeyMkts(k).forEach(function(m){
+      var mine = table(wantDef ? m[0] + '_a' : m[0]);      // the half this section is about
+      var theirs = table(wantDef ? m[0] : m[0] + '_a');    // the half the opponent is judged on
+      if (!mine) return;
+      var best = null;
+      Object.keys(playing).forEach(function(t){
+        if (mine.rank[t] == null) return;
+        if (!best || mine.rank[t] < mine.rank[best]) best = t;
+      });
+      if (best == null) return;
+      var pl = playing[best];
+      var pct = (mine.val[best] - mine.avg) / mine.avg * 100;
+      /* The leader still has to be a real distance from the league. On a two-game slate the
+         "best" of four teams can sit on the average, and printing that as a leader would be
+         the page inventing a matchup out of nothing. */
+      if (pct < CS_TEAM_MIN) return;
+      var ot = normTeam(pl.opp);
+      out.push({ k:k, team:pl.team || best, opp:pl.opp, mkt:m[0], label:m[1],
+                 val:mine.val[best], avg:mine.avg, pct:pct,
+                 rank:mine.rank[best], of:mine.n,
+                 oppRank:(theirs && theirs.rank[ot] != null) ? theirs.rank[ot] : null,
+                 oppOf:theirs ? theirs.n : null,
+                 ms:pl.ms });
     });
   });
-  /* BOTH SIDES GET ROOM. Sorting the two tails into one list by distance alone gave a
-     Defences table of eight stiff clubs and two soft ones on this slate - truthful, but it
-     buries whichever side happens to be less extreme today, and the reader wants the openings
-     AND the walls. So each tail is ordered on its own and the two are interleaved, best
-     against best, before the per-club cap and the top ten. */
-  var byAbs = function(a, b){ return Math.abs(b.pct) - Math.abs(a.pct); };
-  var help = out.filter(function(r){ return r.dir === 'help'; }).sort(byAbs);
-  var hurt = out.filter(function(r){ return r.dir === 'hurt'; }).sort(byAbs);
-  var mix = [];
-  for (var i = 0; i < Math.max(help.length, hurt.length); i++){
-    if (help[i]) mix.push(help[i]);
-    if (hurt[i]) mix.push(hurt[i]);
-  }
-  return csTopPerClub(mix);
+  /* best matchups first: how far the leader is from the league, then how soft the other side
+     is in the same stat */
+  return out.sort(function(a, b){
+    return (b.pct - a.pct) || ((a.oppRank || 99) - (b.oppRank || 99));
+  }).slice(0, CS_TOP);
 }
 function csOuts(sports){
   /* Who has been ruled out of a game inside the window. Printed whether or not it touches a
@@ -14987,7 +15007,8 @@ function csR(o){
     /* no sport badge on the row any more: the page is one sport at a time and the tab above
        already says which, so nine copies of "NBA" down the left was pure noise */
     + '<div class="cs-r-a"><b>' + esc(o.name || '') + '</b></div>'
-    + '<div class="cs-r-b">' + (bet ? '<span class="cs-bet">' + esc(bet) + '</span>' : '')
+    + '<div class="cs-r-b">' + (o.betHtml ? o.betHtml : '')
+      + (bet ? '<span class="cs-bet">' + esc(bet) + '</span>' : '')
       + (o.price ? '<span class="cs-pr">$' + (+o.price).toFixed(2) + '</span>' : '') + '</div>'
     + '<div class="cs-r-c">' + (o.metric ? '<b>' + esc(o.metric) + '</b>' : '')
       + (o.metricLabel ? '<i>' + esc(o.metricLabel) + '</i>' : '') + '</div>'
@@ -15098,25 +15119,34 @@ function csPickSport(sports){
 }
 /* A club-level row: what the club does, where that ranks, and who it lands on. */
 function csTeamRow(r, own){
-  var help = r.dir === 'help';
-  /* WHO IT LANDS ON. For a DEFENCE that is the opposition’s men; for an OFFENCE its own.
-     Naming the wrong side would be worse than naming nobody, so the caller says which. */
+  /* The headline is the RANK, because that is what was asked for and what survives a slow
+     night: "+28%" means nothing without knowing how many teams are above him, and 1st of 30
+     says it in two words. The percentage keeps its place on the reason line. */
+  /* WHOSE PLAYERS. For an OFFENCE producing a stat they are its own; for a DEFENCE conceding
+     one they are the opposition's. Getting this backwards reads as a recommendation and is
+     flatly wrong - the rewrite lost it once already and listed the conceding side's own men
+     as the men who gain from it. */
   var who = csWho(r.k, own ? r.team : r.opp, null, 3);
-  /* the market belongs in the headline. Two rows both reading "ORL concede" with the market
-     off in a side column are two rows the eye cannot tell apart. */
+  /* WHO THEY MEET, IN THE SAME STAT. 1 is always the most of a thing, so on the other half a
+     LOW number is the soft one. The thirds are a reading aid, not a verdict - a team can sit
+     11th of 30 and still be the reason a line moved. */
+  var opp = abbrOf(r.k, r.opp), meet;
+  if (r.oppRank != null){
+    var soft = r.oppRank <= r.oppOf / 3, stiff = r.oppRank > r.oppOf * 2 / 3;
+    meet = '<span class="cs-meet ' + (soft ? 'cs-soft' : stiff ? 'cs-stiff' : '') + '">'
+      + esc('v ' + opp + ', ' + (own ? 'concede ' : 'produce ') + ordinalish(r.oppRank)
+            + ' of ' + r.oppOf) + '</span>';
+  } else {
+    meet = '<span class="cs-meet">' + esc('v ' + opp) + '</span>';
+  }
   return csR({ k:null,
     name:abbrOf(r.k, r.team) + (own ? ' produce ' : ' concede ') + String(r.label).toLowerCase(),
     img:csImgT(r.k, r.team),
-    /* THE OPPONENT GOES UP TOP, NOT ON THE END OF THE REASON. Naming three players pushed the
-       reason line past its width and the ellipsis ate "v ORL 10h" - the one part of the row
-       that says which game this is. The bet column is empty on a club row, so it takes it. */
-    bet:'v ' + abbrOf(r.k, r.opp) + ' \u00b7 ' + csAgo(r.ms),
-    metric:(r.pct > 0 ? '+' : '\u2212') + Math.abs(Math.round(r.pct)) + '%',
-    metricLabel:r.rank ? ordinalish(r.rank) + ' of ' + r.of : '',
-    cls:help ? 'cs-help' : 'cs-hurt',
-    why:(who ? (help ? 'lifts ' : 'holds down ') + who
-             : (help ? 'lifts' : 'holds down') + ' whoever is priced there')
-        + ' \u00b7 ' + r.val.toFixed(1) + ' v ' + r.avg.toFixed(1) + ' league' });
+    betHtml:meet + '<span class="cs-when">\u00b7 ' + esc(csAgo(r.ms)) + '</span>',
+    metric:ordinalish(r.rank), metricLabel:'of ' + r.of,
+    why:(r.pct > 0 ? '+' : '\u2212') + Math.abs(Math.round(r.pct)) + '% on the league \u00b7 '
+        + r.val.toFixed(1) + ' v ' + r.avg.toFixed(1)
+        + (who ? ' \u00b7 ' + who : '') });
 }
 function sheetPage(){
   var active = Object.keys(SPORTS).filter(function(k){ return state.view.active[k]; });
@@ -15178,7 +15208,7 @@ function sheetPage(){
 
   var dv = csDvp(only);
   h += csSec('ti-target-arrow', 'Softest matchups',
-    'Positions these clubs concede to \u00b7 a reason to look, not a reason on its own',
+    'Positions these teams concede to \u00b7 a reason to look, not a reason on its own',
     dv.length ? '<div class="cs-tbl">' + dv.map(function(r){
       var who = csWho(r.k, r.opp, r.pos, 3);
       return csR({ k:null,
@@ -15188,12 +15218,12 @@ function sheetPage(){
         metric:'+' + Math.round(r.pct) + '%',
         metricLabel:r.val.toFixed(1) + ' v ' + r.avg.toFixed(1),
         why:who ? 'lifts ' + who : 'nobody priced at that position' });
-    }).join('') + '</div>' : '', '', 'No club in the window concedes notably to any position.');
+    }).join('') + '</div>' : '', '', 'No team in the window concedes notably to any position.');
 
   [[false, 'ti-sword', 'Offences',
-    'What these clubs produce, where it ranks, and who that lifts or holds down'],
+    'The most of each stat in this window, against where the other side ranks at conceding it'],
    [true, 'ti-shield-half', 'Defences',
-    'What these clubs concede, where it ranks, and who that lifts or holds down']
+    'The most of each stat conceded, against where the other side ranks at producing it']
   ].forEach(function(cfg){
     var rows = csTeams(only, cfg[0]);
     /* "NOTHING FOUND" AND "NEVER CHECKED" ARE DIFFERENT SENTENCES. Four of the seven sports
@@ -15203,13 +15233,13 @@ function sheetPage(){
     h += csSec(cfg[1], cfg[2], cfg[3],
       rows.length ? '<div class="cs-tbl">' + rows.map(function(r){
         return csTeamRow(r, !cfg[0]); }).join('') + '</div>' : '', '',
-      has ? 'No club in the window is far enough from the league in these markets.'
-          : SPORTS[cur].name + ' has no club form file yet, so this is not a quiet day \u2014 it '
+      has ? 'No team in the window leads a market by enough to be worth a row.'
+          : SPORTS[cur].name + ' has no team form file yet, so this is not a quiet day \u2014 it '
             + 'is a table that has never been built for this sport.');
   });
 
   var outs = csOuts(only);
-  h += csSec('ti-user-off', 'Ruled out', 'Busiest first \u00b7 their absence moves other men\u2019s lines',
+  h += csSec('ti-user-off', 'Ruled out', 'Busiest first \u00b7 their absence moves other players\u2019 lines',
     outs.length ? '<div class="cs-tbl">' + outs.map(function(r){
       return csR({ k:null, name:r.name, img:csImgP(r.k, r.name), bet:abbrOf(r.k, r.team),
         metric:r.mins ? Math.round(r.mins) : '', metricLabel:r.mins ? 'a game' : '',
@@ -15237,7 +15267,7 @@ function sheetPage(){
         bet:r.days === 0 ? 'same-day turnaround' : r.days + ' day' + (r.days === 1 ? '' : 's') + ' rest',
         metric:r.in7, metricLabel:'games in 7',
         why:csWho(r.k, r.team, null, 3), opp:abbrOf(r.k, r.opp), ms:r.ms });
-    }).join('') + '</div>' : '', '', 'Every club in the window has had a normal break.');
+    }).join('') + '</div>' : '', '', 'Every team in the window has had a normal break.');
 
   /* What found nothing, in one folded line, then the one note worth keeping. */
   h += csQuietNote();
@@ -19552,7 +19582,7 @@ function nbaWWSection(key, name){
   if (!rows.length) return '';
   return '<div class="dd-sec"><div class="dd-h">When a team-mate sits</div>'
     + rows.map(function(r){ return wwRow(r, 'Without ' + r.mate); }).join('')
-    + '<div class="dd-note">His own average with that man playing, against his average without. '
+    + '<div class="dd-note">His own average with that player playing, against his average without. '
     + 'Only rotation regulars, only inside the stretch they were actually team-mates, and only '
     + 'gaps big enough for the sample to mean something. It is what happened, not a promise.</div></div>';
 }
@@ -19606,7 +19636,7 @@ function availSide(key, team){
     /* An empty list is not a clean bill of health and must never read like one: most feeds only
        publish what they have, and a club with nothing posted is a club nobody has filed on yet. */
     return '<div class="av-col">' + head
-      + '<div class="av-none">No one listed for this club. That means nothing has been filed, '
+      + '<div class="av-none">No one listed for this team. That means nothing has been filed, '
       + 'not that everyone is fit.</div></div>';
   var body = '', last = null;
   rows.forEach(function(r){
@@ -19634,7 +19664,7 @@ function availBody(key, g){
      list below - so the reader needs to be told where one ends. */
   return '<div class="dayband"><span>Who is not playing</span></div>'
     + '<div class="av-wrap">' + availSide(key, g.away) + availSide(key, g.home) + '</div>'
-    + '<div class="av-note">Straight from the injury feed, in its own words. A man in doubt may '
+    + '<div class="av-note">Straight from the injury feed, in its own words. A player in doubt may '
     + 'still play, and a team sheet posted closer to the game beats anything here.</div>';
 }
 function availSection(key, g){
@@ -20125,7 +20155,7 @@ function shotCourtSection(key, g){
   return paneBand('The floor')
     + '<div class="cz-who"><span>Floor shows the defence of</span>' + pick('home', g.home)
       + pick('away', g.away)
-      + '<span>\u2014 so read it against the <b>other</b> club\u2019s shooters below</span></div>'
+      + '<span>\u2014 so read it against the <b>other</b> team\u2019s shooters below</span></div>'
     + '<div class="cz-wrap"><svg viewBox="0 0 500 470" class="cz-svg" aria-label="shot zones">'
     + '<defs><linearGradient id="czWood" x1="0" y1="0" x2="0" y2="1">'
       + '<stop offset="0" stop-color="#c8955a"/><stop offset="1" stop-color="#b07f46"/>'
@@ -20160,13 +20190,13 @@ function shotCourtSection(key, g){
        clubs, because the aggregate is a per-player number and splitting it by club would just be
        two short lists of the same ordering. */
     + (allZ ? '<div class="rz-all">' + (nbaShotMatchup(key, g) || '<div class="av-none">Not enough '
-              + 'shot history for the men named in this game.</div>') + '</div>'
+              + 'shot history for the players named in this game.</div>') + '</div>'
             : '<div class="rz-wrap">' + courtSide(key, g.away, g.home, zone)
               + courtSide(key, g.home, g.away, zone) + '</div>')
-    + '<div class="av-note">Shares are of that man\u2019s own shots, and makes are his accuracy in '
+    + '<div class="av-note">Shares are of that player\u2019s own shots, and makes are his accuracy in '
     + 'that zone against the league\u2019s. Where a defence sits is printed as a percentage as well '
     + 'as a rank, because last of thirty is often only a few per cent from the middle. This says '
-    + 'where a man shoots and what he meets there \u2014 measured against results, shot zone carried '
+    + 'where a player shoots and what he meets there \u2014 measured against results, shot zone carried '
     + '0.47 points of predictive value, so it is a read and not a signal.</div>';
 }
 /* Everyone in this fixture with a shot profile, biggest mover first. Split out from the section
@@ -20334,7 +20364,7 @@ function nbaActionSection(key, g){
          as a read - and it would sit in the same column, in the same type, as the ones that are
          real. The number they actually allowed is still true and is still shown. */
       right = '<span class="pt-allow"><b>' + (dv.efg * 100).toFixed(1) + '%</b>eFG allowed</span>'
-        + '<span class="pt-noise">clubs barely differ here — no rank</span>';
+        + '<span class="pt-noise">teams barely differ here — no rank</span>';
     } else {
       var tough = dv.rank <= 10, soft = dv.rank > (dv.of || 30) - 10;
       right = '<span class="pt-allow"><b>' + (dv.efg * 100).toFixed(1) + '%</b>eFG allowed</span>'
@@ -20372,7 +20402,7 @@ function nbaActionSection(key, g){
     + 'misses would be invisible and the rate wrong by more for poor shooters than good ones. '
     + 'The left half is his own shot diet and is simply what he did. The right half is a ranking, '
     + 'and only ' + nReal + ' of the ' + (pf.actions || []).length + ' actions have a gap between '
-    + 'clubs big enough to outrun sampling noise — the rest say so rather than print an order '
+    + 'teams big enough to outrun sampling noise — the rest say so rather than print an order '
     + 'built on luck. eFG counts a three as a basket and a half, because 35% from three and 52% '
     + 'from two are the same shot.</div>';
 }
@@ -20601,8 +20631,8 @@ function nbaPlaySection(key, g){
           '<div class="pa-foot"><b>' + dRec.fgmAllowed.toFixed(1) + '</b> baskets allowed a game '
           + '(' + ordinalish(dRec.fgmRank) + ') × <b>' + Math.round(dRec.astShare * 100)
           + '%</b> of them created for the shooter (' + ordinalish(dRec.shareRank) + '). Those are '
-          + 'the two reasons a club is soft here and they multiply out to the figure above — a '
-          + 'club can give up a lot of baskets without giving up created ones. Measured, neither '
+          + 'the two reasons a team is soft here and they multiply out to the figure above — a '
+          + 'team can give up a lot of baskets without giving up created ones. Measured, neither '
           + 'half adds anything once the total is known, so they are the reason behind it and not '
           + 'a second number to bet into.</div>');
   }
@@ -20617,14 +20647,14 @@ function nbaPlaySection(key, g){
     + '<div class="pa-sub">Who he feeds'
       + (!tgs.length ? ''
          : goneShare > 0.02
-           ? ' — of the men still alongside him, three take '
+           ? ' — of the players still alongside him, three take '
              + Math.round(top3Mate * 100) + '%'
            : ' — top three take ' + Math.round(top3 * 100) + '% of his passing')
       + '</div>'
     + (tRows ? '<div class="pa-tbl">' + tRows + '</div>'
              : '<div class="pt-na">no target takes 3% of his passing</div>')
     + (goneShare > 0.02
-        ? '<div class="pa-foot">' + Math.round(goneShare * 100) + '% of that passing went to men '
+        ? '<div class="pa-foot">' + Math.round(goneShare * 100) + '% of that passing went to players '
           + 'no longer alongside him — kept here rather than dropped, so the shares '
           + 'still read against his real total. Across all of it his top three took '
           + Math.round(top3 * 100) + '%.</div>' : '')
@@ -20642,13 +20672,13 @@ function nbaPlaySection(key, g){
     + '<div class="pa-sub">Conceded by ' + esc(abbrOf(key, me.opp)) + '</div>'
     + oppBody
     + '<div class="av-note"><b>The network is context, not a reason on its own.</b> Across 189 '
-    + 'passers, a man’s assists moved by +0.00 on average when his busiest target sat out, and '
+    + 'passers, a player’s assists moved by +0.00 on average when his busiest target sat out, and '
     + 'only 46% of them went down — losing a target costs him those buckets and hands him the '
     + 'ball, and the two about cancel. A rank-four target sitting moved it slightly more. So who '
     + 'is out below is printed because it is true, not because it shifts the line. '
     + '<b>The opponent column is the part that holds up:</b> tested out of sample, the gap between '
     + 'the softest and toughest third of defences is worth about ' + PA_SWING.toFixed(2) + ' of an '
-    + 'assist TO ONE PASSER \u2014 not the 3.7 a game that separates those thirds at club level, '
+    + 'assist TO ONE PASSER \u2014 not the 3.7 a game that separates those thirds at team level, '
     + 'which is spread across everyone who passes. The ranking is stable enough season to season '
     + '(+0.74) to survive the test. '
     + 'Two limits worth knowing: ESPN records an assister only on a shot that WENT IN, so a pass '
@@ -20891,28 +20921,28 @@ function nbaGlassSection(key, g){
     + '<div class="pa-sub">His share of the glass</div>' + mine
     + '<div class="pa-sub">Who he competes with</div>'
     + (rRows ? '<div class="pa-tbl">' + rRows + '</div>'
-             : '<div class="pt-na">nobody else on his club takes a board a game</div>')
+             : '<div class="pt-na">nobody else on his team takes a board a game</div>')
     + liftBox
     + (qBody ? '<div class="pa-sub">By quarter</div>' + qBody : '')
     + '<div class="pa-sub">Conceded by ' + esc(abbrOf(key, me.opp)) + '</div>'
     + oppBody
     + '<div class="av-note"><b>A team-mate sitting really does move this one</b> — unlike '
-    + 'assists, where the same test came out at nothing. A rebound is a contested pool, so a man '
+    + 'assists, where the same test came out at nothing. A rebound is a contested pool, so a player '
     + 'off the floor is not taking boards off him. Across 189 players, the top rebounder on his '
-    + 'club sitting was worth <b>+0.86 rebounds</b> against +0.21 for a fringe team-mate, and '
+    + 'team sitting was worth <b>+0.86 rebounds</b> against +0.21 for a fringe team-mate, and '
     + '73% of players went up. About +0.51 of that is simply the extra minutes he inherits and '
     + '+0.34 is a genuinely bigger share of the glass, which is why the two are shown apart '
-    + '\u2014 and the split above is taken from each absent man\u2019s own size rather than one '
+    + '\u2014 and the split above is taken from each absent player\u2019s own size rather than one '
     + 'ratio for everybody, because a fringe team-mate sitting frees up time and almost no extra '
     + 'boards. '
-    + 'The per-man figures come from a fit over 3,100 team-mate pairs and the typical miss is '
+    + 'The per-player figures come from a fit over 3,100 team-mate pairs and the typical miss is '
     + ((fit.mae != null ? fit.mae : 0.84).toFixed(2)) + ' of a rebound a game, so treat them as a '
     + 'nudge rather than a projection. A rival with a short record is eased toward the league '
     + 'before any of this, because ten boards across two games is not a ten-board rebounder. '
     + '<b>The opponent is the weak strand here, the reverse of Playmaking:</b> tested out of '
     + 'sample it is worth about ' + ((lg.oppSwing != null ? lg.oppSwing : 0.43).toFixed(2))
     + ' of a rebound between the softest and toughest third, against 0.65 for assists, and the '
-    + 'club ranking holds up less well season to season (+'
+    + 'team ranking holds up less well season to season (+'
     + ((lg.oppStability != null ? lg.oppStability : 0.57).toFixed(2)) + ' against +0.74). '
     + '<b>Pace is the better half of it</b> \u2014 worth '
     + ((lg.paceSwing != null ? lg.paceSwing : 0.54).toFixed(2)) + ' on its own, and worth +'
@@ -21080,7 +21110,7 @@ function nbaThreeSection(key, g){
         + '<span class="pa-big"><b>' + (rr.pct * 100).toFixed(1) + '%</b>over that run</span>'
         + '<span class="pt-rank mid">' + signedOne(dp) + '<i>v his season</i></span>'
       + '</div>'
-      + '<div class="dp-verdict">' + verdict + ' What does carry is the attempts: a man’s '
+      + '<div class="dp-verdict">' + verdict + ' What does carry is the attempts: a player’s '
       + 'recent volume predicts his next game’s at r=+'
       + (rc.attToAtt != null ? rc.attToAtt.toFixed(2) : '0.52') + ', which is why the two sit '
       + 'side by side here with different weight.</div></div>';
@@ -21101,7 +21131,7 @@ function nbaThreeSection(key, g){
            figure that carries none, the same error the pick'em gap had. */
         + '<div class="pa-n"><b>' + Math.round(rec.assistedShare * 100) + '%</b>of his makes'
         + '<i>' + signedOne((rec.assistedShare - lgSh) * 100) + ' v league · '
-        + (rec.assistedShare >= lgSh ? 'more of a catch-and-shoot man' : 'makes more of his own')
+        + (rec.assistedShare >= lgSh ? 'more of a catch-and-shoot player' : 'makes more of his own')
         + '</i></div>'
         + '<div class="pa-st"></div></div>';
     }
@@ -21183,12 +21213,12 @@ function nbaThreeSection(key, g){
     + '<div class="pa-sub">Allowed by ' + esc(abbrOf(key, me.opp)) + '</div>'
     + oppBody
     + '<div class="av-note"><b>A threes line is a volume bet wearing a shooting bet’s '
-    + 'clothes.</b> Split-half over ' + (stab.n || 297) + ' shooters, a man’s attempts carry '
+    + 'clothes.</b> Split-half over ' + (stab.n || 297) + ' shooters, a player’s attempts carry '
     + 'from one half of his season to the next at r=+'
     + (stab.att != null ? stab.att.toFixed(2) : '0.86') + ' and his percentage at r=+'
     + (stab.pct != null ? stab.pct.toFixed(2) : '0.31') + '. Minutes and attempts are what move '
     + 'the number; how well he is shooting mostly is not. '
-    + '<b>The men who create his threes are context, not a read.</b> ' + Math.round(
+    + '<b>The players who create his threes are context, not a read.</b> ' + Math.round(
         (lg.assistedShare != null ? lg.assistedShare : 0.853) * 100)
     + '% of made threes in the league are assisted and per shooter that runs from under a third '
     + 'to all of them, which tells you what kind of player he is — but losing his busiest '
@@ -21196,7 +21226,7 @@ function nbaThreeSection(key, g){
     + ((lg.creatorOut || {}).gain != null ? lg.creatorOut.gain.toFixed(3) : '0.006')
     + ' threes against a +' + ((lg.creatorOut || {}).control != null
         ? lg.creatorOut.control.toFixed(3) : '0.084') + ' control, with the catch-and-shoot '
-    + 'specialists no worse off than the men who make their own. Someone else creates. '
+    + 'specialists no worse off than the players who make their own. Someone else creates. '
     + '<b>And the opponent is the weakest block on any of these cards:</b> how many threes they '
     + 'allow is worth about ' + ((lg.oppSwing || {}).att != null ? lg.oppSwing.att.toFixed(2)
         : '0.21') + ' of a three out of sample, while the rate those threes go in at is worth '
@@ -23235,7 +23265,7 @@ function simSection(key, g){
   if (hasMargin) on.push(
     (st.mSide === 'either'
       ? ((st.mDir === 'under')
-          ? 'either club within ' + st.mMin
+          ? 'either team within ' + st.mMin
           : 'a margin of ' + st.mMin + ' or more either way')
       : abbrOf(key, st.mSide === 'away' ? g.away : g.home)
         + (st.mDir === 'under' ? ' winning by under ' + st.mMin
@@ -24136,7 +24166,7 @@ function deepPanel(){
       + '<div class="dd-note">'
       + (sim.measured
           ? 'Closest first, by shot mix, size and role; the small number is how far from him each '
-            + 'man is, in standard deviations. Measured over 38,000 player-games this correlates '
+            + 'player is, in standard deviations. Measured over 38,000 player-games this correlates '
             + 'with how the player himself then went at about 0.04 — real, but small enough '
             + 'that it is context and not a reason on its own.'
           : 'Everyone in his position who has met them, newest meeting first. This sport has no '
@@ -24848,7 +24878,7 @@ function rotationSection(key, g){
   return '<div class="dayband"><span>Who played when</span></div>'
     + '<div class="rot-wrap">' + a + b + '</div>'
     + '<div class="deg-note" style="padding:2px 2px 8px">Each side’s most recent game, from the '
-    + 'play-by-play. Bars are time on the floor; the strip above is the margin, this club’s lead '
+    + 'play-by-play. Bars are time on the floor; the strip above is the margin, this team’s lead '
     + 'above the line. <b>1H · MIN · PTS</b> on the right — first-half minutes from the '
     + 'same intervals, total minutes and points from the box score.</div>';
 }
@@ -25026,10 +25056,10 @@ function goalieSection(key, g){
   return paneBand('In goal') + '<div class="lg-wrap">' + cards + '</div>'
     + '<div class="deg-note" style="padding:2px 2px 8px">'
     + (named && named.confirmed
-        ? 'Starters as named by the clubs. Teams do change their mind late, so a very late scratch '
+        ? 'Starters as named by the teams. Teams do change their mind late, so a very late scratch '
           + 'will not show here.'
         : 'Who has actually been starting, from the game logs. <b>No starter has been named for this '
-          + 'game yet</b>, so check the club\u2019s own announcement before backing anything that turns '
+          + 'game yet</b>, so check the team\u2019s own announcement before backing anything that turns '
           + 'on the goalie.')
     + '</div>';
 }
