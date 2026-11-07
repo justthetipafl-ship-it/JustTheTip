@@ -20645,6 +20645,28 @@ function nbaPlaySection(key, g){
      Assists are the one of the three where a hot run partly survives its own minutes: over
      57,648 player-games the hottest fifth beat his own rate by +0.31 a game, and +0.23 of that
      is still there per 30 minutes. Compare rebounds, where the same test leaves \u22120.07. */
+  var pLg = af.league || {}, pStab = pLg.stability || null;
+  var pStabBody = '';
+  if (pStab && pStab.assists != null){
+    /* the per-game figures come from the gamelogs the card already holds; rec.assists is a
+       career-on-file total and would read as an absurd per-game number */
+    var pLogs = (((state.sports[key].idx || {}).logsByName || {})[me.name] || [])
+      .filter(function(x){ return (+x.minutes || 0) > 0; });
+    var apg = pLogs.length
+      ? pLogs.reduce(function(a, x){ return a + (+x.assists || 0); }, 0) / pLogs.length : null;
+    var mpg = pLogs.length
+      ? pLogs.reduce(function(a, x){ return a + (+x.minutes || 0); }, 0) / pLogs.length : null;
+    pStabBody = '<div class="pa-tbl">'
+      + nbaStabRow('Assists', apg != null ? apg.toFixed(1) : '\u2014', pStab.assists, 'a game')
+      + nbaStabRow('Minutes', mpg != null ? mpg.toFixed(0) : '\u2014', pStab.minutes, 'a game')
+      + '</div>'
+      + '<p class="av-note">His first half-season against his second, over ' + (pStab.n || 0)
+      + ' players on this run \u2014 the same test the other two cards use. An assist line '
+      + 'persists about as well as a rebounding one and about as well as three-point ATTEMPTS. '
+      + 'What does not persist is a rate: three-point percent comes out at r=+0.31 against +0.91 '
+      + 'for attempts on that card. Everything here is a count, which is the good case.</p>';
+  }
+
   var pRec = nbaRecent(key, me.name, ['assists']);
   var pGames = ((state.sports[key].idx || {}).logsByName || {})[me.name] || [];
   var pBase = null, pMinBase = null;
@@ -20660,7 +20682,7 @@ function nbaPlaySection(key, g){
     var ppm = pRec.minutes > 0 ? pRec.assists / pRec.minutes * 30 : null;
     var ppmBase = pMinBase > 0 ? pBase / pMinBase * 30 : null;
     pRecBody = '<div class="pa-tbl">'
-      + nbaRecRow('Assists', pRec.assists, pBase, 1, pRec.games + ' of ' + lv.length)
+      + nbaRecRow('Assists', pRec.assists, pBase, 1, 'of ' + lv.length + ' on file')
       + nbaRecRow('Minutes', pRec.minutes, pMinBase, 1, '')
       + nbaRecRow('Per 30 min', ppm, ppmBase, 2, 'minutes taken out')
       + '</div>';
@@ -20695,6 +20717,7 @@ function nbaPlaySection(key, g){
         + 'playing well, where the passer is already playing more and already in form, and that '
         + 'is the whole of it. The names above say who an absence would matter for; they are not '
         + 'a form guide.</p>' : '')
+    + (pStabBody ? '<div class="pa-sub">How much of this you can forecast</div>' + pStabBody : '')
     + (pRecBody ? '<div class="pa-sub">His last 5</div>' + pRecBody
         + '<p class="av-note">Of the three cards this is the one where a run means something. '
         + 'Across 57,648 player-games the hottest fifth by recent assists beat the player\u2019s '
@@ -20880,6 +20903,25 @@ function nbaGlassSection(key, g){
      by +0.39 a game - and played 2.0 minutes more. Per 30 minutes that +0.39 becomes \u22120.07.
      There is no rebounding hot hand; there is a minutes run, and it is worth saying so on the
      card where someone is about to read a good week as form. */
+  /* WHAT PERSISTS. Written by build_nba_rebounds.stability() on whatever window that run
+     covered; absent until the next build, in which case nothing is drawn. */
+  var gStab = lg.stability || null;
+  var gStabBody = '';
+  if (gStab && gStab.reb != null){
+    gStabBody = '<div class="pa-tbl">'
+      + nbaStabRow('Rebounds', rec.reb.toFixed(1), gStab.reb, 'a game')
+      + nbaStabRow('Defensive', rec.dreb.toFixed(1), gStab.dreb, 'a game')
+      + nbaStabRow('Offensive', rec.oreb.toFixed(1), gStab.oreb, 'a game')
+      + nbaStabRow('Minutes', rec.minutes.toFixed(0), gStab.minutes, 'a game')
+      + '</div>'
+      + '<p class="av-note">Measured over ' + (gStab.n || 0) + ' players on this run, his first '
+      + 'half-season against his second \u2014 the same test From Deep uses, so the numbers read '
+      + 'against each other. Both ends of the glass hold up about as well as the total does. '
+      + 'The thing that does not hold anywhere is a PERCENTAGE: three-point percent comes out at '
+      + 'r=+0.31 on that card against +0.91 for attempts. Counts persist, rates do not, and '
+      + 'rebounding is all counts.</p>';
+  }
+
   var gRec = nbaRecent(key, me.name, ['rebounds', 'oreb', 'dreb']);
   /* THE BASE COMES FROM THE SAME PLACE THE LAST FIVE DO. rec.reb is the build's figure over
      every season on file - 81 games here - so measuring a five-game run against it would be
@@ -20897,7 +20939,7 @@ function nbaGlassSection(key, g){
     var pm = gRec.minutes > 0 ? gRec.rebounds / gRec.minutes * 30 : null;
     var pmBase = gMinBase > 0 ? gBase / gMinBase * 30 : null;
     gRecBody = '<div class="pa-tbl">'
-      + nbaRecRow('Rebounds', gRec.rebounds, gBase, 1, gRec.games + ' of ' + gLive.length)
+      + nbaRecRow('Rebounds', gRec.rebounds, gBase, 1, 'of ' + gLive.length + ' on file')
       + nbaRecRow('Minutes', gRec.minutes, gMinBase, 1, '')
       + nbaRecRow('Per 30 min', pm, pmBase, 2, 'minutes taken out')
       + '</div>'
@@ -20991,6 +21033,23 @@ function nbaGlassSection(key, g){
           + '<i>' + (pSoft ? 'fastest end' : pTough ? 'slowest end' : 'middle')
           + '</i></span></span>')
       + '</div>'
+      /* SPLIT BY END OF THE FLOOR, because the absence effect is. A team-mate sitting moves
+         his DEFENSIVE boards and barely touches his offensive ones, so a reader checking an
+         offensive-rebounds line needs the half of the concession that applies to it rather
+         than a total that mixes the two. Absent until the next build. */
+      + (dRec.drebAllowed == null || dRec.orebAllowed == null ? ''
+         : '<span class="pa-pair"><span class="pa-big"><b>' + dRec.drebAllowed.toFixed(1)
+           + '</b>defensive boards conceded</span>'
+           + '<span class="pt-rank ' + (dRec.drebAllowedRank <= 10 ? 'soft'
+               : dRec.drebAllowedRank > of_ - 10 ? 'tough' : 'mid') + '">'
+           + ordinalish(dRec.drebAllowedRank) + ' of ' + of_ + '<i>the half an absence moves</i>'
+           + '</span></span>'
+           + '<span class="pa-pair"><span class="pa-big"><b>' + dRec.orebAllowed.toFixed(1)
+           + '</b>offensive boards conceded</span>'
+           + '<span class="pt-rank ' + (dRec.orebAllowedRank <= 10 ? 'soft'
+               : dRec.orebAllowedRank > of_ - 10 ? 'tough' : 'mid') + '">'
+           + ordinalish(dRec.orebAllowedRank) + ' of ' + of_ + '<i>the half it does not</i>'
+           + '</span></span>')
       + (dRec.boards == null || dRec.oppShare == null ? '' :
           '<div class="pa-foot">That is <b>' + dRec.boards.toFixed(1) + '</b> boards in their '
           + 'games and they let the other side take <b>' + Math.round(dRec.oppShare * 100)
@@ -21003,6 +21062,7 @@ function nbaGlassSection(key, g){
     + '<div class="pt-head"><b>' + esc(me.name) + '</b> v ' + esc(abbrOf(key, me.opp))
       + ' · ' + rec.reb.toFixed(1) + ' a game over ' + rec.games + ' games'
       + (me.priced ? '' : ' · no market') + '</div>'
+    + (gStabBody ? '<div class="pa-sub">How much of this you can forecast</div>' + gStabBody : '')
     + '<div class="pa-sub">His share of the glass</div>' + mine
     + (gRecBody ? '<div class="pa-sub">His last 5</div>' + gRecBody : '')
     + '<div class="pa-sub">Who he competes with</div>'
@@ -21109,6 +21169,29 @@ function nbaRecent(key, name, fields, n){
   });
   return out;
 }
+/* HOW MUCH OF THIS PERSISTS. From Deep has carried this panel since it was built and the other
+   two had nothing, which left a reader to assume all three lines behave alike. They do not, and
+   the interesting part is that the DIVIDE is not between the three stats - it is between counts
+   and percentages. On the identical test (his first half-season against his second, 40-game
+   floor, measured by each build on its own window):
+
+     assists +0.88   rebounds +0.87   three-point attempts +0.91   three-point PERCENT +0.31
+
+   Everything you can count holds up. The one thing that is a rate barely does. That is worth a
+   reader seeing on all three cards rather than only on the one where it happens to be bad.
+
+   Returns nothing at all when the build has not written the block yet, so the card simply looks
+   as it did rather than printing a number nobody measured. */
+function nbaStabRow(label, value, r, note){
+  var firm = r != null && r >= 0.7, soft = r != null && r < 0.45;
+  return '<div class="pa-row"><div class="pa-lab">' + esc(label) + '</div>'
+    + '<div class="pa-bar"><i style="width:' + Math.min(100, Math.round(Math.abs(r || 0) * 100)) + '%"></i></div>'
+    + '<div class="pa-n"><b>' + esc(value) + '</b>' + esc(note || '') + '</div>'
+    + '<div class="pa-st"><span class="' + (firm ? 'dp-firm' : soft ? 'dp-soft' : 'dp-firm') + '">'
+    + (firm ? 'holds up ' : soft ? 'barely holds ' : 'partly holds ')
+    + (r != null ? 'r=' + (r >= 0 ? '+' : '\u2212') + Math.abs(r).toFixed(2) : '')
+    + '</span></div></div>';
+}
 /* One row of "lately against his own season", with the season figure as the reference. The
    delta is the whole point - a bare "8.0 attempts" says nothing without his own rate beside it. */
 function nbaRecRow(label, now, base, dp, note){
@@ -21117,7 +21200,10 @@ function nbaRecRow(label, now, base, dp, note){
     + '<div class="pa-bar"><i style="width:' + Math.min(100, Math.round((now || 0) / Math.max(0.01, (base || 0) * 2) * 100)) + '%"></i></div>'
     + '<div class="pa-n"><b>' + (now != null ? now.toFixed(dp) : '\u2014') + '</b>over his last 5'
     + (d != null ? '<i class="' + (d >= 0 ? 'up' : 'dn') + '">'
-       + (d >= 0 ? '+' : '\u2212') + Math.abs(d).toFixed(dp) + ' v his season</i>' : '') + '</div>'
+       /* "v his season" was a claim about a window this panel does not have. The base is every
+          game in the logs the page holds, which is not the same set the card's header counts -
+          117 against 81 on a player who has been around. "v his average" says what it is. */
+       + (d >= 0 ? '+' : '\u2212') + Math.abs(d).toFixed(dp) + ' v his average</i>' : '') + '</div>'
     + '<div class="pa-st">' + (note ? '<span class="pa-in">' + esc(note) + '</span>' : '') + '</div></div>';
 }
 var T3_HOT = 0.05;          // 5 points of 3P% above his own rate before a run is called hot
