@@ -20544,35 +20544,46 @@ function nbaPlaySection(key, g){
           + (c.priced ? ' · priced' : '') + '</option>';
       }).join('') + '</select>';
 
-  /* WHO HE FEEDS. Every target the build kept, none dropped for being stale. */
-  var tgs = (rec.targets || []).slice(0, PA_SHOW);
-  var topShare = tgs.length ? tgs[0].share : 1;
-  var mates = 0, outMates = 0, goneShare = 0;
+  /* WHO HE FEEDS \u2014 MEN WHO CAN ACTUALLY RECEIVE A PASS TONIGHT.
+     The rows used to include everyone the build kept, departed team-mates and all, on the
+     reasoning that dropping them would make the shares not add up against his real total.
+     That was the wrong trade. On a passer who has changed clubs half the list was men at other
+     clubs, and they pushed the men who ARE there down the page and out of the top three. A
+     target at another club cannot be fed tonight, whatever he was worth last season.
+
+     So they come out, and the shares are RENORMALISED over the men still alongside him \u2014
+     "17% of the passing he still has" rather than "11% of a total that includes four players
+     who left". The share of his passing that walked out the door is not lost: it is the one
+     line underneath, which is where a fact about his situation belongs rather than as four
+     rows competing with the men he plays with. */
+  var allT = rec.targets || [];
+  var here = [], goneShare = 0, goneN = 0;
+  allT.forEach(function(t){
+    if (paStatus(key, me, t).mate) here.push(t);
+    else { goneShare += t.share; goneN++; }
+  });
+  var hereTot = here.reduce(function(a, t){ return a + t.share; }, 0);
+  var tgs = here.slice(0, PA_SHOW);
+  var topShare = tgs.length ? (tgs[0].share / (hereTot || 1)) : 1;
   var tRows = tgs.map(function(t){
     var st = paStatus(key, me, t);
-    if (st.mate) mates++;
-    if (st.cls === 'pa-out') outMates++;
-    if (!st.mate) goneShare += t.share;
-    var w = Math.max(3, Math.round(t.share / (topShare || 1) * 100));
+    var sh = t.share / (hereTot || 1);
+    var w = Math.max(3, Math.round(sh / (topShare || 1) * 100));
     return '<div class="pa-row">'
       + '<div class="pa-lab">' + esc(t.name) + '</div>'
       + '<div class="pa-bar"><i style="width:' + w + '%"></i></div>'
-      + '<div class="pa-n"><b>' + Math.round(t.share * 100) + '%</b>of his passing'
+      + '<div class="pa-n"><b>' + Math.round(sh * 100) + '%</b>of the passing he still has'
         + '<i>' + t.n + ' assist' + (t.n === 1 ? '' : 's')
         + (t.nCur ? ' · ' + t.nCur + ' this season' : '') + '</i></div>'
       + '<div class="pa-st"><span class="' + st.cls + '">' + esc(st.txt) + '</span></div>'
       + '</div>';
   }).join('');
+  /* ONE top-three now, over the men he still plays with, because that is the only list on the
+     page. The old card printed two \u2014 one across everyone and one across the squad \u2014 which
+     was the honest way to show an unfiltered list, and is just noise once the list is filtered. */
   var top3 = (rec.targets || []).slice(0, 3).reduce(function(a, t){ return a + t.share; }, 0);
-  /* AND THE SAME FIGURE FOR THE MEN HE STILL PLAYS WITH. For a passer who has moved clubs the
-     plain top-three is three men he no longer sees - true of the two seasons on file, and
-     misleading about tonight. Harden's reads 33% across Zubac, Mobley and Collins, two of whom
-     are at other clubs. Both figures are printed, the rows are never filtered, and the headline
-     says which set it is describing. */
-  var mateT = (rec.targets || []).filter(function(t){ return paStatus(key, me, t).mate; });
-  var mateTot = mateT.reduce(function(a, t){ return a + t.share; }, 0);
-  var top3Mate = mateTot > 0
-    ? mateT.slice(0, 3).reduce(function(a, t){ return a + t.share; }, 0) / mateTot : 0;
+  var top3Mate = hereTot > 0
+    ? here.slice(0, 3).reduce(function(a, t){ return a + t.share; }, 0) / hereTot : 0;
 
   /* WHAT HE CREATES. His three-share against the league's, then the action mix in the same words
      How He Scores uses, because they are the same taxonomy. */
@@ -20701,11 +20712,14 @@ function nbaPlaySection(key, g){
       + '</div>'
     + (tRows ? '<div class="pa-tbl">' + tRows + '</div>'
              : '<div class="pt-na">no target takes 3% of his passing</div>')
+    /* The one line that has to stay. Dropping the departed rows without saying what left would
+       let the card imply his network is intact, and a passer who has lost a third of it is in a
+       different situation from one who has not. */
     + (goneShare > 0.02
-        ? '<div class="pa-foot">' + Math.round(goneShare * 100) + '% of that passing went to players '
-          + 'no longer alongside him — kept here rather than dropped, so the shares '
-          + 'still read against his real total. Across all of it his top three took '
-          + Math.round(top3 * 100) + '%.</div>' : '')
+        ? '<div class="pa-foot">' + Math.round(goneShare * 100) + '% of his passing went to '
+          + goneN + ' player' + (goneN === 1 ? '' : 's') + ' no longer alongside him — not '
+          + 'listed, because they cannot be fed tonight. The shares above are measured over the '
+          + 'men who can be.</div>' : '')
     + (tRows ? '<p class="av-note"><b>Whether his targets are SHOOTING well is not a read, and '
         + 'it is the obvious one to reach for.</b> An assist needs the man at the other end to '
         + 'make the shot, so a network in form ought to lift him. Weighting each target by his '
