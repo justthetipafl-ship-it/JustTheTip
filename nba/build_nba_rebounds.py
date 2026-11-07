@@ -248,6 +248,103 @@ def fit_rivals(byp, appeared, club_of, rpg):
             'mae': round(mae, 3), 'fitted': True, 'bands': bands}
 
 
+MIN_STAB_GAMES = 40     # the floor build_nba_threes.stability uses, so the two cards compare
+
+
+def stability(byp):
+    """How much of each line persists: his first half-season against his second.
+
+    Measured here rather than hard-coded so a different window reports what that window says,
+    and deliberately the SAME split build_nba_threes.stability uses - chronological halves, a
+    40-game floor - because the two cards sit a tab apart and a reader will compare the numbers.
+    An odd/even split scores the same players around +0.96 on everything; that is a different
+    question (does he do this consistently within a season) and printing it beside the threes
+    card's +0.85 would read as assists being the more forecastable line, which is method, not
+    basketball.
+    """
+    def corr(xs, ys):
+        if len(xs) < 20:
+            return None
+        mx, my = statistics.mean(xs), statistics.mean(ys)
+        sx = sum((x - mx) ** 2 for x in xs) ** .5
+        sy = sum((y - my) ** 2 for y in ys) ** .5
+        if not sx or not sy:
+            return None
+        return sum((x - mx) * (y - my) for x, y in zip(xs, ys)) / (sx * sy)
+    cols = {k: ([], []) for k in ('reb', 'oreb', 'dreb', 'minutes')}
+    FIELD = {'reb': 'rebounds', 'oreb': 'oreb', 'dreb': 'dreb', 'minutes': 'minutes'}
+    for i, rs in byp.items():
+        rs = [r for r in rs if fnum(r.get('minutes')) > 0]
+        if len(rs) < MIN_STAB_GAMES:
+            continue
+        rs = sorted(rs, key=lambda r: str(r.get('Date') or ''))
+        h = len(rs) // 2
+        a, b = rs[:h], rs[h:]
+        for k, f in FIELD.items():
+            cols[k][0].append(statistics.mean(fnum(r.get(f)) for r in a))
+            cols[k][1].append(statistics.mean(fnum(r.get(f)) for r in b))
+    out = {}
+    for k, (x, y) in cols.items():
+        c = corr(x, y)
+        if c is not None:
+            out[k] = round(c, 3)
+    out['n'] = len(cols['reb'][0])
+    return out
+
+
+def recent_form(byp, k=5):
+    """Does a five-game run mean anything once his MINUTES are taken out of it?
+
+    This is the measurement that decides what the recent-form panel is allowed to say, and the
+    honest answer for rebounds is: no. Raw, the hottest fifth of five-game runs beats the
+    player's own season rate by about +0.39 a game. It also comes with two more minutes. Per 30
+    minutes the same run is worth about -0.07 - nothing, and if anything the wrong way.
+
+    Assists, measured identically in build_nba_assists.py, keep +0.23 of their +0.31. So the two
+    cards say opposite things about a hot week, and both are right.
+    """
+    raw, per_min, mins = [], [], []
+    # WITHIN A SEASON, not across the three on file. byp pools every season a player appears in,
+    # so his "own rate" would span three years and a man who simply got more minutes this season
+    # than two seasons ago would register as being on a hot run all year. Measured that way the
+    # per-minute effect comes out at +0.156 and the card would claim a rebounding hot hand that
+    # is really a role change. Split by season it is -0.07, which is the real answer.
+    groups = collections.defaultdict(list)
+    for i, rs in byp.items():
+        for r in rs:
+            groups[(i, str(r.get('Year') or ''))].append(r)
+    for _, rs in groups.items():
+        rs = [r for r in rs if fnum(r.get('minutes')) > 0]
+        if len(rs) < MIN_STAB_GAMES:
+            continue
+        rs = sorted(rs, key=lambda r: str(r.get('Date') or ''))
+        v = [fnum(r.get('rebounds')) for r in rs]
+        m = [fnum(r.get('minutes')) for r in rs]
+        base = statistics.mean(v)
+        if base < 1.0:
+            continue
+        mbase = statistics.mean(m)
+        pm = [(a / b * 30.0) if b else 0.0 for a, b in zip(v, m)]
+        pmbase = statistics.mean(pm)
+        for j in range(k, len(rs)):
+            raw.append((statistics.mean(v[j - k:j]) - base, v[j] - base))
+            per_min.append((statistics.mean(pm[j - k:j]) - pmbase, pm[j] - pmbase))
+            mins.append((statistics.mean(v[j - k:j]) - base, m[j] - mbase))
+    if len(raw) < 500:
+        return None
+    def tails(pool):
+        pool = sorted(pool, key=lambda t: t[0])
+        q = len(pool) // 5
+        return (statistics.mean(y for _, y in pool[:q]),
+                statistics.mean(y for _, y in pool[-q:]))
+    lo, hi = tails(raw)
+    plo, phi = tails(per_min)
+    _, mhi = tails(mins)
+    return {'hottest': round(hi, 3), 'coldest': round(lo, 3),
+            'hottestPerMin': round(phi, 3), 'coldestPerMin': round(plo, 3),
+            'hottestMinutes': round(mhi, 2), 'window': k, 'n': len(raw)}
+
+
 def defence(rows):
     """What each club concedes on the glass, and the two things that drive it.
 
@@ -272,7 +369,7 @@ def defence(rows):
         m, t = str(r.get('MatchId')), r.get('Team')
         if not m or not t:
             continue
-        for k in ('fga', 'fgm', 'fta', 'oreb', 'rebounds', 'turnovers'):
+        for k in ('fga', 'fgm', 'fta', 'oreb', 'dreb', 'rebounds', 'turnovers'):
             tm[m][t + '|' + k] += fnum(r.get(k))
     acc = collections.defaultdict(lambda: collections.defaultdict(list))
     for m, row in tm.items():
@@ -286,13 +383,21 @@ def defence(rows):
             pb = gv(b, 'fga') - gv(b, 'oreb') + gv(b, 'turnovers') + 0.44 * gv(b, 'fta')
             boards = gv(a, 'rebounds') + gv(b, 'rebounds')
             acc[a]['perGame'].append(gv(b, 'rebounds'))
+            # SPLIT BY END OF THE FLOOR. The two halves do not behave alike and the card now
+            # says so: a team-mate's absence moves a player's DEFENSIVE boards (+0.36 per 30
+            # minutes for a big rival) and barely touches his offensive ones (+0.08, 54% up,
+            # which is the null). A concession figure that lumps them together cannot support
+            # that distinction, so it is measured apart here.
+            acc[a]['orebAllowed'].append(gv(b, 'oreb'))
+            acc[a]['drebAllowed'].append(gv(b, 'dreb'))
             acc[a]['pace'].append((pa + pb) / 2.0)
             acc[a]['boards'].append(boards)
             acc[a]['misses'].append((gv(a, 'fga') - gv(a, 'fgm')) + (gv(b, 'fga') - gv(b, 'fgm')))
     clubs = {c: {k: statistics.mean(v) for k, v in kv.items()}
              for c, kv in acc.items() if len(kv['perGame']) >= MIN_DEF_GAMES}
     out = {}
-    for key, rev in (('perGame', True), ('pace', True)):
+    for key, rev in (('perGame', True), ('pace', True),
+                     ('orebAllowed', True), ('drebAllowed', True)):
         for n, c in enumerate(sorted(clubs, key=lambda x: -clubs[x][key] if rev else clubs[x][key])):
             out.setdefault(c, {})[key] = round(clubs[c][key], 2)
             out[c][key + 'Rank'] = n + 1
@@ -379,6 +484,10 @@ def build(rows):
             # the measurements the card quotes; see the docstring for how each was taken
             'rival': dict(fit, top=0.86, fromMinutes=0.51, fromShare=0.34,
                           control=0.21, n=188, extraMinutes=2.05, upPct=73),
+            # measured on THIS window every run, not carried as constants - see stability()
+            # and recent_form(). The card prints whatever this says.
+            'stability': stability(byp),
+            'recent': recent_form(byp),
             # measured out of sample; paceSwing is worth more than the concession itself and
             # is the only contributor that adds anything on top of it
             'oppSwing': 0.43, 'oppStability': 0.57,
