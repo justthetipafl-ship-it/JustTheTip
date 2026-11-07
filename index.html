@@ -20640,6 +20640,32 @@ function nbaPlaySection(key, g){
   var sampNote = rec.assistsCur
     ? rec.assists + ' assists on file, ' + rec.assistsCur + ' of them this season'
     : rec.assists + ' assists on file, none yet this season';
+  /* HIS LAST FIVE. This card had no recent form at all and no minutes either \u2014 From Deep
+     was the only one of the three that could say anything about a player\u2019s last week.
+     Assists are the one of the three where a hot run partly survives its own minutes: over
+     57,648 player-games the hottest fifth beat his own rate by +0.31 a game, and +0.23 of that
+     is still there per 30 minutes. Compare rebounds, where the same test leaves \u22120.07. */
+  var pRec = nbaRecent(key, me.name, ['assists']);
+  var pGames = ((state.sports[key].idx || {}).logsByName || {})[me.name] || [];
+  var pBase = null, pMinBase = null;
+  var lv = pGames.filter(function(x){ return (+x.minutes || 0) > 0; });
+  if (pGames.length){
+    if (lv.length){
+      pBase = lv.reduce(function(a, x){ return a + (+x.assists || 0); }, 0) / lv.length;
+      pMinBase = lv.reduce(function(a, x){ return a + (+x.minutes || 0); }, 0) / lv.length;
+    }
+  }
+  var pRecBody = '';
+  if (pRec && pBase != null){
+    var ppm = pRec.minutes > 0 ? pRec.assists / pRec.minutes * 30 : null;
+    var ppmBase = pMinBase > 0 ? pBase / pMinBase * 30 : null;
+    pRecBody = '<div class="pa-tbl">'
+      + nbaRecRow('Assists', pRec.assists, pBase, 1, pRec.games + ' of ' + lv.length)
+      + nbaRecRow('Minutes', pRec.minutes, pMinBase, 1, '')
+      + nbaRecRow('Per 30 min', ppm, ppmBase, 2, 'minutes taken out')
+      + '</div>';
+  }
+
   return paneBand('Playmaking')
     + chips
     + '<div class="pt-head"><b>' + esc(me.name) + '</b> v ' + esc(abbrOf(key, me.opp))
@@ -20658,6 +20684,23 @@ function nbaPlaySection(key, g){
           + 'no longer alongside him — kept here rather than dropped, so the shares '
           + 'still read against his real total. Across all of it his top three took '
           + Math.round(top3 * 100) + '%.</div>' : '')
+    + (tRows ? '<p class="av-note"><b>Whether his targets are SHOOTING well is not a read, and '
+        + 'it is the obvious one to reach for.</b> An assist needs the man at the other end to '
+        + 'make the shot, so a network in form ought to lift him. Weighting each target by his '
+        + 'share of the passing and taking how those men had shot over their own previous five '
+        + 'games, across 41,478 passer-games: raw it looks like something, r=+0.08, and the '
+        + 'coldest fifth of networks sits 0.62 assists below the hottest. Take out the passer\u2019s '
+        + 'own minutes and it halves to +0.05. Take out his own recent assists as well and it is '
+        + '<b>\u22120.0006</b> \u2014 nothing whatsoever. Teams whose shooters are hot are teams '
+        + 'playing well, where the passer is already playing more and already in form, and that '
+        + 'is the whole of it. The names above say who an absence would matter for; they are not '
+        + 'a form guide.</p>' : '')
+    + (pRecBody ? '<div class="pa-sub">His last 5</div>' + pRecBody
+        + '<p class="av-note">Of the three cards this is the one where a run means something. '
+        + 'Across 57,648 player-games the hottest fifth by recent assists beat the player\u2019s '
+        + 'own rate by +0.31 the following game \u2014 and <b>+0.23 of that survives per 30 '
+        + 'minutes</b>, so it is not only the extra time. On Rebounding the same test leaves '
+        + '\u22120.07, and from deep it leaves nothing at all.</p>' : '')
     + '<div class="pa-sub">What he creates</div>'
     + '<div class="pa-tbl">'
       + '<div class="pa-row pa-act"><div class="pa-lab">Threes</div>'
@@ -20814,16 +20857,58 @@ function nbaGlassSection(key, g){
       + (dRate != null ? '<i class="' + (dRate >= 0 ? 'up' : 'dn') + '">' + signedOne(dRate)
          + ' v the league’s ' + lgRate.toFixed(1) + '%</i>' : '') + '</div>'
       + '<div class="pa-st"><span class="pa-in">' + rec.minutes.toFixed(0) + ' min</span></div></div>'
+    /* THE RATES WERE IN THE FILE ALL ALONG. The build computes drebPct and orebPct - the
+       share of the boards AVAILABLE at each end that he takes - and the page showed neither,
+       printing only the per-game counts. Those counts are mostly a fact about how many shots
+       get missed in his games: a man on a fast, bad-shooting team collects defensive boards
+       a better rebounder on a slow accurate one never sees. The rate is the thing he controls. */
     + '<div class="pa-row pa-act"><div class="pa-lab">Defensive</div>'
       + '<div class="pa-bar"><i style="width:' + Math.round((1 - oShare) * 100) + '%"></i></div>'
-      + '<div class="pa-n"><b>' + rec.dreb.toFixed(1) + '</b>a game</div>'
-      + '<div class="pa-st"></div></div>'
+      + '<div class="pa-n"><b>' + rec.dreb.toFixed(1) + '</b>a game'
+      + (rec.drebPct != null ? '<i>' + rec.drebPct.toFixed(1) + '% of what was there</i>' : '')
+      + '</div><div class="pa-st"></div></div>'
     + '<div class="pa-row pa-act"><div class="pa-lab">Offensive</div>'
       + '<div class="pa-bar"><i style="width:' + Math.round(oShare * 100) + '%"></i></div>'
       + '<div class="pa-n"><b>' + rec.oreb.toFixed(1) + '</b>a game'
-      + '<i>' + Math.round(oShare * 100) + '% off the offensive glass</i></div>'
-      + '<div class="pa-st"></div></div>'
+      + (rec.orebPct != null ? '<i>' + rec.orebPct.toFixed(1) + '% of what was there</i>'
+         : '<i>' + Math.round(oShare * 100) + '% off the offensive glass</i>')
+      + '</div><div class="pa-st"></div></div>'
     + '</div>';
+
+  /* HIS LAST FIVE, with minutes beside it because minutes are what moved.
+     Over 67,525 player-games the hottest fifth by recent rebounding beat his own season rate
+     by +0.39 a game - and played 2.0 minutes more. Per 30 minutes that +0.39 becomes \u22120.07.
+     There is no rebounding hot hand; there is a minutes run, and it is worth saying so on the
+     card where someone is about to read a good week as form. */
+  var gRec = nbaRecent(key, me.name, ['rebounds', 'oreb', 'dreb']);
+  /* THE BASE COMES FROM THE SAME PLACE THE LAST FIVE DO. rec.reb is the build's figure over
+     every season on file - 81 games here - so measuring a five-game run against it would be
+     labelled "v his season" while comparing against two of them. Both halves of this panel now
+     come out of the gamelogs the page already holds. */
+  var gAll = ((state.sports[key].idx || {}).logsByName || {})[me.name] || [];
+  var gLive = gAll.filter(function(x){ return (+x.minutes || 0) > 0; });
+  var gBase = null, gMinBase = null;
+  if (gLive.length){
+    gBase = gLive.reduce(function(a, x){ return a + (+x.rebounds || 0); }, 0) / gLive.length;
+    gMinBase = gLive.reduce(function(a, x){ return a + (+x.minutes || 0); }, 0) / gLive.length;
+  }
+  var gRecBody = '';
+  if (gRec && gBase != null){
+    var pm = gRec.minutes > 0 ? gRec.rebounds / gRec.minutes * 30 : null;
+    var pmBase = gMinBase > 0 ? gBase / gMinBase * 30 : null;
+    gRecBody = '<div class="pa-tbl">'
+      + nbaRecRow('Rebounds', gRec.rebounds, gBase, 1, gRec.games + ' of ' + gLive.length)
+      + nbaRecRow('Minutes', gRec.minutes, gMinBase, 1, '')
+      + nbaRecRow('Per 30 min', pm, pmBase, 2, 'minutes taken out')
+      + '</div>'
+      + '<p class="av-note">' + (pm != null && pmBase != null && Math.abs(pm - pmBase) < 0.6
+          ? 'Per minute he is rebounding at his own rate, which is the usual case. Whatever the '
+            + 'per-game line has done lately, it has been the minutes doing it.'
+          : 'The per-minute line is the one to read. Across 67,525 player-games a hot five-game '
+            + 'run beat the player\u2019s own rate by +0.39 a game and came with two extra minutes; '
+            + 'per 30 minutes the same run is worth \u22120.07. Rebounding form is minutes.')
+      + '</p>';
+  }
 
   /* WHO HE COMPETES WITH, and what each one being out is worth. Every rival carries its figure
      whether or not he is playing - a reader checking a line wants to know which absence would
@@ -20919,6 +21004,7 @@ function nbaGlassSection(key, g){
       + ' · ' + rec.reb.toFixed(1) + ' a game over ' + rec.games + ' games'
       + (me.priced ? '' : ' · no market') + '</div>'
     + '<div class="pa-sub">His share of the glass</div>' + mine
+    + (gRecBody ? '<div class="pa-sub">His last 5</div>' + gRecBody : '')
     + '<div class="pa-sub">Who he competes with</div>'
     + (rRows ? '<div class="pa-tbl">' + rRows + '</div>'
              : '<div class="pt-na">nobody else on his team takes a board a game</div>')
@@ -20951,7 +21037,17 @@ function nbaGlassSection(key, g){
     + 'it a second read rather than the same one restated, and it is the only contributor here '
     + 'that is: the share of the glass they allow adds +'
     + ((lg.shareAdds != null ? lg.shareAdds : 0.0008).toFixed(4)) + ', which is nothing. On the '
-    + 'Playmaking card pace earns no place at all \u2014 it adds \u22120.002 there.</div>';
+    + 'Playmaking card pace earns no place at all \u2014 it adds \u22120.002 there. '
+    + '<b>It is a DEFENSIVE-glass effect, and the size of the rival decides whether there is '
+    + 'one at all.</b> Re-measured over 8,847 team-mate pairs against a permutation null: '
+    + 'averaged over every team-mate the whole thing is minutes \u2014 per 30 minutes it comes '
+    + 'to +0.02 of a rebound, which is nothing. It only survives for a big one. With a rival who '
+    + 'takes eight boards a game (519 pairs) it is +0.78 raw and still <b>+0.44 per 30 '
+    + 'minutes</b>, 63% up. Of that +0.44, defensive boards are <b>+0.36</b> and offensive '
+    + 'boards <b>+0.08</b> at 54% up \u2014 barely off the null. That follows from where the '
+    + 'boards come from: his own team missing shots is what creates offensive rebounds, and a '
+    + 'team-mate sitting does not make them miss more. <b>So an offensive-rebounds line is close '
+    + 'to unmoved by an absence, and a total-rebounds line moves on its defensive half.</b></div>';
 }
 /* ---------------------------------------------------------------- FROM DEEP
    Threes, from nba/data/threes.json (nba/build_nba_threes.py), with where he shoots them taken
@@ -20987,6 +21083,43 @@ function nbaGlassSection(key, g){
    put a number worth nothing in the same type as one worth something. ---------------------- */
 var T3_SHOW = 4;            // creators listed
 var T3_RECENT = 5;          // the window the hot-hand measurement was taken over
+var NBA_RECENT = 5;
+
+/* RECENT FORM FOR ANY BOX FIELD. t3Recent did this for threes alone and the other two cards
+   had nothing, which is why From Deep was the only one of the three that could say anything
+   about a player's last week. Minutes always come back with it, and that is not a convenience:
+   measured over 57,648 player-games, a "hot" five-game run comes with a monotonic MINUTES run
+   underneath it, and taking minutes out is what separates the two cards below.
+
+     assists   hottest fifth +0.31 a game raw → +0.23 per 30 min once minutes are out
+     rebounds  hottest fifth +0.39 a game raw → −0.07 per 30 min
+
+   So an assist run is part real; a rebounding run is a minutes run wearing a hat. Each card
+   says its own version of that in words, beside its own numbers. */
+function nbaRecent(key, name, fields, n){
+  var rows = ((state.sports[key].idx || {}).logsByName || {})[name] || [];
+  var r = sortLogsDesc(rows.slice()).filter(function(x){ return (+x.minutes || 0) > 0; })
+            .slice(0, n || NBA_RECENT);
+  if (!r.length) return null;
+  var out = { games:r.length };
+  fields.concat(['minutes']).forEach(function(f){
+    var t = 0;
+    r.forEach(function(x){ t += (+x[f] || 0); });
+    out[f] = t / r.length;
+  });
+  return out;
+}
+/* One row of "lately against his own season", with the season figure as the reference. The
+   delta is the whole point - a bare "8.0 attempts" says nothing without his own rate beside it. */
+function nbaRecRow(label, now, base, dp, note){
+  var d = (now != null && base != null) ? now - base : null;
+  return '<div class="pa-row pa-act"><div class="pa-lab">' + esc(label) + '</div>'
+    + '<div class="pa-bar"><i style="width:' + Math.min(100, Math.round((now || 0) / Math.max(0.01, (base || 0) * 2) * 100)) + '%"></i></div>'
+    + '<div class="pa-n"><b>' + (now != null ? now.toFixed(dp) : '\u2014') + '</b>over his last 5'
+    + (d != null ? '<i class="' + (d >= 0 ? 'up' : 'dn') + '">'
+       + (d >= 0 ? '+' : '\u2212') + Math.abs(d).toFixed(dp) + ' v his season</i>' : '') + '</div>'
+    + '<div class="pa-st">' + (note ? '<span class="pa-in">' + esc(note) + '</span>' : '') + '</div></div>';
+}
 var T3_HOT = 0.05;          // 5 points of 3P% above his own rate before a run is called hot
 function t3File(key){
   var S = state.sports[key];
