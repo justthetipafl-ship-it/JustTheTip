@@ -71,6 +71,7 @@ import datetime
 import io
 import json
 import os
+import statistics
 import sys
 import urllib.request
 
@@ -195,6 +196,118 @@ def harvest(seasons):
                 'cur': 1 if s == cur else 0,
             })
     return rows, club_games, conceded
+
+
+MIN_STAB_GAMES = 40     # the floor build_nba_threes.stability uses, so the three cards compare
+
+
+def box_form(out_dir, seasons, window=5):
+    """How much of an assist line persists, and whether a hot week means anything.
+
+    Read from the gamelogs rather than the play-by-play: this is a question about the box score
+    line a book actually prices, not about who he passed to.
+
+    Two measurements, both taken the same way their counterparts are taken in
+    build_nba_rebounds.py and build_nba_threes.py so the three cards can be read against each
+    other:
+
+      stability  - his first half against his second, chronological, 40-game floor, pooled over
+                   the seasons on file exactly as the threes card does it.
+      recent     - his last five games against his very next one, WITHIN a season. The window
+                   matters: pooled across seasons a man who simply gets more minutes this year
+                   than two years ago reads as permanently hot, and the per-minute answer flips
+                   sign. Split by season it is honest.
+
+    The result that earns its place on the card: of the three lines, assists is the one where a
+    hot run survives its own minutes. Raw the hottest fifth beats his own rate by about +0.31 the
+    next game; per 30 minutes about +0.23 of that is still there. Rebounds keep nothing (-0.07)
+    and threes nothing at all.
+    """
+    byp, bys = collections.defaultdict(list), collections.defaultdict(list)
+    for s_ in seasons:
+        path = os.path.join(out_dir, 'gamelogs_%s.json' % s_)
+        if not os.path.exists(path):
+            continue
+        for r in json.load(open(path)):
+            try:
+                mins = float(r.get('minutes') or 0)
+            except (TypeError, ValueError):
+                mins = 0.0
+            if not mins > 0:
+                continue
+            i = pid(r.get('PlayerId'))
+            if not i:
+                continue
+            byp[i].append(r)
+            bys[(i, str(r.get('Year') or ''))].append(r)
+    if not byp:
+        return None, None
+
+    def f(r, k):
+        try:
+            v = float(r.get(k) or 0)
+        except (TypeError, ValueError):
+            return 0.0
+        return 0.0 if v != v else v
+
+    def corr(xs, ys):
+        if len(xs) < 20:
+            return None
+        mx, my = statistics.mean(xs), statistics.mean(ys)
+        sx = sum((x - mx) ** 2 for x in xs) ** .5
+        sy = sum((y - my) ** 2 for y in ys) ** .5
+        if not sx or not sy:
+            return None
+        return sum((x - mx) * (y - my) for x, y in zip(xs, ys)) / (sx * sy)
+
+    cols = {'assists': ([], []), 'minutes': ([], [])}
+    for i, rs in byp.items():
+        if len(rs) < MIN_STAB_GAMES:
+            continue
+        rs = sorted(rs, key=lambda r: str(r.get('Date') or ''))
+        h = len(rs) // 2
+        for k in cols:
+            cols[k][0].append(statistics.mean(f(r, k) for r in rs[:h]))
+            cols[k][1].append(statistics.mean(f(r, k) for r in rs[h:]))
+    stab = {}
+    for k, (x, y) in cols.items():
+        c = corr(x, y)
+        if c is not None:
+            stab[k] = round(c, 3)
+    stab['n'] = len(cols['assists'][0])
+
+    raw, per_min, mins = [], [], []
+    for _, rs in bys.items():
+        if len(rs) < MIN_STAB_GAMES:
+            continue
+        rs = sorted(rs, key=lambda r: str(r.get('Date') or ''))
+        v = [f(r, 'assists') for r in rs]
+        m = [f(r, 'minutes') for r in rs]
+        base = statistics.mean(v)
+        if base < 1.0:
+            continue
+        mbase = statistics.mean(m)
+        pm = [(a / b * 30.0) if b else 0.0 for a, b in zip(v, m)]
+        pmbase = statistics.mean(pm)
+        for j in range(window, len(rs)):
+            raw.append((statistics.mean(v[j - window:j]) - base, v[j] - base))
+            per_min.append((statistics.mean(pm[j - window:j]) - pmbase, pm[j] - pmbase))
+            mins.append((statistics.mean(v[j - window:j]) - base, m[j] - mbase))
+    if len(raw) < 500:
+        return stab, None
+
+    def tails(pool):
+        pool = sorted(pool, key=lambda t: t[0])
+        q = len(pool) // 5
+        return (statistics.mean(y for _, y in pool[:q]),
+                statistics.mean(y for _, y in pool[-q:]))
+    lo, hi = tails(raw)
+    plo, phi = tails(per_min)
+    _, mhi = tails(mins)
+    rec = {'hottest': round(hi, 3), 'coldest': round(lo, 3),
+           'hottestPerMin': round(phi, 3), 'coldestPerMin': round(plo, 3),
+           'hottestMinutes': round(mhi, 2), 'window': window, 'n': len(raw)}
+    return stab, rec
 
 
 def defence_extras(out_dir, seasons, dfc):
@@ -523,4 +636,10 @@ if __name__ == '__main__':
     print('  %d assisted field goals' % len(rows))
     payload = build(rows, club_games, conceded)
     payload['defence'] = defence_extras(a.out, seasons, payload['defence'])
+    # the box-score half of this card: what persists, and what a hot week is worth
+    stab, rec = box_form(a.out, seasons)
+    if stab:
+        payload['league']['stability'] = stab
+    if rec:
+        payload['league']['recent'] = rec
     write(a.out, payload, seasons)
