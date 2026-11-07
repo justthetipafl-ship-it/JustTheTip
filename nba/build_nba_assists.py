@@ -79,7 +79,11 @@ REL = 'https://github.com/sportsdataverse/sportsdataverse-data/releases/download
 PBP = REL + '/espn_nba_pbp/play_by_play_%s.parquet'
 
 MIN_ASSISTS = 40          # below this a man's network is a handful of games, not a pattern
-MAX_TARGETS = 8           # the tail is a long list of ones; the share that matters is at the top
+MAX_TARGETS = 14          # the tail is a long list of ones; the share that matters is at the top.
+                          # Raised from 8 on 2026-11-07: the card now drops targets who have left
+                          # the team, and on a passer who changed clubs that took four of the eight
+                          # away, leaving a four-row list. The extra rows cost a few KB and are the
+                          # difference between a usable list and a stub.
 MIN_TARGET_SHARE = 0.03   # and anybody under 3% of his passing is noise in the list
 MIN_DEF_GAMES = 20        # a club's concession needs a season behind it to rank
 
