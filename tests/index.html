@@ -1485,7 +1485,7 @@
   .nb-why summary u{text-decoration:none;color:var(--text-3);border-bottom:1px dotted var(--text-3);
     margin-left:6px;font-size:9.5px;white-space:nowrap;}
   .nb-why[open] summary u{color:var(--accent);border-color:var(--accent);}
-  .nb-why > .av-note,.nb-why > .pa-foot{margin-top:5px;}
+  .nb-why > .av-note,.nb-why > .pa-foot,.nb-why > .dd-note{margin-top:5px;}
   .pa-q{display:flex;align-items:flex-end;gap:7px;padding:7px 9px;
     border:1px solid var(--border);border-radius:9px;}
   .pa-qc{flex:1 1 0;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;
@@ -25476,6 +25476,40 @@ function render(){
 }
 
 /* ---- public ------------------------------------------------------------- */
+/* EVERY LONG DEEP-DIVE NOTE FOLDS TO ITS FIRST SENTENCE, on every sport, from one place.
+   There are fifty-one of these notes written across forty functions, and threading a fold
+   through each would be fifty-one edits and a fifty-second the next time someone adds a note.
+   So it is done to the page instead: whenever a .dd-note lands in the document, a long one is
+   wrapped so its first sentence shows with a "why" beside it and the rest sits behind the tap.
+   A note that is already a line long is left alone, and so is one whose first sentence IS the
+   note. The full text is moved, never copied or cut - the element inside is the original. */
+var DD_FOLD_MIN = 150;
+function ddFold(el){
+  if (!el || el.getAttribute('data-fold')) return;
+  el.setAttribute('data-fold', '1');
+  if (el.closest && el.closest('.nb-why')) return;
+  var plain = (el.textContent || '').replace(/\s+/g, ' ').trim();
+  if (plain.length < DD_FOLD_MIN) return;
+  var cut = plain.search(/[.!?](\s|$)/);
+  if (cut < 20 || cut > 160 || cut + 1 >= plain.length - 30) return;
+  var d = document.createElement('details'), sm = document.createElement('summary'),
+      u = document.createElement('u');
+  d.className = 'nb-why';
+  sm.textContent = plain.slice(0, cut + 1);
+  u.textContent = 'why';
+  sm.appendChild(u); d.appendChild(sm);
+  el.parentNode.insertBefore(d, el);
+  d.appendChild(el);
+}
+function ddFoldAll(root){
+  var list = (root || document).querySelectorAll ? (root || document).querySelectorAll('.dd-note:not([data-fold])') : [];
+  for (var i = 0; i < list.length; i++) ddFold(list[i]);
+}
+if (typeof MutationObserver !== 'undefined' && document.body){
+  new MutationObserver(function(){ ddFoldAll(document); })
+    .observe(document.body, { childList:true, subtree:true });
+  ddFoldAll(document);
+}
 window.LAB = {
   crewSport: function(k){
     state.view.crewSport = k;
