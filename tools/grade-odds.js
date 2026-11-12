@@ -25,6 +25,59 @@ const SPORTS = [['afl','AFL'], ['nfl','nfl'], ['epl','EPL'], ['mlb','mlb'], ['nb
                 ['nhl','nhl'], ['nba','nba']];
 const nt = s => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
 const argEV = (() => { const i = process.argv.indexOf('--min-ev'); return i > 0 ? +process.argv[i+1] / 100 : 0.03; })();
+/* --rule <file>: grade a CANDIDATE RULE instead of the model's own EV picks.
+ *
+ * Every new idea for a tile starts as "this looks like it should win". The only honest way to
+ * find out is to run it over prices that were really on the board, and before this the tool
+ * could only grade what the model already liked - so a new idea had to be shipped to be
+ * measured, which is how a tile ends up on the ledger at -65%.
+ *
+ * A rule file exports { name, markets?, pick(ctx) } and returns 'over', 'under' or nothing:
+ *
+ *     module.exports = {
+ *       name: 'rebounds when a rival sits',
+ *       markets: ['rebounds'],
+ *       pick: ctx => ctx.absent.some(n => ctx.rivalReb(n) >= 5) ? 'over' : null
+ *     };
+ *
+ * ctx carries: sport, player, market, line, over, under, side, opp, team, day,
+ * prior (his games before this one, newest last), absent (team-mates who did not play),
+ * data(file) to read that sport's data/<file>.json, and prob/evRaw/evCap from the model so a
+ * rule can combine with it rather than replace it. The rule is applied INSTEAD of the EV gate,
+ * so its picks are whatever it says and nothing else. */
+const argRule = (() => {
+  const i = process.argv.indexOf('--rule');
+  if (i < 0) return null;
+  const f = process.argv[i + 1];
+  const p = path.isAbsolute(f) ? f : path.resolve(ROOT, f);
+  const m = require(p);
+  if (!m || typeof m.pick !== 'function') throw new Error('rule file must export pick()');
+  return m;
+})();
+const argSport = (() => { const i = process.argv.indexOf('--sport'); return i > 0 ? process.argv[i+1].toLowerCase() : null; })();
+/* --main: only the line a book actually hangs its market on.
+ *
+ * A snapshot stores the whole ALTERNATE ladder - one man's points can appear at twenty rungs
+ * from 4.5 to 49.5, priced from $1.01 to $41. Grading a rule across all of them does not measure
+ * the rule, it measures the ladder: "over rebounds when a rival sits" came back at -69% here
+ * purely because 43 of its 90 picks were $6-plus rungs that were never going to land.
+ *
+ * A main line is the one with both sides priced like a two-way market. Everything outside that
+ * is a different bet with a different question attached. */
+const argMain = process.argv.indexOf('--main') > 0;
+const MAIN_LO = 1.55, MAIN_HI = 2.45;
+const isMainLine = row => !!(row && row.over != null && row.under != null
+  && +row.over >= MAIN_LO && +row.over <= MAIN_HI
+  && +row.under >= MAIN_LO && +row.under <= MAIN_HI);
+const dataCache = {};
+function dataOf(dir, file){
+  const k = dir + '/' + file;
+  if (!(k in dataCache)){
+    try { dataCache[k] = JSON.parse(fs.readFileSync(`${ROOT}/${dir}/data/${file}.json`, 'utf8')); }
+    catch (e) { dataCache[k] = null; }
+  }
+  return dataCache[k];
+}
 const COVER = { epl: 'passes' };
 
 function statOf(key, row, mkt){
@@ -58,6 +111,30 @@ const dayOf = r => {
   return `${r.Year}-${String(rd ? rd[0] : 0).padStart(3, '0')}`;
 };
 
+/* Team-mates who did not take the floor in the game a price settled on. A rule asks for this
+   constantly - it is the whole family of "X is out tonight" ideas - and working it out from the
+   gamelogs is the only way available after the fact. Two caveats a rule author should know and
+   the write-up should repeat: it includes late scratches a bettor could not have known about,
+   and it cannot see a man who was always going to rest. */
+const absentCache = new Map();
+function absentFor(res, logs){
+  const mid = String(res.MatchId != null ? res.MatchId : (res.gamePk != null ? res.gamePk : ''));
+  const team = res.Team || res.team;
+  if (!mid || !team) return [];
+  const k = mid + '|' + team;
+  if (absentCache.has(k)) return absentCache.get(k);
+  const playedIn = new Set(), squad = new Set();
+  logs.forEach(r => {
+    if ((r.Team || r.team) !== team) return;
+    const n = r.Player || r.player; if (!n) return;
+    squad.add(n);
+    const mi = String(r.MatchId != null ? r.MatchId : (r.gamePk != null ? r.gamePk : ''));
+    if (mi === mid && (+r.minutes > 0 || +r.min > 0 || +r.toiMin > 0)) playedIn.add(n);
+  });
+  const out = [...squad].filter(n => !playedIn.has(n));
+  absentCache.set(k, out);
+  return out;
+}
 function gradeSport(key, dir){
   const dirHist = `${ROOT}/${dir}/odds-history`;
   if (!fs.existsSync(dirHist)) return console.log(`${key.toUpperCase()}: no snapshots yet`);
@@ -191,6 +268,7 @@ function gradeSport(key, dir){
     (snap.odds || []).forEach(row => {
       snapRows++;
       if (!markets.has(row.market)) return;
+      if (argMain && !isMainLine(row)) return;
       const p = byName[row.player], res = settled[row.player];
       if (!p || !res) return;
       const actual = statOf(key, res, row.market);
@@ -219,8 +297,23 @@ function gradeSport(key, dir){
         // signals SHOW is the capped number - the raw model is only what they start from.
         const pCap = capProb(row.player, row.market, row.line, side, prob);
         const evCap = pCap * (price - 1) - (1 - pCap);
-        if (ev < argEV && evCap < argEV) return;
-        if (prob > Math.min(0.97, (1/price) * 4) && pCap > Math.min(0.97, (1/price) * 4)) return;
+        if (argRule){
+          /* A rule replaces the EV gate entirely. It is asked once per side and takes the side
+             it names, so a rule that says 'under' is never also graded as an over. */
+          if (argRule.markets && argRule.markets.indexOf(row.market) < 0) return;
+          let want = null;
+          try {
+            want = argRule.pick({ sport:key, dir, player:row.player, market:row.market,
+                                  line:row.line, over:row.over, under:row.under, side,
+                                  price:+price, opp, team:res.Team || res.team, day:file.slice(0, 10),
+                                  prior:(prior[row.player] || []), absent:absentFor(res, logs),
+                                  data:f => dataOf(dir, f), prob, evRaw:ev, evCap });
+          } catch (e) { return; }
+          if (want !== side) return;
+        } else {
+          if (ev < argEV && evCap < argEV) return;
+          if (prob > Math.min(0.97, (1/price) * 4) && pCap > Math.min(0.97, (1/price) * 4)) return;
+        }
         const won = side === 'over' ? actual > row.line : actual <= row.line;
         picks.push({ day:file.replace('.json.gz', ''), game:target[row.player], key, player:row.player,
                      market:row.market, line:row.line, side,
@@ -235,14 +328,51 @@ function gradeSport(key, dir){
     console.log(`  no gradable picks yet` + (ungraded ? ` (${ungraded} prices captured for games not yet played)` : ''));
     return;
   }
+  /* AN ERROR BAR, CLUSTERED BY SLATE.
+     A bare ROI invites the reader to treat it as the answer, and on a few hundred picks it is
+     mostly noise - a band here showed +29% on 36 bets and a 90% interval of -3% to +56%.
+     Resampling PICKS would report an interval several times too narrow, because picks move
+     together: twelve legs off one blowout are nearer one observation than twelve.
+     So the unit resampled is the fixture key each price settled on, which is the DAY'S SLATE
+     for the sports whose gamelogs carry dates and the ROUND for NFL and AFL, which do not.
+     That is coarser than a single game and deliberately so - it is the conservative direction,
+     and it is why a 20,382-pick NFL sample honestly reports as five clusters and gets no
+     interval at all rather than a flatteringly tight one. */
+  const roiOf = rows => rows.reduce((a, r) => a + (r.won ? r.price - 1 : -1), 0) / rows.length * 100;
+  const ciOf = (rows, draws) => {
+    const byGame = new Map();
+    rows.forEach(r => {
+      const k = r.key + '|' + r.game;
+      if (!byGame.has(k)) byGame.set(k, []);
+      byGame.get(k).push(r);
+    });
+    const keys = [...byGame.keys()];
+    if (keys.length < 8) return null;          // too few slates to say anything
+    draws = draws || 1200;
+    let seed = 20260101;                        // fixed, so two runs of the same data agree
+    const rnd = () => (seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff;
+    const out = [];
+    for (let d = 0; d < draws; d++){
+      const s = [];
+      for (let i = 0; i < keys.length; i++) s.push(...byGame.get(keys[(rnd() * keys.length) | 0]));
+      if (s.length) out.push(roiOf(s));
+    }
+    out.sort((a, b) => a - b);
+    return [out[Math.floor(0.05 * out.length)], out[Math.floor(0.95 * out.length)]];
+  };
   const report = (label, rows, evKey) => {
     if (!rows.length) return;
     evKey = evKey || 'ev';
     const n = rows.length, wins = rows.filter(r => r.won).length;
     const ret = rows.reduce((a, r) => a + (r.won ? r.price - 1 : -1), 0);
     const exp = rows.reduce((a, r) => a + r[evKey], 0);
+    const ci = ciOf(rows);
+    const slates = new Set(rows.map(r => r.key + '|' + r.game)).size;
     console.log(`  ${label.padEnd(22)} ${String(n).padStart(5)} picks  ${(wins/n*100).toFixed(1).padStart(5)}% strike  `
-      + `${(ret/n*100 >= 0 ? '+' : '')}${(ret/n*100).toFixed(1).padStart(6)}% ROI   (model expected ${(exp/n*100 >= 0 ? '+' : '')}${(exp/n*100).toFixed(1)}%)`);
+      + `${(ret/n*100 >= 0 ? '+' : '')}${(ret/n*100).toFixed(1).padStart(6)}% ROI   (model expected ${(exp/n*100 >= 0 ? '+' : '')}${(exp/n*100).toFixed(1)}%)`
+      + (ci ? `   90% ${ci[0] >= 0 ? '+' : ''}${ci[0].toFixed(1)}..${ci[1] >= 0 ? '+' : ''}${ci[1].toFixed(1)}`
+              + `${ci[1] < 0 ? ' LOSES' : ci[0] > 0 ? ' CLEARS' : ''}`
+            : `   (only ${slates} slate${slates === 1 ? '' : 's'} - no interval)`));
   };
   const rawPicks = picks.filter(r => r.ev >= argEV), capPicks = picks.filter(r => r.evCap >= argEV);
   console.log('  RAW MODEL (what the signals start from):');
@@ -270,6 +400,21 @@ function gradeSport(key, dir){
   }
 }
 
-SPORTS.forEach(([k, d]) => { try { gradeSport(k, d); } catch (e) { console.log(`${k}: ${e.message}`); } });
-console.log(`\nEdge threshold ${(argEV*100).toFixed(0)}% \u00b7 settled at the stored price \u00b7 `
-  + `no look-ahead: each day is priced by a model that has only seen earlier games.`);
+/* Guarded so the file can be required by a test without grading seven sports as a side effect.
+   Running it directly is unchanged. */
+if (require.main === module){
+SPORTS.filter(([k]) => !argSport || k === argSport)
+  .forEach(([k, d]) => { try { gradeSport(k, d); } catch (e) { console.log(`${k}: ${e.message}`); } });
+console.log(argRule
+  ? `\nRule "${argRule.name || 'unnamed'}"${argMain ? ' \u00b7 main lines only' : ''}`
+    + ` \u00b7 settled at the stored price \u00b7 no look-ahead.`
+    + `\nIntervals are 90%, resampled by SLATE (the day or round a price settled on, not the `
+    + `pick), so a band whose interval spans zero has not been shown to do anything \u2014 `
+    + `however good its ROI looks.`
+  : `\nEdge threshold ${(argEV*100).toFixed(0)}%${argMain ? ' \u00b7 main lines only' : ''}`
+    + ` \u00b7 settled at the stored price \u00b7 `
+    + `no look-ahead: each day is priced by a model that has only seen earlier games.`
+    + `\nIntervals are 90%, resampled by SLATE (the day or round a price settled on) rather `
+    + `than by pick, because picks on one slate move together.`);
+}
+module.exports = { isMainLine, absentFor, MAIN_LO, MAIN_HI, SPORTS };

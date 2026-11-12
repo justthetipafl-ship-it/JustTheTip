@@ -340,8 +340,17 @@ function lgArr(j, key){
   return (j && typeof j === 'object') ? Object.keys(j).map(function(k){ return j[k]; }) : [];
 }
 function lgFetch(url){
-  return fetch(url, { cache:'no-store' }).then(function(r){ return r.ok ? r.json() : null; })
-    .catch(function(){ return null; });
+  /* Same empty-body trap as api(), with the failure hidden rather than shown: an empty 200
+     threw inside r.json(), the catch below swallowed it, and the sport's games simply never
+     appeared with nothing anywhere to say why. Parsing the text keeps the "missing file means
+     null" contract without turning a readable response into a silent blank. */
+  return fetch(url, { cache:'no-store' }).then(function(r){
+    if (!r.ok) return null;
+    return r.text().then(function(t){
+      if (!t) return null;
+      try { return JSON.parse(t); } catch(e){ return null; }
+    });
+  }).catch(function(){ return null; });
 }
 // config.js sets window.SPORT_CONFIG; loading it as a script is how the site itself reads it, so
 // there is no second parser here to drift from the real one.
@@ -585,10 +594,24 @@ function rowKeyId(str){
 
 function api(path, opts){
   opts = opts || {};
+  /* NO CACHE, EVER. GitHub answers a repeat GET with 304 Not Modified and an EMPTY BODY once
+     the browser has an ETag for it, and this file is read before every single save - so the
+     second save of a session is the one that breaks. lgFetch above already asks for no-store;
+     this never did, which is the whole difference between the two. */
+  if (!opts.cache) opts.cache = 'no-store';
   opts.headers = Object.assign({ 'Authorization': 'Bearer ' + $('tok').value.trim(),
     'Accept': 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28' }, opts.headers || {});
   return fetch('https://api.github.com/repos/' + REPO + path, opts).then(function(r){
-    return r.json().then(function(j){ return { ok:r.ok, status:r.status, body:j }; });
+    /* READ IT AS TEXT AND PARSE IT HERE. r.json() on an empty body rejects the whole chain
+       with "Failed to execute 'json' on 'Response': Unexpected end of JSON input" - a message
+       that names neither the file nor the status, so there is nothing to act on. Any empty or
+       unparseable response now comes back as body:null with the status intact, and the caller
+       decides what that means. */
+    return r.text().then(function(t){
+      var j = null;
+      if (t){ try { j = JSON.parse(t); } catch(e){ j = null; } }
+      return { ok:r.ok, status:r.status, body:j };
+    });
   });
 }
 // UTF-8 safe base64 both ways: bet text can carry accents and emoji.
@@ -621,6 +644,13 @@ $('save').onclick = function(){
       existing = Array.isArray(parsed) ? parsed : ((parsed && parsed.bets) || []);
       if (!Array.isArray(existing)) existing = [];
       fileUnit = (parsed && !Array.isArray(parsed) && +parsed.unitSize > 0) ? +parsed.unitSize : null;
+    } else if (res.ok && !res.body){
+      /* A 200 means the file IS there; an unreadable one means we do not have its sha. Writing
+         without the sha would ask GitHub to CREATE a file that already exists - so the save
+         fails anyway, but only after the merge step has thrown away what was in it. Stop here
+         and say so, rather than risking the season's history on a blank response. */
+      throw new Error('Read ' + FILE + ' but the response was empty \u2014 nothing saved. '
+        + 'Hit Save again; if it keeps happening, check the token has repo contents access.');
     } else if (res.status !== 404 && res.status !== 200){
       throw new Error('Could not read the file: ' + res.status + ' ' + ((res.body && res.body.message) || ''));
     }
@@ -715,7 +745,12 @@ drawBatch(); calc();
    the page actually stored rather than a re-derivation of it. Read-only, and handy from the phone's
    console on the night something looks wrong. */
 window.JTT_ADMIN = { legs: function(){ return lgLegs; }, batch: function(){ return batch; },
-                     games: function(){ return $('lgGame')._games || []; }, matchId: lgMatchId };
+                     games: function(){ return $('lgGame')._games || []; }, matchId: lgMatchId,
+  /* The network layer, so the one screen that WRITES can be tested. It was not reachable at
+     all before - the page is a single IIFE - which is how an unguarded r.json() sat here
+     unnoticed. Adds no reach a script on this page did not already have: api() reads the same
+     token field the rest of the file does. */
+  api: api, setBatch: function(b){ batch = b; } };
 })();
 </script>
 </body></html>
