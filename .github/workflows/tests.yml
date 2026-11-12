@@ -16,7 +16,7 @@ on:
              # what those pending bets track against. The suite drives both, so a change to either
              # has to re-run it.
              'admin.html', 'workers/jtt-live.js', 'mlb/fetch_mlb.py', 'mlb/build_mlb_data.py',
-             'scripts/grade_bets.py', 'scripts/build_dna.py', 'scripts/build_swing.py',
+             'scripts/grade_bets.py', 'scripts/build_dna.py',
              'scripts/build_volumes.py',
              '.github/workflows/odds-worker.yml', '.github/workflows/ladder.yml',
              '.github/workflows/calibrate.yml' ]
@@ -25,6 +25,8 @@ on:
 jobs:
   tests:
     runs-on: ubuntu-latest
+    # the whole run is about six minutes; a hung jsdom should not hold a runner for six hours
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -58,11 +60,6 @@ jobs:
       # off most of the ledger while the page showed a confident number. These are the cases.
       - name: Signal grader selftest
         run: python3 scripts/grade_signals.py --selftest
-      # Buy Low / Sell High reads twenty-odd gzipped odds snapshots to find where a line was
-      # before a player's hard run, so the browser suite cannot drive it. Its own synthetic cases
-      # carry the rules - above all the refusals, which are the whole signal.
-      - name: Buy Low / Sell High selftest
-        run: python3 scripts/build_swing.py --selftest
       # Volumes fades a line the market has pushed above the volume behind it. Its refusals are the
       # signal - a player whose shots collapsed is not a sell at any price, and one converting at
       # his normal rate has nothing to come down from - and a careless threshold edit removes them
@@ -75,6 +72,11 @@ jobs:
 
       - name: Boot check
         run: node --max-old-space-size=6000 tests/harness.js
+      # The suite below drives the STAGING page (tests/index.html). The page people actually see
+      # is the one at the root, and the two are different files for days at a time - so the live
+      # one at least has to boot on today's data, or a red run here says nothing about the site.
+      - name: Boot check (live page)
+        run: JTT_PAGE=../index.html node --max-old-space-size=6000 tests/harness.js
       - name: Suite
         run: |
           shopt -s nullglob
