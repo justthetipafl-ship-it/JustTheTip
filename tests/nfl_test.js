@@ -39,12 +39,21 @@ const { boot, ok, done } = require('./harness');
 
   // --- the fixture page ------------------------------------------------------------------------
   const html = t.app().innerHTML;
-  ok('the fixture shows who they look for first', /Who they look for first/.test(html));
+  /* First Read used to be a band on the fixture page. It is a pane on the Players card now, so
+     the page only draws it once that pane is chosen - ask the card for the pane directly. */
+  const fg = t.LAB.state.view.focus && t.LAB.state.view.focus.g;
+  const pane = fg ? t.LAB.cardPaneProbe('player', 'nfl', fg, 'firstread') : '';
+  ok('the Players card carries who they look for first', /first reads/.test(pane));
+  t.LAB.cardSrc('player', 'firstread');
+  await t.wait(300);
+  ok('and choosing that pane puts it on the page', /first reads/.test(t.app().innerHTML));
   ok('FTN is credited where the data is shown', /FTN Data via nflverse/.test(html));
 
   // --- folded sections -------------------------------------------------------------------------
-  const folds = t.app().querySelectorAll('details.fold');
-  ok('reference sections are folded', folds.length >= 4, '(' + folds.length + ' sections)');
+  /* The reference sections were separate folds; they are cards now (match, teams, players,
+     scoring), each a <details> that holds several panes. */
+  const folds = t.app().querySelectorAll('details.bld-card');
+  ok('reference sections are folded into cards', folds.length >= 4, '(' + folds.length + ' cards)');
   const open = Array.from(folds).filter(d => d.hasAttribute('open')).length;
   ok('and they start closed', open < folds.length, '(' + open + ' of ' + folds.length + ' open)');
 

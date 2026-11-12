@@ -4,7 +4,8 @@ const { boot, ok, done } = require('./harness');
 
 (async () => {
   const t = await boot('nfl');
-  await t.focus(0);
+  await t.focus(0);          // opening a game is what loads the game logs the hit rates need
+  t.LAB.focus(null);         // a focused fixture replaces the whole page, so step back out of it
   t.LAB.tab('odds');
   await t.wait(1200);
 

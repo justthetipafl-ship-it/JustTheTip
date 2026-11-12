@@ -28,7 +28,28 @@ const DATA = ['meta.json', 'fixture.json', 'teams.json', 'players.json', 'odds.j
               // quarter checks are the clearest case: they could not have passed. A sport that
               // has no such file still 404s harmlessly here, exactly as goalies.json already did.
               'zones.json', 'quarters.json', 'special_teams.json', 'teams_form.json',
-              'odds_open.json', 'profiles.json', 'swing.json', 'volumes.json'];
+              'odds_open.json', 'profiles.json', 'volumes.json',
+              // dna.json drives the league strand table AND dna_test. It was never staged, so that
+              // test could only ever report "no DNA table" and skip every check it owns.
+              'dna.json',
+              // the shrinkage factors the shot matchup applies - without them the page falls back
+              // to its baked-in defaults and a test could not tell the difference
+              'zone_persistence.json',
+              // Two more declared in a sport's config.dataFiles and never staged here. A file in
+              // that list is one the page really loads, so leaving it out does not make a test
+              // fail loudly - it makes the feature quietly absent and the test green about a
+              // card that was never drawn. ground.json feeds NFL's Ground & Air; pickem.json the
+              // Dabble Pick'Em comparison, whose whole test is about which fixture a line lands
+              // on. A sport without either still 404s harmlessly, as goalies.json already does.
+              'ground.json', 'pickem.json',
+              // the on/off intervals behind the rotation chart; NBA only, 404s elsewhere
+              'stints.json',
+              // the passing networks behind Playmaking; NBA only, 404s elsewhere
+              'assists.json',
+              // and the glass behind Rebounding, likewise
+              'rebounds.json',
+              // and the shooting behind From Deep
+              'threes.json'];
 
 const remote = process.argv.includes('--remote');
 const want = process.argv.slice(2).filter(a => !a.startsWith('--'));
@@ -56,6 +77,23 @@ async function grab(rel, dest) {
     let got = 0;
     for (const f of FILES) if (await grab(dir + '/' + f, path.join(OUT, dir, f))) got++;
     for (const f of DATA) if (await grab(dir + '/data/' + f, path.join(OUT, dir, 'data', f))) got++;
+    /* EVERYTHING ELSE IN THE FOLDER. The list above is kept by hand and has been wrong five times:
+       each time a builder started writing a new file, the page loaded it, and this stager did
+       not - so the feature was quietly absent under test and the test was green, or red, about
+       a card that was never drawn. playtypes.json was the latest (the shot-profile picker found
+       nobody, and assists_test failed on a page that was fine). When the repo is on disk there
+       is no reason to guess: stage every top-level data file. The list still serves --remote,
+       where there is no folder to read. */
+    if (!remote) {
+      let names = [];
+      try { names = fs.readdirSync(path.join(REPO, dir, 'data')); } catch (e) {}
+      for (const f of names) {
+        if (!/\.(json|txt)$/.test(f)) continue;
+        const dest = path.join(OUT, dir, 'data', f);
+        if (fs.existsSync(dest) && DATA.indexOf(f) >= 0) continue;      // already staged above
+        if (await grab(dir + '/data/' + f, dest)) got++;
+      }
+    }
     // the per-season gamelog files the page actually loads
     try {
       const meta = JSON.parse(fs.readFileSync(path.join(OUT, dir, 'data', 'meta.json'), 'utf8'));

@@ -37,15 +37,23 @@ const { boot, ok, done } = require('./harness');
   if (q && q.players) {
     // Q1-Q4 must sum to a little UNDER the season average: overtime is excluded on purpose. A sum
     // ABOVE it means the denominator is wrong, which is exactly the bug the first version had.
-    const byName = {};
-    q.players.forEach(r => { byName[r.name] = (byName[r.name] || 0) + (r.points || 0); });
-    const players = (S.data.players || []).filter(p => p.games >= 40 && p.points > 15);
+    /* LIKE WITH LIKE. This used to compare the quarter sums against players.json, which is the
+       CURRENT season only, while quarters.json pools the seasons it names - so in November it
+       set 75 games of quarters against a dozen games of average and found nobody to check. The
+       average is taken here from the game logs of the same seasons the quarters were built on. */
+    const byName = {}, qGames = {};
+    q.players.forEach(r => { byName[r.name] = (byName[r.name] || 0) + (r.points || 0); qGames[r.name] = r.games; });
+    const seasons = (q.seasons || []).map(String);
+    const logs = (S.idx && S.idx.logsByName) || {};
     let over = 0, checked = 0;
-    players.forEach(p => {
-      const sum = byName[p.name];
-      if (sum == null) return;
+    Object.keys(byName).forEach(n => {
+      if ((qGames[n] || 0) < 40 || !logs[n]) return;
+      const rows = logs[n].filter(r => seasons.indexOf(String(r.Year || r.year)) >= 0);
+      if (rows.length < 40) return;
+      const avg = rows.reduce((a, r) => a + (+r.points || 0), 0) / rows.length;
+      if (avg <= 15) return;
       checked++;
-      if (sum > p.points * 1.02) over++;
+      if (byName[n] > avg * 1.02) over++;
     });
     ok('no player sums above his season average', over === 0 && checked > 20,
        '(' + checked + ' checked, ' + over + ' over)');
