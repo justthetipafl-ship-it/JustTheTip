@@ -24,9 +24,17 @@ name: JTT Odds Worker (all sports)
 # ~21k of sweeps, against a 200k plan. MLB only overlaps in Sep/Oct.
 #
 # Per-sport tuning lives in one place: the SPORTS table below. Columns:
-#   ID  output path  within(h)  every(min)
+#   ID  output path  within(h)  every(min)  early(h)  earlyEvery(min)
 # within  = how far before the next game the refresh starts
 # every   = minimum minutes between refresh pulls (cheap sports refresh faster)
+# early / earlyEvery = an optional SLOW tier further out: from `early` hours before the next game,
+#            pull at most once every `earlyEvery` minutes until the fast tier takes over. 0 0 = none.
+#
+# WHY THE NBA HAS AN EARLY TIER. Its slates tip around 10am AEST, so a five-hour window opens at
+# 5am - and the night before, when the next day's card is actually being read, the file still
+# held the slate that had just been played. 16 hours puts tomorrow's lines on the page from about
+# 6pm AEST, refreshed two-hourly overnight, and the fast tier takes over at 5am as before. About
+# five extra pulls a day.
 #
 # AFL still runs through its Cloudflare worker; add a row here when that moves across.
 
@@ -81,27 +89,40 @@ jobs:
           FORCE: ${{ github.event.inputs.force }}
         run: |
           set -u
-          # ID  path  within(h)  every(min)
-          SPORTS="NFL nfl/data/odds.json 6 20
-          EPL EPL/data/odds.json 6 20
-          NHL nhl/data/odds.json 5 15
-          NBA nba/data/odds.json 5 20
-          NBL nbl/data/odds.json 5 20
-          MLB mlb/data/odds.json 5 15"
+          # ID  path  within(h)  every(min)  early(h)  earlyEvery(min)
+          SPORTS="NFL nfl/data/odds.json 6 20 0 0
+          EPL EPL/data/odds.json 6 20 0 0
+          NHL nhl/data/odds.json 5 15 0 0
+          NBA nba/data/odds.json 5 20 16 120
+          NBL nbl/data/odds.json 5 20 0 0
+          MLB mlb/data/odds.json 5 15 0 0"
 
+          # WHICH SCHEDULE FIRED. This used to list the three sweep crons by their exact text, and
+          # when they were moved from minute 0 to minute 5 the list was not - so no scheduled run
+          # ever matched, every one fell through to "refresh", and the three daily full pulls
+          # silently stopped. Nothing failed; the early board just was not there. It now asks the
+          # one question that cannot go stale: the refresh cron is the only one that runs every
+          # hour, so any schedule with a fixed hour is a sweep, whatever minute it is moved to.
           MODE="refresh"
           case "$SCHEDULE" in
-            "0 20 * * *"|"0 2 * * *"|"0 8 * * *") MODE="sweep" ;;
+            *" * * * *") MODE="refresh" ;;
+            ?*)          MODE="sweep" ;;
           esac
           if [ -z "$SCHEDULE" ] && [ "${FORCE:-true}" = "true" ]; then MODE="sweep"; fi
           echo "mode: $MODE  (schedule='${SCHEDULE:-manual}')"
 
-          echo "$SPORTS" | while read -r ID PATH_ WITHIN EVERY; do
+          echo "$SPORTS" | while read -r ID PATH_ WITHIN EVERY EARLY EARLYEVERY; do
             [ -z "${ID:-}" ] && continue
             if [ -n "${ONLY:-}" ] && [ "$ONLY" != "$ID" ]; then continue; fi
             if [ "$MODE" = "sweep" ]; then
               python3 scripts/fetch_odds.py "$ID" "$PATH_" --force || echo "  ($ID sweep failed - continuing)"
             else
+              # the slow tier first: if it pulls, the file is fresh and the fast gate below skips;
+              # if it skips, the fast gate decides exactly as it always has
+              if [ "${EARLY:-0}" != "0" ]; then
+                python3 scripts/fetch_odds.py "$ID" "$PATH_" --within "$EARLY" --every "$EARLYEVERY" \
+                  || echo "  ($ID early refresh failed - continuing)"
+              fi
               python3 scripts/fetch_odds.py "$ID" "$PATH_" --within "$WITHIN" --every "$EVERY" \
                 || echo "  ($ID refresh failed - continuing)"
             fi
