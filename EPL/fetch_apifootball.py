@@ -18,6 +18,7 @@ Output (EPL/data/):
      lineups:  {fid: {home:{formation,startXI:[name],subs:[name],coach}, away:{...}}} }
 Referee + venue come free from the /fixtures list (already fetched). Lineups + corner stats cost two extra calls per fixture (/fixtures/lineups, /fixtures/statistics).
 """
+import html
 import json
 import os
 import time
@@ -253,10 +254,17 @@ def main():
                 tname = ((tb.get("team")) or {}).get("name")
                 is_home = (tname == home); opp = away if is_home else home
                 for pl in (tb.get("players") or []):
-                    name = ((pl.get("player")) or {}).get("name"); k = nmkey(name)
+                    # the feed sends "O&apos;Riley" - the entity, not the apostrophe - and nmkey()
+                    # then keeps the letters of it, so he was filed under "oaposriley"
+                    name = html.unescape(((pl.get("player")) or {}).get("name") or ""); k = nmkey(name)
                     if not k:
                         continue
-                    row = {"fixture_id": fid, "date": date, "opp": opp, "home": is_home}
+                    # THE FEED'S OWN ID GOES ON EVERY ROW. Rows are filed by name, and in September
+                    # 2026 the feed started abbreviating names ("M. Cash"), which split every
+                    # player in two (see _short_keys in build_epl.py). The id never changes; with
+                    # it on the row, the next change of spelling can be undone exactly.
+                    row = {"fixture_id": fid, "date": date, "opp": opp, "home": is_home,
+                           "pid": ((pl.get("player")) or {}).get("id")}
                     row.update(player_stat(pl.get("statistics")))
                     store["rows"].setdefault(k, []).append(row)
             done.add(fid); n += 1

@@ -191,6 +191,20 @@ def merge_row(p, f, a, dy):
         v = (f or {}).get(fk)
         return v if v is not None else (a or {}).get(ak)
 
+    # A BLANK IS A ZERO WHEN HE WAS ON THE PITCH. Until September 2026 API-Football sent null
+    # for a count of nothing: across every player with an hour or more in a match, not one row
+    # before that date holds a 0 for shots - only a number or a blank, 55 blanks to 45 numbers -
+    # and from the day the feed changed, the same share of rows holds a 0 instead. Passing the
+    # blank through meant a game with no shots was not a game at all, so every average and hit
+    # rate downstream was taken over only the games where he had at least one. Where the feed
+    # has a row for him AND minutes on it, a blank count is the zero it always meant. No row, or
+    # no minutes, stays unknown.
+    on_pitch = bool(a) and (a.get("min") or 0) > 0
+
+    def count(ak):
+        v = (a or {}).get(ak)
+        return 0 if (v is None and on_pitch) else v
+
     return {
         "Player": p.get("name"), "Team": team, "Opp": opp, "home": home,
         "Year": year_of(dy), "Date": dy, "date": dy, "MatchId": match_id(dy, team, opp),
@@ -205,9 +219,9 @@ def merge_row(p, f, a, dy):
         "yellowCard": yc, "redCard": rc, "cards": yc + rc,
         "xg": _num((f or {}).get("xG")), "xa": _num((f or {}).get("xA")),
         # API-Football-only fields
-        "shots": (a or {}).get("shots"), "shotsOn": (a or {}).get("sot"),
-        "keyPasses": (a or {}).get("key_passes"), "foulsCommitted": (a or {}).get("fouls"),
-        "foulsDrawn": (a or {}).get("fouls_drawn"), "passes": (a or {}).get("passes"),
+        "shots": count("shots"), "shotsOn": count("sot"),
+        "keyPasses": count("key_passes"), "foulsCommitted": count("fouls"),
+        "foulsDrawn": count("fouls_drawn"), "passes": count("passes"),
     }
 
 
@@ -240,10 +254,89 @@ def _best_api_match(fpl_nmkey, api_nmkeys):
     return best if best_sc >= 5 else None
 
 
-def build_gamelogs(fpl_players, fpl_logs, api):
+def _short_keys(fpl_players, api_rows, api_meta):
+    """Which FPL player each ABBREVIATED API-Football key belongs to: {fpl id: [api keys]}.
+
+    From 2026-09-12 API-Football's /fixtures/players began answering with "M. Cash" where it had
+    always said "Matty Cash" - not for everyone, and not even consistently for one player from one
+    fixture to the next. The fetcher files rows under the name it is given, so a player's season
+    split in two: the old key kept his games to mid-September and a new one, "m cash", took the
+    rest. The join below looked up the full name, found the old key, and stopped - so every shot,
+    foul, key pass and pass after that date was dropped for about nine players in ten, with
+    nothing failing. Coverage of those five stats fell from 18% of rows in August to 7% by
+    October, and the per-game averages built on them were quietly a slice of last season.
+
+    An initial and a surname is not an identity, so this is deliberately narrow. A short key is
+    only given to a player when
+
+      - the initial is his first name's,
+      - the rest of the key is a run of words inside his registered name (or is his FPL short
+        name), and
+      - the key's rows were played FOR HIS TEAM - worked out from the fixture, not assumed.
+
+    and when two players at one team both fit, neither gets it: a stat on the wrong player is
+    worse than a stat missing. Those are counted and printed, never guessed.
+    """
+    fixtures = (api_meta or {}).get("fixtures", {}) or {}
+
+    def teams_of(rows):
+        out = set()
+        for r in rows:
+            fx = fixtures.get(str(r.get("fixture_id"))) or {}
+            t = fx.get("home") if r.get("home") else fx.get("away")
+            if t:
+                out.add(_canon_team(t))
+        return out
+
+    short = {}
+    for k, rows in api_rows.items():
+        toks = k.split()
+        if len(toks) >= 2 and len(toks[0]) == 1:
+            # "M. O&apos;Riley" reached the key as "m oaposriley" - the entity, not the apostrophe
+            rest = " ".join(toks[1:])
+            short[k] = (toks[0], {rest, rest.replace("apos", "")}, teams_of(rows))
+
+    claims = {}                                    # api key -> [fpl id, ...]
+    for p in fpl_players.get("players", []):
+        ftoks = (p.get("nmkey") or "").split()
+        if not ftoks:
+            continue
+        team = _canon_team(p.get("team"))
+        web = " ".join("".join(c for c in (p.get("web_name") or "").lower()
+                               if c.isalnum() or c == " ").split())
+        spans = set()
+        for i in range(1, len(ftoks)):
+            for j in range(i + 1, len(ftoks) + 1):
+                spans.add(" ".join(ftoks[i:j]))
+        if web:
+            spans.add(web)
+        for k, (ini, rests, teams) in short.items():
+            if ini == ftoks[0][:1] and team in teams and (rests & spans):
+                claims.setdefault(k, []).append(str(p.get("id")))
+
+    out, clash = {}, 0
+    for k, ids in claims.items():
+        if len(ids) == 1:
+            out.setdefault(ids[0], []).append(k)
+        else:
+            clash += 1
+    print("  api-football short names: %d keys, %d joined to a player, %d left alone (two players fit)"
+          % (len(short), sum(len(v) for v in out.values()), clash))
+    return out
+
+
+def _fuller(a, b):
+    """Of two API rows for one player on one day, the one that says more."""
+    def n(r):
+        return sum(1 for v in (r or {}).values() if v is not None)
+    return a if n(a) >= n(b) else b
+
+
+def build_gamelogs(fpl_players, fpl_logs, api, api_meta=None):
     api_rows = (api or {}).get("rows", {})
     api_nmkeys = list(api_rows.keys())
     logs = (fpl_logs or {}).get("logs", {})
+    short = _short_keys(fpl_players, api_rows, api_meta) if api_rows else {}
     out = []
     for p in fpl_players.get("players", []):
         nmk, fid = p.get("nmkey"), str(p.get("id"))
@@ -255,8 +348,12 @@ def build_gamelogs(fpl_players, fpl_logs, api):
         for r in logs.get(fid, []):
             fpl_by_day[day(r.get("date"))] = r
         api_by_day = {}
-        for r in api_rows.get(nmk, []):
-            api_by_day[day(r.get("date"))] = r
+        # his full-name key, then every short-name key that is provably him. One player, one
+        # set of rows - whichever spelling the feed happened to use for that fixture.
+        for k in [nmk] + [x for x in short.get(fid, []) if x != nmk]:
+            for r in api_rows.get(k, []):
+                d = day(r.get("date"))
+                api_by_day[d] = _fuller(api_by_day[d], r) if d in api_by_day else r
         for dy in sorted(set(fpl_by_day) | set(api_by_day)):
             if not dy:
                 continue
@@ -679,7 +776,7 @@ def main():
     boot = fetch(FPL + "/bootstrap-static/")
     fixtures = fetch(FPL + "/fixtures/")
 
-    gamelogs = build_gamelogs(fpl_players, fpl_logs, api)
+    gamelogs = build_gamelogs(fpl_players, fpl_logs, api, meta)
     counts = {}
     for r in gamelogs:
         counts[r["Player"]] = counts.get(r["Player"], 0) + 1
