@@ -193,6 +193,15 @@ const wait = ms => new Promise(r => setTimeout(r, ms));
           try { spec = btn ? JSON.parse(btn.getAttribute('data-d')) : null; } catch (e) {}
           const name = ((row.querySelector('.gl-nm b, .stk-nm b, .elm-nm b, .h2h-sig-nm b') || {}).textContent || '').trim();
           if (!name) return;
+          /* A ROW WITH NO MARKET IS NOT A BET, AND THE LEDGER IS A LEDGER OF BETS. Some tiles
+             show a player without a single stat-and-line behind him - Double Trouble, Sack
+             Artists, First Quarter, Shot Matchup, Brick Wall - and their rows carry no market in
+             data-d. They were logged anyway, could never be settled against a game log, and were
+             written off as void once the game had gone: 568 of them, which is why the record
+             said EPL voided 56% of what it captured. Nothing was wrong with those games; there
+             was never anything to grade. They are not logged now. A tile that should be on the
+             record needs a market on its row, and then it will be. */
+          if (!spec || !spec.mkt) return;
           /* every row type names its price box differently, and they do not all put the price
              first. Elite Matchups, Bunnies and Bogey render "270+ $3.05 Sportsbet" - the LINE,
              then the price. The dollar sign used to be optional in this pattern, so those rows

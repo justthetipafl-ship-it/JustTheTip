@@ -244,6 +244,23 @@ def settle(bet, idx, by_match, cover):
     return ('win' if v > line else 'loss'), v, how
 
 
+def drop_unbettable(rows):
+    """Remove, in place, the rows that were never a bet. Returns how many went.
+
+    A row with no market has no stat to settle against and never will have - it is a player a
+    tile displayed, not a line anyone could take. The snapshot used to log them, and this grader
+    then voided every one of them for "the feed does not carry that stat": 568 rows across EPL,
+    NBA and NFL, 143 of the 183 EPL voids on their own. A void is supposed to mean a real bet that
+    did not get a run. Counting these as voids made the record look as though the grader was
+    losing games. The snapshot no longer writes them; this clears the ones already written.
+    """
+    keep = [b for b in rows if b.get('market')]
+    gone = len(rows) - len(keep)
+    if gone:
+        rows[:] = keep
+    return gone
+
+
 def grade(rows, root, regrade='none'):
     """Settle every open row in place. Returns (settled, how_counts, waiting_by_sport)."""
     if regrade == 'void':
@@ -455,6 +472,9 @@ def main():
         print('signal ledger is empty - nothing to grade')
         return 0
 
+    gone = drop_unbettable(rows)
+    if gone:
+        print('dropped %d row(s) with no market - never a bet, so never gradeable' % gone)
     fixed = repair_prices(rows) if a.repair_prices else 0
     if a.repair_prices:
         print('repaired %d row(s) whose price was the line' % fixed)
@@ -708,6 +728,15 @@ def selftest():
        repair_prices(rows) == 0 and rows[0]['price'] == 2.0, '(that box would have said 1.5)')
     ok('Volumes is covered: it shares the .elm-odds box with Elite Matchups',
        'volumes' in LINE_FIRST_TILES)
+
+    # a row that was never a bet is not a void - it is not on the ledger at all
+    rows = [bet(), bet(market=None, tile='Double Trouble', line=None, price=None, result='void'),
+            bet(market=None, tile='First Goal', line=0.5), bet(market='firstScorer', result='void')]
+    gone = drop_unbettable(rows)
+    ok('rows with no market are dropped, settled or not', gone == 2 and len(rows) == 2)
+    ok('and every row that names a market stays, whatever its verdict',
+       [b.get('market') for b in rows] == ['shots', 'firstScorer'])
+    ok('a ledger with nothing to drop is left alone', drop_unbettable(rows) == 0 and len(rows) == 2)
 
     print(('\nFAILED: ' + ', '.join(fails)) if fails else '\nall good')
     return 1 if fails else 0
