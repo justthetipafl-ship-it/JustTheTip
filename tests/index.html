@@ -1960,6 +1960,18 @@
   .ww-c.ww-up b{color:var(--accent);}
   .ww-c.ww-dn b{color:#f97316;}
   .ww-blk{padding:8px 0;}
+  .ww-blk>select{margin:2px 0 4px;max-width:100%;}
+  .ww-out img{width:16px;height:16px;vertical-align:-3px;}
+  /* a thin sample is still shown, but it does not get to look like a full one */
+  .wo-thin{opacity:.55;}
+  .wo-more{margin-top:4px;}
+  .wo-line{border-top:0;padding-top:2px;}
+  .wo-hint{font-family:var(--font-mono);font-size:10px;color:var(--text-3);margin:2px 0 4px;}
+  .wo-more>summary{cursor:pointer;font-family:var(--font-mono);font-size:10px;
+    color:var(--text-3);padding:5px 0;list-style:none;}
+  .wo-more>summary::-webkit-details-marker{display:none;}
+  .wo-more>summary::before{content:'+ ';}
+  .wo-more[open]>summary::before{content:'− ';}
   .ww-out{font-family:var(--font-display);font-size:12px;letter-spacing:.02em;
     color:var(--text);padding-bottom:4px;}
   .sim-sw{display:inline-flex;gap:0;margin:2px 0 6px;border:1px solid var(--border);
@@ -2821,6 +2833,12 @@ var TIER3 = { gamelogs:'data/gamelogs.json', dvp:'data/dvp.json', teams_form:'da
               assists:'data/assists.json',
               // The glass, built by nba/build_nba_rebounds.py from the gamelogs. NBA only.
               rebounds:'data/rebounds.json',
+              // On the floor with a team-mate and without him, built by nba/build_nba_without.py
+              // from the play-by-play. NBA only; the Without pane draws nothing when it is absent.
+              without:'data/without.json',
+              // What a points line is made of, built by nba/build_nba_scoring.py from the
+              // gamelogs. NBA only; the Scoring pane draws nothing when it is absent.
+              scoring:'data/scoring.json',
               // Threes, built by nba/build_nba_threes.py. NBA only.
               threes:'data/threes.json',
               profiles:'data/profiles.json',
@@ -10497,9 +10515,10 @@ var TEAM_SOURCES = [['web','Attack v Def'], ['dvp','DvP'], ['form','Last 5'], ['
                     ['pace','Pace'], ['sched','Rest']];
 var PLAYER_SOURCES = [['radar','Radar'], ['leaders','Leaders'], ['formal','Form Alerts'],
                       ['coverage','Coverage'], ['usage','Usage'], ['firstread','First Read'],
+                      ['without','Without'],
                       ['avail','Available'], ['goalie','In Goal'], ['all','Everyone']];
 var SCORE_SOURCES = [['profile','Player'], ['court','The Floor'], ['acts','How He Scores'],
-                    ['play','Playmaking'], ['glass','Rebounding'], ['deep','From Deep'],
+                    ['pts','Scoring'], ['play','Playmaking'], ['glass','Rebounding'], ['deep','From Deep'],
                     ['q1','Q1'], ['first','First Score'], ['rz','Red Zone']];
 var TEAM_NOW = null, PLAYER_NOW = null, SCORE_NOW = null;
 function cardPane(kind, key, g, src){
@@ -10530,6 +10549,7 @@ function cardPane(kind, key, g, src){
       if (src === 'coverage')  return coverageSection(key, g) || '';
       if (src === 'usage')     return usageSection(key, g) || '';
       if (src === 'firstread') return firstReadSection(key, g) || '';
+      if (src === 'without')   return nbaWithoutSection(key, g) || '';
       // the team sheet and who is missing answer one question, so they share a tab
       if (src === 'avail')     return (lineupSection(key, g) || '') + (availBody(key, g) || '');
       if (src === 'goalie')    return goalieSection(key, g) || '';
@@ -10540,6 +10560,7 @@ function cardPane(kind, key, g, src){
       if (src === 'court') return shotCourtSection(key, g) || '';
       if (src === 'q1')    return nbaQ1Section(key, g) || '';
       if (src === 'acts')  return nbaActionSection(key, g) || '';
+      if (src === 'pts')   return nbaScoreSection(key, g) || '';
       if (src === 'play')  return nbaPlaySection(key, g) || '';
       if (src === 'glass') return nbaGlassSection(key, g) || '';
       if (src === 'deep')  return nbaThreeSection(key, g) || '';
@@ -19732,6 +19753,396 @@ function nbaOutSection(key, g){
     + 'clear its own noise to appear here at all.</div>';
 }
 
+/* ===== ON THE FLOOR WITH HIM, AND WITHOUT ======================================================
+   From nba/data/without.json (nba/build_nba_without.py).
+
+   "When a team-mate sits" above answers this from the GAMES a player missed, which for most
+   stars is three or four a season. But a starter is on the bench for a third of every game he
+   plays, and those minutes are the same question asked hundreds of times: same team-mates, same
+   games, same opponents. The play-by-play knows who was on the floor for every shot; this is
+   each player's rate with the chosen team-mate out there, and with him off.
+
+   THREE RULES, because this table is very easy to over-read:
+
+   MINUTES ON EVERY ROW. They are the finding as often as the rate is. Twelve minutes without a
+   team-mate is one stint; a man who scored twice in it shows 30 points per 36. Rows with less
+   than WO_MIN_SIDE on either side are not thrown away - they go in a fold underneath, dimmed.
+
+   COLOUR ONLY WHEN THE GAP CLEARS ITS OWN NOISE. Each cell is two rates from two counts, so the
+   gap has a standard error that can be worked out from the counts themselves. A cell is only
+   tinted when the gap is twice that. Most cells are not, which is the honest picture: measured
+   across every pair in two seasons, the average team-mate sitting moves a player's per-minute
+   numbers by almost nothing.
+
+   NO VERDICT. It does not say who to back. It shows what happened in those minutes. */
+var WO_MIN_SIDE = 36 * 60;       // seconds on BOTH sides before a row is shown at full weight
+var WO_Z = 2;                    // a gap is tinted when it is this many standard errors wide
+/* How lumpy each count is next to a plain count of events. Rebounds, assists and attempts arrive
+   one at a time; points arrive in ones, twos and threes, so the same number of points is fewer
+   independent events and its rate is noisier by about this much. */
+var WO_COLS = [['usg', 'Usg', 1], ['pts', 'Pts', 2.2], ['reb', 'Reb', 1], ['ast', 'Ast', 1],
+               ['tpa', '3PA', 1]];
+function woFile(key){ var S = state.sports[key]; return (S && S.data && S.data.without) || null; }
+function woTeam(key, team){
+  var wf = woFile(key); if (!wf || !wf.teams) return null;
+  return wf.teams[abbrOf(key, team)] || wf.teams[team] || null;
+}
+/* One side of one pair -> the rates. `a` is the stat row in the file's own order. */
+function woRates(wf, sec, a){
+  var ix = function(k){ return wf.stats.indexOf(k); };
+  var get = function(k){ var i = ix(k); return i < 0 ? null : a[i]; };
+  var out = { n:{}, sec:sec };
+  /* Found by NAME in the file's own list, so a file built before a stat was added reads as that
+     column simply being absent, never as the wrong number in the right place. */
+  ['pts', 'reb', 'ast', 'tpa', 'fga', 'oreb', 'dreb', 'tpm'].forEach(function(k){
+    var v = get(k);
+    out.n[k] = v;
+    out[k] = (v != null && sec > 0) ? v * 2160 / sec : null;
+  });
+  var used = (get('fga') || 0) + 0.44 * (get('fta') || 0) + (get('tov') || 0), poss = get('poss') || 0;
+  out.usg = poss > 0 ? used / poss * 100 : null;
+  out.used = used; out.poss = poss;
+  return out;
+}
+/* How many standard errors apart the two sides are, for one column. */
+function woZ(col, w, o){
+  var k = col[0];
+  if (w[k] == null || o[k] == null) return 0;
+  if (k === 'usg'){
+    var n1 = w.poss, n2 = o.poss; if (!(n1 > 0 && n2 > 0)) return 0;
+    var p = (w.used + o.used) / (n1 + n2);
+    var se = Math.sqrt(p * (1 - p) * (1 / n1 + 1 / n2));
+    return se > 0 ? ((o.used / n2) - (w.used / n1)) / se : 0;
+  }
+  // a rate from a count: its variance is the count over the time squared, times the lumpiness
+  var v = col[2] * (w.n[k] / (w.sec * w.sec) + o.n[k] / (o.sec * o.sec)) * 2160 * 2160;
+  return v > 0 ? (o[k] - w[k]) / Math.sqrt(v) : 0;
+}
+/* Who the table is "without", for one team: the reader's choice, else the biggest-minutes
+   team-mate the injury feed lists for this game, else the biggest-minutes one. */
+function woMateFor(key, team){
+  var T = woTeam(key, team); if (!T) return null;
+  var ab = abbrOf(key, team);
+  var pick = ((state.view.woMate || {})[ab]);
+  if (pick && T.mates.indexOf(pick) >= 0) return { id:pick, why:'' };
+  var listed = {};
+  availFor(key, team).forEach(function(r){ listed[cmbNameKey(r.name)] = r; });
+  for (var i = 0; i < T.mates.length; i++){
+    var r = listed[cmbNameKey(T.names[T.mates[i]] || '')];
+    if (r) return { id:T.mates[i], why:r.raw || r.bucket || 'listed' };
+  }
+  return T.mates.length ? { id:T.mates[0], why:'' } : null;
+}
+function woRows(key, team, mateId){
+  var wf = woFile(key), T = woTeam(key, team); if (!wf || !T) return [];
+  var out = [];
+  Object.keys(T.pairs).forEach(function(pid){
+    var r = T.pairs[pid][mateId]; if (!r) return;
+    var w = woRates(wf, r[0], r[2]), o = woRates(wf, r[1], r[3]);
+    out.push({ id:pid, name:T.names[pid] || pid, mins:T.minutes[pid] || 0, w:w, o:o,
+               thin: Math.min(r[0], r[1]) < WO_MIN_SIDE });
+  });
+  out.sort(function(a, b){ return b.mins - a.mins; });
+  return out;
+}
+function woRow(r){
+  var cells = WO_COLS.map(function(c){
+    var a = r.w[c[0]], b = r.o[c[0]];
+    if (a == null || b == null) return '';
+    var z = r.thin ? 0 : woZ(c, r.w, r.o);
+    var cls = Math.abs(z) >= WO_Z ? (z > 0 ? ' ww-up' : ' ww-dn') : '';
+    return '<span class="ww-c' + cls + '"><i>' + c[1] + '</i>' + a.toFixed(1)
+      + ' → <b>' + b.toFixed(1) + '</b></span>';
+  }).join('');
+  return '<div class="ww-row' + (r.thin ? ' wo-thin' : '') + '"><div class="ww-hd"><b>' + esc(r.name) + '</b>'
+    + '<span>' + Math.round(r.w.sec / 60) + ' min with · ' + Math.round(r.o.sec / 60)
+    + ' without</span></div><div class="ww-cells">' + cells + '</div></div>';
+}
+function woSide(key, team){
+  var T = woTeam(key, team); if (!T || !T.mates.length) return '';
+  var m = woMateFor(key, team); if (!m) return '';
+  var ab = abbrOf(key, team);
+  var rows = woRows(key, team, m.id);
+  var full = rows.filter(function(r){ return !r.thin; }), thin = rows.filter(function(r){ return r.thin; });
+  var sel = '<select class="mb-fixsel gg-sel" onchange="LAB.woMate(\'' + esc(ab) + '\', this.value)">'
+    + T.mates.map(function(id){
+        return '<option value="' + esc(id) + '"' + (id === m.id ? ' selected' : '') + '>Without '
+          + esc(T.names[id] || id) + ' · ' + Math.round(T.minutes[id] || 0) + ' min played</option>';
+      }).join('') + '</select>';
+  var body = full.map(woRow).join('');
+  if (!full.length)
+    body = '<div class="dd-note">Nobody has ' + Math.round(WO_MIN_SIDE / 60)
+      + ' minutes both with and without him yet this season.</div>';
+  if (thin.length)
+    body += '<details class="wo-more"><summary>' + thin.length + ' more on a thinner sample</summary>'
+      + thin.map(woRow).join('') + '</details>';
+  return '<div class="ww-blk"><div class="ww-out">' + teamLogo(key, team) + ' ' + esc(ab)
+    + (m.why ? ' · ' + esc(T.names[m.id] || '') + ' is listed ' + esc(String(m.why).toLowerCase()) : '')
+    + '</div>' + sel + body + '</div>';
+}
+function nbaWithoutSection(key, g){
+  if (key !== 'nba' || !g || !g.home || !g.away) return '';
+  var wf = woFile(key); if (!wf || !wf.teams) return '';
+  var a = woSide(key, g.away), h = woSide(key, g.home);
+  if (!a && !h) return '';
+  return paneBand('On the floor with him, and without') + a + h
+    + '<div class="deg-note">Each player’s rate per 36 minutes with the chosen team-mate on the '
+    + 'floor, then with him off it — bench stints and games he missed alike — over '
+    + (wf.games || 0) + ' games this season. Usg is his share of the team’s shots, free throws and '
+    + 'turnovers while he is out there. A number is tinted only when the gap is wider than its own '
+    + 'noise; most are not, and the minutes say how far to trust a row. Nothing is adjusted for the '
+    + 'opponent or for who else was on the floor. It is what happened in those minutes, not a '
+    + 'forecast of the next ones.</div>';
+}
+
+/* ONE PLAYER, ONE TEAM-MATE, ON EACH OF THE FOUR CARDS. The Without tab shows a whole team
+   against one absent player; a reader on the Rebounding card wants the other cut - THIS player,
+   THIS stat. Same file, same rates, same rule for the tint and for a thin sample. The team-mate
+   is the one the Without tab is set to (a listed absence first, else the biggest minutes), and
+   when that is the player himself it is the next one down. */
+var WO_COL = { usg:['usg', 'Usg', 1], pts:['pts', 'Pts', 2.2], reb:['reb', 'Reb', 1],
+               ast:['ast', 'Ast', 1], tpa:['tpa', '3PA', 1], tpm:['tpm', '3PM', 1],
+               fga:['fga', 'Shots', 1], oreb:['oreb', 'Off reb', 1], dreb:['dreb', 'Def reb', 1] };
+function nbaWoLine(key, me, cols){
+  var wf = woFile(key), T = me && woTeam(key, me.team);
+  if (!wf || !T) return '';
+  var myId = null, mk = cmbNameKey(me.name);
+  Object.keys(T.names).forEach(function(id){ if (cmbNameKey(T.names[id]) === mk) myId = id; });
+  if (!myId || !T.pairs[myId]) return '';
+  var m = woMateFor(key, me.team); if (!m) return '';
+  var mate = m.id, why = m.why;
+  if (mate === myId || !T.pairs[myId][mate]){
+    mate = null; why = '';
+    for (var i = 0; i < T.mates.length; i++)
+      if (T.mates[i] !== myId && T.pairs[myId][T.mates[i]]){ mate = T.mates[i]; break; }
+  }
+  if (!mate) return '';
+  var r = T.pairs[myId][mate];
+  var w = woRates(wf, r[0], r[2]), o = woRates(wf, r[1], r[3]);
+  var thin = Math.min(r[0], r[1]) < WO_MIN_SIDE;
+  var cells = cols.map(function(k){
+    var c = WO_COL[k]; if (!c || w[k] == null || o[k] == null) return '';
+    var z = thin ? 0 : woZ(c, w, o);
+    var cls = Math.abs(z) >= WO_Z ? (z > 0 ? ' ww-up' : ' ww-dn') : '';
+    return '<span class="ww-c' + cls + '"><i>' + c[1] + '</i>' + w[k].toFixed(1)
+      + ' → <b>' + o[k].toFixed(1) + '</b></span>';
+  }).join('');
+  if (!cells) return '';
+  return '<div class="pa-sub">With ' + esc(T.names[mate] || '') + ' off the floor'
+    + (why ? ' · listed ' + esc(String(why).toLowerCase()) : '') + '</div>'
+    + '<div class="ww-row wo-line' + (thin ? ' wo-thin' : '') + '"><div class="ww-hd"><b>Per 36 minutes, with him → without</b>'
+    + '<span>' + Math.round(r[0] / 60) + ' min with · ' + Math.round(r[1] / 60) + ' without</span></div>'
+    + '<div class="ww-cells">' + cells + '</div></div>'
+    + '<div class="wo-hint">' + (thin ? 'A thin sample — under ' + Math.round(WO_MIN_SIDE / 60)
+        + ' minutes on one side. ' : '')
+    + 'Tinted only when the gap is wider than its own noise. Any other team-mate: Players card, Without tab.</div>';
+}
+
+/* ===== WHAT A POINTS LINE IS MADE OF ============================================================
+   From nba/data/scoring.json (nba/build_nba_scoring.py).
+
+   Playmaking, Rebounding and From Deep each take one line apart. Points - the most-bet line there
+   is - had nothing: the shot actions and the floor say HOW he scores, and neither says what the
+   line is made of or which part of it to trust.
+
+   A points line is volume times efficiency, and the two do not behave alike. Every figure the
+   notes quote is measured by the build on the window it ran over - nothing here is a constant:
+
+     - shots and free throws carry from one half of a season to the next about as well as
+       anything on the site; true shooting carries roughly half as well;
+     - a hot scoring week is mostly extra minutes, and what is left per minute is shot VOLUME;
+     - a hot SHOOTING week says nothing about the next game;
+     - the opponent is real and small, and is read through what they allow, not who they are.
+
+   The card is laid out in that order, the same order the other three use. */
+var NB_SCORE_LINES = [
+  [/first half-season against his second/, 'Shots and free throws carry over well. Shooting efficiency carries about half as well.'],
+  [/A hot scoring week/, 'A hot scoring run is mostly extra minutes. What is left is more shots, not better shooting.'],
+  [/softest fifth of defences/, 'The opponent is worth about a point either way. Minutes matter more.']
+];
+function scFile(key){
+  var S = state.sports[key];
+  return (key === 'nba' && S && S.data && S.data.scoring) || null;
+}
+function scPlayer(key, name){
+  var sf = scFile(key); if (!sf || !sf.players) return null;
+  var S = state.sports[key];
+  if (!S.idx.scIdx){
+    var ix = {};
+    sf.players.forEach(function(r){ if (r && r.name) ix[cmbNameKey(r.name)] = r; });
+    S.idx.scIdx = ix;
+  }
+  return S.idx.scIdx[cmbNameKey(name)] || null;
+}
+function scCandidates(key, g){
+  var out = [];
+  [[g.away, g.home], [g.home, g.away]].forEach(function(pair){
+    playersOnTeam(key, pair[0]).forEach(function(p){
+      if (!isPlayingP(key, p.name, p.team)) return;
+      var r = scPlayer(key, p.name);
+      if (r) out.push({ name:p.name, team:pair[0], opp:pair[1], rec:r,
+                        priced:hasAnyOddsFor(key, p.name) });
+    });
+  });
+  out.sort(function(a, b){ return b.rec.pts - a.rec.pts; });
+  return out;
+}
+/* Shares state.view.ptName with the other tabs on this card, so the player stays put as the
+   reader moves between Scoring, Playmaking, Rebounding and From Deep. */
+function scPick(key, g){
+  var cands = scCandidates(key, g);
+  if (!cands.length) return null;
+  var want = state.view.ptName;
+  for (var i = 0; i < cands.length; i++) if (cands[i].name === want) return cands[i];
+  return cands[0];
+}
+function scSrcRow(label, share, lgShare, note){
+  var d = (share != null && lgShare != null) ? (share - lgShare) * 100 : null;
+  return '<div class="pa-row"><div class="pa-lab">' + esc(label) + '</div>'
+    + '<div class="pa-bar"><i style="width:' + Math.round((share || 0) * 100) + '%"></i></div>'
+    /* NEUTRAL, not up/dn: getting more of his points at the line is a description of a
+       player, not a point in his favour */
+    + '<div class="pa-n"><b>' + Math.round((share || 0) * 100) + '%</b>of his points'
+    + (d != null ? '<i>' + signedOne(d) + ' v league</i>' : '') + '</div>'
+    + '<div class="pa-st">' + (note ? '<span class="pa-in">' + esc(note) + '</span>' : '') + '</div></div>';
+}
+function scRank(rank, of_, softTxt, toughTxt){
+  var soft = rank <= 10, tough = rank > of_ - 10;
+  return '<span class="pt-rank ' + (soft ? 'soft' : tough ? 'tough' : 'mid') + '">'
+    + ordinalish(rank) + ' of ' + of_ + '<i>' + (soft ? softTxt : tough ? toughTxt : 'middle') + '</i></span>';
+}
+function nbaScoreSection(key, g){
+  if (key !== 'nba' || !g || !g.home || !g.away) return '';
+  var sf = scFile(key); if (!sf || !sf.players) return '';
+  var cands = scCandidates(key, g);
+  var me = scPick(key, g);
+  if (!me) return '';
+  var rec = me.rec, lg = sf.league || {}, stab = lg.stability || {}, rc = lg.recent || {},
+      hs = lg.hotShooting || {}, op = lg.opp || {};
+  var chips = cands.length < 2 ? '' :
+    '<select class="mb-fixsel gg-sel" onchange="LAB.ptName(this.value)">'
+    + cands.map(function(c){
+        return '<option value="' + esc(c.name) + '"' + (c.name === me.name ? ' selected' : '') + '>'
+          + esc(c.name) + ' · ' + esc(abbrOf(key, c.team))
+          + ' · ' + c.rec.pts.toFixed(1) + ' pts'
+          + (c.priced ? ' · priced' : '') + '</option>';
+      }).join('') + '</select>';
+
+  /* HOW MUCH OF THIS YOU CAN FORECAST. Volume on top, efficiency underneath, each with the
+     figure the build measured for it. Absent until the build has written the block. */
+  var stabBody = '';
+  if (stab.pts != null){
+    stabBody = '<div class="pa-tbl">'
+      + nbaStabRow('Points', rec.pts.toFixed(1), stab.pts, 'a game')
+      + nbaStabRow('Shots', rec.fga.toFixed(1), stab.fga, 'a game')
+      + nbaStabRow('Free throws', rec.fta.toFixed(1), stab.fta, 'attempts a game')
+      + nbaStabRow('Minutes', rec.minutes.toFixed(0), stab.minutes, 'a game')
+      + nbaStabRow('True shooting', (rec.ts * 100).toFixed(1) + '%', stab.ts,
+                   lg.ts != null ? 'league ' + (lg.ts * 100).toFixed(1) + '%' : '')
+      + '</div>'
+      + '<p class="av-note">Measured over ' + (stab.n || 0) + ' players on this run, his first '
+      + 'half-season against his second — the same test the other three cards use. How many '
+      + 'shots he takes and how often he gets to the line carry at r=+' + stab.fga.toFixed(2)
+      + ' and r=+' + stab.fta.toFixed(2) + '. How efficiently they go in carries at r=+'
+      + (stab.ts != null ? stab.ts.toFixed(2) : '0.5') + ': real, and about half as dependable. '
+      + 'A points line is mostly a question about volume.</p>';
+  }
+
+  /* WHERE HIS POINTS COME FROM. Three sources that add to all of them. */
+  var src = '<div class="pa-tbl">'
+    + scSrcRow('Twos', rec.from2, lg.from2, (rec.fga - rec.tpa).toFixed(1) + ' attempts')
+    + scSrcRow('Threes', rec.from3, lg.from3, rec.tpa.toFixed(1) + ' attempts')
+    + scSrcRow('Free throws', rec.fromFt, lg.fromFt, rec.fta.toFixed(1) + ' attempts')
+    + '</div>';
+
+  /* HIS LAST 5, against every game the page holds for him - the same base, from the same logs. */
+  var rr = nbaRecent(key, me.name, ['points', 'fga', 'fta', 'threesAtt']);
+  var all = ((state.sports[key].idx || {}).logsByName || {})[me.name] || [];
+  var live = all.filter(function(x){ return (+x.minutes || 0) > 0; });
+  var avg = function(f){ return live.length ? live.reduce(function(a, x){ return a + (+x[f] || 0); }, 0) / live.length : null; };
+  var recBody = '', pm = null, pmBase = null;
+  if (rr && live.length){
+    var bPts = avg('points'), bMin = avg('minutes'), bFga = avg('fga');
+    pm = rr.minutes > 0 ? rr.points / rr.minutes * 30 : null;
+    pmBase = bMin > 0 ? bPts / bMin * 30 : null;
+    var sh30 = rr.minutes > 0 ? rr.fga / rr.minutes * 30 : null;
+    var sh30Base = bMin > 0 ? bFga / bMin * 30 : null;
+    recBody = '<div class="pa-tbl">'
+      + nbaRecRow('Points', rr.points, bPts, 1, 'of ' + live.length + ' on file')
+      + nbaRecRow('Minutes', rr.minutes, bMin, 1, '')
+      + nbaRecRow('Per 30 min', pm, pmBase, 1, 'minutes taken out')
+      + nbaRecRow('Shots per 30', sh30, sh30Base, 1, 'the part that carries')
+      + '</div>'
+      + '<p class="av-note">A hot scoring week is worth less than it looks. Across '
+      + (rc.n || 0).toLocaleString() + ' player-games the hottest fifth of five-game runs beat '
+      + 'the player’s own average by ' + signedOne(rc.hottest || 0) + ' next game, and came '
+      + 'with ' + (rc.hottestMinutes != null ? rc.hottestMinutes.toFixed(1) : '—')
+      + ' extra minutes. Per 30 minutes ' + signedOne(rc.hottestPerMin || 0) + ' of it is left. '
+      + 'A hot SHOOTING week — true shooting over his last five against his own — '
+      + 'predicts the next game at r=' + (hs.r != null ? (hs.r >= 0 ? '+' : '−') + Math.abs(hs.r).toFixed(2) : '0')
+      + ', which is nothing. So read the minutes first, the shots per 30 second, and how well '
+      + 'they have been going in not at all.</p>';
+  }
+
+  var qr = paQuarters(key, me.name), qBody = '';
+  if (qr){
+    var qmax = Math.max.apply(null, qr.map(function(r){ return +r.points || 0; })) || 1;
+    qBody = '<div class="pa-q">' + qr.map(function(r){
+        var h = Math.max(3, Math.round((+r.points || 0) / qmax * PA_QH));
+        return '<div class="pa-qc"><b>' + (+r.points || 0).toFixed(1) + '</b>'
+          + '<u style="height:' + h + 'px"></u><span>Q' + r.period + '</span></div>';
+      }).join('') + '</div>';
+  }
+
+  /* THE OPPONENT, through what they allow: points, the shots and free throws behind them, pace. */
+  var D = sf.defence || {};
+  var dRec = D[abbrOf(key, me.opp)] || D[normTeam(me.opp)] || D[me.opp] || null;
+  var oppBody;
+  if (!dRec){
+    oppBody = '<div class="pa-opp"><span class="pt-na">no concession on file for '
+      + esc(abbrOf(key, me.opp)) + '</span></div>';
+  } else {
+    var of_ = dRec.of || 30;
+    oppBody = '<div class="pa-opp">'
+      + '<span class="pa-pair"><span class="pa-big"><b>' + dRec.ptsAllowed.toFixed(1)
+      + '</b>points allowed a game</span>' + scRank(dRec.ptsRank, of_, 'most allowed', 'fewest allowed') + '</span>'
+      + '<span class="pa-pair"><span class="pa-big"><b>' + dRec.fgaAllowed.toFixed(1)
+      + '</b>shots allowed</span>' + scRank(dRec.fgaRank, of_, 'most allowed', 'fewest allowed') + '</span>'
+      + '<span class="pa-pair"><span class="pa-big"><b>' + dRec.ftaAllowed.toFixed(1)
+      + '</b>free throws allowed</span>' + scRank(dRec.ftaRank, of_, 'most allowed', 'fewest allowed') + '</span>'
+      + (dRec.pace == null ? '' :
+          '<span class="pa-pair"><span class="pa-big"><b>' + dRec.pace.toFixed(1)
+          + '</b>possessions a game</span>' + scRank(dRec.paceRank, of_, 'fastest end', 'slowest end') + '</span>')
+      + '</div>'
+      + (op.softestPer30 == null ? '' :
+          '<div class="pa-foot">Against the softest fifth of defences a player finishes about '
+          + signedOne(op.softestPer30) + ' points per 30 minutes from his own average, and against '
+          + 'the toughest fifth about ' + signedOne(op.toughestPer30) + ' — measured out of sample over '
+          + (op.n || 0).toLocaleString() + ' player-games, using only what each defence had allowed '
+          + 'BEFORE that game. Real, and smaller than a change of two or three minutes.</div>');
+  }
+
+  var d30 = (pm != null && pmBase != null) ? pm - pmBase : null;
+  var verdict = nbaVerdict([
+    rr ? 'last 5: <b>' + rr.points.toFixed(1) + '</b> in ' + rr.minutes.toFixed(0) + ' min' : null,
+    d30 != null ? 'per 30 min: <b>' + signedOne(d30) + '</b> v his average' : null,
+    dRec ? nbaOppPart(key, me.opp, dRec.ptsRank, dRec.of, 'points') : null
+  ]);
+  return nbaFold(paneBand('Scoring')
+    + chips
+    + '<div class="pt-head"><b>' + esc(me.name) + '</b> v ' + esc(abbrOf(key, me.opp))
+      + ' · ' + rec.pts.toFixed(1) + ' a game over ' + rec.games + ' games'
+      + (me.priced ? '' : ' · no market') + '</div>'
+    + verdict
+    + (stabBody ? '<div class="pa-sub">How much of this you can forecast</div>' + stabBody : '')
+    + '<div class="pa-sub">Where his points come from</div>' + src
+    + (recBody ? '<div class="pa-sub">His last 5</div>' + recBody : '')
+    + nbaWoLine(key, me, ['pts', 'usg', 'fga'])
+    + (qBody ? '<div class="pa-sub">By quarter</div>' + qBody : '')
+    + '<div class="pa-sub">Allowed by ' + esc(abbrOf(key, me.opp)) + '</div>'
+    + oppBody, NB_SCORE_LINES);
+}
+
 /* ===== THE FIRST QUARTER =====================================================================
    NO BOOK HERE POSTS A FIRST-QUARTER PLAYER PROP, so this is deliberately a READ and not a signal.
    It carries no price, no edge and no side. What it is for: a full-game line is an average over
@@ -20772,6 +21183,7 @@ function nbaPlaySection(key, g){
         + (d3 != null ? '<i class="' + (Math.round(d3) >= 0 ? 'up' : 'dn') + '">' + signedInt(d3)
            + ' v league</i>' : '') + '</div><div class="pa-st"></div></div>'
       + aRows + '</div>'
+    + nbaWoLine(key, me, ['ast', 'usg'])
     + (qBody ? '<div class="pa-sub">By quarter</div>' + qBody : '')
     /* "<club> concede" uppercases to "NO CONCEDE" when the opponent is New Orleans, which
        reads as a refusal rather than a heading. Leading with the verb cannot misread. */
@@ -21120,6 +21532,7 @@ function nbaGlassSection(key, g){
     + (rRows ? '<div class="pa-tbl">' + rRows + '</div>'
              : '<div class="pt-na">nobody else on his team takes a board a game</div>')
     + liftBox
+    + nbaWoLine(key, me, ['reb', 'dreb', 'oreb'])
     + (qBody ? '<div class="pa-sub">By quarter</div>' + qBody : '')
     + '<div class="pa-sub">Conceded by ' + esc(abbrOf(key, me.opp)) + '</div>'
     + oppBody
@@ -21537,6 +21950,7 @@ function nbaThreeSection(key, g){
     + '<div class="pa-sub">How much of this you can forecast</div>' + vol
     + (recentBody ? '<div class="pa-sub">His last ' + T3_RECENT + '</div>' + recentBody : '')
     + (kind ? '<div class="pa-sub">What kind of shooter he is</div>' + kind : '')
+    + nbaWoLine(key, me, ['tpa', 'tpm'])
     + (qBody ? '<div class="pa-sub">By quarter</div>' + qBody : '')
     + '<div class="pa-sub">Allowed by ' + esc(abbrOf(key, me.opp)) + '</div>'
     + oppBody
@@ -25755,6 +26169,10 @@ window.LAB = {
   szZone: function(z){ state.view.szZone = z; cardRender('score'); },
   szTeam: function(side){ state.view.szTeam = side; cardRender('score'); },
   ptName: function(n){ state.view.ptName = n; cardRender('score'); },
+  woMate: function(ab, id){
+    (state.view.woMate = state.view.woMate || {})[ab] = id;
+    cardRender('player');
+  },
   cardSrc: function(kind, src){
     (state.view.cardSrc = state.view.cardSrc || {})[kind] = src;
     cardRender(kind);
@@ -26028,6 +26446,13 @@ window.LAB = {
   playProbe: function(key, g){ return nbaPlaySection(key, g); },
   actsProbe: function(key, g){ return nbaActionSection(key, g); },
   glassProbe: function(key, g){ return nbaGlassSection(key, g); },
+  withoutProbe: function(key, g){ return nbaWithoutSection(key, g); },
+  scoreProbe: function(key, g){ return nbaScoreSection(key, g); },
+  scCandsProbe: function(key, g){ return scCandidates(key, g); },
+  woLineProbe: function(key, me, cols){ return nbaWoLine(key, me, cols); },
+  woRowsProbe: function(key, team, mateId){ return woRows(key, team, mateId); },
+  woMateProbe: function(key, team){ return woMateFor(key, team); },
+  woZProbe: function(col, w, o){ return woZ(col, w, o); },
   rbCandsProbe: function(key, g){ return rbCandidates(key, g); },
   rbPlayerProbe: function(key, name){ return rbPlayer(key, name); },
   rbGainProbe: function(key, v){ return rbGain(key, v); },

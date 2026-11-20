@@ -114,6 +114,17 @@ jobs:
           python3 nba/build_nba_stints.py $ARGS \
             || echo "::warning::rotation build failed - keeping the stints.json already in the repo"
 
+      # ON THE FLOOR WITH A TEAM-MATE, AND WITHOUT HIM - for the Without pane. Same feed and the
+      # same floor reconstruction as the rotations above (it imports that module rather than
+      # repeating it), walked over the whole current season instead of a three-week window. The
+      # builder prints its own receipt: what the play-by-play adds up to against the box score.
+      - name: Without selftest
+        run: python3 nba/build_nba_without.py --selftest
+      - name: Build with / without
+        run: |
+          python3 nba/build_nba_without.py --out nba/data \
+            || echo "::warning::with/without build failed - keeping the without.json already in the repo"
+
       # WHO HE FEEDS: passing networks from the same play-by-play, for the Playmaking tab. Here
       # for the same reasons as the rotations - one feed, one rolling window, and the action
       # taxonomy must agree with the shot-actions file built eight steps above. If the two ever
@@ -172,12 +183,25 @@ jobs:
           python3 nba/build_nba_threes.py $ARGS \
             || echo "::warning::threes build failed - keeping the threes.json already in the repo"
 
+      # WHAT A POINTS LINE IS MADE OF - for the Scoring pane. Offline, from the gamelogs the 12:00
+      # build writes, like rebounding. Every figure the card quotes (what carries from one half of
+      # a season to the next, what a hot week is worth with the minutes taken out, what the
+      # opponent is worth out of sample) is measured here on each run rather than written down.
+      - name: Scoring selftest
+        run: python3 nba/build_nba_scoring.py --selftest
+      - name: Build scoring
+        run: |
+          ARGS="--out nba/data"
+          if [ -n "${{ inputs.seasons }}" ]; then ARGS="$ARGS --seasons ${{ inputs.seasons }}"; fi
+          python3 nba/build_nba_scoring.py $ARGS \
+            || echo "::warning::scoring build failed - keeping the scoring.json already in the repo"
+
       # LAST LINE OF DEFENCE on the file the page has to parse. The build refuses to write a NaN,
       # but anything that produces unreadable JSON here costs a silent, invisible card, so the
       # file is parsed before it is committed rather than after someone notices it is missing.
       - name: Check the written JSON parses
         run: |
-          for f in assists rebounds threes; do
+          for f in assists rebounds threes without scoring; do
             python3 -c "import json; json.load(open('nba/data/$f.json')); print('$f.json parses')" \
               || { echo "::error::$f.json is not valid JSON - not committing it"; rm -f "nba/data/$f.json"; }
           done
@@ -189,7 +213,8 @@ jobs:
           for f in nba/data/quarters.json nba/data/zones.json \
                    nba/data/zones_by_season.json nba/data/zone_persistence.json \
                    nba/data/playtypes.json nba/data/stints.json \
-                   nba/data/assists.json nba/data/rebounds.json nba/data/threes.json; do
+                   nba/data/assists.json nba/data/rebounds.json nba/data/threes.json \
+                   nba/data/without.json nba/data/scoring.json; do
             [ -f "$f" ] && git add "$f" && echo "staged $f"
           done
           if git diff --cached --quiet; then

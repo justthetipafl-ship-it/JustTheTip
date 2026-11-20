@@ -47,7 +47,11 @@ const { boot, ok, done } = require('./harness');
   t.LAB.cardSrc('player', 'firstread');
   await t.wait(300);
   ok('and choosing that pane puts it on the page', /first reads/.test(t.app().innerHTML));
-  ok('FTN is credited where the data is shown', /FTN Data via nflverse/.test(html));
+  /* Checked on the pane itself and on the page AFTER the pane is chosen. It used to read the
+     page as it stood before, which only carried the credit when some other FTN-fed block
+     happened to be open on that week's first fixture - so it passed or failed by the schedule. */
+  ok('FTN is credited where the data is shown',
+     /FTN Data via nflverse/.test(pane) || /FTN Data via nflverse/.test(t.app().innerHTML));
 
   // --- folded sections -------------------------------------------------------------------------
   /* The reference sections were separate folds; they are cards now (match, teams, players,
