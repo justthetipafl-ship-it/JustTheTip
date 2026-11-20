@@ -129,9 +129,13 @@ const text = (h) => String(h || '').replace(/<option[^>]*>[^<]*<\/option>/g, '')
   ok('a target with no detail draws no panel', LAB.paPairProbe('nba', { name: 'x' }, { id: '1', name: 'y' }) === '');
 
   /* On the card: a row with detail is a way in, and the panel only shows once it is opened. */
+  /* The tab opens on the board now; the profile (and its rows) shows once a player is tapped. */
   let found = null;
   (S.data.fixture || []).slice(0, 12).forEach((f) => {
     if (found) return;
+    const B = LAB.boardRowsProbe('nba', f, 'play');
+    if (!B || !B.rows.length) return;
+    LAB.state.view.nbSel = B.rows.slice().sort((x, y) => y.sort - x.sort)[0].name;
     const h = LAB.cardPaneProbe('score', 'nba', f, 'play');
     const m = h.match(/LAB\.paPair\('((?:[^'\\]|\\.)+)'\)/);
     if (m) found = { f, id: m[1].replace(/\\'/g, "'"), h };
@@ -143,6 +147,7 @@ const text = (h) => String(h || '').replace(/<option[^>]*>[^<]*<\/option>/g, '')
     const opened = LAB.cardPaneProbe('score', 'nba', found.f, 'play');
     ok('and opens under its own row', opened.indexOf('pp-wrap') > 0);
     LAB.state.view.paPair = null;
+    LAB.state.view.nbSel = null;
   } else ok('(no Playmaking pane with pair detail on today\'s list)', true);
 
   done();

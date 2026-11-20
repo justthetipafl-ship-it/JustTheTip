@@ -1976,6 +1976,31 @@
   /* a thin sample is still shown, but it does not get to look like a full one */
   .wo-thin{opacity:.55;}
   .wo-more{margin-top:4px;}
+  /* the board: one row a player, numbers in fixed columns so the eye can run down them */
+  .nbb{margin:0 0 4px;}
+  .nbb-row{display:grid;grid-template-columns:minmax(0,1fr) 34px 42px 38px 40px 96px;gap:9px;
+    align-items:center;padding:7px 4px;border-top:1px solid var(--border);cursor:pointer;
+    font-family:var(--font-mono);font-size:11px;color:var(--text-2);}
+  .nbb-dd .nbb-row{grid-template-columns:minmax(0,1fr) 42px 46px 58px 34px 78px;}
+  .nbb-stk .nbb-row{grid-template-columns:minmax(0,1fr) 34px 52px 34px 52px 58px;}
+  .nbb-row>span{text-align:right;min-width:0;}
+  .nbb-row>span b{color:var(--text);font-weight:600;}
+  .nbb-row>span i{display:block;font-style:normal;font-size:9px;color:var(--text-3);line-height:1.2;}
+  .nbb-row .nbb-nm{text-align:left;font-family:var(--font-display);font-size:12px;overflow:hidden;}
+  .nbb-row .nbb-nm b{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:600;}
+  .nbb-row .nbb-w{white-space:nowrap;}
+  .nbb-row:hover{background:var(--surface);}
+  .nbb-row.on{background:var(--surface-2);box-shadow:inset 2px 0 0 var(--accent);}
+  .nbb-hd{cursor:default;border-top:0;padding:2px 4px 4px;font-size:9px;letter-spacing:.05em;
+    text-transform:uppercase;color:var(--text-3);}
+  .nbb-hd:hover{background:none;}
+  .nbb-tm{display:flex;align-items:center;gap:6px;padding:8px 4px 4px;font-family:var(--font-display);
+    font-size:12px;border-top:1px solid var(--border);}
+  .nbb-tm img{width:16px;height:16px;}
+  .nbb-tm span:not(.pt-rank){font-family:var(--font-mono);font-size:10px;color:var(--text-3);margin-left:auto;}
+  .nbb-tm .pt-rank{font-size:10px;padding:1px 5px;}
+  .nbb-row .pt-rank{font-size:10px;padding:1px 5px;}
+  .nbb-na{color:var(--text-3);}
   .pa-tap{cursor:pointer;}
   .pa-chev{font-style:normal;color:var(--text-3);margin-left:6px;font-size:11px;}
   .pp-wrap{border:1px solid var(--border);border-radius:10px;padding:10px;margin:2px 0 8px;
@@ -10664,6 +10689,20 @@ function cardPane(kind, key, g, src){
       return '';
     }
     if (kind === 'score'){
+      if (key === 'nba' && NB_BOARD[src]){
+        var board = nbaBoard(key, g, src);
+        if (board){
+          var who = nbChosen(key, g, src);
+          if (!who) return board;
+          state.view.ptName = state.view.ddName = state.view.skName = who;
+          var prof = src === 'pts' ? nbaScoreSection(key, g) : src === 'play' ? nbaPlaySection(key, g)
+                   : src === 'glass' ? nbaGlassSection(key, g) : src === 'deep' ? nbaThreeSection(key, g)
+                   : src === 'dd' ? nbaDoubleSection(key, g) : nbaStocksSection(key, g);
+          // the board is the picker now; the profile's own drop-down would be a second one
+          return board + String(prof || '').replace(
+            /<select class="mb-fixsel gg-sel" onchange="LAB\.(?:ptName|ddName|skName)\(this\.value\)">[\s\S]*?<\/select>/, '');
+        }
+      }
       if (src === 'court') return shotCourtSection(key, g) || '';
       if (src === 'q1')    return nbaQ1Section(key, g) || '';
       if (src === 'acts')  return nbaActionSection(key, g) || '';
@@ -21001,6 +21040,182 @@ function nbaFirstSection(key, g){
     NB_FIRST_LINES);
 }
 
+/* ===== THE BOARD: EVERY PRICED PLAYER, ONE ROW EACH =============================================
+   Scoring, Playmaking, Rebounding, From Deep, Doubles and Steals & Blocks each opened on ONE
+   player's profile with a drop-down to change him. That answers "tell me about this player" and
+   not the question a slate is usually read with - "who in this game is worth a look" - which
+   needs everyone side by side. The Floor has always worked that way; these six do now.
+
+   Each tab opens on a board: every player in the game with a line in that market, his season
+   average, his last five, how often he has cleared tonight's line in his last ten, what the
+   opponent gives up, and the line with its best prices. Tapping a row opens the full profile
+   underneath, exactly as it was; tapping it again closes it.
+
+   The board adds no judgement of its own. Every figure on it is one the profile already shows,
+   or a plain count against the posted line. */
+var NB_BOARD = {
+  pts:  { label:'Scoring', mkt:'points', f:'points',
+          cands:function(key, g){ return scCandidates(key, g); },
+          def:function(key){ return (scFile(key) || {}).defence; }, rk:'ptsRank' },
+  play: { label:'Playmaking', mkt:'assists', f:'assists',
+          cands:function(key, g){ return paCandidates(key, g); },
+          def:function(key){ return (state.sports[key].data.assists || {}).defence; }, rk:'rank' },
+  glass:{ label:'Rebounding', mkt:'rebounds', f:'rebounds',
+          cands:function(key, g){ return rbCandidates(key, g); },
+          def:function(key){ return (state.sports[key].data.rebounds || {}).defence; }, rk:'perGameRank', rk2:'rank' },
+  deep: { label:'From deep', mkt:'threes', f:'threes',
+          cands:function(key, g){ return t3Candidates(key, g); },
+          def:function(key){ return (state.sports[key].data.threes || {}).defence; }, rk:'attRank' },
+  dd:   { label:'Double-doubles', custom:'dd',
+          cands:function(key, g){ return ddCandidates(key, g); } },
+  stk:  { label:'Steals and blocks', custom:'stk',
+          cands:function(key, g){ return skCandidates(key, g); } }
+};
+var NB_BOARD_MAX = 8;            // players shown when nobody in the game is priced yet
+/* The posted main line for one player in one market: the line most books agree on, and the best
+   price each way at it. */
+function nbLine(key, name, mkt){
+  var nm = oddsPlayer(key, name);
+  var rows = twoWayRows(state.sports[key].data.odds || {}).filter(function(r){
+    return r && r.market === mkt && r.player === nm && r.line != null && (r.over != null || r.under != null); });
+  if (!rows.length) return null;
+  var n = {}, best = null;
+  rows.forEach(function(r){ n[r.line] = (n[r.line] || 0) + 1; });
+  Object.keys(n).forEach(function(l){ if (best == null || n[l] > n[best]) best = l; });
+  var at = rows.filter(function(r){ return String(r.line) === String(best); });
+  var o = null, u = null;
+  at.forEach(function(r){
+    if (r.over != null && (!o || +r.over > o.price)) o = { price:+r.over, book:r.book };
+    if (r.under != null && (!u || +r.under > u.price)) u = { price:+r.under, book:r.book };
+  });
+  return { line:+best, over:o, under:u, books:at.length };
+}
+function nbLogs(key, name){
+  var all = ((state.sports[key].idx || {}).logsByName || {})[name] || [];
+  return sortLogsDesc(all.filter(function(x){ return (+x.minutes || 0) > 0; }).slice());
+}
+function nbDefRank(key, cfg, opp){
+  var D = cfg.def ? cfg.def(key) : null; if (!D) return null;
+  var d = D[abbrOf(key, opp)] || D[normTeam(opp)] || D[opp]; if (!d) return null;
+  var rank = d[cfg.rk] != null ? d[cfg.rk] : (cfg.rk2 ? d[cfg.rk2] : null);
+  return rank == null ? null : { rank:rank, of:d.of || 30 };
+}
+function nbOppChip(rk){
+  if (!rk) return '<span class="nbb-na">—</span>';
+  var soft = rk.rank <= 10, tough = rk.rank > rk.of - 10;
+  return '<span class="pt-rank ' + (soft ? 'soft' : tough ? 'tough' : 'mid') + '">' + ordinalish(rk.rank) + '</span>';
+}
+/* Who is on the board: everyone with a line in this market, or - before the books have posted -
+   the main players, said plainly. */
+function nbBoardRows(key, g, src){
+  var cfg = NB_BOARD[src]; if (!cfg) return null;
+  var cands = cfg.cands(key, g) || [];
+  var rows = cands.map(function(c){
+    var r = { name:c.name, team:c.team, opp:c.opp, rec:c.rec };
+    // minutes lead every one of these cards' notes, so they sit under the name on every row
+    var m5 = nbLogs(key, c.name).slice(0, 5);
+    r.min5 = m5.length ? m5.reduce(function(a, x){ return a + (+x.minutes || 0); }, 0) / m5.length : null;
+    if (cfg.custom === 'dd'){
+      var hard = (c.rec.legs || [])[1];
+      r.hard = hard;
+      r.od = hard ? bestPriceFor(key, c.name, hard.k, 9.5) : null;
+      r.priced = !!(r.od && r.od.price > 1);
+      r.sort = c.rec.ddRate;
+    } else if (cfg.custom === 'stk'){
+      r.so = bestPriceFor(key, c.name, 'steals', 0.5);
+      r.bo = bestPriceFor(key, c.name, 'blocks', 0.5);
+      r.priced = !!((r.so && r.so.price > 1) || (r.bo && r.bo.price > 1));
+      r.sort = c.rec.steals.avg + c.rec.blocks.avg;
+    } else {
+      var logs = nbLogs(key, c.name);
+      r.ln = nbLine(key, c.name, cfg.mkt);
+      r.priced = !!r.ln;
+      r.avg = logs.length ? logs.reduce(function(a, x){ return a + (+x[cfg.f] || 0); }, 0) / logs.length : null;
+      var l5 = logs.slice(0, 5), l10 = logs.slice(0, 10);
+      r.l5 = l5.length ? l5.reduce(function(a, x){ return a + (+x[cfg.f] || 0); }, 0) / l5.length : null;
+      r.n10 = l10.length;
+      r.over10 = r.ln ? l10.filter(function(x){ return (+x[cfg.f] || 0) > r.ln.line; }).length : null;
+      r.nAll = logs.length;
+      r.overAll = (r.ln && logs.length) ? logs.filter(function(x){ return (+x[cfg.f] || 0) > r.ln.line; }).length / logs.length : null;
+      r.rk = nbDefRank(key, cfg, c.opp);
+      r.sort = r.ln ? r.ln.line : (r.avg || 0);
+    }
+    return r;
+  });
+  var priced = rows.filter(function(r){ return r.priced; });
+  var noPrices = !priced.length && cfg.custom !== 'dd';
+  var show = cfg.custom === 'dd' ? rows : (priced.length ? priced
+    : rows.slice().sort(function(a, b){ return b.sort - a.sort; }).slice(0, NB_BOARD_MAX));
+  return { cfg:cfg, rows:show, noPrices:noPrices, total:rows.length };
+}
+function nbChosen(key, g, src){
+  var want = state.view.nbSel; if (!want) return null;
+  var cfg = NB_BOARD[src]; if (!cfg) return null;
+  var c = (cfg.cands(key, g) || []).filter(function(x){ return x.name === want; })[0];
+  return c ? c.name : null;
+}
+function nbPrice(od){ return od && od.price > 1 ? '$' + od.price.toFixed(2) : '—'; }
+function nbBoardRow(key, B, r, sel){
+  var cfg = B.cfg, cells;
+  if (cfg.custom === 'dd'){
+    cells = '<span><b>' + Math.round(r.rec.ddRate * 100) + '%</b></span>'
+      + '<span>' + (r.rec.fair > 0 ? '$' + (1 / r.rec.fair).toFixed(2) : '—') + '</span>'
+      + '<span class="nbb-w">' + (r.hard ? ({ points:'Pts', rebounds:'Reb', assists:'Ast', steals:'Stl', blocks:'Blk' }[r.hard.k] || esc(r.hard.k)) + ' ' + Math.round(r.hard.rate * 100) + '%' : '—') + '</span>'
+      + '<span>' + (r.rec.td || '—') + '</span>'
+      + '<span class="nbb-ln">' + (r.od && r.od.price > 1 ? '<b>$' + r.od.price.toFixed(2) + '</b><i>' + esc(r.od.book || '') + '</i>'
+          : '<i>no price</i>') + '</span>';
+  } else if (cfg.custom === 'stk'){
+    cells = '<span><b>' + r.rec.steals.avg.toFixed(1) + '</b></span>'
+      + '<span>' + Math.round(r.rec.steals.r1 * 100) + '%<i>' + nbPrice(r.so) + '</i></span>'
+      + '<span><b>' + r.rec.blocks.avg.toFixed(1) + '</b></span>'
+      + '<span>' + Math.round(r.rec.blocks.r1 * 100) + '%<i>' + nbPrice(r.bo) + '</i></span>'
+      + '<span class="nbb-ln"><i>' + r.rec.games + ' games</i></span>';
+  } else {
+    var d = (r.l5 != null && r.avg != null) ? r.l5 - r.avg : null;
+    cells = '<span>' + (r.avg != null ? r.avg.toFixed(1) : '—') + '</span>'
+      + '<span><b>' + (r.l5 != null ? r.l5.toFixed(1) : '—') + '</b>'
+        + (d != null ? '<i>' + signedOne(d) + '</i>' : '') + '</span>'
+      + '<span>' + (r.over10 != null ? r.over10 + '/' + r.n10 : '—') + '</span>'
+      + '<span>' + (r.overAll != null ? Math.round(r.overAll * 100) + '%<i>' + r.nAll + ' gms</i>' : '—') + '</span>'
+      + '<span class="nbb-ln">' + (r.ln
+          ? '<b>' + r.ln.line + '</b><i>o ' + nbPrice(r.ln.over) + ' · u ' + nbPrice(r.ln.under) + '</i>'
+          : '<i>no line</i>') + '</span>';
+  }
+  return '<div class="nbb-row' + (sel ? ' on' : '') + '" onclick="LAB.nbPick(\'' + jsq(r.name) + '\')">'
+    + '<span class="nbb-nm"><b>' + esc(r.name) + '</b><i>'
+      + (r.min5 != null ? r.min5.toFixed(0) + ' min last 5' : esc(abbrOf(key, r.team))) + '</i></span>'
+    + cells + '</div>';
+}
+function nbaBoard(key, g, src){
+  var B = nbBoardRows(key, g, src); if (!B || !B.rows.length) return '';
+  var cfg = B.cfg, sel = nbChosen(key, g, src);
+  var head = cfg.custom === 'dd' ? ['DD rate', 'Fair', 'Needs', 'Triples', '10+ leg']
+    : cfg.custom === 'stk' ? ['Stl', '1+ stl', 'Blk', '1+ blk', '']
+    : ['Avg', 'Last 5', 'Over L10', 'Over all', 'Line'];
+  var block = function(team){
+    var rows = B.rows.filter(function(r){ return r.team === team; })
+      .sort(function(a, b){ return b.sort - a.sort; });
+    if (!rows.length) return '';
+    /* THE OPPONENT GOES IN THE HEAD, ONCE. It is the same for every player on a team, so a
+       column of it was the same chip down the whole block - The Floor made that mistake first. */
+    var rk = cfg.custom ? null : (rows[0] || {}).rk, opp = (rows[0] || {}).opp;
+    return '<div class="nbb-tm">' + teamLogo(key, team) + '<b>' + esc(abbrOf(key, team)) + '</b>'
+      + (rk ? '<span>' + esc(abbrOf(key, opp)) + ' give up the ' + ordinalish(rk.rank) + '-most of ' + rk.of + '</span>'
+            + nbOppChip(rk) : '') + '</div>'
+      + rows.map(function(r){ return nbBoardRow(key, B, r, r.name === sel); }).join('');
+  };
+  return paneBand(cfg.label + ' · ' + (B.noPrices ? 'no lines posted yet' : cfg.custom === 'dd' ? 'everyone in range' : 'everyone priced'))
+    + '<div class="nbb' + (cfg.custom ? ' nbb-' + cfg.custom : '') + '">'
+    + '<div class="nbb-row nbb-hd"><span class="nbb-nm"></span>' + head.map(function(h){ return '<span>' + h + '</span>'; }).join('') + '</div>'
+    + block(g.away) + block(g.home) + '</div>'
+    + '<div class="wo-hint">'
+    + (B.noPrices ? 'The books have not posted this market for the game yet, so these are the main players. ' : '')
+    + (cfg.custom === 'dd' ? 'Fair is his record with the luck taken off. The price is for 10+ in the leg that decides it — the feed has no double-double market. '
+        : cfg.custom === 'stk' ? '1+ is how often he gets at least one; the price under it is for that rung. '
+        : 'Over L10 and Over all are how often he has cleared tonight’s line: his last ten, then every game on file. ')
+    + (sel ? 'Tap the row again to close his profile.' : 'Tap a player for his full profile.') + '</div>';
+}
+
 /* ===== THE FIRST QUARTER =====================================================================
    NO BOOK HERE POSTS A FIRST-QUARTER PLAYER PROP, so this is deliberately a READ and not a signal.
    It carries no price, no edge and no side. What it is for: a full-game line is an average over
@@ -27039,6 +27254,10 @@ window.LAB = {
   ptName: function(n){ state.view.ptName = n; cardRender('score'); },
   ddName: function(n){ state.view.ddName = n; cardRender('score'); },
   skName: function(n){ state.view.skName = n; cardRender('score'); },
+  nbPick: function(n){ state.view.nbSel = (state.view.nbSel === n ? null : n); cardRender('score'); },
+  boardProbe: function(key, g, src){ return nbaBoard(key, g, src); },
+  boardRowsProbe: function(key, g, src){ return nbBoardRows(key, g, src); },
+  nbLineProbe: function(key, name, mkt){ return nbLine(key, name, mkt); },
   firstProbe: function(key, g){ return nbaFirstSection(key, g); },
   fbModelProbe: function(key, g){ return fbModel(key, g); },
   stocksProbe: function(key, g){ return nbaStocksSection(key, g); },
