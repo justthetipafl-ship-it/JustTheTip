@@ -1103,18 +1103,29 @@
      surfaces - so it reads as part of the page rather than a fifth way of drawing a button. */
   .j-slip-empty{opacity:.45;}
   .j-slip-empty .pc-add{pointer-events:none;}
-  .bld-tabs{display:flex;flex-wrap:wrap;gap:2px;background:var(--surface);
-    border:1px solid var(--border);border-radius:9px;padding:3px;margin:0 0 10px;}
-  .bld-tab{flex:1 1 auto;min-width:0;background:transparent;border:0;border-radius:7px;
-    cursor:pointer;padding:6px 6px;white-space:nowrap;
-    color:var(--text-3);font-family:var(--font-display);font-weight:800;font-size:10px;
-    letter-spacing:.06em;text-transform:uppercase;}
-  .bld-tab.on{background:var(--surface-2);color:var(--text);}
+  /* ONE ROW, UNDERLINED, SCROLLS SIDEWAYS. This was a segmented box that wrapped: fine at four
+     sources, but the NBA scoring card now has ten, and ten 10px capitals wrapped over three
+     rows read as a keypad rather than as navigation. A single line with the current tab
+     underlined is how every tool a reader already uses does this; the row scrolls under the
+     thumb when it is wider than the card, and the tab in use is brought into view. */
+  .bld-tabs{display:flex;flex-wrap:nowrap;gap:2px;overflow-x:auto;overflow-y:hidden;
+    -webkit-overflow-scrolling:touch;scrollbar-width:none;
+    border-bottom:1px solid var(--border);margin:0 -12px 12px;padding:0 12px;}
+  .bld-tabs::-webkit-scrollbar{display:none;}
+  .bld-tab{flex:0 0 auto;background:transparent;border:0;border-bottom:2px solid transparent;
+    margin-bottom:-1px;border-radius:0;cursor:pointer;padding:9px 10px 8px;white-space:nowrap;
+    color:var(--text-3);font-family:var(--font-display);font-weight:600;font-size:13px;
+    letter-spacing:0;text-transform:none;transition:color .12s;}
+  .bld-tab:hover{color:var(--text-2);}
+  .bld-tab.on{color:var(--text);border-bottom-color:var(--accent);}
   /* The pick'em view switch sits INSIDE a source pane, one level below the card's own tab strip.
      Two identical strips stacked read as one confusing row of five, so this one is smaller and
      only as wide as its two buttons need. */
-  .pk-tabs{margin:0 0 8px;width:-moz-fit-content;width:fit-content;max-width:100%;}
-  .pk-tabs .bld-tab{flex:0 0 auto;font-size:9px;padding:5px 10px;}
+  .pk-tabs{margin:0 0 8px;width:-moz-fit-content;width:fit-content;max-width:100%;
+    gap:2px;background:var(--surface);border:1px solid var(--border);border-radius:9px;padding:3px;}
+  .pk-tabs .bld-tab{flex:0 0 auto;font-size:10px;font-weight:800;letter-spacing:.06em;
+    text-transform:uppercase;padding:5px 10px;border:0;margin:0;border-radius:7px;}
+  .pk-tabs .bld-tab.on{background:var(--surface-2);}
   .bld-body{padding:0 12px 12px;}
   .bld-body>.dayband:first-child{margin-top:0;}
   .cmb-tab{flex:1;background:transparent;border:0;color:var(--text-3);font-family:var(--font-display);font-weight:800;
@@ -1965,6 +1976,21 @@
   /* a thin sample is still shown, but it does not get to look like a full one */
   .wo-thin{opacity:.55;}
   .wo-more{margin-top:4px;}
+  .ed-row{padding:9px 0;border-top:1px solid var(--border);}
+  .ed-top{display:flex;justify-content:space-between;align-items:center;gap:8px;
+    font-family:var(--font-display);font-size:13px;}
+  .ed-kind{font-style:normal;font-family:var(--font-mono);font-size:9px;font-weight:400;
+    color:var(--text-3);margin-left:7px;text-transform:uppercase;letter-spacing:.05em;}
+  .ed-line{font-size:11px;color:var(--text-3);margin-top:3px;line-height:1.45;}
+  .ed-line b{color:var(--text);font-weight:600;}
+  .ed-whos{display:flex;flex-wrap:wrap;gap:4px 6px;margin-top:6px;}
+  .ed-who{font-size:11px;color:var(--text-2);border:1px solid var(--border);border-radius:999px;
+    padding:3px 9px;cursor:pointer;}
+  .ed-who b{color:var(--text);font-weight:600;}
+  .ed-who:hover{border-color:var(--accent);}
+  .ed-none{font-size:11px;color:var(--text-3);}
+  .ed-rest{display:flex;flex-wrap:wrap;gap:4px 12px;font-family:var(--font-mono);font-size:10px;
+    color:var(--text-3);padding-bottom:6px;}
   .wo-line{border-top:0;padding-top:2px;}
   .wo-hint{font-family:var(--font-mono);font-size:10px;color:var(--text-3);margin:2px 0 4px;}
   .wo-more>summary{cursor:pointer;font-family:var(--font-mono);font-size:10px;
@@ -4257,6 +4283,51 @@ function buildLineup(key, team, g){
     if (fw.length) out.groups.push({ name:'Forwards', players: fw.map(row) });
     if (df.length) out.groups.push({ name:'Defence', players: df.map(row) });
     return out.groups.length ? out : null;
+  }
+
+  /* NBA: A PROJECTED FIVE, AND IT SAYS SO. Nobody publishes an NBA starting five until about
+     half an hour before the tip, and no feed this site reads carries it even then. What the
+     build does write (lineups.json) is each player's share of games started and his minutes this
+     season - and for two weeks the page read that file and then fell through to the EPL branch
+     below, which looks for a field NBA rows do not have, and printed "No lineup on file" for
+     every team in the league.
+     So: the five who start most often, AFTER tonight's injury list has been applied. A regular
+     starter who is ruled out is not quietly dropped - he is listed underneath, because who is
+     missing from the five is the first thing a reader wants from it. Anyone in doubt stays in
+     and carries the feed's own word. */
+  if (key === 'nba'){
+    var nrot = (asArray(S.data.lineups) || []).filter(function(r){
+      return r && r.player && normTeam(r.team) === normTeam(team); });
+    if (!nrot.length) return null;
+    var stOf = function(r){ return injStatus(key, r.player, team); };
+    var isOut = function(r){ var st = stOf(r); return !!(st && st.st === 'out'); };
+    var order = nrot.slice().sort(function(a, b){
+      return ((+b.starterPct || 0) - (+a.starterPct || 0)) || ((+b.minAvg || 0) - (+a.minAvg || 0)); });
+    var avail = order.filter(function(r){ return !isOut(r); });
+    var nfive = avail.slice(0, 5);
+    var inFive = {}; nfive.forEach(function(r){ inFive[r.player] = 1; });
+    var nbench = avail.filter(function(r){ return !inFive[r.player]; })
+      .sort(function(a, b){ return (+b.minAvg || 0) - (+a.minAvg || 0); }).slice(0, 5);
+    var missing = order.filter(function(r){ return isOut(r) && (+r.starterPct || 0) >= 0.5; });
+    var lab = function(r){
+      var st = stOf(r), sp = Math.round((+r.starterPct || 0) * 100);
+      var base = (sp >= 50 ? 'starts ' + sp + '%' : sp > 0 ? 'started ' + sp + '%' : 'bench')
+        + ' · ' + Math.round(+r.minAvg || 0) + ' min';
+      return { label:(st && st.st === 'doubt' ? (st.raw || 'In doubt') + ' · ' : '') + base, out:false };
+    };
+    var promoted = nfive.filter(function(r){ return (+r.starterPct || 0) < 0.5; }).length;
+    out.status = 'Projected'; out.statusCls = 'soft';
+    out.sub = 'Who has started this season, with tonight’s injury list applied'
+      + (promoted ? ' · ' + promoted + ' not a regular starter' : '') + ' · not a confirmed five';
+    out.groups.push({ name:'Projected five', players:nfive.map(function(r){
+      return { name:r.player, tag:r.position || '', flag:lab(r) }; }) });
+    if (nbench.length) out.groups.push({ name:'Rotation', players:nbench.map(function(r){
+      return { name:r.player, tag:r.position || '', flag:lab(r) }; }) });
+    if (missing.length) out.groups.push({ name:'Regular starters out', players:missing.map(function(r){
+      var st = stOf(r) || {};
+      return { name:r.player, tag:r.position || '',
+               flag:{ label:(st.raw || 'Out') + (st.injury ? ' · ' + st.injury : ''), out:true } }; }) });
+    return out;
   }
 
   // NBL: no lineup feed either, but the box scores carry a starter flag - so the last game's
@@ -10519,7 +10590,7 @@ function buildRender(){
 
    A source that renders nothing for a sport never gets a tab - NFL has no Q1 board, NBA has no
    goalie - so each sport shows only its own, and a card with no sources does not appear at all. */
-var TEAM_SOURCES = [['web','Attack v Def'], ['dvp','DvP'], ['form','Last 5'], ['dist','Usage'],
+var TEAM_SOURCES = [['web','Attack v Def'], ['edges','Edges'], ['dvp','DvP'], ['form','Last 5'], ['dist','Usage'],
                     ['starter','Starters'], ['halves','Halves'], ['subs','Subs'],
                     ['pace','Pace'], ['sched','Rest']];
 var PLAYER_SOURCES = [['radar','Radar'], ['leaders','Leaders'], ['formal','Form Alerts'],
@@ -10541,6 +10612,7 @@ function cardPane(kind, key, g, src){
     }
     if (kind === 'team'){
       if (src === 'web')     return matchRadar(key, g) || '';
+      if (src === 'edges')   return nbaEdgesSection(key, g) || '';
       if (src === 'dvp')     return dvpSection(key, g) || '';
       if (src === 'form')    return formSection(key, g) || '';
       if (src === 'dist')    return distSection(key, g) || '';
@@ -10678,6 +10750,17 @@ function cardRender(kind){
   var html = cardSection(kind, now.key, now.g);
   if (!html){ render(); return; }
   el.outerHTML = html;
+  tabsReveal(document.getElementById(def.id));
+}
+/* Bring the tab in use into view. The row scrolls sideways now, and a tab chosen from the
+   card's summary chips can be one that is off the right-hand edge. Moves the row only - never
+   the page. */
+function tabsReveal(root){
+  try {
+    var row = root && root.querySelector('.bld-tabs'), on = row && row.querySelector('.bld-tab.on');
+    if (!row || !on) return;
+    row.scrollLeft = Math.max(0, on.offsetLeft - (row.clientWidth - on.offsetWidth) / 2);
+  } catch(e){}
 }
 function fold(id, html){
   if (!html) return '';
@@ -20369,6 +20452,160 @@ function nbaDoubleSection(key, g){
     + oppBody, NB_DD_LINES);
 }
 
+/* ===== WHERE THE MATCHUP LEANS ==================================================================
+   One team's attack against the other's defence, by where the shots come from and how they are
+   made - and which players that touches. From zones.json and playtypes.json, both already on
+   the page as The Floor and How He Scores; this is the two of them read together for a game.
+
+   THE RULE THAT MAKES THIS DIFFERENT FROM A MATCHUP GRAPHIC. A defence "allows 41% from the
+   corner" is a fact about last month. Whether it tells you anything about tonight is a separate
+   question, and both builds answer it:
+
+     zone_persistence.json   how much of a defence's gap to the league in each zone is still
+                             there the next season. Rim 0.60, paint 0.55, mid-range 0.27 -
+                             corner three 0.00 and above the break 0.09. Three-point percentage
+                             allowed is luck: it does not carry at all.
+     playtypes.json spread   how much of the spread between defences in each shot action is
+                             real rather than sampling noise.
+
+   So an edge is only drawn where the build measured that the gap carries, and it is shown at
+   the size that carries - the raw gap times the share that persists. The zones and actions
+   that fail are listed underneath as not a read, with their numbers, rather than dropped:
+   leaving them out silently would look like they had been checked and found neutral.
+
+   No grades and no "back" or "fade". It says where the lean is, how big, and whose shots are
+   there. */
+var ED_KEEP_MIN = 0.25;         // share of a zone gap that must carry before it is drawn as an edge
+var ED_ZONE_LAB = { rim:'At the rim', paint:'In the paint', midRange:'Mid-range',
+                    cornerThree:'Corner three', armsThree:'Above the break' };
+var ED_LEAN = 1.2;              // a player "lives" somewhere when his share is this x the league's
+function edTeamShots(key, team, file, parts){
+  /* The team's shot diet, added up from the players who are in tonight's game. */
+  var tot = 0, by = {}, per = [];
+  parts.forEach(function(z){ by[z] = 0; });
+  var ix = {};
+  (file.players || []).forEach(function(r){ if (r && r.name) ix[cmbNameKey(r.name)] = r; });
+  playersOnTeam(key, team).forEach(function(p){
+    if (!isPlayingP(key, p.name, team)) return;
+    var r = ix[cmbNameKey(p.name)]; if (!r || !(r.shots > 0)) return;
+    tot += r.shots; per.push({ p:p, r:r });
+    parts.forEach(function(z){ by[z] += ((r[z] || {}).att || 0); });
+  });
+  return { tot:tot, by:by, per:per };
+}
+function edRows(key, att, def){
+  var S = state.sports[key], zf = S.data.zones, pf = S.data.playtypes, zp = S.data.zonePersist || {};
+  var out = { edges:[], rest:[] };
+  var softRank = function(table, part, field, team){
+    var list = Object.keys(table || {}).map(function(t){
+      var rec = (table[t] || {})[part]; return rec && rec[field] != null ? { t:t, v:rec[field] } : null;
+    }).filter(Boolean).sort(function(a, b){ return b.v - a.v; });          // 1 = allows the most
+    for (var i = 0; i < list.length; i++) if (list[i].t === team) return { rank:i + 1, of:list.length };
+    return null;
+  };
+  var push = function(kind, part, label, lgPct, lgShare, dRec, field, keep, ok, diet, defKey, table){
+    if (!dRec || dRec[field] == null || lgPct == null) return;
+    var gap = (dRec[field] - lgPct) * 100;                      // points of shooting, + = softer
+    var rk = softRank(table, part, field, defKey);
+    var share = diet.tot > 0 ? diet.by[part] / diet.tot : null;
+    var touch = diet.per.map(function(x){
+        var z = x.r[part] || {};
+        return { name:x.p.name, share:z.share || 0, att:z.att || 0, pct:z[field] != null ? z[field] : z.pct };
+      }).filter(function(x){ return x.att >= 15 && lgShare > 0 && x.share >= lgShare * ED_LEAN; })
+      .sort(function(a, b){ return b.share - a.share; }).slice(0, 3);
+    var row = { kind:kind, part:part, label:label, gap:gap, keep:keep, carries:gap * keep, rank:rk,
+                allowed:dRec[field], lg:lgPct, share:share, lgShare:lgShare, touch:touch };
+    /* how much it can matter to the game: the lean, times how much of the offence goes there.
+       A big lean on a shot the team takes one time in twenty-five is a small thing. */
+    row.weight = Math.abs(row.carries) * (share != null ? share : (lgShare || 0));
+    (ok ? out.edges : out.rest).push(row);
+  };
+  if (zf && zf.defence && zf.league){
+    var dKey = zf.defence[abbrOf(key, def)] ? abbrOf(key, def) : (zf.defence[normTeam(def)] ? normTeam(def) : def);
+    var dz = zf.defence[dKey];
+    var zones = zf.zones || Object.keys(ED_ZONE_LAB);
+    var diet = edTeamShots(key, att, zf, zones);
+    zones.forEach(function(z){
+      var lg = zf.league[z] || {};
+      push('zone', z, ED_ZONE_LAB[z] || z, lg.pct, zf.leagueShots ? lg.att / zf.leagueShots : null,
+           dz && dz[z], 'pct', ((zp.keep || {})[z]) || 0, (((zp.keep || {})[z]) || 0) >= ED_KEEP_MIN,
+           diet, dKey, zf.defence);
+    });
+  }
+  if (pf && pf.defence && pf.league){
+    var pKey = pf.defence[abbrOf(key, def)] ? abbrOf(key, def) : (pf.defence[normTeam(def)] ? normTeam(def) : def);
+    var dp = pf.defence[pKey];
+    var acts = pf.actions || Object.keys(pf.league);
+    var diet2 = edTeamShots(key, att, pf, acts);
+    var floor = pf.rankFloor != null ? pf.rankFloor : 0.5;
+    acts.forEach(function(a){
+      var lg = pf.league[a] || {}, real = ((pf.spread || {})[a] || {}).real || 0;
+      // an action clears the build's own floor or it is not a read
+      push('action', a, a === 'rim' ? 'Layups and dunks' : ((pf.labels || {})[a] || a), lg.efg, lg.freq,
+           dp && dp[a], 'efg', real, real >= floor, diet2, pKey, pf.defence);
+    });
+  }
+  out.edges.sort(function(a, b){ return b.weight - a.weight; });
+  out.rest.sort(function(a, b){ return Math.abs(b.gap) - Math.abs(a.gap); });
+  return out;
+}
+function edRow(key, r, att, def){
+  var soft = r.carries >= 0.4, tough = r.carries <= -0.4;
+  var who = r.touch.length ? r.touch.map(function(x){
+      return '<span class="ed-who" onclick="event.stopPropagation();LAB.player(\'' + key + '\',\'' + jsq(x.name)
+        + '\')"><b>' + esc(x.name) + '</b> ' + Math.round(x.share * 100) + '% of his shots</span>';
+    }).join('') : '<span class="ed-none">nobody on ' + esc(abbrOf(key, att)) + ' leans on it</span>';
+  return '<div class="ed-row"><div class="ed-top"><b>' + esc(r.label)
+    + '<i class="ed-kind">' + (r.kind === 'zone' ? 'zone' : 'shot type') + '</i></b>'
+    + '<span class="pt-rank ' + (soft ? 'soft' : tough ? 'tough' : 'mid') + '">'
+    + signedOne(r.carries) + '<i>' + (soft ? 'leans to ' + esc(abbrOf(key, att)) : tough ? 'leans to ' + esc(abbrOf(key, def)) : 'about even') + '</i></span></div>'
+    + '<div class="ed-line">' + esc(abbrOf(key, def)) + ' allow <b>' + (r.allowed * 100).toFixed(1) + '%</b>'
+    + (r.kind === 'action' ? ' eFG' : '') + ' there, league ' + (r.lg * 100).toFixed(1) + '%'
+    + (r.rank ? ' · ' + ordinalish(r.rank.rank) + '-most of ' + r.rank.of : '')
+    + ' · ' + Math.round(r.keep * 100) + '% of a gap like that carries'
+    + (r.share != null ? ' · ' + esc(abbrOf(key, att)) + ' take ' + Math.round(r.share * 100) + '% of their shots there'
+        + (r.lgShare != null ? ' (league ' + Math.round(r.lgShare * 100) + '%)' : '') : '') + '</div>'
+    + '<div class="ed-whos">' + who + '</div></div>';
+}
+function edSide(key, att, def){
+  var R = edRows(key, att, def);
+  if (!R.edges.length && !R.rest.length) return '';
+  var rest = !R.rest.length ? '' :
+    '<details class="wo-more"><summary>' + R.rest.length + ' more that are not a read</summary>'
+    + '<div class="ed-rest">' + R.rest.map(function(r){
+        return '<span>' + esc(r.label) + ' ' + (r.allowed * 100).toFixed(1) + '% (' + signedOne(r.gap)
+          + ') · ' + Math.round(r.keep * 100) + '% carries</span>';
+      }).join('') + '</div></details>';
+  return '<div class="ww-blk"><div class="ww-out">' + teamLogo(key, att) + ' ' + esc(abbrOf(key, att))
+    + ' attack v ' + esc(abbrOf(key, def)) + ' defence</div>'
+    + (R.edges.length ? R.edges.map(function(r){ return edRow(key, r, att, def); }).join('')
+        : '<div class="pt-na">Nothing here clears the bar for a read.</div>')
+    + rest + '</div>';
+}
+function nbaEdgesSection(key, g){
+  if (key !== 'nba' || !g || !g.home || !g.away) return '';
+  var S = state.sports[key];
+  if (!S.data.zones && !S.data.playtypes) return '';
+  var a = edSide(key, g.away, g.home), h = edSide(key, g.home, g.away);
+  if (!a && !h) return '';
+  var m = ((S.data.zonePersist || {}).measured) || {};
+  var r3 = function(z){ return m[z] && m[z].r != null ? (m[z].r >= 0 ? '+' : '−') + Math.abs(m[z].r).toFixed(2) : '—'; };
+  return nbaFold(paneBand('Where the matchup leans') + a + h
+    + '<div class="av-note">The figure on each row is points of shooting percentage, after keeping only the '
+    + 'part of the defence’s gap to the league that has been shown to carry. A defence that allows 4 points '
+    + 'more than the league at the rim is not worth 4 tonight: across five seasons about 60% of a rim gap is '
+    + 'still there the next year (r=' + r3('rim') + '), 55% in the paint (r=' + r3('paint') + ') and 27% from '
+    + 'mid-range. <b>Three-point percentage allowed does not carry at all</b> — r=' + r3('cornerThree')
+    + ' from the corner and ' + r3('armsThree') + ' above the break — so neither is drawn as an edge '
+    + 'however large the gap looks; both sit in the fold with their numbers. Shot actions are held to the '
+    + 'same idea: only those where the spread between defences is more real than noise. The players named '
+    + 'are the ones who take a larger share of their shots there than the league does. It says where the '
+    + 'lean is and whose shots are in it, not who to back.</div>', NB_EDGE_LINES);
+}
+var NB_EDGE_LINES = [
+  [/points of shooting percentage/, 'Only gaps that have been shown to carry are drawn. Three-point percentage allowed is not one of them.']
+];
+
 /* ===== THE FIRST QUARTER =====================================================================
    NO BOOK HERE POSTS A FIRST-QUARTER PLAYER PROP, so this is deliberately a READ and not a signal.
    It carries no price, no edge and no side. What it is for: a full-game line is an average over
@@ -26677,7 +26914,10 @@ window.LAB = {
   playProbe: function(key, g){ return nbaPlaySection(key, g); },
   actsProbe: function(key, g){ return nbaActionSection(key, g); },
   glassProbe: function(key, g){ return nbaGlassSection(key, g); },
+  nbaFiveProbe: function(key, team, g){ return buildLineup(key, team, g); },
   withoutProbe: function(key, g){ return nbaWithoutSection(key, g); },
+  edgesProbe: function(key, g){ return nbaEdgesSection(key, g); },
+  edRowsProbe: function(key, att, def){ return edRows(key, att, def); },
   scoreProbe: function(key, g){ return nbaScoreSection(key, g); },
   doubleProbe: function(key, g){ return nbaDoubleSection(key, g); },
   ddCandsProbe: function(key, g){ return ddCandidates(key, g); },

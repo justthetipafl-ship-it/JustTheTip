@@ -1,0 +1,97 @@
+name: JTT clock
+
+# WHY THIS EXISTS
+# GitHub does not run a busy repository's schedules on time. Measured over the last 40 runs of
+# each: the odds job is scheduled every 15 minutes and actually ran every 3.5 hours (longest gap
+# 7h 46m); the signal ledger is scheduled every 30 minutes and ran every 4.5 hours; Volumes is
+# hourly and ran every 7. Nothing fails - the runs are simply never started - so prices on the
+# page were hours old, the early NBA pull never had a run to ride on, and the ledger missed
+# most of the games it was meant to capture.
+#
+# A run that is STARTED BY HAND (workflow_dispatch) is not subject to that queue: it starts in
+# seconds. So this is one small job that stays awake and presses the button on the others at the
+# cadence their own schedules ask for:
+#
+#     odds      every 15 minutes   (refresh mode - the gate still decides whether to pull)
+#     ledger    every 30 minutes
+#     volumes   every 60 minutes
+#
+# A job may run for six hours, so each run keeps time for 5h 45m, starts its successor, and
+# stops. The schedule below is only a WATCHDOG: every two hours it checks whether a clock is
+# already running and, if one is, exits at once. If the chain ever dies - a cancelled run, a
+# GitHub outage - the next watchdog restarts it, late by at most the delay this file is here
+# to get around.
+#
+# The other workflows keep their own schedules. A late scheduled run on top of a dispatched one
+# costs nothing: the odds gate skips a file pulled minutes ago, and each job has its own
+# concurrency group, so two never write at once.
+#
+# TO PAUSE IT: cancel the running clock - a cancelled run does not hand over, and the watchdog
+# restarts the chain within two hours. TO STOP IT: Actions -> JTT clock -> disable workflow.
+on:
+  workflow_dispatch:
+    inputs:
+      handoff:
+        description: "Started by the previous clock run (skips the already-running check)"
+        required: false
+        default: "false"
+  schedule:
+    - cron: "11 */2 * * *"
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  clock:
+    runs-on: ubuntu-latest
+    timeout-minutes: 355
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+      HANDOFF: ${{ github.event.inputs.handoff }}
+    steps:
+      - name: Is a clock already running?
+        id: alive
+        run: |
+          set -u
+          if [ "${HANDOFF:-false}" = "true" ]; then
+            echo "handed over by the previous run - carrying on"; echo "go=yes" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          # Another run of THIS workflow that started before this one and has not finished.
+          # "Before" is the tiebreak: two watchdogs starting together must not both stand down.
+          OTHER=$(gh api "repos/$REPO/actions/workflows/jtt-clock.yml/runs?per_page=20" \
+            --jq "[.workflow_runs[] | select((.status==\"in_progress\" or .status==\"queued\") and .id < $GITHUB_RUN_ID)] | length" \
+            || echo 0)
+          if [ "${OTHER:-0}" -gt 0 ]; then
+            echo "a clock is already running ($OTHER) - nothing to do"; echo "go=no" >> "$GITHUB_OUTPUT"
+          else
+            echo "no clock running - starting one"; echo "go=yes" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Keep time
+        if: steps.alive.outputs.go == 'yes'
+        run: |
+          set -u
+          press() {   # press <workflow file> [field=value ...]; a failed press is logged, never fatal
+            local wf="$1"; shift
+            local args=()
+            for kv in "$@"; do args+=(-f "inputs[${kv%%=*}]=${kv#*=}"); done
+            gh api -X POST "repos/$REPO/actions/workflows/$wf/dispatches" -f ref=main "${args[@]}" >/dev/null 2>&1 \
+              && echo "$(date -u +%H:%M) pressed $wf" || echo "$(date -u +%H:%M) could not press $wf"
+          }
+          # 23 ticks, 15 minutes apart = 5h 45m. Tick 0 fires at once, so a restart after a gap
+          # refreshes everything straight away rather than a quarter of an hour later.
+          for TICK in $(seq 0 22); do
+            press odds-worker.yml force=false
+            if [ $((TICK % 2)) -eq 0 ]; then press signal-ledger.yml; fi
+            if [ $((TICK % 4)) -eq 1 ]; then press volumes.yml; fi
+            sleep 900
+          done
+
+      - name: Hand over
+        if: steps.alive.outputs.go == 'yes' && !cancelled()
+        run: |
+          gh api -X POST "repos/$REPO/actions/workflows/jtt-clock.yml/dispatches" \
+            -f ref=main -f "inputs[handoff]=true" && echo "successor started" \
+            || echo "::warning::could not start the next clock run - the watchdog will, within two hours"
