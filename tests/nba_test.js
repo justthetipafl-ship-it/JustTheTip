@@ -71,5 +71,26 @@ const { boot, ok, done } = require('./harness');
   ok('the scoring profile renders a shooting line', /True shooting/.test(html));
   ok('and the zone split', /Where he shoots from/.test(html));
 
+  /* THE Q1 PANE LEAVES OUT PLAYERS WHO ARE RULED OUT. It used to list them - Curry and Butler led
+     the Warriors' first-quarter board on a night both were Out. Rule the pane's own first player
+     out and he has to go. */
+  {
+    const g1 = t.LAB.state.view.focus && t.LAB.state.view.focus.g;
+    const strip = (h) => String(h || '').replace(/<[^>]*>/g, ' ');
+    const before = g1 ? t.LAB.cardPaneProbe('score', 'nba', g1, 'q1') : '';
+    const first = (before.match(/LAB\.player\('nba','([^']+)'\)/) || [])[1];
+    if (before && first) {
+      const P = (S.idx.byName || {})[first.replace(/\\'/g, "'")] || {};
+      const keep = S.data.injury;
+      S.data.injury = (keep || []).concat([{ Player: P.name || first, Team: P.team, Status: 'Out', Injury: 'test' }]);
+      if (S.idx) { delete S.idx.inj; delete S.idx.injIdx; }
+      const after = t.LAB.cardPaneProbe('score', 'nba', g1, 'q1');
+      ok('a player ruled out is not on the Q1 board (' + (P.name || first) + ')',
+         strip(after).indexOf(P.name || first) < 0 || after === '');
+      S.data.injury = keep;
+      if (S.idx) { delete S.idx.inj; delete S.idx.injIdx; }
+    } else ok('(no Q1 board for this fixture today)', true);
+  }
+
   done();
 })().catch(e => { console.log('  FAIL harness threw: ' + e.message.slice(0, 160)); process.exit(1); });

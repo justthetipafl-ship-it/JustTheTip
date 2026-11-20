@@ -2839,6 +2839,9 @@ var TIER3 = { gamelogs:'data/gamelogs.json', dvp:'data/dvp.json', teams_form:'da
               // What a points line is made of, built by nba/build_nba_scoring.py from the
               // gamelogs. NBA only; the Scoring pane draws nothing when it is absent.
               scoring:'data/scoring.json',
+              // Double-doubles and triple-doubles, built by nba/build_nba_doubles.py from the
+              // gamelogs. NBA only; the Doubles pane draws nothing when it is absent.
+              doubles:'data/doubles.json',
               // Threes, built by nba/build_nba_threes.py. NBA only.
               threes:'data/threes.json',
               profiles:'data/profiles.json',
@@ -9665,8 +9668,13 @@ function nbaBigNights(key, g, want){
       var carry = reach.slice(0, want);
       var hard = carry[carry.length - 1];
       if (!hard || hard.r <= 0) return;
-      // priced on the hardest leg: the 9.5 line in the category he reaches least often
-      var b = nblPriced(key, p, hard.k, opp, 9.5);
+      /* THE PRICE WAS FOUND AND THEN NEVER SHOWN. This asked nblPriced(), which only answers
+         when its model sees 5%+ of value and hands back {od, pr, ev} - while the row below reads
+         b.price. So a row was priced only on the rare night the model liked the leg, and even
+         then printed nothing: the tile has never shown a price. The feed carries no
+         double-double market at all (data/odds_markets.json), so the honest thing to show is
+         what IS posted - the best price on 10+ in the leg that decides it - labelled as that. */
+      var b = bestPriceFor(key, p.name, hard.k, 9.5);
       out.push({ name:p.name, p:p, opp:opp, rate:rate, n:n, of:l20.length,
                  carry:carry, hard:hard, b:b, streak:(function(){
                    var run = 0;
@@ -9707,7 +9715,8 @@ function nbaBigRow(key, r, want){
           var pr = r.b ? +(r.b.price != null ? r.b.price : r.b.over) : null;
           if (!(pr > 1)) return '';
           return '<div class="gl-odds">$' + pr.toFixed(2)
-            + (r.b.book ? '<i>' + esc(r.b.book) + '</i>' : '') + '</div>';
+            + '<i>10+ ' + esc(mktLabel(key, r.hard.k)).toLowerCase() + (r.b.book ? ' \u00b7 ' + esc(r.b.book) : '')
+            + '</i></div>';
         })()
     + '</div></div>';
 }
@@ -10518,7 +10527,7 @@ var PLAYER_SOURCES = [['radar','Radar'], ['leaders','Leaders'], ['formal','Form 
                       ['without','Without'],
                       ['avail','Available'], ['goalie','In Goal'], ['all','Everyone']];
 var SCORE_SOURCES = [['profile','Player'], ['court','The Floor'], ['acts','How He Scores'],
-                    ['pts','Scoring'], ['play','Playmaking'], ['glass','Rebounding'], ['deep','From Deep'],
+                    ['pts','Scoring'], ['play','Playmaking'], ['glass','Rebounding'], ['deep','From Deep'], ['dd','Doubles'],
                     ['q1','Q1'], ['first','First Score'], ['rz','Red Zone']];
 var TEAM_NOW = null, PLAYER_NOW = null, SCORE_NOW = null;
 function cardPane(kind, key, g, src){
@@ -10564,6 +10573,7 @@ function cardPane(kind, key, g, src){
       if (src === 'play')  return nbaPlaySection(key, g) || '';
       if (src === 'glass') return nbaGlassSection(key, g) || '';
       if (src === 'deep')  return nbaThreeSection(key, g) || '';
+      if (src === 'dd')    return nbaDoubleSection(key, g) || '';
       if (src === 'first') return firstLastSection(key, g) || '';
       if (src === 'rz')    return redZoneSection(key, g) || '';
       if (src === 'profile') return scoreProfilePane(key, g) || '';
@@ -20143,6 +20153,222 @@ function nbaScoreSection(key, g){
     + oppBody, NB_SCORE_LINES);
 }
 
+/* ===== DOUBLE-DOUBLES AND TRIPLE-DOUBLES =========================================================
+   From nba/data/doubles.json (nba/build_nba_doubles.py).
+
+   The feed carries no double-double or triple-double market, so the two tiles could only ever
+   say "N of his last 20". This is the rest of what the game logs know, in the order a reader
+   needs it:
+
+     HOW HE GETS THERE   each category's own rate of reaching ten. One of them is close to
+                         automatic; the other is the bet.
+     WHEN HE MISSES      how often the deciding leg finished on 8 or 9.
+     PRICED AS ITS LEGS  what the books DO post: 10+ in each leg. Two legs multiplied is the
+                         nearest thing to a double-double price there is, and the build measures
+                         how far apart the two are.
+     WHAT MOVES IT       minutes, measured: the biggest swing on any of these cards.
+     THE OPPONENT        double-doubles conceded, ranked, with what that has been worth.
+
+   The "fair" figure is his record with the luck taken off: players are listed here BECAUSE their
+   rate is high, and next game they land about nine-tenths as often as the record says. The
+   build measures that line on every run and the page uses whatever it found. */
+var NB_DD_LINES = [
+  [/whole record forecasts/, 'His whole record is the best guide. A short hot streak is the worst one.'],
+  [/Minutes move this more/, 'Minutes move this more than anything else on the card.'],
+  [/fewest double-doubles/, 'The opponent matters more here than it does for points.']
+];
+var DD_COL = { points:'pts', rebounds:'reb', assists:'ast' };
+function ddFile(key){
+  var S = state.sports[key];
+  return (key === 'nba' && S && S.data && S.data.doubles) || null;
+}
+function ddPlayer(key, name){
+  var df = ddFile(key); if (!df || !df.players) return null;
+  var S = state.sports[key];
+  if (!S.idx.ddIdx){
+    var ix = {};
+    df.players.forEach(function(r){ if (r && r.name) ix[cmbNameKey(r.name)] = r; });
+    S.idx.ddIdx = ix;
+  }
+  return S.idx.ddIdx[cmbNameKey(name)] || null;
+}
+function ddCandidates(key, g){
+  var out = [];
+  [[g.away, g.home], [g.home, g.away]].forEach(function(pair){
+    playersOnTeam(key, pair[0]).forEach(function(p){
+      if (!isPlayingP(key, p.name, p.team)) return;
+      var r = ddPlayer(key, p.name);
+      if (r) out.push({ name:p.name, team:pair[0], opp:pair[1], rec:r,
+                        priced:hasAnyOddsFor(key, p.name) });
+    });
+  });
+  out.sort(function(a, b){ return b.rec.ddRate - a.rec.ddRate; });
+  return out;
+}
+/* Its own pick, not the card's shared one: the players who post double-doubles are a short list
+   and mostly not the ones a reader had open on Scoring or From Deep. */
+function ddPick(key, g){
+  var cands = ddCandidates(key, g);
+  if (!cands.length) return null;
+  var want = state.view.ddName || state.view.ptName;
+  for (var i = 0; i < cands.length; i++) if (cands[i].name === want) return cands[i];
+  return cands[0];
+}
+function ddPct(v){ return Math.round((v || 0) * 100) + '%'; }
+function nbaDoubleSection(key, g){
+  if (key !== 'nba' || !g || !g.home || !g.away) return '';
+  var df = ddFile(key); if (!df || !df.players) return '';
+  var cands = ddCandidates(key, g);
+  var me = ddPick(key, g);
+  if (!me){
+    return paneBand('Double-doubles')
+      + '<div class="pt-na">Nobody in this game has posted a double-double often enough to read.</div>';
+  }
+  var rec = me.rec, lg = df.league || {}, fc = lg.forecast || {}, sh = lg.shrink || {},
+      op = lg.opp || {}, lt = lg.legs || {}, st = lg.stability || {};
+  var legs = rec.legs || [], hard = legs[1] || null;
+  if (!hard) return '';
+  var chips = cands.length < 2 ? '' :
+    '<select class="mb-fixsel gg-sel" onchange="LAB.ddName(this.value)">'
+    + cands.map(function(c){
+        return '<option value="' + esc(c.name) + '"' + (c.name === me.name ? ' selected' : '') + '>'
+          + esc(c.name) + ' · ' + esc(abbrOf(key, c.team))
+          + ' · ' + ddPct(c.rec.ddRate) + ' of games'
+          + (c.rec.td ? ' · ' + c.rec.td + ' triple' + (c.rec.td === 1 ? '' : 's') : '') + '</option>';
+      }).join('') + '</select>';
+
+  /* HOW HE GETS THERE. */
+  var legRows = legs.map(function(L, i){
+    return '<div class="pa-row' + (i === 2 ? ' pa-act' : '') + '"><div class="pa-lab">' + esc(mktLabel(key, L.k)) + '</div>'
+      + '<div class="pa-bar"><i style="width:' + Math.round(L.rate * 100) + '%"></i></div>'
+      + '<div class="pa-n"><b>' + ddPct(L.rate) + '</b>of games at 10+<i>averages ' + L.avg.toFixed(1) + '</i></div>'
+      + '<div class="pa-st">' + (i === 1 ? '<span class="pa-in">the leg that decides it</span>'
+          : i === 2 && rec.td ? '<span class="pa-in">the third, for a triple</span>' : '') + '</div></div>';
+  }).join('');
+
+  /* WHEN HE MISSES. */
+  var nearBody = (rec.near == null || !rec.nearN) ? '' :
+    '<div class="pa-tbl"><div class="pa-row"><div class="pa-lab">Missed by one or two</div>'
+    + '<div class="pa-bar"><i style="width:' + Math.round(rec.near * 100) + '%"></i></div>'
+    + '<div class="pa-n"><b>' + ddPct(rec.near) + '</b>of his misses<i>finished on 8 or 9 '
+    + esc(mktLabel(key, hard.k)).toLowerCase() + '</i></div>'
+    + '<div class="pa-st"><span class="pa-in">' + rec.nearN + ' misses</span></div></div></div>';
+
+  /* PRICED AS ITS LEGS. The books post 10+ in each category; nobody on the feed posts the pair. */
+  var priced = legs.slice(0, 2).map(function(L){
+    return { L:L, od:bestPriceFor(key, me.name, L.k, 9.5) };
+  });
+  var havePr = priced.filter(function(x){ return x.od && x.od.price > 1; });
+  var priceBody;
+  if (!havePr.length){
+    priceBody = '<div class="pt-na">No 10+ price posted on either leg yet. The feed has no '
+      + 'double-double market, so the legs are the only prices there will be.</div>';
+  } else {
+    priceBody = '<div class="pa-opp">' + priced.map(function(x){
+        if (!x.od || !(x.od.price > 1))
+          return '<span class="pa-pair"><span class="pa-big"><b>—</b>10+ '
+            + esc(mktLabel(key, x.L.k)).toLowerCase() + '</span><span class="dp-norank">'
+            + (x.L.rate >= 0.95 ? 'not posted — he reaches it in ' + ddPct(x.L.rate) : 'not posted') + '</span></span>';
+        return '<span class="pa-pair"><span class="pa-big"><b>$' + x.od.price.toFixed(2) + '</b>10+ '
+          + esc(mktLabel(key, x.L.k)).toLowerCase() + '</span>'
+          + '<span class="pt-rank mid">' + ddPct(1 / x.od.price) + ' implied<i>' + esc(x.od.book || '')
+          + ' · he does it ' + ddPct(x.L.rate) + '</i></span></span>';
+      }).join('') + '</div>';
+    if (havePr.length === 2){
+      var multi = havePr[0].od.price * havePr[1].od.price;
+      priceBody += '<div class="pa-foot">Multiplied together the two legs come to about <b>$'
+        + multi.toFixed(2) + '</b>, before whatever a book takes off for putting them in one bet. '
+        + (lt.ratio != null ? 'His legs are not independent: across ' + (lt.n || 0)
+            + ' players like him, both land about ' + Math.round((lt.ratio - 1) * 100)
+            + '% more often than multiplying says. ' : '')
+        + 'On his own record the fair price is <b>$' + (rec.fair > 0 ? (1 / rec.fair).toFixed(2) : '—') + '</b>.</div>';
+    } else {
+      priceBody += '<div class="pa-foot">Only one leg is priced. On his own record the fair price '
+        + 'for the double-double is <b>$' + (rec.fair > 0 ? (1 / rec.fair).toFixed(2) : '—') + '</b>.</div>';
+    }
+  }
+
+  /* WHAT MOVES IT: minutes, as measured, and where his own have been lately. */
+  var rr = nbaRecent(key, me.name, [hard.k]);
+  var all = ((state.sports[key].idx || {}).logsByName || {})[me.name] || [];
+  var live = all.filter(function(x){ return (+x.minutes || 0) > 0; });
+  var bMin = live.length ? live.reduce(function(a, x){ return a + (+x.minutes || 0); }, 0) / live.length : null;
+  var dMin = (rr && bMin != null) ? rr.minutes - bMin : null;
+  var bands = lg.minutes || [];
+  var minBody = !bands.length ? '' :
+    '<div class="pa-tbl">' + bands.map(function(b){
+      return '<div class="pa-row pa-act"><div class="pa-lab">' + esc(b.label) + '</div>'
+        + '<div class="pa-bar"><i style="width:' + Math.round(b.actual * 100) + '%"></i></div>'
+        + '<div class="pa-n"><b>' + ddPct(b.actual) + '</b>landed<i>their record said ' + ddPct(b.said) + '</i></div>'
+        + '<div class="pa-st"><span class="pa-in">' + b.n + ' games</span></div></div>';
+    }).join('') + '</div>'
+    + '<p class="av-note">Minutes move this more than anything else on the card. These are every '
+    + 'candidate’s games, grouped by how the minutes he played compared with his own average. '
+    + (dMin != null ? esc(me.name) + ' has averaged <b>' + rr.minutes.toFixed(1) + '</b> over his last 5, '
+        + signedOne(dMin) + ' on his average. ' : '')
+    + 'A blowout, foul trouble or a minutes limit does more to a double-double than any matchup.</p>';
+
+  /* THE OPPONENT. */
+  var D = df.defence || {};
+  var dRec = D[abbrOf(key, me.opp)] || D[normTeam(me.opp)] || D[me.opp] || null;
+  var oppBody = !dRec
+    ? '<div class="pa-opp"><span class="pt-na">no concession on file for ' + esc(abbrOf(key, me.opp)) + '</span></div>'
+    : '<div class="pa-opp"><span class="pa-pair"><span class="pa-big"><b>' + dRec.dd.toFixed(2)
+      + '</b>double-doubles conceded a game</span>'
+      + scRank(dRec.ddRank, dRec.of || 30, 'most conceded', 'fewest conceded') + '</span></div>'
+      + (op.toughest == null ? '' :
+          '<div class="pa-foot">Against the fifth of defences that concede the fewest double-doubles, '
+          + 'candidates landed ' + Math.abs(Math.round(op.toughest * 100)) + ' points of probability '
+          + (op.toughest < 0 ? 'under' : 'over') + ' the middle of the league; against the softest fifth, '
+          + Math.abs(Math.round(op.softest * 100)) + ' ' + (op.softest >= 0 ? 'over' : 'under')
+          + '. Measured out of sample over ' + (op.n || 0).toLocaleString()
+          + ' games, using only what each defence had conceded BEFORE that game.</div>');
+
+  /* TRIPLE-DOUBLES, when he has any. */
+  var third = legs[2] || null;
+  var tdBody = (!rec.td || !third) ? '' :
+    '<div class="pa-tbl"><div class="pa-row"><div class="pa-lab">Triple-doubles</div>'
+    + '<div class="pa-bar"><i style="width:' + Math.round(rec.tdRate * 100) + '%"></i></div>'
+    + '<div class="pa-n"><b>' + rec.td + '</b>in ' + rec.games + ' games<i>' + ddPct(rec.tdRate)
+    + ' · needs 10+ ' + esc(mktLabel(key, third.k)).toLowerCase() + ', which he gets in '
+    + ddPct(third.rate) + '</i></div><div class="pa-st"></div></div></div>';
+
+  var last10 = sortLogsDesc(live.slice()).slice(0, 10);
+  var l10n = last10.filter(function(r){
+    return ['points', 'rebounds', 'assists', 'steals', 'blocks'].filter(function(k){ return (+r[k] || 0) >= 10; }).length >= 2;
+  }).length;
+  var verdict = nbaVerdict([
+    'record: <b>' + ddPct(rec.ddRate) + '</b>',
+    rec.fair > 0 ? 'with the luck off: <b>' + ddPct(rec.fair) + '</b> · fair $' + (1 / rec.fair).toFixed(2) : null,
+    last10.length >= 5 ? 'last ' + last10.length + ': <b>' + l10n + '</b>' : null,
+    dRec ? nbaOppPart(key, me.opp, dRec.ddRank, dRec.of, 'double-doubles') : null
+  ]);
+  var woCols = [DD_COL[hard.k], DD_COL[(legs[0] || {}).k]].filter(Boolean);
+  return nbaFold(paneBand('Double-doubles')
+    + chips
+    + '<div class="pt-head"><b>' + esc(me.name) + '</b> v ' + esc(abbrOf(key, me.opp))
+      + ' · double-double in ' + rec.dd + ' of ' + rec.games + ' games</div>'
+    + verdict
+    + '<div class="pa-sub">How he gets there</div><div class="pa-tbl">' + legRows + '</div>'
+    + (nearBody ? '<div class="pa-sub">When he misses</div>' + nearBody : '')
+    + '<div class="pa-sub">Priced as its legs</div>' + priceBody
+    + (fc.season == null ? '' :
+        '<p class="av-note">His whole record forecasts the next game better than any recent run. '
+        + 'Scored over ' + (fc.n || 0).toLocaleString() + ' candidate games (lower is better): '
+        + 'whole season ' + fc.season.toFixed(3) + ', last 20 ' + fc.last20.toFixed(3) + ', last 10 '
+        + fc.last10.toFixed(3) + ', last 5 ' + fc.last5.toFixed(3) + '. And the record itself runs hot: '
+        + 'those players’ records said ' + ddPct(fc.said) + ' and they landed ' + ddPct(fc.rate)
+        + ', because a player is only on this list while his rate is high. The fair figure above is '
+        + 'his record with that taken off'
+        + (st.rCand != null ? '; the rate itself carries from one half of a season to the next at r=+' + st.rCand.toFixed(2) : '')
+        + '.</p>')
+    + (minBody ? '<div class="pa-sub">What minutes do to it</div>' + minBody : '')
+    + (woCols.length ? nbaWoLine(key, me, woCols) : '')
+    + (tdBody ? '<div class="pa-sub">And the triple</div>' + tdBody : '')
+    + '<div class="pa-sub">Conceded by ' + esc(abbrOf(key, me.opp)) + '</div>'
+    + oppBody, NB_DD_LINES);
+}
+
 /* ===== THE FIRST QUARTER =====================================================================
    NO BOOK HERE POSTS A FIRST-QUARTER PLAYER PROP, so this is deliberately a READ and not a signal.
    It carries no price, no edge and no side. What it is for: a full-game line is an average over
@@ -20218,6 +20444,10 @@ function nbaQ1Section(key, g){
   var rows = [];
   [g.away, g.home].forEach(function(team){
     playersOnTeam(key, team).forEach(function(p){
+      /* A player ruled out does not have a first quarter tonight. Every other pane on this
+         card already asks this; this one did not, and led the GS list with Stephen Curry and
+         Jimmy Butler on a night the injury feed had both as Out. */
+      if (!isPlayingP(key, p.name, team)) return;
       var q = nbaQ1For(key, p.name);
       if (!q || !q.q1 || q.q1.games < Q1_MIN_GAMES) return;
       /* A man who was almost never out there in the first is not a slow starter, he is a
@@ -26169,6 +26399,7 @@ window.LAB = {
   szZone: function(z){ state.view.szZone = z; cardRender('score'); },
   szTeam: function(side){ state.view.szTeam = side; cardRender('score'); },
   ptName: function(n){ state.view.ptName = n; cardRender('score'); },
+  ddName: function(n){ state.view.ddName = n; cardRender('score'); },
   woMate: function(ab, id){
     (state.view.woMate = state.view.woMate || {})[ab] = id;
     cardRender('player');
@@ -26448,6 +26679,9 @@ window.LAB = {
   glassProbe: function(key, g){ return nbaGlassSection(key, g); },
   withoutProbe: function(key, g){ return nbaWithoutSection(key, g); },
   scoreProbe: function(key, g){ return nbaScoreSection(key, g); },
+  doubleProbe: function(key, g){ return nbaDoubleSection(key, g); },
+  ddCandsProbe: function(key, g){ return ddCandidates(key, g); },
+  bigNightsProbe: function(key, g, want){ return nbaBigNights(key, g, want); },
   scCandsProbe: function(key, g){ return scCandidates(key, g); },
   woLineProbe: function(key, me, cols){ return nbaWoLine(key, me, cols); },
   woRowsProbe: function(key, team, mateId){ return woRows(key, team, mateId); },
