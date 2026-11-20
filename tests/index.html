@@ -20912,6 +20912,12 @@ function fbModel(key, g){
   var q = lg.tipToFirst != null ? lg.tipToFirst : 0.5;
   var keepJ = st.jumper != null ? Math.max(0, Math.min(1, st.jumper)) : 0;
   var keepP = st.basket != null ? Math.max(0, Math.min(1, st.basket)) : 0;
+  /* WHICH RECORD TO LEAN ON. The build measures two things about a player against his LATER
+     share of first baskets: his earlier share of first baskets, and his earlier share of first
+     SHOTS. Whichever predicts better is the one used, at the weight it earned. So far that has
+     been the shots - there are more of them, and a make needs luck an attempt does not. */
+  var keepS = st.shotToBasket != null ? Math.max(0, Math.min(1, st.shotToBasket)) : 0;
+  var useShot = keepS > keepP;
   var base = lg.starterShare != null ? lg.starterShare : 0.2;
   var fiveOf = function(team){
     var lu = buildLineup(key, team, g);
@@ -20928,7 +20934,8 @@ function fbModel(key, g){
   var side = function(five, pTeam){
     var rows = five.map(function(p){
       var r = fbPlayer(key, p.name);
-      var own = r ? base + (r.teamFirstRate - base) * keepP : base;
+      var own = !r ? base : useShot ? base + (r.firstShotRate - base) * keepS
+                                    : base + (r.teamFirstRate - base) * keepP;
       return { name:p.name, rec:r, own:own };
     });
     var tot = rows.reduce(function(x, r){ return x + r.own; }, 0) || 1;
@@ -20941,7 +20948,7 @@ function fbModel(key, g){
     rows.sort(function(x, y){ return y.fair - x.fair; });
     return rows;
   };
-  return { q:q, keepJ:keepJ, keepP:keepP, ja:ja, jh:jh, tipAway:tipAway, firstAway:firstAway,
+  return { q:q, keepJ:keepJ, keepP:keepP, keepS:keepS, useShot:useShot, ja:ja, jh:jh, tipAway:tipAway, firstAway:firstAway,
            away:side(fiveA, firstAway), home:side(fiveH, 1 - firstAway) };
 }
 function fbSide(key, team, rows, pTeam, jumper, pTip){
@@ -20987,8 +20994,9 @@ function nbaFirstSection(key, g){
     + sgn(st.shot) + ')'
     + (lo && hi ? ' — players whose record said ' + Math.round(lo.said * 100) + '% went on to ' + Math.round(lo.then * 100)
         + '%, and those whose record said ' + Math.round(hi.said * 100) + '% went on to ' + Math.round(hi.then * 100) + '%' : '')
-    + '. So the fair figure is the team’s chance, split five ways and nudged toward each player’s own record by '
-    + 'only as much as that record has been shown to be worth. It is for the projected five; a late change to '
+    + '. So the fair figure is the team’s chance, split five ways and nudged toward each player’s own record '
+    + '— his first shots, which predict his later first baskets at r=' + sgn(st.shotToBasket) + ' — by '
+    + 'only as much as that record has been shown to be worth. Books price the biggest names shorter than this does. It is for the projected five; a late change to '
     + 'the starters changes all of it. First basket means the first made field goal — a free throw does not count.</div>',
     NB_FIRST_LINES);
 }

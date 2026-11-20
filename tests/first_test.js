@@ -60,8 +60,11 @@ const near = (a, b, e) => Math.abs(a - b) < (e || 1e-9);
      && near(M.home.reduce((x, r) => x + r.fair, 0), 1 - M.firstAway, 1e-9));
   ok('and the ten add to one basket', near(M.away.concat(M.home).reduce((x, r) => x + r.fair, 0), 1, 1e-9));
   const r0 = M.away.concat(M.home).filter((r) => r.rec)[0];
+  ok('the model leans on whichever record the build measured as the better predictor',
+     M.useShot === (M.keepS > M.keepP) && near(M.keepS, Math.max(0, Math.min(1, st.shotToBasket))));
   ok('a player\'s own record moves him only as far as it has been shown to be worth',
-     near(r0.own, 0.2 + (r0.rec.teamFirstRate - 0.2) * M.keepP));
+     near(r0.own, M.useShot ? 0.2 + (r0.rec.firstShotRate - 0.2) * M.keepS
+                            : 0.2 + (r0.rec.teamFirstRate - 0.2) * M.keepP));
   ok('so nobody in a five is given more than double an even share',
      M.away.concat(M.home).every((r) => r.share < 0.4 && r.share > 0.1));
   ok('rows are in order of chance', M.away.every((r, i) => !i || M.away[i - 1].fair >= r.fair));
