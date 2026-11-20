@@ -2892,6 +2892,8 @@ var TIER3 = { gamelogs:'data/gamelogs.json', dvp:'data/dvp.json', teams_form:'da
               doubles:'data/doubles.json',
               // Steals and blocks, built by nba/build_nba_stocks.py from the gamelogs. NBA only.
               stocks:'data/stocks.json',
+              // First basket, built by nba/build_nba_first.py from the play-by-play. NBA only.
+              first:'data/first.json',
               // Threes, built by nba/build_nba_threes.py. NBA only.
               threes:'data/threes.json',
               profiles:'data/profiles.json',
@@ -10671,7 +10673,7 @@ function cardPane(kind, key, g, src){
       if (src === 'deep')  return nbaThreeSection(key, g) || '';
       if (src === 'dd')    return nbaDoubleSection(key, g) || '';
       if (src === 'stk')   return nbaStocksSection(key, g) || '';
-      if (src === 'first') return firstLastSection(key, g) || '';
+      if (src === 'first') return (key === 'nba' ? nbaFirstSection(key, g) : firstLastSection(key, g)) || '';
       if (src === 'rz')    return redZoneSection(key, g) || '';
       if (src === 'profile') return scoreProfilePane(key, g) || '';
     }
@@ -20845,6 +20847,160 @@ function nbaStocksSection(key, g){
     + parts.join('') + note, NB_STK_LINES);
 }
 
+/* ===== FIRST BASKET =============================================================================
+   From nba/data/first.json (nba/build_nba_first.py) and, when the books have posted it, the
+   first-basket price from the odds feed.
+
+   A first basket is three things in a row, and the card lays them out in that order because the
+   build's own measurements say that is the order they matter in:
+
+     THE TIP     who jumps for each team and how often each wins. This is the solid part: a
+                 jumper's win rate carries from one half of his games to the next better than
+                 anything else on this card.
+     THE TEAM    the side that wins the tip scores the first field goal well over half the time.
+     THE PLAYER  his share of his team's first baskets. This is the weak part, and the card says
+                 so: a record of scoring first barely carries, and players at both ends of the
+                 range come back to about one in five. So the fair figure leans mostly on the
+                 team's chance and only lightly on his own record - by exactly as much as the
+                 build measured that record to be worth.
+
+   "Fair" is those three multiplied out for tonight's projected five. It is set beside the posted
+   price and what that price implies; it is arithmetic on what happened, not a tip. */
+var NB_FIRST_LINES = [
+  [/The tip is the part that carries/, 'The tip is the reliable part. Who scores first after it is close to one-in-five each.']
+];
+function fbFile(key){
+  var S = state.sports[key];
+  return (key === 'nba' && S && S.data && S.data.first) || null;
+}
+function fbPlayer(key, name){
+  var ff = fbFile(key); if (!ff || !ff.players) return null;
+  var S = state.sports[key];
+  if (!S.idx.fbIdx){
+    var ix = {};
+    ff.players.forEach(function(r){ if (r && r.name) ix[cmbNameKey(r.name)] = r; });
+    S.idx.fbIdx = ix;
+  }
+  return S.idx.fbIdx[cmbNameKey(name)] || null;
+}
+/* Tonight's jumper for a team: of its projected five, the player who has taken the most tips.
+   NOT the team's usual jumper over the whole file - that was Jaren Jackson Jr. for Memphis on a
+   night he was not in the five, and a tip record belongs to the player who will actually jump. */
+function fbJumper(key, team, five){
+  var ff = fbFile(key); if (!ff || !ff.jumpers) return null;
+  var S = state.sports[key];
+  if (!S.idx.fbJump){
+    var ix = {};
+    Object.keys(ff.jumpers).forEach(function(id){
+      var j = ff.jumpers[id]; if (!j || !j.name) return;
+      var k = cmbNameKey(j.name);
+      if (!ix[k] || j.jumps > ix[k].jumps) ix[k] = j;
+    });
+    S.idx.fbJump = ix;
+  }
+  var best = null;
+  (five || []).forEach(function(p){
+    var j = S.idx.fbJump[cmbNameKey(p.name)];
+    if (j && (!best || j.jumps > best.jumps)) best = j;
+  });
+  return best ? { name:best.name, jumps:best.jumps, won:best.won, rate:best.rate, playing:true } : null;
+}
+/* The whole model, in one place so the test can check the arithmetic. */
+function fbModel(key, g){
+  var ff = fbFile(key); if (!ff) return null;
+  var lg = ff.league || {}, st = lg.stability || {};
+  var q = lg.tipToFirst != null ? lg.tipToFirst : 0.5;
+  var keepJ = st.jumper != null ? Math.max(0, Math.min(1, st.jumper)) : 0;
+  var keepP = st.basket != null ? Math.max(0, Math.min(1, st.basket)) : 0;
+  /* WHICH RECORD TO LEAN ON. The build measures two things about a player against his LATER
+     share of first baskets: his earlier share of first baskets, and his earlier share of first
+     SHOTS. Whichever predicts better is the one used, at the weight it earned. So far that has
+     been the shots - there are more of them, and a make needs luck an attempt does not. */
+  var keepS = st.shotToBasket != null ? Math.max(0, Math.min(1, st.shotToBasket)) : 0;
+  var useShot = keepS > keepP;
+  var base = lg.starterShare != null ? lg.starterShare : 0.2;
+  var fiveOf = function(team){
+    var lu = buildLineup(key, team, g);
+    return (lu && lu.groups && lu.groups[0] && lu.groups[0].players) || [];
+  };
+  var fiveA = fiveOf(g.away), fiveH = fiveOf(g.home);
+  var ja = fbJumper(key, g.away, fiveA), jh = fbJumper(key, g.home, fiveH);
+  // a jumper's rate, pulled toward a coin flip by how much of it has been shown to carry
+  var eff = function(j){ return (j && j.playing) ? 0.5 + (j.rate - 0.5) * keepJ : 0.5; };
+  var a = eff(ja), h = eff(jh);
+  var tipAway = (a * (1 - h)) / ((a * (1 - h)) + (h * (1 - a)) || 1);
+  if (!(ja && ja.playing) || !(jh && jh.playing)) tipAway = (ja && ja.playing) || (jh && jh.playing) ? tipAway : 0.5;
+  var firstAway = tipAway * q + (1 - tipAway) * (1 - q);
+  var side = function(five, pTeam){
+    var rows = five.map(function(p){
+      var r = fbPlayer(key, p.name);
+      var own = !r ? base : useShot ? base + (r.firstShotRate - base) * keepS
+                                    : base + (r.teamFirstRate - base) * keepP;
+      return { name:p.name, rec:r, own:own };
+    });
+    var tot = rows.reduce(function(x, r){ return x + r.own; }, 0) || 1;
+    rows.forEach(function(r){
+      r.share = r.own / tot;                       // the five add to all of their team's chance
+      r.fair = pTeam * r.share;
+      var fp = fsPrice(key, r.name);                // {over, book} - the field bet's one price
+      r.od = fp && fp.over > 1 ? { price:fp.over, book:fp.book } : null;
+    });
+    rows.sort(function(x, y){ return y.fair - x.fair; });
+    return rows;
+  };
+  return { q:q, keepJ:keepJ, keepP:keepP, keepS:keepS, useShot:useShot, ja:ja, jh:jh, tipAway:tipAway, firstAway:firstAway,
+           away:side(fiveA, firstAway), home:side(fiveH, 1 - firstAway) };
+}
+function fbSide(key, team, rows, pTeam, jumper, pTip){
+  var jtxt = !jumper ? 'Nobody in the projected five has a tip record on file, so the tip is treated as even.'
+    : 'Likely jumper: ' + esc(jumper.name) + ', who has won ' + jumper.won + ' of ' + jumper.jumps + ' tips.';
+  var body = rows.map(function(r){
+    var pr = r.od && r.od.price > 1 ? r.od : null;
+    return '<div class="pa-row"><div class="pa-lab">' + esc(r.name) + '</div>'
+      + '<div class="pa-bar"><i style="width:' + Math.min(100, Math.round(r.fair * 500)) + '%"></i></div>'
+      + '<div class="pa-n"><b>' + (r.fair * 100).toFixed(1) + '%</b>fair $' + (r.fair > 0 ? (1 / r.fair).toFixed(2) : '—')
+      + (r.rec ? '<i>took his team’s first shot in ' + Math.round(r.rec.firstShotRate * 100) + '%, scored its first in '
+          + Math.round(r.rec.teamFirstRate * 100) + '% of ' + r.rec.starts + ' starts</i>'
+          : '<i>no starts on file — treated as one in five</i>') + '</div>'
+      + '<div class="pa-st">' + (pr ? '<span class="pa-in"><b>$' + pr.price.toFixed(2) + '</b> ' + esc(pr.book || '')
+          + ' · implies ' + Math.round(100 / pr.price) + '%</span>' : '<span class="pa-in">no price</span>') + '</div></div>';
+  }).join('');
+  return '<div class="ww-blk"><div class="ww-out">' + teamLogo(key, team) + ' ' + esc(abbrOf(key, team))
+    + ' · wins the tip ' + Math.round(pTip * 100) + '% · scores first ' + Math.round(pTeam * 100) + '%</div>'
+    + '<div class="wo-hint">' + jtxt + '</div>'
+    + (body ? '<div class="pa-tbl">' + body + '</div>' : '<div class="pt-na">no projected five for this team</div>') + '</div>';
+}
+function nbaFirstSection(key, g){
+  if (key !== 'nba' || !g || !g.home || !g.away) return '';
+  var ff = fbFile(key); if (!ff || !ff.players) return '';
+  var M = fbModel(key, g); if (!M || (!M.away.length && !M.home.length)) return '';
+  var lg = ff.league || {}, st = lg.stability || {};
+  var anyPrice = M.away.concat(M.home).some(function(r){ return r.od && r.od.price > 1; });
+  var honest = (lg.honest || []);
+  var lo = honest[0], hi = honest[honest.length - 1];
+  var sgn = function(v){ return v == null ? '—' : (v >= 0 ? '+' : '−') + Math.abs(v).toFixed(2); };
+  return nbaFold(paneBand('First basket')
+    + nbaVerdict([
+        'tip winner scores first <b>' + Math.round(M.q * 100) + '%</b> of the time',
+        anyPrice ? null : 'no first-basket prices posted yet'
+      ])
+    + fbSide(key, g.away, M.away, M.firstAway, M.ja, M.tipAway)
+    + fbSide(key, g.home, M.home, 1 - M.firstAway, M.jh, 1 - M.tipAway)
+    + '<div class="av-note">The tip is the part that carries. Across ' + (lg.tipGames || 0).toLocaleString()
+    + ' games the side that won the opening tip scored the first field goal ' + Math.round(M.q * 100)
+    + '% of the time, and a jumper’s tip record holds from one half of his games to the next at r='
+    + sgn(st.jumper) + '. Who scores it is much closer to a draw among the five: a player’s record of scoring '
+    + 'his team’s first basket carries at only r=' + sgn(st.basket) + ' (taking its first SHOT carries better, r='
+    + sgn(st.shot) + ')'
+    + (lo && hi ? ' — players whose record said ' + Math.round(lo.said * 100) + '% went on to ' + Math.round(lo.then * 100)
+        + '%, and those whose record said ' + Math.round(hi.said * 100) + '% went on to ' + Math.round(hi.then * 100) + '%' : '')
+    + '. So the fair figure is the team’s chance, split five ways and nudged toward each player’s own record '
+    + '— his first shots, which predict his later first baskets at r=' + sgn(st.shotToBasket) + ' — by '
+    + 'only as much as that record has been shown to be worth. Books price the biggest names shorter than this does. It is for the projected five; a late change to '
+    + 'the starters changes all of it. First basket means the first made field goal — a free throw does not count.</div>',
+    NB_FIRST_LINES);
+}
+
 /* ===== THE FIRST QUARTER =====================================================================
    NO BOOK HERE POSTS A FIRST-QUARTER PLAYER PROP, so this is deliberately a READ and not a signal.
    It carries no price, no edge and no side. What it is for: a full-game line is an average over
@@ -26883,6 +27039,8 @@ window.LAB = {
   ptName: function(n){ state.view.ptName = n; cardRender('score'); },
   ddName: function(n){ state.view.ddName = n; cardRender('score'); },
   skName: function(n){ state.view.skName = n; cardRender('score'); },
+  firstProbe: function(key, g){ return nbaFirstSection(key, g); },
+  fbModelProbe: function(key, g){ return fbModel(key, g); },
   stocksProbe: function(key, g){ return nbaStocksSection(key, g); },
   skCandsProbe: function(key, g){ return skCandidates(key, g); },
   paPair: function(id){ state.view.paPair = (state.view.paPair === id ? null : id); cardRender('score'); },
