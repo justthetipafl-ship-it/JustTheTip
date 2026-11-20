@@ -261,8 +261,12 @@ LINE_1H_KEY  = 'alternate_lines_1st_half'
 TEAM_TOTAL_KEYS = {'alternate_team_total_points': 'teamTotal', 'alternate_team_total_points_1st_half': 'teamTotal1H',
                    'alternate_team_total_goals': 'teamTotal', 'alternate_team_total_runs': 'teamTotal'}
 FIELD_MARKETS = {'player_1st_touchdown_scorer': 'firstScorer',   # "player X to do Y": no line, one price per player
-                 'player_1st_goalscorer': 'firstScorer'}
-FIELD_BY_SPORT = {'NFL': ['player_1st_touchdown_scorer'], 'EPL': ['player_1st_goalscorer']}
+                 'player_1st_goalscorer': 'firstScorer',
+                 # the NBA's version of the same bet. Found by listing what the feed carries
+                 # (data/odds_markets.json): it was on offer all along and never asked for.
+                 'player_1st_basket': 'firstScorer'}
+FIELD_BY_SPORT = {'NFL': ['player_1st_touchdown_scorer'], 'EPL': ['player_1st_goalscorer'],
+                  'NBA': ['player_1st_basket']}
 TOTAL_KEYS = {
     'alternate_total_goals': 'total', 'alternate_total_corners': 'totalCorners', 'alternate_total_cards': 'totalCards',
     'alternate_total_points': 'total', 'alternate_total_touchdowns': 'totalTds',
