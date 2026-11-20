@@ -79,6 +79,18 @@ def normalise(payload, sport):
     return rows, dropped
 
 
+def file_age_minutes(path, now=None):
+    """Minutes since the file's own "updated" stamp, or None when it has none it can read."""
+    try:
+        with open(path) as f:
+            stamp = (json.load(f) or {}).get("updated")
+        then = datetime.datetime.strptime(stamp, "%Y-%m-%dT%H:%MZ").replace(tzinfo=datetime.timezone.utc)
+    except Exception:
+        return None
+    now = now or datetime.datetime.now(datetime.timezone.utc)
+    return (now - then).total_seconds() / 60.0
+
+
 def too_fresh(out_dir, every_min):
     """True when the existing file is younger than `every_min`, so the pull is skipped.
 
@@ -94,7 +106,15 @@ def too_fresh(out_dir, every_min):
     path = os.path.join(out_dir, "pickem.json")
     if not os.path.exists(path):
         return False
-    age = (datetime.datetime.now().timestamp() - os.path.getmtime(path)) / 60.0
+    # THE AGE IS THE STAMP INSIDE THE FILE, NOT THE FILE'S OWN DATE. This used to read the
+    # modification time, and on a GitHub runner every file is written by the checkout seconds
+    # before this runs - so the file was always "0 min old", the pull was skipped on every single
+    # run, and the lines on the page stayed at 26 October for three and a half weeks while the
+    # log said "skipping" and the job went green. The "updated" field is when the lines were
+    # actually pulled, and it travels with the file wherever it is checked out.
+    age = file_age_minutes(path)
+    if age is None:
+        return False                      # unreadable or unstamped: pull, do not trust it
     if age < every_min:
         print("  pickem.json is %.0f min old (< %d) - skipping" % (age, every_min))
         return True
@@ -209,6 +229,24 @@ def selftest():
     write(d2, "NBA", [])
     check("but an empty FIRST run still writes a file",
           os.path.exists(os.path.join(d2, "pickem.json")))
+    # THE GATE READS THE STAMP, NOT THE FILE DATE. A runner's checkout writes every file seconds
+    # before this runs, so a file pulled three weeks ago has a modification time of "just now".
+    d3 = tempfile.mkdtemp()
+    p3 = os.path.join(d3, "pickem.json")
+    old = (datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=25))
+    json.dump({"updated": old.strftime("%Y-%m-%dT%H:%MZ"), "rows": [1]}, open(p3, "w"))
+    check("a file stamped weeks ago is pulled again, however new the file itself is",
+          too_fresh(d3, 60) is False)
+    new = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(minutes=10)
+    json.dump({"updated": new.strftime("%Y-%m-%dT%H:%MZ"), "rows": [1]}, open(p3, "w"))
+    os.utime(p3, (0, 0))                          # make the file itself look ancient
+    check("a file stamped ten minutes ago is skipped, however old the file itself is",
+          too_fresh(d3, 60) is True)
+    json.dump({"rows": [1]}, open(p3, "w"))
+    check("a file with no stamp is pulled rather than trusted", too_fresh(d3, 60) is False)
+    open(p3, "w").write("{not json")
+    check("so is one that cannot be read", too_fresh(d3, 60) is False)
+    check("no gate asked for, no skip", too_fresh(d3, 0) is False)
     print("SELFTEST", "PASSED" if ok else "FAILED")
     return 0 if ok else 1
 

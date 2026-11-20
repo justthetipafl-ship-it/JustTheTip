@@ -1,0 +1,47 @@
+name: Odds feed market list
+
+# What the odds feed carries for each sport, next to what scripts/fetch_odds.py asks it for.
+# Both calls are FREE (the feed's own /sports and /usage), so this costs no credits. Weekly is
+# plenty: the list changes when the provider adds a market, not day to day. Run it by hand
+# whenever a tile "never has odds" - the answer to "does the feed even carry that" is in
+# data/odds_markets.json under notAsked.
+on:
+  schedule:
+    - cron: "17 21 * * 0"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: odds-markets
+  cancel-in-progress: false
+
+jobs:
+  list:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install rapidoddsapi
+      - name: Selftest
+        run: python3 scripts/list_markets.py --selftest
+      - name: List markets
+        env:
+          ROA_API_KEY: ${{ secrets.ROA_API_KEY }}
+        run: python3 scripts/list_markets.py --out data/odds_markets.json
+      - name: Commit
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/odds_markets.json
+          if git diff --staged --quiet; then echo "no change"; else
+            git commit -m "Odds feed market list $(date -u +%Y-%m-%dT%H:%MZ)"
+            for i in 1 2 3; do
+              git pull --rebase --autostash origin main && git push && break
+              sleep 5
+            done
+          fi
