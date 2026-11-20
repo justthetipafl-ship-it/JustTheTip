@@ -1976,6 +1976,28 @@
   /* a thin sample is still shown, but it does not get to look like a full one */
   .wo-thin{opacity:.55;}
   .wo-more{margin-top:4px;}
+  .pa-tap{cursor:pointer;}
+  .pa-chev{font-style:normal;color:var(--text-3);margin-left:6px;font-size:11px;}
+  .pp-wrap{border:1px solid var(--border);border-radius:10px;padding:10px;margin:2px 0 8px;
+    background:var(--surface);}
+  .pp-head{display:flex;flex-wrap:wrap;justify-content:space-between;gap:4px 10px;align-items:baseline;
+    font-family:var(--font-display);font-size:13px;margin-bottom:8px;}
+  .pp-head span{font-family:var(--font-mono);font-size:10px;color:var(--text-3);}
+  .pp-grid{display:grid;grid-template-columns:minmax(0,5fr) minmax(0,6fr);gap:10px;align-items:start;}
+  .pp-court{width:100%;height:auto;display:block;background:var(--surface-2);border-radius:8px;}
+  .pp-line{fill:none;stroke:var(--border);stroke-width:3;}
+  .pp-dot{fill:var(--accent);fill-opacity:.8;}
+  .pp-dot.three{fill:#eab308;}
+  .pp-t{font-family:var(--font-mono);font-size:9px;letter-spacing:.06em;text-transform:uppercase;
+    color:var(--text-3);margin:0 0 5px;}
+  .pp-r{display:grid;grid-template-columns:minmax(0,1fr) 44px 22px;gap:6px;align-items:center;
+    font-size:11px;color:var(--text-2);padding:2px 0;}
+  .pp-r span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .pp-r u{display:block;height:5px;border-radius:3px;background:var(--surface-2);text-decoration:none;overflow:hidden;}
+  .pp-r u i{display:block;height:100%;background:var(--accent);border-radius:3px;}
+  .pp-r b{font-family:var(--font-mono);font-weight:600;color:var(--text);text-align:right;}
+  .pp-log{margin-top:4px;}
+  .pp-log .pa-qc span{line-height:1.25;}
   .ed-row{padding:9px 0;border-top:1px solid var(--border);}
   .ed-top{display:flex;justify-content:space-between;align-items:center;gap:8px;
     font-family:var(--font-display);font-size:13px;}
@@ -2868,6 +2890,8 @@ var TIER3 = { gamelogs:'data/gamelogs.json', dvp:'data/dvp.json', teams_form:'da
               // Double-doubles and triple-doubles, built by nba/build_nba_doubles.py from the
               // gamelogs. NBA only; the Doubles pane draws nothing when it is absent.
               doubles:'data/doubles.json',
+              // Steals and blocks, built by nba/build_nba_stocks.py from the gamelogs. NBA only.
+              stocks:'data/stocks.json',
               // Threes, built by nba/build_nba_threes.py. NBA only.
               threes:'data/threes.json',
               profiles:'data/profiles.json',
@@ -10598,7 +10622,7 @@ var PLAYER_SOURCES = [['radar','Radar'], ['leaders','Leaders'], ['formal','Form 
                       ['without','Without'],
                       ['avail','Available'], ['goalie','In Goal'], ['all','Everyone']];
 var SCORE_SOURCES = [['profile','Player'], ['court','The Floor'], ['acts','How He Scores'],
-                    ['pts','Scoring'], ['play','Playmaking'], ['glass','Rebounding'], ['deep','From Deep'], ['dd','Doubles'],
+                    ['pts','Scoring'], ['play','Playmaking'], ['glass','Rebounding'], ['deep','From Deep'], ['dd','Doubles'], ['stk','Steals & Blocks'],
                     ['q1','Q1'], ['first','First Score'], ['rz','Red Zone']];
 var TEAM_NOW = null, PLAYER_NOW = null, SCORE_NOW = null;
 function cardPane(kind, key, g, src){
@@ -10646,6 +10670,7 @@ function cardPane(kind, key, g, src){
       if (src === 'glass') return nbaGlassSection(key, g) || '';
       if (src === 'deep')  return nbaThreeSection(key, g) || '';
       if (src === 'dd')    return nbaDoubleSection(key, g) || '';
+      if (src === 'stk')   return nbaStocksSection(key, g) || '';
       if (src === 'first') return firstLastSection(key, g) || '';
       if (src === 'rz')    return redZoneSection(key, g) || '';
       if (src === 'profile') return scoreProfilePane(key, g) || '';
@@ -20606,6 +20631,220 @@ var NB_EDGE_LINES = [
   [/points of shooting percentage/, 'Only gaps that have been shown to carry are drawn. Three-point percentage allowed is not one of them.']
 ];
 
+/* ONE PASSER TO ONE RECEIVER. The detail behind a row of "Who he feeds": this season's assists
+   from him to that player - each one a dot where the basket was, counted by zone and by how it
+   was made, and a log over the passer's recent games.
+
+   MADE BASKETS ONLY, and the panel says so. The play-by-play records an assist; it does not
+   record a pass that led to a miss. So there is no "potential assists" figure and no conversion
+   rate here - those come from player tracking, which this site has no feed for - and nothing on
+   the panel is dressed up to look like one. */
+function paPairPanel(key, me, t){
+  var d = t.pair; if (!d) return '';
+  var pf = state.sports[key].data.playtypes || {};
+  var dots = (d.dots || []).map(function(q){
+    // ESPN's grid is in feet with the hoop at (25, 1); the court below is 10px a foot with the
+    // hoop drawn at (250, 70)
+    var x = Math.max(4, Math.min(496, q[0] * 10)), y = Math.max(4, Math.min(466, (q[1] + 6) * 10));
+    return '<circle class="pp-dot' + (q[2] ? ' three' : '') + '" cx="' + x.toFixed(0) + '" cy="' + y.toFixed(0) + '" r="8"/>';
+  }).join('');
+  var court = '<svg viewBox="0 0 500 470" class="pp-court" aria-label="where the assisted baskets were">'
+    + '<rect x="1" y="1" width="498" height="468" class="pp-line"/>'
+    + '<path d="M170 0 V190 H330 V0" class="pp-line"/>'
+    + '<circle cx="250" cy="190" r="60" class="pp-line"/>'
+    + '<path d="M30 0 V150 A220 220 0 0 0 470 150 V0" class="pp-line"/>'
+    + '<circle cx="250" cy="70" r="9" class="pp-line"/><path d="M220 52 H280" class="pp-line"/>'
+    + dots + '</svg>';
+  var zTot = 0; Object.keys(d.zones || {}).forEach(function(z){ zTot += d.zones[z]; });
+  var zRows = ['rim', 'paint', 'midRange', 'cornerThree', 'armsThree'].map(function(z){
+    var n = (d.zones || {})[z] || 0;
+    return '<div class="pp-r"><span>' + esc(ED_ZONE_LAB[z] || z) + '</span>'
+      + '<u><i style="width:' + (zTot ? Math.round(n / zTot * 100) : 0) + '%"></i></u>'
+      + '<b>' + (n || '—') + '</b></div>';
+  }).join('');
+  var aTot = 0; Object.keys(d.acts || {}).forEach(function(a){ aTot += d.acts[a]; });
+  var aRows = Object.keys(d.acts || {}).sort(function(a, b){ return d.acts[b] - d.acts[a]; }).map(function(a){
+    // the shot type "rim" shares its label with the zone printed just above it
+    return '<div class="pp-r"><span>' + esc(a === 'rim' ? 'Layups and dunks' : ((pf.labels || {})[a] || a)) + '</span>'
+      + '<u><i style="width:' + Math.round(d.acts[a] / (aTot || 1) * 100) + '%"></i></u>'
+      + '<b>' + d.acts[a] + '</b></div>';
+  }).join('');
+  var mx = Math.max.apply(null, (d.log || []).map(function(g){ return g[2]; }).concat([1]));
+  var log = (d.log || []).map(function(g){
+    return '<div class="pa-qc"><b>' + g[2] + '</b><u style="height:' + Math.max(3, Math.round(g[2] / mx * PA_QH))
+      + 'px"></u><span>' + esc(g[1]) + '<br>' + esc(String(g[0]).slice(5).replace('-', '/')) + '</span></div>';
+  }).join('');
+  var per = d.games ? d.n / d.games : null;
+  return '<div class="pp-wrap" onclick="event.stopPropagation()">'
+    + '<div class="pp-head"><b>' + esc(me.name) + ' → ' + esc(t.name) + '</b>'
+    + '<span>' + d.n + ' assists this season' + (per != null ? ' · ' + per.toFixed(1) + ' a game over ' + d.games : '') + '</span></div>'
+    + '<div class="pp-grid"><div class="pp-cell">' + court + '</div>'
+    + '<div class="pp-cell"><div class="pp-t">Where the baskets were</div>' + zRows
+    + (aRows ? '<div class="pp-t" style="margin-top:8px">How they were made</div>' + aRows : '') + '</div></div>'
+    + (log ? '<div class="pp-t">His last ' + (d.log || []).length + ' games with an assist — how many went to '
+        + esc(t.name.split(' ').slice(-1)[0]) + '</div><div class="pa-q pp-log">' + log + '</div>' : '')
+    + '<div class="wo-hint">Made baskets only. The play-by-play records an assist, not a pass that led to a '
+    + 'miss, so there is no potential-assist count and no conversion rate here.</div></div>';
+}
+
+/* ===== STEALS AND BLOCKS ========================================================================
+   From nba/data/stocks.json (nba/build_nba_stocks.py).
+
+   The two markets where an average misleads most. A steals line of 1.5 on a player who averages
+   1.4 is not a coin flip: steals come in ones and noughts, and the average is held up by the odd
+   night of four. So the card is built on the question the line actually asks - how often does he
+   get AT LEAST one, two, three - and sets each rung beside the price posted for it.
+
+   Two honest corrections ride on every rung, both measured by the build on each run:
+
+     - a record runs hot at the top. Players who had cleared a rung in 85% of their games went on
+       to clear it about 76% of the time; the page shows what records LIKE HIS then did, from the
+       band his own rate falls in.
+     - a hot week is nothing. Per minute, the hottest fifth of five-game runs came out at their
+       own average the next game, for steals and for blocks alike. */
+var NB_STK_LINES = [
+  [/Split-half over/, 'Blocks carry over about as well as rebounds. Steals carry over less.'],
+  [/A hot run in either/, 'A hot run of steals or blocks means nothing for the next game.'],
+  [/Out of sample over/, 'The opponent is worth a little, and more on a low line than a high one.']
+];
+var STK_LAB = { steals:'Steals', blocks:'Blocks' };
+function skFile(key){
+  var S = state.sports[key];
+  return (key === 'nba' && S && S.data && S.data.stocks) || null;
+}
+function skPlayer(key, name){
+  var sf = skFile(key); if (!sf || !sf.players) return null;
+  var S = state.sports[key];
+  if (!S.idx.skIdx){
+    var ix = {};
+    sf.players.forEach(function(r){ if (r && r.name) ix[cmbNameKey(r.name)] = r; });
+    S.idx.skIdx = ix;
+  }
+  return S.idx.skIdx[cmbNameKey(name)] || null;
+}
+function skCandidates(key, g){
+  var out = [];
+  [[g.away, g.home], [g.home, g.away]].forEach(function(pair){
+    playersOnTeam(key, pair[0]).forEach(function(p){
+      if (!isPlayingP(key, p.name, p.team)) return;
+      var r = skPlayer(key, p.name);
+      if (r) out.push({ name:p.name, team:pair[0], opp:pair[1], rec:r,
+                        priced:!!(bestPriceFor(key, p.name, 'steals', 0.5) || bestPriceFor(key, p.name, 'blocks', 0.5)) });
+    });
+  });
+  out.sort(function(a, b){
+    return (b.rec.steals.avg + b.rec.blocks.avg) - (a.rec.steals.avg + a.rec.blocks.avg); });
+  return out;
+}
+function skPick(key, g){
+  var cands = skCandidates(key, g);
+  if (!cands.length) return null;
+  var want = state.view.skName || state.view.ptName;
+  for (var i = 0; i < cands.length; i++) if (cands[i].name === want) return cands[i];
+  return cands[0];
+}
+/* What records like his then did: the build's band that his own rate falls in. */
+function skLike(lg, rung, rate){
+  var L = ((lg || {}).ladder || []).filter(function(x){ return x.rung === rung; })[0];
+  if (!L) return null;
+  for (var i = 0; i < L.bands.length; i++)
+    if (rate >= L.bands[i].lo && rate < L.bands[i].hi + (L.bands[i].hi >= 1 ? 0.001 : 0)) return L.bands[i];
+  return null;
+}
+function skBlock(key, me, stat, sf){
+  var rec = me.rec[stat], lg = (sf.league || {})[stat] || {};
+  if (!rec || rec.avg < 0.4) return '';
+  var rungs = [1, 2, 3].map(function(k){
+    var rate = rec['r' + k], like = skLike(lg, k, rate);
+    var od = bestPriceFor(key, me.name, stat, k - 0.5);
+    var pr = od && od.price > 1 ? od : null;
+    return '<div class="pa-row' + (k > 1 ? ' pa-act' : '') + '"><div class="pa-lab">' + k + '+ ' + STK_LAB[stat].toLowerCase() + '</div>'
+      + '<div class="pa-bar"><i style="width:' + Math.round(rate * 100) + '%"></i></div>'
+      + '<div class="pa-n"><b>' + Math.round(rate * 100) + '%</b>of his games'
+      + (like ? '<i>records like his then landed ' + Math.round(like.actual * 100) + '%</i>' : '') + '</div>'
+      + '<div class="pa-st">' + (pr
+          ? '<span class="pa-in"><b>$' + pr.price.toFixed(2) + '</b> ' + esc(pr.book || '') + ' · implies '
+            + Math.round(100 / pr.price) + '%</span>'
+          : '<span class="pa-in">no price</span>') + '</div></div>';
+  }).join('');
+  var rr = nbaRecent(key, me.name, [stat]);
+  var all = ((state.sports[key].idx || {}).logsByName || {})[me.name] || [];
+  var live = all.filter(function(x){ return (+x.minutes || 0) > 0; });
+  var base = live.length ? live.reduce(function(a, x){ return a + (+x[stat] || 0); }, 0) / live.length : null;
+  var bMin = live.length ? live.reduce(function(a, x){ return a + (+x.minutes || 0); }, 0) / live.length : null;
+  var recBody = (!rr || base == null) ? '' :
+    '<div class="pa-tbl">'
+    + nbaRecRow(STK_LAB[stat], rr[stat], base, 1, 'of ' + live.length + ' on file')
+    + nbaRecRow('Per 30 min', rr.minutes > 0 ? rr[stat] / rr.minutes * 30 : null,
+                bMin > 0 ? base / bMin * 30 : null, 2, 'minutes taken out')
+    + '</div>';
+  var D = sf.defence || {};
+  var dRec = D[abbrOf(key, me.opp)] || D[normTeam(me.opp)] || D[me.opp] || null;
+  var op = lg.opp || {};
+  return { rungs:rungs, recBody:recBody, dRec:dRec, rr:rr, rec:rec, lg:lg, op:op };
+}
+function nbaStocksSection(key, g){
+  if (key !== 'nba' || !g || !g.home || !g.away) return '';
+  var sf = skFile(key); if (!sf || !sf.players) return '';
+  var cands = skCandidates(key, g);
+  var me = skPick(key, g);
+  if (!me) return '';
+  var chips = cands.length < 2 ? '' :
+    '<select class="mb-fixsel gg-sel" onchange="LAB.skName(this.value)">'
+    + cands.map(function(c){
+        return '<option value="' + esc(c.name) + '"' + (c.name === me.name ? ' selected' : '') + '>'
+          + esc(c.name) + ' · ' + esc(abbrOf(key, c.team)) + ' · ' + c.rec.steals.avg.toFixed(1) + ' stl · '
+          + c.rec.blocks.avg.toFixed(1) + ' blk' + (c.priced ? ' · priced' : '') + '</option>';
+      }).join('') + '</select>';
+  var parts = [], vparts = [];
+  ['steals', 'blocks'].forEach(function(stat){
+    var B = skBlock(key, me, stat, sf);
+    if (!B) return;
+    var lab = STK_LAB[stat], st = (B.lg.stability || {}), op = B.op || {};
+    if (B.rr) vparts.push('last 5: <b>' + B.rr[stat].toFixed(1) + '</b> ' + lab.toLowerCase());
+    if (B.dRec) vparts.push(nbaOppPart(key, me.opp, B.dRec[stat + 'Rank'], B.dRec.of, lab.toLowerCase()));
+    parts.push('<div class="pa-sub">' + lab + ' — ' + B.rec.avg.toFixed(1) + ' a game, ' + B.rec.per30.toFixed(2)
+      + ' per 30 min' + (st.r != null ? ' · carries r=+' + st.r.toFixed(2) : '') + '</div>'
+      + '<div class="pa-tbl">' + B.rungs + '</div>'
+      + (B.recBody ? '<div class="pa-sub">His last 5 — ' + lab.toLowerCase() + '</div>' + B.recBody : '')
+      + (B.dRec ? '<div class="pa-sub">' + lab + ' given up by ' + esc(abbrOf(key, me.opp)) + '</div>'
+          + '<div class="pa-opp"><span class="pa-pair"><span class="pa-big"><b>' + B.dRec[stat + 'Allowed'].toFixed(1)
+          + '</b>a game</span>' + scRank(B.dRec[stat + 'Rank'], B.dRec.of || 30, 'most given up', 'fewest given up')
+          + '</span></div>'
+          + (op.softest == null ? '' :
+              '<div class="pa-foot">Out of sample over ' + (op.n || 0).toLocaleString() + ' games: against the fifth '
+              + 'of opponents giving up the most, players finished ' + (op.softest >= 0 ? '+' : '−')
+              + Math.abs(op.softest).toFixed(2) + ' ' + lab.toLowerCase() + ' from their own average; against the '
+              + 'fifth giving up the fewest, ' + (op.toughest >= 0 ? '+' : '−') + Math.abs(op.toughest).toFixed(2)
+              + '. Small, and worth more on a 0.5 line than on a 2.5.</div>') : ''));
+  });
+  if (!parts.length) return '';
+  var ls = (sf.league || {}).steals || {}, lb = (sf.league || {}).blocks || {};
+  var note = '';
+  if ((ls.stability || {}).r != null && (lb.stability || {}).r != null){
+    note = '<p class="av-note">Split-half over ' + (ls.stability.n || 0) + ' players, first half-season against '
+      + 'second: blocks carry at r=+' + lb.stability.r.toFixed(2) + ' and steals at r=+' + ls.stability.r.toFixed(2)
+      + '. Blocks are a job a player has; steals have more luck in them, so a steals record deserves less weight '
+      + 'than a blocks record of the same length. Each rung also shows what records like his went on to do: a '
+      + 'player who had cleared a rung in most of his games clears it a little less often afterwards, and one who '
+      + 'rarely had clears it a little more.</p>';
+  }
+  if (ls.recent && lb.recent){
+    note += '<p class="av-note">A hot run in either is not a read. Per 30 minutes, the hottest fifth of five-game '
+      + 'runs finished ' + (ls.recent.hottestPerMin >= 0 ? '+' : '−') + Math.abs(ls.recent.hottestPerMin).toFixed(2)
+      + ' steals and ' + (lb.recent.hottestPerMin >= 0 ? '+' : '−') + Math.abs(lb.recent.hottestPerMin).toFixed(2)
+      + ' blocks from their own rate the next game, across ' + (ls.recent.n + lb.recent.n).toLocaleString()
+      + ' player-games. That is nothing. Three steals a night for a week is a week.</p>';
+  }
+  return nbaFold(paneBand('Steals and blocks')
+    + chips
+    + '<div class="pt-head"><b>' + esc(me.name) + '</b> v ' + esc(abbrOf(key, me.opp))
+      + ' · ' + me.rec.games + ' games, ' + me.rec.minutes.toFixed(0) + ' min'
+      + (me.priced ? '' : ' · no market') + '</div>'
+    + nbaVerdict(vparts)
+    + parts.join('') + note, NB_STK_LINES);
+}
+
 /* ===== THE FIRST QUARTER =====================================================================
    NO BOOK HERE POSTS A FIRST-QUARTER PLAYER PROP, so this is deliberately a READ and not a signal.
    It carries no price, no edge and no side. What it is for: a full-game line is an average over
@@ -21467,14 +21706,20 @@ function nbaPlaySection(key, g){
     var st = paStatus(key, me, t);
     var sh = t.share / (hereTot || 1);
     var w = Math.max(3, Math.round(sh / (topShare || 1) * 100));
-    return '<div class="pa-row">'
-      + '<div class="pa-lab">' + esc(t.name) + '</div>'
+    /* A PAIR WITH ENOUGH BEHIND IT OPENS. The build writes this season's detail for his busiest
+       pairs - a game log, where the baskets were, how they were made - and the row is the way
+       in. A row with no detail is exactly the row it always was. */
+    var open = t.pair && state.view.paPair === (me.name + '|' + t.id);
+    return '<div class="pa-row' + (t.pair ? ' pa-tap' : '') + '"'
+      + (t.pair ? ' onclick="LAB.paPair(\'' + jsq(me.name + '|' + t.id) + '\')"' : '') + '>'
+      + '<div class="pa-lab">' + esc(t.name)
+      + (t.pair ? '<i class="pa-chev">' + (open ? '\u25be' : '\u25b8') + '</i>' : '') + '</div>'
       + '<div class="pa-bar"><i style="width:' + w + '%"></i></div>'
       + '<div class="pa-n"><b>' + Math.round(sh * 100) + '%</b>of the passing he still has'
         + '<i>' + t.n + ' assist' + (t.n === 1 ? '' : 's')
         + (t.nCur ? ' · ' + t.nCur + ' this season' : '') + '</i></div>'
       + '<div class="pa-st"><span class="' + st.cls + '">' + esc(st.txt) + '</span></div>'
-      + '</div>';
+      + '</div>' + (open ? paPairPanel(key, me, t) : '');
   }).join('');
   /* ONE top-three now, over the men he still plays with, because that is the only list on the
      page. The old card printed two \u2014 one across everyone and one across the squad \u2014 which
@@ -26637,6 +26882,11 @@ window.LAB = {
   szTeam: function(side){ state.view.szTeam = side; cardRender('score'); },
   ptName: function(n){ state.view.ptName = n; cardRender('score'); },
   ddName: function(n){ state.view.ddName = n; cardRender('score'); },
+  skName: function(n){ state.view.skName = n; cardRender('score'); },
+  stocksProbe: function(key, g){ return nbaStocksSection(key, g); },
+  skCandsProbe: function(key, g){ return skCandidates(key, g); },
+  paPair: function(id){ state.view.paPair = (state.view.paPair === id ? null : id); cardRender('score'); },
+  paPairProbe: function(key, me, t){ return paPairPanel(key, me, t); },
   woMate: function(ab, id){
     (state.view.woMate = state.view.woMate || {})[ab] = id;
     cardRender('player');

@@ -86,6 +86,14 @@ MAX_TARGETS = 14          # the tail is a long list of ones; the share that matt
                           # difference between a usable list and a stub.
 MIN_TARGET_SHARE = 0.03   # and anybody under 3% of his passing is noise in the list
 MIN_DEF_GAMES = 20        # a club's concession needs a season behind it to rank
+# THE PAIR CARD. One passer to one receiver, this season only: a game log, where the baskets
+# came from, how they were made, and a dot for each. It is the detail behind one row of the
+# network, so it is only written for pairs with enough behind them to draw.
+PAIR_MIN = 5              # assists this season before a pair gets its own detail
+PAIR_MAX_TARGETS = 6      # per passer - the list on the page shows the top few
+PAIR_LOG = 8              # games in the log
+PAIR_DOTS = 40            # most recent shots plotted
+ZONES = ['rim', 'paint', 'midRange', 'cornerThree', 'armsThree']
 
 # Same table, same order, same precedence, same labels as build_nba_playtypes.py. Copied rather
 # than imported because these are standalone build scripts run independently in CI - and checked
@@ -152,6 +160,69 @@ def grab(url):
         return io.BytesIO(r.read())
 
 
+def coord(v):
+    """A court coordinate in feet, or None. ESPN writes a missing location as a NaN or as a huge
+    negative sentinel, and either would plot a basket in the car park."""
+    try:
+        f = float(v)
+    except (TypeError, ValueError):
+        return None
+    if f != f or f < -5 or f > 100:
+        return None
+    return round(f, 1)
+
+
+def zone_of(x, y, three):
+    """The same five zones build_nba_zones.py uses, on the same grid (hoop at 25, 1)."""
+    if x is None or y is None:
+        return None
+    if three:
+        return 'cornerThree' if y <= 14.0 else 'armsThree'
+    if ((x - 25.0) ** 2 + (y - 1.0) ** 2) ** .5 <= 4.0:
+        return 'rim'
+    if 17.0 <= x <= 33.0 and y <= 19.0:
+        return 'paint'
+    return 'midRange'
+
+
+def pair_detail(rows):
+    """{(passer, scorer): detail} for this season's pairs.
+
+    The game log runs over the PASSER's games - every game this season in which he had an assist
+    to anyone - so a night he fed somebody else shows as a zero for this pair rather than as a
+    gap. A game where he had no assist at all is not in the play-by-play as his, and is not
+    invented.
+    """
+    cur = [r for r in rows if r.get('cur') and r['passer'] != r['scorer']]
+    games = collections.defaultdict(dict)                 # passer -> {game: (date, opp)}
+    per = collections.defaultdict(list)
+    for r in cur:
+        games[r['passer']][r.get('game')] = (r.get('date') or '', r.get('opp') or '')
+        per[(r['passer'], r['scorer'])].append(r)
+    out = {}
+    for (p, sc), rs in per.items():
+        if len(rs) < PAIR_MIN:
+            continue
+        by_game = collections.Counter(r.get('game') for r in rs)
+        order = sorted(games[p].items(), key=lambda kv: (kv[1][0], kv[0]))[-PAIR_LOG:]
+        log = [[d, o, by_game.get(g, 0)] for g, (d, o) in order]
+        zones = collections.Counter()
+        acts = collections.Counter()
+        dots = []
+        for r in sorted(rs, key=lambda r: (r.get('date') or '', r.get('game') or '')):
+            z = zone_of(r.get('x'), r.get('y'), r.get('three'))
+            if z:
+                zones[z] += 1
+                dots.append([r['x'], r['y'], 1 if r.get('three') else 0])
+            if r.get('act'):
+                acts[r['act']] += 1
+        out[(p, sc)] = {'n': len(rs), 'games': len(games[p]), 'log': log,
+                        'zones': {z: zones[z] for z in ZONES if zones.get(z)},
+                        'acts': {a: acts[a] for a in ACTION_KEYS if acts.get(a)},
+                        'dots': dots[-PAIR_DOTS:]}
+    return out
+
+
 def harvest(seasons):
     """-> (assist rows, games per club, assists conceded per club).
 
@@ -198,6 +269,10 @@ def harvest(seasons):
                 'act': classify(r.type_text),
                 'team': r.jttClub,
                 'cur': 1 if s == cur else 0,
+                'game': str(r.game_id), 'date': str(getattr(r, 'game_date', '') or '')[:10],
+                'opp': r.jttDef,
+                'x': coord(getattr(r, 'coordinate_x_raw', None)),
+                'y': coord(getattr(r, 'coordinate_y_raw', None)),
             })
     return rows, club_games, conceded
 
@@ -425,6 +500,7 @@ def build(rows, club_games, conceded):
             p['tgCur'][r['scorer']] += 1
             p['clubsCur'][r['team']] += 1
 
+    pairs = pair_detail(rows)
     players = []
     for k, v in by.items():
         if v['n'] < MIN_ASSISTS:
@@ -435,8 +511,14 @@ def build(rows, club_games, conceded):
             share = c / v['n']
             if share < MIN_TARGET_SHARE:
                 break
-            tgt.append({'id': sid, 'name': v['names'].get(sid, sid),
-                        'n': c, 'share': round(share, 4), 'nCur': v['tgCur'].get(sid, 0)})
+            t = {'id': sid, 'name': v['names'].get(sid, sid),
+                 'n': c, 'share': round(share, 4), 'nCur': v['tgCur'].get(sid, 0)}
+            tgt.append(t)
+        # the detail goes on his busiest pairs THIS season, which is not always the order above
+        for t in sorted(tgt, key=lambda t: -t['nCur'])[:PAIR_MAX_TARGETS]:
+            d = pairs.get((k, t['id']))
+            if d:
+                t['pair'] = d
         acts = {}
         tot_act = sum(v['acts'].values())
         if tot_act:
@@ -616,6 +698,41 @@ def selftest():
                   + ('' if ns['ACTIONS'] == ACTIONS else '\n         theirs: ' + theirs
                      + '\n         mine:   ' + mine),
                   ns['ACTIONS'] == ACTIONS)
+
+    # THE PAIR DETAIL. Passer P to scorer S over three of P's games this season; in the middle
+    # one he fed somebody else, and that has to show as a zero rather than vanish.
+    def prow(sc, game, date, x, y, three=0, act='rim', cur=1):
+        return {'passer': 'P', 'passerName': 'Pee', 'scorer': sc, 'scorerName': sc, 'three': three,
+                'act': act, 'team': 'DEN', 'cur': cur, 'game': game, 'date': date, 'opp': 'BOS',
+                'x': x, 'y': y}
+    pr = ([prow('S', 'g1', '2027-01-01', 25.0, 2.0)] * 3 + [prow('T', 'g2', '2027-01-03', 25.0, 2.0)]
+          + [prow('S', 'g3', '2027-01-05', 2.0, 5.0, three=1, act='jumper'),
+             prow('S', 'g3', '2027-01-05', 25.0, 27.0, three=1, act='jumper'),
+             prow('S', 'g3', '2027-01-05', None, None, act='cut')]
+          + [prow('S', 'g0', '2026-01-01', 25.0, 2.0, cur=0)] * 9)
+    pd_ = pair_detail(pr)
+    d = pd_.get(('P', 'S'))
+    check('a pair with enough behind it this season gets its detail', bool(d) and d['n'] == 6)
+    check('last season does not count towards it', d['n'] == 6 and d['games'] == 3)
+    check('a game he fed somebody else is a zero in the log, not a gap',
+          [x[2] for x in d['log']] == [3, 0, 3])
+    check('the log is in date order', [x[0] for x in d['log']] == ['2027-01-01', '2027-01-03', '2027-01-05'])
+    check('zones use the same five as the zones build',
+          d['zones'] == {'rim': 3, 'cornerThree': 1, 'armsThree': 1})
+    check('a basket with no location is counted but not plotted',
+          len(d['dots']) == 5 and d['acts'].get('cut') == 1)
+    check('a pair below the floor gets nothing', ('P', 'T') not in pd_)
+    check('a missing or absurd coordinate is no coordinate',
+          coord(float('nan')) is None and coord(-214748340) is None and coord('x') is None and coord(25) == 25.0)
+    check('rim, paint, mid-range and the two threes land where the zones build puts them',
+          [zone_of(25, 3, 0), zone_of(20, 12, 0), zone_of(5, 10, 0), zone_of(1, 6, 1), zone_of(25, 26, 1)]
+          == ['rim', 'paint', 'midRange', 'cornerThree', 'armsThree'])
+    full = build(pr + [prow('S', 'g%d' % i, '2027-02-%02d' % i, 25.0, 2.0) for i in range(1, 30)],
+                 games, collections.Counter())
+    tg = [t for t in full['players'][0]['targets'] if t['id'] == 'S'][0]
+    check('the detail rides on the target row in the file', 'pair' in tg and tg['pair']['n'] == 35)
+    check('and the log is capped', len(tg['pair']['log']) == PAIR_LOG)
+    json.dumps(full, allow_nan=False)
 
     print('SELFTEST', 'PASSED' if ok else 'FAILED')
     return 0 if ok else 1

@@ -209,12 +209,24 @@ jobs:
           python3 nba/build_nba_doubles.py $ARGS \
             || echo "::warning::doubles build failed - keeping the doubles.json already in the repo"
 
+      # STEALS AND BLOCKS - for the Steals & Blocks pane. Offline, from the gamelogs. How often he
+      # clears each rung (1+, 2+, 3+), and - measured on every run - how well each stat carries,
+      # whether a record of clearing a rung is honest about the next game, and the opponent.
+      - name: Stocks selftest
+        run: python3 nba/build_nba_stocks.py --selftest
+      - name: Build steals and blocks
+        run: |
+          ARGS="--out nba/data"
+          if [ -n "${{ inputs.seasons }}" ]; then ARGS="$ARGS --seasons ${{ inputs.seasons }}"; fi
+          python3 nba/build_nba_stocks.py $ARGS \
+            || echo "::warning::stocks build failed - keeping the stocks.json already in the repo"
+
       # LAST LINE OF DEFENCE on the file the page has to parse. The build refuses to write a NaN,
       # but anything that produces unreadable JSON here costs a silent, invisible card, so the
       # file is parsed before it is committed rather than after someone notices it is missing.
       - name: Check the written JSON parses
         run: |
-          for f in assists rebounds threes without scoring doubles; do
+          for f in assists rebounds threes without scoring doubles stocks; do
             python3 -c "import json; json.load(open('nba/data/$f.json')); print('$f.json parses')" \
               || { echo "::error::$f.json is not valid JSON - not committing it"; rm -f "nba/data/$f.json"; }
           done
@@ -227,7 +239,7 @@ jobs:
                    nba/data/zones_by_season.json nba/data/zone_persistence.json \
                    nba/data/playtypes.json nba/data/stints.json \
                    nba/data/assists.json nba/data/rebounds.json nba/data/threes.json \
-                   nba/data/without.json nba/data/scoring.json nba/data/doubles.json; do
+                   nba/data/without.json nba/data/scoring.json nba/data/doubles.json nba/data/stocks.json; do
             [ -f "$f" ] && git add "$f" && echo "staged $f"
           done
           if git diff --cached --quiet; then
